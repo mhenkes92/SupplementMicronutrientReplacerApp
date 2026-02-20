@@ -1,0 +1,332 @@
+{
+    "kiwi": [
+        "supports digestive health with fiber",
+        "provides antioxidant protection from polyphenols",
+        "aids collagen synthesis for skin health"
+    ],
+    "broccoli": [
+        "rich in sulforaphane for cellular detoxification",
+        "supports gut microbiome diversity",
+        "high in glucosinolates for anti-inflammatory effects"
+    ],
+    "bell pepper": [
+        "contains carotenoids for eye health",
+        "supports immune function with vitamin synergies",
+        "provides fiber for metabolic health"
+    ],
+    "strawberries": [
+        "high in ellagic acid for antioxidant activity",
+        "supports heart health with flavonoids",
+        "promotes gut health with prebiotic fibers"
+    ],
+    "orange": [
+        "rich in flavonoids for vascular health",
+        "supports immune modulation",
+        "provides pectin for digestive regularity"
+    ],
+    "spinach": [
+        "contains lutein for cognitive support",
+        "high in nitrates for circulation",
+        "supports bone health with mineral synergies"
+    ],
+    "kale": [
+        "rich in chlorophyll for detoxification",
+        "supports hormonal balance with indole compounds",
+        "provides fiber for microbiome health"
+    ],
+    "sweet potato": [
+        "high in beta-carotene for immune modulation",
+        "contains resistant starch for gut health",
+        "supports metabolic health with anthocyanins"
+    ],
+    "carrot": [
+        "rich in falcarinol for cellular health",
+        "supports vision with carotenoid synergies",
+        "provides fiber for digestive health"
+    ],
+    "tomato": [
+        "contains lycopene for prostate health",
+        "supports cardiovascular health",
+        "high in glutathione precursors"
+    ],
+    "avocado": [
+        "rich in healthy fats for brain health",
+        "contains lutein for eye protection",
+        "supports skin health with vitamin E synergies"
+    ],
+    "banana": [
+        "high in resistant starch for gut health",
+        "provides potassium for muscle function",
+        "supports mood with tryptophan precursors"
+    ],
+    "apple": [
+        "rich in quercetin for antioxidant effects",
+        "supports gut health with pectin",
+        "contains ursolic acid for metabolic health"
+    ],
+    "blueberries": [
+        "high in anthocyanins for cognitive health",
+        "supports vascular health",
+        "promotes microbiome diversity"
+    ],
+    "lentils": [
+        "rich in polyphenols for antioxidant activity",
+        "supports blood sugar regulation",
+        "high in prebiotic fibers for gut health"
+    ],
+    "almonds": [
+        "contains healthy fats for heart health",
+        "rich in vitamin E for skin protection",
+        "supports bone health with mineral synergies"
+    ],
+    "walnuts": [
+        "high in omega-3s for brain health",
+        "contains melatonin for sleep support",
+        "rich in antioxidants for cellular protection"
+    ],
+    "chia seeds": [
+        "rich in omega-3s for anti-inflammatory effects",
+        "high in fiber for digestive health",
+        "contains complete protein profile"
+    ],
+    "quinoa": [
+        "contains saponins for cholesterol health",
+        "rich in complete protein",
+        "supports gut health with fiber"
+    ],
+    "oats": [
+        "high in beta-glucans for heart health",
+        "contains avenanthramides for antioxidant effects",
+        "supports blood sugar management"
+    ],
+    "garlic": [
+        "rich in allicin for immune support",
+        "supports cardiovascular health",
+        "contains sulfur compounds for detoxification"
+    ],
+    "ginger": [
+        "contains gingerol for anti-inflammatory effects",
+        "supports digestive health",
+        "rich in antioxidants for cellular protection"
+    ],
+    "turmeric": [
+        "high in curcumin for anti-inflammatory activity",
+        "supports joint health",
+        "contains antioxidants for liver health"
+    ],
+    "green tea": [
+        "rich in catechins for metabolic health",
+        "supports cognitive function",
+        "contains L-theanine for relaxation"
+    ],
+    "dark chocolate": [
+        "high in flavanols for heart health",
+        "supports mood with phenylethylamine",
+        "rich in antioxidants for skin health"
+    ],
+    "salmon": [
+        "rich in omega-3s for brain health",
+        "supports joint health with anti-inflammatory fats",
+        "contains astaxanthin for antioxidant protection"
+    ],
+    "eggs": [
+        "rich in choline for cognitive health",
+        "contains complete protein profile",
+        "supports eye health with lutein"
+    ],
+    "yogurt": [
+        "contains probiotics for gut health",
+        "rich in calcium for bone health",
+        "supports immune function with live cultures"
+    ],
+    "beef liver": [
+        "rich in heme iron for oxygen transport",
+        "contains complete vitamin profile",
+        "supports detoxification with enzymes"
+    ],
+    "mushrooms": [
+        "rich in beta-glucans for immune support",
+        "contains ergothioneine for antioxidant effects",
+        "supports gut health with prebiotics"
+    ],
+    "beets": [
+        "high in nitrates for circulation",
+        "contains betalains for anti-inflammatory effects",
+        "supports detoxification with glutathione"
+    ],
+    "cucumber": [
+        "rich in cucurbitacins for anti-inflammatory effects",
+        "supports hydration with high water content",
+        "contains silica for connective tissue health"
+    ],
+    "celery": [
+        "high in apigenin for anti-inflammatory effects",
+        "contains phthalides for blood pressure support",
+        "rich in antioxidants for cellular health"
+    ],
+    "lettuce": [
+        "contains lactucopicrin for relaxation",
+        "rich in chlorophyll for detoxification",
+        "supports digestive health with fiber"
+    ],
+    "cabbage": [
+        "rich in indole compounds for hormonal health",
+        "contains sulforaphane precursors",
+        "supports gut health with fiber"
+    ],
+    "cauliflower": [
+        "high in glucosinolates for detoxification",
+        "contains indole-3-carbinol for hormonal balance",
+        "supports microbiome health"
+    ],
+    "brussels sprouts": [
+        "rich in kaempferol for anti-inflammatory effects",
+        "contains sulforaphane for cellular health",
+        "supports gut health with fiber"
+    ],
+    "asparagus": [
+        "high in inulin for prebiotic effects",
+        "contains glutathione for detoxification",
+        "supports kidney health with asparagine"
+    ],
+    "artichoke": [
+        "rich in cynarin for liver health",
+        "contains silymarin-like compounds",
+        "high in inulin for gut health"
+    ],
+    "peas": [
+        "rich in pisumsaponins for cholesterol health",
+        "contains complete protein",
+        "high in fiber for digestive health"
+    ],
+    "beans": [
+        "rich in lectins for gut health",
+        "contains resistant starch",
+        "high in polyphenols for antioxidant effects"
+    ],
+    "nuts": [
+        "rich in healthy fats for brain health",
+        "contains vitamin E for skin protection",
+        "high in fiber for metabolic health"
+    ],
+    "seeds": [
+        "rich in lignans for hormonal health",
+        "contains healthy fats for anti-inflammatory effects",
+        "high in minerals for bone health"
+    ],
+    "berries": [
+        "high in anthocyanins for cognitive health",
+        "rich in ellagic acid for cellular protection",
+        "support gut health with fibers"
+    ],
+    "citrus": [
+        "rich in limonoids for anti-cancer effects",
+        "contains hesperidin for vascular health",
+        "high in vitamin synergies"
+    ],
+    "leafy greens": [
+        "rich in chlorophyll for detoxification",
+        "high in nitrates for circulation",
+        "contain lutein for eye health"
+    ],
+    "cruciferous vegetables": [
+        "rich in glucosinolates for detoxification",
+        "contain indole compounds for hormonal health",
+        "support microbiome diversity"
+    ],
+    "root vegetables": [
+        "high in resistant starch for gut health",
+        "rich in polyphenols for antioxidant effects",
+        "contain nitrates for circulation"
+    ],
+    "allium vegetables": [
+        "rich in organosulfur compounds for detoxification",
+        "support cardiovascular health",
+        "contain allicin for immune modulation"
+    ],
+    "nightshade vegetables": [
+        "rich in alkaloids for anti-inflammatory effects",
+        "contain solanine for cellular health",
+        "high in antioxidants"
+    ],
+    "squash": [
+        "rich in carotenoids for immune support",
+        "high in fiber for digestive health",
+        "contain cucurbitacins for anti-inflammatory effects"
+    ],
+    "mango": [
+        "rich in mangiferin for antioxidant effects",
+        "supports skin health with vitamin A synergies",
+        "high in fiber for gut health"
+    ],
+    "pineapple": [
+        "rich in bromelain for digestive health",
+        "contains vitamin C synergies",
+        "high in manganese for bone health"
+    ],
+    "grapes": [
+        "rich in resveratrol for heart health",
+        "high in quercetin for antioxidant effects",
+        "support gut health with fibers"
+    ],
+    "cherries": [
+        "rich in anthocyanins for joint health",
+        "contain melatonin for sleep support",
+        "high in antioxidants"
+    ],
+    "plums": [
+        "rich in neochlorogenic acid for liver health",
+        "high in fiber for digestive health",
+        "contain sorbitol for gut motility"
+    ],
+    "peaches": [
+        "rich in chlorogenic acid for metabolic health",
+        "high in fiber for gut health",
+        "contain carotenoids for skin health"
+    ],
+    "pears": [
+        "high in arbutin for urinary health",
+        "rich in fiber for digestive health",
+        "contain quercetin for antioxidant effects"
+    ],
+    "apricots": [
+        "rich in carotenoids for eye health",
+        "high in fiber for gut health",
+        "contain vitamin A synergies"
+    ],
+    "figs": [
+        "rich in ficin for digestive health",
+        "high in calcium for bone health",
+        "contain prebiotics for gut health"
+    ],
+    "dates": [
+        "rich in tannins for antioxidant effects",
+        "high in fiber for digestive health",
+        "contain potassium for heart health"
+    ],
+    "raisins": [
+        "rich in oleanolic acid for liver health",
+        "high in boron for bone health",
+        "contain polyphenols for heart health"
+    ],
+    "coconut": [
+        "rich in lauric acid for immune support",
+        "high in MCTs for metabolic health",
+        "contains antioxidants for cellular protection"
+    ],
+    "olive oil": [
+        "rich in oleuropein for heart health",
+        "high in hydroxytyrosol for antioxidant effects",
+        "supports Mediterranean diet benefits"
+    ],
+    "herbs": [
+        "rich in volatile oils for digestive health",
+        "contain polyphenols for antioxidant effects",
+        "support detoxification with enzymes"
+    ],
+    "spices": [
+        "rich in curcuminoids for anti-inflammatory effects",
+        "high in antioxidants for cellular health",
+        "support metabolic health"
+    ]
+}
