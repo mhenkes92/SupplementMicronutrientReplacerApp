@@ -286,6 +286,21 @@ TRANSLATIONS = {
         "ocr_processing": "Processing OCR text...",
         "ocr_done": "Done",
         "ocr_processing_api": "Processing with OCR API...",
+        "optional": "Optional",
+        "default_diet": "Omnivore",
+        "none": "none",
+        "default_nutrient_benefit": "Essential micronutrient for health",
+        "uncategorized": "Uncategorized",
+        "not_available": "N/A",
+        "usda": "USDA",
+        "dash": "—",
+        "showing_range": "Showing {start}-{end} of {total}",
+        "legend_practical": "✔ Practical",
+        "legend_large_amount": "⚠ Large amount needed",
+        "legend_impractical": "✗ Impractical",
+        "legend_nutrients": "Nutrients:",
+        "verdict": "Verdict",
+        "plan": "Plan",
     },
     "es": {
         "select_language": "Seleccionar idioma de visualización:",
@@ -1042,13 +1057,27 @@ def pubmed_search_link(food_name: str):
     q = quote_plus(f"{food_name} health benefits")
     return f"https://pubmed.ncbi.nlm.nih.gov/?term={q}"
 
+def _strip_html_to_text(html: str) -> str:
+    """Convert HTML into normalized plain text."""
+    if not html:
+        return ""
+    txt = re.sub(r"<script[\s\S]*?</script>", " ", html, flags=re.IGNORECASE)
+    txt = re.sub(r"<style[\s\S]*?</style>", " ", txt, flags=re.IGNORECASE)
+    txt = re.sub(r"<[^>]+>", " ", txt)
+    txt = re.sub(r"&nbsp;", " ", txt)
+    txt = re.sub(r"&amp;", "&", txt)
+    txt = re.sub(r"\s+", " ", txt).strip()
+    return txt
 
-    # --------------------
-    # STEP 3: Use USDA-only query seeds for candidate generation
-    # --------------------
-    progress("Step 3/6: Building USDA-only candidate queries…", "step_3_candidates", 0.5)
-    candidates_map = {}
-    # 1) normal fetch
+
+def fetch_url_text(url: str, timeout: int = 15) -> str:
+    """Best-effort text fetch for product URLs; falls back to jina.ai proxy."""
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+    best = ""
+
     try:
         r = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
         if r.status_code == 200 and r.text:
@@ -1056,15 +1085,11 @@ def pubmed_search_link(food_name: str):
     except Exception:
         pass
 
-    # Heuristics: many product pages block bots or require JS
     blocked_markers = ["enable javascript", "access denied", "are you a human", "captcha", "cloudflare"]
-    looks_blocked = (len(best) < 500) or any(m in best.lower() for m in blocked_markers)
+    looks_blocked = (len(best) < 500) or any(marker in best.lower() for marker in blocked_markers)
 
     if looks_blocked:
-        # 2) fallback via jina.ai text proxy (often works for JS-heavy pages)
         try:
-            # r.jina.ai expects a scheme-less URL after it:
-            # https://r.jina.ai/http(s)://example.com/page
             proxy_url = "https://r.jina.ai/" + url
             r2 = requests.get(proxy_url, headers=headers, timeout=timeout, allow_redirects=True)
             if r2.status_code == 200 and r2.text:
@@ -2471,27 +2496,45 @@ def pipeline_run(
       }
     """
 
-    def progress(step: str, key: str = None, value: float = None):
-        """Send progress message. If key provided, translate it."""
-        text = _t_for(lang, key, step) if key else step
-        progress_q.put({"type": "progress", "text": text, "value": value})
+    def progress(step: str, key: str = None, value: float = None, fmt: dict | None = None):
+        """Send progress message with optional translation key and formatting values."""
+        progress_q.put({"type": "progress", "text": step, "key": key, "value": value, "fmt": fmt or {}})
 
-    def fail(err_title: str, err_key: str = None, err_msg: str = None):
-        """Send error. If key provided, translate the message."""
-        title = _t_for(lang, err_key, err_title) if err_key else err_title
-        msg = err_msg or err_title
-        progress_q.put({"type": "error", "title": title, "msg": msg})
+    def fail(
+        err_title: str,
+        err_key: str = None,
+        err_msg: str = None,
+        msg_key: str = None,
+    ):
+        """Send error with optional translation keys for title and message."""
+        progress_q.put({
+            "type": "error",
+            "title": err_title,
+            "title_key": err_key,
+            "msg": err_msg or err_title,
+            "msg_key": msg_key,
+        })
 
     # --------------------
     # STEP 0: basic checks
     # --------------------
     if not USDA_API_KEY.strip():
-        fail("Config Error", "config_error_title", "Missing USDA_API_KEY. Paste it at the top of the script.")
+        fail(
+            "Config Error",
+            err_key="config_error_title",
+            err_msg="Missing USDA_API_KEY. Paste it at the top of the script.",
+            msg_key="config_error_msg",
+        )
         return
 
     input_text = (input_text or "").strip()
     if not input_text:
-        fail("Input Error", "input_error_title", "Paste supplement facts, a product link, or upload a label image.")
+        fail(
+            "Input Error",
+            err_key="input_error_title",
+            err_msg="Paste supplement facts, a product link, or upload a label image.",
+            msg_key="input_error_msg",
+        )
         return
 
     # Keep SuppSwap2 URL logic unchanged by default:
@@ -2576,7 +2619,12 @@ TEXT:
         # try regex fallback before failing
         fallback_only = fallback_parse_supplement_label(input_used)
         if not fallback_only:
-            fail("Parse Error", "No supplement data found. Try label image or paste Supplement Facts text.")
+            fail(
+                "Parse Error",
+                err_key="error_parse",
+                err_msg="No supplement data found. Try label image or paste Supplement Facts text.",
+                msg_key="error_no_supplement",
+            )
             return
         parsed_raw = parse_out
         parsed = fallback_only
@@ -2589,7 +2637,7 @@ TEXT:
             # if LLM JSON parsing fails, try regex fallback before failing
             fallback_only = fallback_parse_supplement_label(input_used)
             if not fallback_only:
-                fail("Parse Error", parsed["__error__"])
+                fail("Parse Error", err_key="error_parse", err_msg=parsed["__error__"])
                 return
             parsed = fallback_only
 
@@ -2597,7 +2645,12 @@ TEXT:
             # try regex fallback before failing
             fallback_only = fallback_parse_supplement_label(input_used)
             if not fallback_only:
-                fail("Parse Error", "No supplement data found. Try label image or paste Supplement Facts text.")
+                fail(
+                    "Parse Error",
+                    err_key="error_parse",
+                    err_msg="No supplement data found. Try label image or paste Supplement Facts text.",
+                    msg_key="error_no_supplement",
+                )
                 return
             parsed = fallback_only
 
@@ -2626,7 +2679,12 @@ TEXT:
             supplement_dict[name] = mg_value
 
     if not supplement_dict:
-        fail("Parse Error", "No valid nutrient values found in supplement data.")
+        fail(
+            "Parse Error",
+            err_key="error_parse",
+            err_msg="No valid nutrient values found in supplement data.",
+            msg_key="error_no_nutrients",
+        )
         return
 
     if cancel_event.is_set():
@@ -2635,7 +2693,7 @@ TEXT:
     # --------------------
     # STEP 3: Ask LLM for Top 10 whole-food candidates per nutrient (single call)
     # --------------------
-    progress("Step 3/6: Getting whole-food candidates (plain foods only)…", 0.5)
+    progress("Step 3/6: Getting whole-food candidates (plain foods only)…", "step_3_candidates", 0.5)
 
     nutrients_str = ", ".join(sorted(supplement_dict.keys()))
     exclusions_str = ", ".join([e for e in exclusions if e]) or "none"
@@ -2668,7 +2726,7 @@ Output ONLY valid JSON in this exact format (no markdown):
     # --------------------
     # STEP 4: USDA ranking per nutrient (Top 5 by practicality/grams)
     # --------------------
-    progress("Step 4/6: Ranking foods using USDA nutrient data…", 0.6)
+    progress("Step 4/6: Ranking foods using USDA nutrient data…", "step_4_ranking", 0.6)
 
     results = {}  # nutrient -> list of top picks
 
@@ -2678,7 +2736,11 @@ Output ONLY valid JSON in this exact format (no markdown):
     for idx, (nut_name, target_mg) in enumerate(nutrients_list, start=1):
         if cancel_event.is_set():
             return
-        progress(f"Step 4/6: Ranking {nut_name} ({idx}/{total_n})…")
+        progress(
+            f"Step 4/6: Ranking {nut_name} ({idx}/{total_n})…",
+            "step_4_ranking_nutrient",
+            fmt={"nut_name": nut_name, "idx": idx, "total": total_n},
+        )
 
         candidates = []
         arr = candidates_map.get(nut_name, [])
@@ -2890,7 +2952,7 @@ Output ONLY valid JSON in this exact format (no markdown):
     # --------------------
     # STEP 5: Add 3 "additional benefits" per food (compact call)
     # --------------------
-    progress("Step 5/6: Adding 3 additional benefits per whole food…", 0.8)
+    progress("Step 5/6: Adding 3 additional benefits per whole food…", "step_5_benefits", 0.8)
 
     # Build a compact list of foods to annotate (unique)
     unique_foods = []
@@ -2985,7 +3047,7 @@ Example:
     # --------------------
     # STEP 6: Done
     # --------------------
-    progress("Step 6/6: Rendering output…", 0.9)
+    progress("Step 6/6: Rendering output…", "step_6_rendering", 0.9)
 
     progress_q.put({
         "type": "done",
@@ -3072,11 +3134,23 @@ class App(ctk.CTk):
         """Handle language change and refresh current screen."""
         code = _LANG_NAME_TO_CODE.get(lang_name, self.lang)
         if code != self.lang:
-            # Prevent language refresh while upload or analysis is in progress
-            if getattr(self, 'upload_in_progress', False) or getattr(self, 'analysis_in_progress', False):
-                return
+            self._capture_state_before_refresh()
             self.lang = code
             self.refresh_screen()
+
+    def _capture_state_before_refresh(self):
+        """Capture mutable screen state before rebuilding UI for language refresh."""
+        try:
+            if self.current_screen in ("diet", "input"):
+                if self.diet_menu:
+                    self.diet = self.diet_menu.get() or self.diet
+                if self.exclude_entry:
+                    self.exclusions = parse_exclusion_input(self.exclude_entry.get() or "")
+
+            if self.current_screen == "input" and self.text_box:
+                self.last_input_text = self.text_box.get("1.0", "end").strip()
+        except Exception:
+            pass
 
     def clear(self):
         for w in self.winfo_children():
@@ -3195,7 +3269,7 @@ class App(ctk.CTk):
 
         def _on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        canvas.bind("<MouseWheel>", _on_mousewheel)
 
         # Content text
         why_box = ctk.CTkTextbox(content, width=900, height=400, font=("Arial", 11), state="disabled")
@@ -3262,7 +3336,7 @@ class App(ctk.CTk):
 
         def _on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        canvas.bind("<MouseWheel>", _on_mousewheel)
 
         # Content
         ctk.CTkLabel(content, text=self.t("select_diet_type"), font=("Arial", 13, "bold")).pack(pady=(15, 8), padx=20)
@@ -3271,7 +3345,7 @@ class App(ctk.CTk):
         self.diet_menu.pack(pady=8, padx=20)
 
         ctk.CTkLabel(content, text=self.t("exclude_foods_label"), font=("Arial", 13, "bold")).pack(pady=(20, 8), padx=20)
-        self.exclude_entry = ctk.CTkEntry(content, width=500, placeholder_text="Optional")
+        self.exclude_entry = ctk.CTkEntry(content, width=500, placeholder_text=self.t("optional", "Optional"))
         self.exclude_entry.insert(0, ", ".join(self.exclusions) if self.exclusions else "")
         self.exclude_entry.pack(pady=8, padx=20)
 
@@ -3343,7 +3417,7 @@ class App(ctk.CTk):
 
         def _on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        canvas.bind("<MouseWheel>", _on_mousewheel)
 
         # Content
         ctk.CTkLabel(content, text=self.t("paste_prompt"), font=("Arial", 12, "bold")).pack(pady=(15, 8), padx=20)
@@ -3403,9 +3477,9 @@ class App(ctk.CTk):
     def start_upload_worker(self, path: str):
         """Begin async OCR upload for given path (used for Retry as well)."""
         async def async_worker():
-            self.upload_progress_q.put({"type": "progress", "value": 0.1, "text": self.t("starting_upload")})
+            self.upload_progress_q.put({"type": "progress", "value": 0.1, "text": "Starting upload...", "key": "starting_upload"})
             await asyncio.sleep(0.2)
-            self.upload_progress_q.put({"type": "progress", "value": 0.2, "text": "Sending to OCR service..."})
+            self.upload_progress_q.put({"type": "progress", "value": 0.2, "text": "Sending to OCR service...", "key": "ocr_sending"})
 
             # Start progress updater
             progress_task = asyncio.create_task(update_progress())
@@ -3416,21 +3490,21 @@ class App(ctk.CTk):
 
             # If OCR returned an error string (convention: starts with 'OCR') then surface as upload error
             if isinstance(text, str) and text.startswith("OCR"):
-                self.upload_progress_q.put({"type": "progress", "value": 0.0, "text": "OCR Error"})
+                self.upload_progress_q.put({"type": "progress", "value": 0.0, "text": "OCR Error", "key": "ocr_error_title"})
                 # Put an error object on the upload_queue for the UI to handle (contains path for retry)
                 self.upload_queue.put({"__error__": True, "text": text, "path": path})
                 return
 
-            self.upload_progress_q.put({"type": "progress", "value": 0.9, "text": "Processing OCR text..."})
+            self.upload_progress_q.put({"type": "progress", "value": 0.9, "text": "Processing OCR text...", "key": "ocr_processing"})
             text = fix_common_ocr_errors(text)
-            self.upload_progress_q.put({"type": "progress", "value": 1.0, "text": "Done"})
+            self.upload_progress_q.put({"type": "progress", "value": 1.0, "text": "Done", "key": "ocr_done"})
             self.upload_queue.put(text)
 
         async def update_progress():
             val = 0.2
             while True:
                 val = min(val + 0.005, 0.8)  # Increment by 0.5% every 0.1s
-                self.upload_progress_q.put({"type": "progress", "value": val, "text": "Processing with OCR API..."})
+                self.upload_progress_q.put({"type": "progress", "value": val, "text": "Processing with OCR API...", "key": "ocr_processing_api"})
                 await asyncio.sleep(0.1)
 
         def upload_worker():
@@ -3498,6 +3572,15 @@ class App(ctk.CTk):
 
                 if t == "progress":
                     text = msg.get("text", "")
+                    key = msg.get("key")
+                    fmt = msg.get("fmt") or {}
+                    if key:
+                        text = self.t(key, text)
+                        if fmt:
+                            try:
+                                text = text.format(**fmt)
+                            except Exception:
+                                pass
                     self.step_label.configure(text=text)
                     self.log(text)
                     val = msg.get("value")
@@ -3507,12 +3590,20 @@ class App(ctk.CTk):
                 elif t == "error":
                     title = msg.get("title", "Error")
                     err = msg.get("msg", "Unknown error.")
+                    title_key = msg.get("title_key")
+                    msg_key = msg.get("msg_key")
+                    if title_key:
+                        title = self.t(title_key, title)
+                    if msg_key:
+                        err = self.t(msg_key, err)
+                    self.analysis_in_progress = False
                     messagebox.showerror(title, err)
                     self.show_input(from_back=True)
                     return
 
                 elif t == "done":
                     payload = msg.get("payload")
+                    self.analysis_in_progress = False
                     self.show_screen("output", payload=payload)
                     return
         except queue.Empty:
@@ -3529,8 +3620,13 @@ class App(ctk.CTk):
                 if t == "progress":
                     val = msg.get("value", 0.0)
                     text = msg.get("text", "")
-                    self.upload_progress.set(val)
-                    self.upload_progress_label.configure(text=text)
+                    key = msg.get("key")
+                    if key:
+                        text = self.t(key, text)
+                    if hasattr(self, "upload_progress") and self.upload_progress and self.upload_progress.winfo_exists():
+                        self.upload_progress.set(val)
+                    if hasattr(self, "upload_progress_label") and self.upload_progress_label and self.upload_progress_label.winfo_exists():
+                        self.upload_progress_label.configure(text=text)
         except queue.Empty:
             pass
 
@@ -3549,16 +3645,34 @@ class App(ctk.CTk):
                     return
                 else:
                     # Give user a visible message and hide progress
-                    self.upload_progress.set(0.0)
-                    self.upload_progress_label.configure(text=self.t("ocr_failed"))
-                    self.after(1000, lambda: (self.upload_progress.pack_forget(), self.upload_progress_label.pack_forget()))
+                    if hasattr(self, "upload_progress") and self.upload_progress and self.upload_progress.winfo_exists():
+                        self.upload_progress.set(0.0)
+                    if hasattr(self, "upload_progress_label") and self.upload_progress_label and self.upload_progress_label.winfo_exists():
+                        self.upload_progress_label.configure(text=self.t("ocr_failed"))
+                    self.after(
+                        1000,
+                        lambda: (
+                            self.upload_progress.pack_forget() if hasattr(self, "upload_progress") and self.upload_progress and self.upload_progress.winfo_exists() else None,
+                            self.upload_progress_label.pack_forget() if hasattr(self, "upload_progress_label") and self.upload_progress_label and self.upload_progress_label.winfo_exists() else None,
+                        ),
+                    )
+                    self.upload_in_progress = False
                     return
 
             # Normal successful OCR text
             self.text_box.insert("end", "\n\n[OCR TEXT]\n" + text)
-            self.upload_progress.set(1.0)
-            self.upload_progress_label.configure(text=self.t("complete"))
-            self.after(1000, lambda: (self.upload_progress.pack_forget(), self.upload_progress_label.pack_forget()))
+            if hasattr(self, "upload_progress") and self.upload_progress and self.upload_progress.winfo_exists():
+                self.upload_progress.set(1.0)
+            if hasattr(self, "upload_progress_label") and self.upload_progress_label and self.upload_progress_label.winfo_exists():
+                self.upload_progress_label.configure(text=self.t("complete"))
+            self.after(
+                1000,
+                lambda: (
+                    self.upload_progress.pack_forget() if hasattr(self, "upload_progress") and self.upload_progress and self.upload_progress.winfo_exists() else None,
+                    self.upload_progress_label.pack_forget() if hasattr(self, "upload_progress_label") and self.upload_progress_label and self.upload_progress_label.winfo_exists() else None,
+                ),
+            )
+            self.upload_in_progress = False
         except queue.Empty:
             self.after(100, self.poll_upload_queue)
 
@@ -3568,7 +3682,7 @@ class App(ctk.CTk):
     def analyze_clicked(self):
         self.last_input_text = self.text_box.get("1.0", "end").strip() if self.text_box else ""
         if not self.last_input_text:
-            messagebox.showerror("Input Error", "Paste supplement facts, a URL, or upload label image.")
+            messagebox.showerror(self.t("input_error_title", "Input Error"), self.t("input_error_msg", "Paste supplement facts, a product link, or upload a label image."))
             return
 
         # refresh diet/exclusions from stored state (already set in show_input)
@@ -3657,8 +3771,8 @@ class App(ctk.CTk):
             canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
 
         # Bind to the canvas widget and to all so mouse wheel works when pointer is over child widgets
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        canvas.bind_all("<Shift-MouseWheel>", _on_shift_mousewheel)
+        canvas.bind("<MouseWheel>", _on_mousewheel)
+        canvas.bind("<Shift-MouseWheel>", _on_shift_mousewheel)
 
         header = ctk.CTkFrame(main)
         header.pack(fill="x", pady=(5, 12))
@@ -3672,7 +3786,10 @@ class App(ctk.CTk):
         # Add language selector to the right
         self._make_lang_selector(title_frame)
         
-        diet_txt = self.t("diet_exclusions").format(diet=debug.get('diet') or 'Omnivore', exclusions=', '.join(debug.get('exclusions') or []) or 'none')
+        diet_txt = self.t("diet_exclusions").format(
+            diet=debug.get("diet") or self.t("default_diet", "Omnivore"),
+            exclusions=", ".join(debug.get("exclusions") or []) or self.t("none", "none"),
+        )
         diet_box = ctk.CTkTextbox(header, width=900, height=50, font=("Arial", 13), state="disabled")
         diet_box.pack(anchor="w", padx=12, pady=(0, 10), fill="x")
         diet_box.configure(state="normal")
@@ -3737,7 +3854,7 @@ class App(ctk.CTk):
                 ctk.CTkLabel(hdr, text=nut_name.title(), font=("Arial", 18, "bold")).pack(side="left", anchor="w")
                 
                 # Health benefit description
-                benefit = MICRONUTRIENT_BENEFITS.get(nut_name.lower(), "Essential micronutrient for health")
+                benefit = MICRONUTRIENT_BENEFITS.get(nut_name.lower(), self.t("default_nutrient_benefit", "Essential micronutrient for health"))
                 benefit_box = ctk.CTkTextbox(card, width=900, height=50, font=("Arial", 11), state="disabled")
                 benefit_box.pack(anchor="w", padx=12, pady=(4, 0), fill="x")
                 benefit_box.configure(state="normal")
@@ -3771,7 +3888,7 @@ class App(ctk.CTk):
                 categories = []
                 seen_cats = set()
                 for p in all_picks:
-                    cat = p.get("category") or "Uncategorized"
+                    cat = p.get("category") or self.t("uncategorized", "Uncategorized")
                     if cat in seen_cats:
                         continue
                     seen_cats.add(cat)
@@ -3808,13 +3925,13 @@ class App(ctk.CTk):
                 selected_category = self.output_categories.get(nut_name, all_label)
                 filtered = all_picks
                 if selected_category != all_label:
-                    filtered = [p for p in filtered if (p.get("category") or "Uncategorized") == selected_category]
+                    filtered = [p for p in filtered if (p.get("category") or self.t("uncategorized", "Uncategorized")) == selected_category]
 
                 if self.output_diverse_vars[nut_name].get():
                     seen = set()
                     diverse = []
                     for p in filtered:
-                        cat = p.get("category") or "Uncategorized"
+                        cat = p.get("category") or self.t("uncategorized", "Uncategorized")
                         if cat in seen:
                             continue
                         seen.add(cat)
@@ -3892,14 +4009,20 @@ class App(ctk.CTk):
                     rda_col.pack(side="left", padx=6, pady=8)
                     rda_display = item.get("grams_for_rda", "")
                     if rda_display is None:
-                        rda_display = "N/A"
+                        rda_display = self.t("not_available", "N/A")
                     ctk.CTkLabel(rda_col, text=str(rda_display), font=("Arial", 10)).pack(anchor="w")
 
                     # Practicality (with visual indicator)
                     prac_col = ctk.CTkFrame(row_frame, fg_color="transparent", width=80)
                     prac_col.pack(side="left", padx=6, pady=8)
-                    prac_text = item.get("practicality", "")
-                    prac_color = "#4CAF50" if "✔" in prac_text else "#FF9800" if "⚠" in prac_text else "#f44336"
+                    prac_raw = item.get("practicality", "")
+                    if "✔" in prac_raw:
+                        prac_text = self.t("practical", "✔ Practical")
+                    elif "⚠" in prac_raw:
+                        prac_text = self.t("large", "⚠ Large")
+                    else:
+                        prac_text = self.t("impractical", "— Impractical")
+                    prac_color = "#4CAF50" if "✔" in prac_raw else "#FF9800" if "⚠" in prac_raw else "#f44336"
                     ctk.CTkLabel(prac_col, text=prac_text, font=("Arial", 10, "bold"), text_color=prac_color).pack(anchor="w")
 
                     # Reference button
@@ -3907,9 +4030,9 @@ class App(ctk.CTk):
                     ref_col.pack(side="left", padx=6, pady=8)
                     fdc_id = item.get("fdcId")
                     if fdc_id:
-                        ctk.CTkButton(ref_col, text="USDA", width=50, height=24, font=("Arial", 9), command=lambda fid=fdc_id: open_usda_link(fid)).pack(side="left")
+                        ctk.CTkButton(ref_col, text=self.t("usda", "USDA"), width=50, height=24, font=("Arial", 9), command=lambda fid=fdc_id: open_usda_link(fid)).pack(side="left")
                     else:
-                        ctk.CTkLabel(ref_col, text="—", font=("Arial", 10)).pack(anchor="w")
+                        ctk.CTkLabel(ref_col, text=self.t("dash", "—"), font=("Arial", 10)).pack(anchor="w")
 
                 # Paging controls for additional results
                 if len(filtered) > 5:
@@ -3919,7 +4042,7 @@ class App(ctk.CTk):
                     end_idx = min(offset + 5, len(filtered))
                     ctk.CTkLabel(
                         controls,
-                        text=f"Showing {start_idx}-{end_idx} of {len(filtered)}",
+                        text=self.t("showing_range", "Showing {start}-{end} of {total}").format(start=start_idx, end=end_idx, total=len(filtered)),
                         font=("Arial", 10)
                     ).pack(side="left")
 
@@ -4024,15 +4147,15 @@ class App(ctk.CTk):
         # Legend items in rows
         row1 = ctk.CTkFrame(legend_content, fg_color="transparent")
         row1.pack(fill="x", pady=4)
-        ctk.CTkLabel(row1, text="✔ Practical", font=("Arial", 10), text_color="#4CAF50").pack(side="left", padx=(0, 20))
-        ctk.CTkLabel(row1, text="⚠ Large amount needed", font=("Arial", 10), text_color="#FF9800").pack(side="left", padx=(0, 20))
-        ctk.CTkLabel(row1, text="✗ Impractical", font=("Arial", 10), text_color="#f44336").pack(side="left", padx=(0, 20))
+        ctk.CTkLabel(row1, text=self.t("legend_practical", "✔ Practical"), font=("Arial", 10), text_color="#4CAF50").pack(side="left", padx=(0, 20))
+        ctk.CTkLabel(row1, text=self.t("legend_large_amount", "⚠ Large amount needed"), font=("Arial", 10), text_color="#FF9800").pack(side="left", padx=(0, 20))
+        ctk.CTkLabel(row1, text=self.t("legend_impractical", "✗ Impractical"), font=("Arial", 10), text_color="#f44336").pack(side="left", padx=(0, 20))
 
         # Nutrient color swatches
         if nutrient_names:
             row2 = ctk.CTkFrame(legend_content, fg_color="transparent")
             row2.pack(fill="x", pady=4)
-            ctk.CTkLabel(row2, text="Nutrients: ", font=("Arial", 10, "bold")).pack(side="left", padx=(0, 8))
+            ctk.CTkLabel(row2, text=self.t("legend_nutrients", "Nutrients:"), font=("Arial", 10, "bold")).pack(side="left", padx=(0, 8))
             
             swatch_frame = ctk.CTkFrame(row2, fg_color="transparent")
             swatch_frame.pack(side="left", fill="x", expand=True)
