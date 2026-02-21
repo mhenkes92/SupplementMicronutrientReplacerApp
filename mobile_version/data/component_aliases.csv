@@ -1,0 +1,46 @@
+alias,canonical_nutrient
+vit c,"Vitamin C, total ascorbic acid"
+ascorbic acid,"Vitamin C, total ascorbic acid"
+vitamin c,"Vitamin C, total ascorbic acid"
+vitamin d,"Vitamin D (D2 + D3)"
+vit d,"Vitamin D (D2 + D3)"
+vitamin e,"Vitamin E (alpha-tocopherol)"
+vit e,"Vitamin E (alpha-tocopherol)"
+vitamin a,"Vitamin A, RAE"
+vit a,"Vitamin A, RAE"
+vitamin b1,Thiamin
+thiamine,Thiamin
+vitamin b2,Riboflavin
+vitamin b3,Niacin
+niacin,Niacin
+vitamin b5,Pantothenic acid
+pantothenic acid,Pantothenic acid
+vitamin b6,"Vitamin B-6"
+vitamin b7,Biotin
+vitamin b9,"Folate, total"
+folate,"Folate, total"
+vitamin b12,"Vitamin B-12"
+choline,"Choline, total"
+calcium,"Calcium, Ca"
+iron,"Iron, Fe"
+magnesium,"Magnesium, Mg"
+zinc,"Zinc, Zn"
+selenium,"Selenium, Se"
+potassium,"Potassium, K"
+sodium,"Sodium, Na"
+omega 3,"PUFA 22:6 n-3 (DHA)"
+omega-3,"PUFA 22:6 n-3 (DHA)"
+fish oil,"PUFA 22:6 n-3 (DHA)"
+dha,"PUFA 22:6 n-3 (DHA)"
+epa,"PUFA 20:5 n-3 (EPA)"
+lutein,Lutein
+zeaxanthin,Zeaxanthin
+beta carotene,"Carotene, beta"
+polyphenols,"Polyphenols, total"
+flavonoids,"Flavonoids, total"
+fiber,"Fiber, total dietary"
+dietary fiber,"Fiber, total dietary"
+protein,Protein
+carbohydrate,"Carbohydrate, by difference"
+fat,"Total lipid (fat)"
+caffeine,Caffeine

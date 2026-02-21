@@ -1,0 +1,14 @@
+# Python caches
+**/__pycache__/
+**/*.pyc
+
+# Virtual environments
+mobile_version/.venv/
+mobile_version/.venv-*/
+
+# Secrets
+mobile_version/.env
+
+# Temporary diagnostics
+mobile_version/_pdf_text_diagnose.py
+mobile_version/_rag_diag.py

@@ -1,0 +1,9 @@
+{
+  "python.terminal.executeInFileDir": true,
+  "python.terminal.activateEnvironment": true,
+  "python.terminal.launchArgs": [
+    "-m",
+    "streamlit",
+    "run"
+  ]
+}
