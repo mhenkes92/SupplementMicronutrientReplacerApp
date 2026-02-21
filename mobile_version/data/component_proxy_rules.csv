@@ -1,4 +1,8 @@
 component,proxy_nutrient,confidence,rationale
+vitamin k1,"Vitamin K (phylloquinone)",high,"Vitamin K1 corresponds to phylloquinone, which is present in whole foods (especially leafy greens)."
+vitamin k2,"Vitamin K (Menaquinone-4)",high,"Vitamin K2 is mapped to menaquinone-4 for whole-food ranking."
+vitamin k3,"Vitamin K (phylloquinone)",low,"Vitamin K3 (menadione) is synthetic and not a natural whole-food form; showing K1 whole-food proxy instead."
+menadione,"Vitamin K (phylloquinone)",low,"Menadione is synthetic vitamin K3; showing K1 whole-food proxy instead."
 ashwagandha,"Iron, Fe",medium,"No direct USDA ashwagandha analyte; uses mineral-rich whole-food proxy pathway."
 curcumin,"Polyphenols, total",medium,"Curcumin is a polyphenolic compound; USDA does not provide direct curcumin values across foods."
 turmeric,"Polyphenols, total",medium,"Turmeric supplements are commonly curcuminoid-focused; mapped to total polyphenols proxy."

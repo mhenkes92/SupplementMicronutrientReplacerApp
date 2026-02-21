@@ -269,7 +269,7 @@ def unit_to_mg(unit: str) -> float | None:
     u = (unit or "").strip().lower()
     if u in {"mg", "milligram", "milligrams"}:
         return 1.0
-    if u in {"mcg", "ug", "μg", "microgram", "micrograms"}:
+    if u in {"mcg", "ug", "μg", "µg", "microgram", "micrograms"}:
         return 0.001
     if u in {"g", "gram", "grams"}:
         return 1000.0
@@ -533,9 +533,11 @@ def normalize_component_name(raw_name: str) -> str:
     if not text:
         return ""
 
+    text = text.replace("|", " ")
     text = re.sub(r"\([^)]*\)", "", text)
     text = text.split("/")[0].strip()
-    text = re.sub(r"^[\-•:;,.\s]+", "", text)
+    text = re.sub(r"^[\-•:;,.|\s]+", "", text)
+    text = re.sub(r"[\-•:;,.|\s]+$", "", text)
     text = re.sub(r"\s+", " ", text)
 
     lowered = text.lower()
@@ -1314,13 +1316,16 @@ Why this matters:
         dose_value = item.get("dose_value")
         dose_unit = str(item.get("dose_unit") or "")
 
-        row_cols[0].markdown(component_raw.title() if component_raw else "Not available")
+        component_display = component_raw.title() if component_raw else "Not available"
+        detail = detail_by_component.get(component_key)
+        if detail and detail.get("proxy_rationale"):
+            component_display = f"{component_display}\n\n_Proxy note: {detail['proxy_rationale']}_"
+        row_cols[0].markdown(component_display)
         if dose_value is not None:
             row_cols[1].markdown(f"{format_float(float(dose_value))} {dose_unit}")
         else:
             row_cols[1].markdown("Not available")
 
-        detail = detail_by_component.get(component_key)
         foods = detail.get("foods", []) if detail else []
 
         if usda_status != "ok":
