@@ -61,7 +61,7 @@ COMPONENT_ALIASES_PATH = APP_DIR / "data" / "component_aliases.csv"
 COMPONENT_PROXY_RULES_PATH = APP_DIR / "data" / "component_proxy_rules.csv"
 TOP_FOODS_PER_COMPONENT = 5
 OVERVIEW_ALT_LIMIT = 100
-RAG_TOP_K = 5
+RAG_TOP_K = 8
 RAG_INDEX_PATH = APP_DIR / "data" / "fitness_rag_chunks.jsonl"
 RAG_INDEX_META_PATH = APP_DIR / "data" / "fitness_rag_meta.json"
 
@@ -411,14 +411,46 @@ def score_chunk(query_terms: set[str], chunk_text_value: str) -> float:
     return float(hits + (2 * unique_hits))
 
 
+def has_numeric_guidance(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b\d+(?:\.\d+)?\s*(?:g|mg|mcg|ug|µg|μg|kg|g/kg|mg/kg|%)\b",
+            (text or "").lower(),
+        )
+    )
+
+
 def retrieve_rag_chunks(query: str, chunks: list[dict[str, str]], top_k: int = RAG_TOP_K) -> list[dict[str, str]]:
     query_terms = set(tokenize_for_rag(query))
     if not query_terms:
         return []
 
+    wants_numeric = bool(
+        query_terms.intersection(
+            {
+                "optimal",
+                "dose",
+                "dosing",
+                "dosage",
+                "intake",
+                "recommended",
+                "amount",
+                "grams",
+                "gram",
+                "mg",
+                "mcg",
+                "ug",
+                "microgram",
+            }
+        )
+    )
+
     scored: list[tuple[float, dict[str, str]]] = []
     for chunk in chunks:
-        score = score_chunk(query_terms, chunk.get("text", ""))
+        chunk_text_value = chunk.get("text", "")
+        score = score_chunk(query_terms, chunk_text_value)
+        if wants_numeric and has_numeric_guidance(chunk_text_value):
+            score += 6.0
         if score > 0:
             scored.append((score, chunk))
 
@@ -445,12 +477,15 @@ def answer_rag_question(query: str, chunks: list[dict[str, str]]) -> tuple[str, 
     system_prompt = (
         "You are a practical fitness and nutrition evidence assistant. "
         "Answer only using the provided reference excerpts. "
-        "If the context is insufficient, say so clearly."
+        "If the context is insufficient, say so clearly. "
+        "If numeric dosage/intake values are present in excerpts, include them explicitly with units."
     )
     user_prompt = (
         f"Question:\n{query}\n\n"
         f"Reference excerpts:\n{context}\n\n"
-        "Return a concise answer followed by a short 'Sources:' line listing filenames used."
+        "Return a concise answer only. "
+        "Do not output a separate Sources line. "
+        "Do not say values are missing if numeric values are present in the excerpts."
     )
 
     answer = call_openrouter_text(system_prompt, user_prompt)
@@ -1305,7 +1340,7 @@ Why this matters:
 
     header_cols = st.columns([2.4, 1.4, 3.3, 2.9])
     header_cols[0].markdown("**Your supplement components**")
-    header_cols[1].markdown("**Dose + unit**")
+    header_cols[1].markdown("**Concentration**")
     header_cols[2].markdown("**Whole Food Alternative**")
     header_cols[3].markdown("**How much to eat of the selected whole food to match supplement dose**")
 
