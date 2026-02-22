@@ -1,4 +1,4 @@
-# SuppSwap Mobile MVP (Screen 1)
+# SuppSwap
 
 Single-screen mobile-friendly MVP for:
 - expert-style onboarding copy,
@@ -48,6 +48,9 @@ This creates `data/usda_rankings.db` used by the app for fast lookup.
 - `GITHUB_MODELS_MODEL_VISION`: optional, defaults to `gpt-4o-mini`
 - `GITHUB_MODELS_URL`: optional, defaults to `https://models.inference.ai.azure.com/chat/completions`
 - `TESSERACT_CMD`: optional full path to tesseract binary (if not in PATH)
+- `SERPAPI_API_KEY`: optional, enables Google Shopping offer retrieval via SerpApi
+- `DATAFORSEO_LOGIN`: optional, DataForSEO API login for Shopping SERP retrieval
+- `DATAFORSEO_PASSWORD`: optional, DataForSEO API password for Shopping SERP retrieval
 
 ## Hybrid component mapping
 
@@ -56,6 +59,35 @@ This creates `data/usda_rankings.db` used by the app for fast lookup.
 - Tier 3: curated non-USDA proxy mapping from `data/component_proxy_rules.csv`
 - Tier 4: LLM fallback mapping for uncertain/non-standard component names
 - Confidence labels shown in app: `high`, `medium`, `low`
+
+## Economic comparison (whole-food cost)
+
+- Local pricing seed DB: `data/whole_food_prices.csv`
+- Canonical offer schema is used for all sources (title, optional EAN, pack size, unit price, source, timestamp, URL).
+- Runtime candidate sources:
+	1. local DB,
+	2. optional live market scrape (Rewe/Walmart where parseable),
+	3. optional SerpApi Google Shopping,
+	4. optional DataForSEO Google Shopping,
+	5. optional LLM estimate fallback.
+- Selection uses auditable weighted ranking with explicit confidence penalties and scores:
+	- source reliability,
+	- match quality (EAN exact > pack/title > title similarity),
+	- freshness,
+	- geographic relevance,
+	- economics (cost per kg and cost to meet dose).
+- The app calculates selected-food required grams and estimated cost per row, and shows source/confidence/match score audit details.
+- A total whole-food cost summary is shown under the table.
+
+## Meal ideas from suggested foods
+
+- Local-first meal ideas are loaded from `data/meal_recipes_local.json`.
+- Additional fitness pack recipes can be loaded from `data/meal_recipes_fitness_pack.json`.
+- Dietary profile filters are loaded from `data/dietary_profiles.json`.
+- Coverage logic targets at least supplement-equivalent component amounts (exceeding is allowed).
+- If no full-coverage local recipe is found, optional AI fallback can generate practical meal ideas.
+- Users can apply common dietary restrictions and require a specific ingredient.
+- Each meal card shows covered and uncovered components for transparency.
 
 ## Notes
 

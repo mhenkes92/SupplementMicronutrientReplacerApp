@@ -1,0 +1,20 @@
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+.venv-*/
+
+# Local env/secrets
+.env
+
+# Streamlit/local editor artifacts
+.streamlit/secrets.toml
+.vscode/*.log
+
+# Generated QA outputs
+qa_reports/
+
+# Archived non-runtime artifacts
+unused/

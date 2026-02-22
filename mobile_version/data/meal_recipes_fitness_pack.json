@@ -1,0 +1,1946 @@
+[
+  {
+    "name": "SuppSwap Fit Meal 01: Salmon + Kale",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "salmon",
+        "grams": 170
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "quinoa",
+        "grams": 170
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "olive oil",
+        "grams": 10
+      }
+    ],
+    "steps": "Cook salmon and quinoa. Sauté kale with olive oil. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 02: Salmon + Kale",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "salmon",
+        "grams": 170
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "brown rice",
+        "grams": 180
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "avocado",
+        "grams": 90
+      }
+    ],
+    "steps": "Cook salmon and brown rice. Sauté kale with avocado. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 03: Salmon + Kale",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "salmon",
+        "grams": 170
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "sweet potato",
+        "grams": 220
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "tomato",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook salmon and sweet potato. Sauté kale with tomato. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 04: Salmon + Kale",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "salmon",
+        "grams": 170
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "whole grain bread",
+        "grams": 90
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "bell pepper",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook salmon and whole grain bread. Sauté kale with bell pepper. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 05: Salmon + Spinach",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "salmon",
+        "grams": 170
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "quinoa",
+        "grams": 170
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "olive oil",
+        "grams": 10
+      }
+    ],
+    "steps": "Cook salmon and quinoa. Sauté spinach with olive oil. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 06: Salmon + Spinach",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "salmon",
+        "grams": 170
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "brown rice",
+        "grams": 180
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "avocado",
+        "grams": 90
+      }
+    ],
+    "steps": "Cook salmon and brown rice. Sauté spinach with avocado. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 07: Salmon + Spinach",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "salmon",
+        "grams": 170
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "sweet potato",
+        "grams": 220
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "tomato",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook salmon and sweet potato. Sauté spinach with tomato. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 08: Salmon + Spinach",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "salmon",
+        "grams": 170
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "whole grain bread",
+        "grams": 90
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "bell pepper",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook salmon and whole grain bread. Sauté spinach with bell pepper. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 09: Salmon + Broccoli",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "salmon",
+        "grams": 170
+      },
+      {
+        "name": "broccoli",
+        "grams": 190
+      },
+      {
+        "name": "quinoa",
+        "grams": 170
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "olive oil",
+        "grams": 10
+      }
+    ],
+    "steps": "Cook salmon and quinoa. Sauté broccoli with olive oil. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 10: Salmon + Broccoli",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "salmon",
+        "grams": 170
+      },
+      {
+        "name": "broccoli",
+        "grams": 190
+      },
+      {
+        "name": "brown rice",
+        "grams": 180
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "avocado",
+        "grams": 90
+      }
+    ],
+    "steps": "Cook salmon and brown rice. Sauté broccoli with avocado. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 11: Salmon + Broccoli",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "salmon",
+        "grams": 170
+      },
+      {
+        "name": "broccoli",
+        "grams": 190
+      },
+      {
+        "name": "sweet potato",
+        "grams": 220
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "tomato",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook salmon and sweet potato. Sauté broccoli with tomato. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 12: Salmon + Broccoli",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "salmon",
+        "grams": 170
+      },
+      {
+        "name": "broccoli",
+        "grams": 190
+      },
+      {
+        "name": "whole grain bread",
+        "grams": 90
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "bell pepper",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook salmon and whole grain bread. Sauté broccoli with bell pepper. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 13: Salmon + Brussels Sprouts",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "salmon",
+        "grams": 170
+      },
+      {
+        "name": "brussels sprouts",
+        "grams": 180
+      },
+      {
+        "name": "quinoa",
+        "grams": 170
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "olive oil",
+        "grams": 10
+      }
+    ],
+    "steps": "Cook salmon and quinoa. Sauté brussels sprouts with olive oil. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 14: Salmon + Brussels Sprouts",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "salmon",
+        "grams": 170
+      },
+      {
+        "name": "brussels sprouts",
+        "grams": 180
+      },
+      {
+        "name": "brown rice",
+        "grams": 180
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "avocado",
+        "grams": 90
+      }
+    ],
+    "steps": "Cook salmon and brown rice. Sauté brussels sprouts with avocado. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 15: Salmon + Brussels Sprouts",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "salmon",
+        "grams": 170
+      },
+      {
+        "name": "brussels sprouts",
+        "grams": 180
+      },
+      {
+        "name": "sweet potato",
+        "grams": 220
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "tomato",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook salmon and sweet potato. Sauté brussels sprouts with tomato. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 16: Salmon + Brussels Sprouts",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "salmon",
+        "grams": 170
+      },
+      {
+        "name": "brussels sprouts",
+        "grams": 180
+      },
+      {
+        "name": "whole grain bread",
+        "grams": 90
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "bell pepper",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook salmon and whole grain bread. Sauté brussels sprouts with bell pepper. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 17: Sardine + Kale",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "sardine",
+        "grams": 130
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "quinoa",
+        "grams": 170
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "olive oil",
+        "grams": 10
+      }
+    ],
+    "steps": "Cook sardine and quinoa. Sauté kale with olive oil. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 18: Sardine + Kale",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "sardine",
+        "grams": 130
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "brown rice",
+        "grams": 180
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "avocado",
+        "grams": 90
+      }
+    ],
+    "steps": "Cook sardine and brown rice. Sauté kale with avocado. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 19: Sardine + Kale",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "sardine",
+        "grams": 130
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "sweet potato",
+        "grams": 220
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "tomato",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook sardine and sweet potato. Sauté kale with tomato. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 20: Sardine + Kale",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "sardine",
+        "grams": 130
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "whole grain bread",
+        "grams": 90
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "bell pepper",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook sardine and whole grain bread. Sauté kale with bell pepper. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 21: Sardine + Spinach",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "sardine",
+        "grams": 130
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "quinoa",
+        "grams": 170
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "olive oil",
+        "grams": 10
+      }
+    ],
+    "steps": "Cook sardine and quinoa. Sauté spinach with olive oil. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 22: Sardine + Spinach",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "sardine",
+        "grams": 130
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "brown rice",
+        "grams": 180
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "avocado",
+        "grams": 90
+      }
+    ],
+    "steps": "Cook sardine and brown rice. Sauté spinach with avocado. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 23: Sardine + Spinach",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "sardine",
+        "grams": 130
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "sweet potato",
+        "grams": 220
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "tomato",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook sardine and sweet potato. Sauté spinach with tomato. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 24: Sardine + Spinach",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "sardine",
+        "grams": 130
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "whole grain bread",
+        "grams": 90
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "bell pepper",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook sardine and whole grain bread. Sauté spinach with bell pepper. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 25: Sardine + Broccoli",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "sardine",
+        "grams": 130
+      },
+      {
+        "name": "broccoli",
+        "grams": 190
+      },
+      {
+        "name": "quinoa",
+        "grams": 170
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "olive oil",
+        "grams": 10
+      }
+    ],
+    "steps": "Cook sardine and quinoa. Sauté broccoli with olive oil. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 26: Sardine + Broccoli",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "sardine",
+        "grams": 130
+      },
+      {
+        "name": "broccoli",
+        "grams": 190
+      },
+      {
+        "name": "brown rice",
+        "grams": 180
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "avocado",
+        "grams": 90
+      }
+    ],
+    "steps": "Cook sardine and brown rice. Sauté broccoli with avocado. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 27: Sardine + Broccoli",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "sardine",
+        "grams": 130
+      },
+      {
+        "name": "broccoli",
+        "grams": 190
+      },
+      {
+        "name": "sweet potato",
+        "grams": 220
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "tomato",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook sardine and sweet potato. Sauté broccoli with tomato. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 28: Sardine + Broccoli",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "sardine",
+        "grams": 130
+      },
+      {
+        "name": "broccoli",
+        "grams": 190
+      },
+      {
+        "name": "whole grain bread",
+        "grams": 90
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "bell pepper",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook sardine and whole grain bread. Sauté broccoli with bell pepper. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 29: Sardine + Brussels Sprouts",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "sardine",
+        "grams": 130
+      },
+      {
+        "name": "brussels sprouts",
+        "grams": 180
+      },
+      {
+        "name": "quinoa",
+        "grams": 170
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "olive oil",
+        "grams": 10
+      }
+    ],
+    "steps": "Cook sardine and quinoa. Sauté brussels sprouts with olive oil. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 30: Sardine + Brussels Sprouts",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "sardine",
+        "grams": 130
+      },
+      {
+        "name": "brussels sprouts",
+        "grams": 180
+      },
+      {
+        "name": "brown rice",
+        "grams": 180
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "avocado",
+        "grams": 90
+      }
+    ],
+    "steps": "Cook sardine and brown rice. Sauté brussels sprouts with avocado. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 31: Sardine + Brussels Sprouts",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "sardine",
+        "grams": 130
+      },
+      {
+        "name": "brussels sprouts",
+        "grams": 180
+      },
+      {
+        "name": "sweet potato",
+        "grams": 220
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "tomato",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook sardine and sweet potato. Sauté brussels sprouts with tomato. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 32: Sardine + Brussels Sprouts",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "sardine",
+        "grams": 130
+      },
+      {
+        "name": "brussels sprouts",
+        "grams": 180
+      },
+      {
+        "name": "whole grain bread",
+        "grams": 90
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "bell pepper",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook sardine and whole grain bread. Sauté brussels sprouts with bell pepper. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 33: Turkey Sausage + Kale",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "turkey sausage",
+        "grams": 160
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "quinoa",
+        "grams": 170
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "olive oil",
+        "grams": 10
+      }
+    ],
+    "steps": "Cook turkey sausage and quinoa. Sauté kale with olive oil. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 34: Turkey Sausage + Kale",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "turkey sausage",
+        "grams": 160
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "brown rice",
+        "grams": 180
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "avocado",
+        "grams": 90
+      }
+    ],
+    "steps": "Cook turkey sausage and brown rice. Sauté kale with avocado. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 35: Turkey Sausage + Kale",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "turkey sausage",
+        "grams": 160
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "sweet potato",
+        "grams": 220
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "tomato",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook turkey sausage and sweet potato. Sauté kale with tomato. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 36: Turkey Sausage + Kale",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "turkey sausage",
+        "grams": 160
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "whole grain bread",
+        "grams": 90
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "bell pepper",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook turkey sausage and whole grain bread. Sauté kale with bell pepper. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 37: Turkey Sausage + Spinach",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "turkey sausage",
+        "grams": 160
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "quinoa",
+        "grams": 170
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "olive oil",
+        "grams": 10
+      }
+    ],
+    "steps": "Cook turkey sausage and quinoa. Sauté spinach with olive oil. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 38: Turkey Sausage + Spinach",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "turkey sausage",
+        "grams": 160
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "brown rice",
+        "grams": 180
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "avocado",
+        "grams": 90
+      }
+    ],
+    "steps": "Cook turkey sausage and brown rice. Sauté spinach with avocado. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 39: Turkey Sausage + Spinach",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "turkey sausage",
+        "grams": 160
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "sweet potato",
+        "grams": 220
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "tomato",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook turkey sausage and sweet potato. Sauté spinach with tomato. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 40: Turkey Sausage + Spinach",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "turkey sausage",
+        "grams": 160
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "whole grain bread",
+        "grams": 90
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "bell pepper",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook turkey sausage and whole grain bread. Sauté spinach with bell pepper. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 41: Turkey Sausage + Broccoli",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "turkey sausage",
+        "grams": 160
+      },
+      {
+        "name": "broccoli",
+        "grams": 190
+      },
+      {
+        "name": "quinoa",
+        "grams": 170
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "olive oil",
+        "grams": 10
+      }
+    ],
+    "steps": "Cook turkey sausage and quinoa. Sauté broccoli with olive oil. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 42: Turkey Sausage + Broccoli",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "turkey sausage",
+        "grams": 160
+      },
+      {
+        "name": "broccoli",
+        "grams": 190
+      },
+      {
+        "name": "brown rice",
+        "grams": 180
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "avocado",
+        "grams": 90
+      }
+    ],
+    "steps": "Cook turkey sausage and brown rice. Sauté broccoli with avocado. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 43: Turkey Sausage + Broccoli",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "turkey sausage",
+        "grams": 160
+      },
+      {
+        "name": "broccoli",
+        "grams": 190
+      },
+      {
+        "name": "sweet potato",
+        "grams": 220
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "tomato",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook turkey sausage and sweet potato. Sauté broccoli with tomato. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 44: Turkey Sausage + Broccoli",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "turkey sausage",
+        "grams": 160
+      },
+      {
+        "name": "broccoli",
+        "grams": 190
+      },
+      {
+        "name": "whole grain bread",
+        "grams": 90
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "bell pepper",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook turkey sausage and whole grain bread. Sauté broccoli with bell pepper. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 45: Turkey Sausage + Brussels Sprouts",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "turkey sausage",
+        "grams": 160
+      },
+      {
+        "name": "brussels sprouts",
+        "grams": 180
+      },
+      {
+        "name": "quinoa",
+        "grams": 170
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "olive oil",
+        "grams": 10
+      }
+    ],
+    "steps": "Cook turkey sausage and quinoa. Sauté brussels sprouts with olive oil. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 46: Turkey Sausage + Brussels Sprouts",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "turkey sausage",
+        "grams": 160
+      },
+      {
+        "name": "brussels sprouts",
+        "grams": 180
+      },
+      {
+        "name": "brown rice",
+        "grams": 180
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "avocado",
+        "grams": 90
+      }
+    ],
+    "steps": "Cook turkey sausage and brown rice. Sauté brussels sprouts with avocado. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 47: Turkey Sausage + Brussels Sprouts",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "turkey sausage",
+        "grams": 160
+      },
+      {
+        "name": "brussels sprouts",
+        "grams": 180
+      },
+      {
+        "name": "sweet potato",
+        "grams": 220
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "tomato",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook turkey sausage and sweet potato. Sauté brussels sprouts with tomato. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 48: Turkey Sausage + Brussels Sprouts",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "turkey sausage",
+        "grams": 160
+      },
+      {
+        "name": "brussels sprouts",
+        "grams": 180
+      },
+      {
+        "name": "whole grain bread",
+        "grams": 90
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "bell pepper",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook turkey sausage and whole grain bread. Sauté brussels sprouts with bell pepper. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 49: Greek Yogurt + Kale",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "greek yogurt",
+        "grams": 250
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "quinoa",
+        "grams": 170
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "olive oil",
+        "grams": 10
+      }
+    ],
+    "steps": "Cook greek yogurt and quinoa. Sauté kale with olive oil. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 50: Greek Yogurt + Kale",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "greek yogurt",
+        "grams": 250
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "brown rice",
+        "grams": 180
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "avocado",
+        "grams": 90
+      }
+    ],
+    "steps": "Cook greek yogurt and brown rice. Sauté kale with avocado. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 51: Greek Yogurt + Kale",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "greek yogurt",
+        "grams": 250
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "sweet potato",
+        "grams": 220
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "tomato",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook greek yogurt and sweet potato. Sauté kale with tomato. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 52: Greek Yogurt + Kale",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "greek yogurt",
+        "grams": 250
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "whole grain bread",
+        "grams": 90
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "bell pepper",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook greek yogurt and whole grain bread. Sauté kale with bell pepper. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 53: Greek Yogurt + Spinach",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "greek yogurt",
+        "grams": 250
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "quinoa",
+        "grams": 170
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "olive oil",
+        "grams": 10
+      }
+    ],
+    "steps": "Cook greek yogurt and quinoa. Sauté spinach with olive oil. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 54: Greek Yogurt + Spinach",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "greek yogurt",
+        "grams": 250
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "brown rice",
+        "grams": 180
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "avocado",
+        "grams": 90
+      }
+    ],
+    "steps": "Cook greek yogurt and brown rice. Sauté spinach with avocado. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 55: Greek Yogurt + Spinach",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "greek yogurt",
+        "grams": 250
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "sweet potato",
+        "grams": 220
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "tomato",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook greek yogurt and sweet potato. Sauté spinach with tomato. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 56: Greek Yogurt + Spinach",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "greek yogurt",
+        "grams": 250
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "whole grain bread",
+        "grams": 90
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "bell pepper",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook greek yogurt and whole grain bread. Sauté spinach with bell pepper. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 57: Greek Yogurt + Broccoli",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "greek yogurt",
+        "grams": 250
+      },
+      {
+        "name": "broccoli",
+        "grams": 190
+      },
+      {
+        "name": "quinoa",
+        "grams": 170
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "olive oil",
+        "grams": 10
+      }
+    ],
+    "steps": "Cook greek yogurt and quinoa. Sauté broccoli with olive oil. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 58: Greek Yogurt + Broccoli",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "greek yogurt",
+        "grams": 250
+      },
+      {
+        "name": "broccoli",
+        "grams": 190
+      },
+      {
+        "name": "brown rice",
+        "grams": 180
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "avocado",
+        "grams": 90
+      }
+    ],
+    "steps": "Cook greek yogurt and brown rice. Sauté broccoli with avocado. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 59: Greek Yogurt + Broccoli",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "greek yogurt",
+        "grams": 250
+      },
+      {
+        "name": "broccoli",
+        "grams": 190
+      },
+      {
+        "name": "sweet potato",
+        "grams": 220
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "tomato",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook greek yogurt and sweet potato. Sauté broccoli with tomato. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 60: Greek Yogurt + Broccoli",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "greek yogurt",
+        "grams": 250
+      },
+      {
+        "name": "broccoli",
+        "grams": 190
+      },
+      {
+        "name": "whole grain bread",
+        "grams": 90
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "bell pepper",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook greek yogurt and whole grain bread. Sauté broccoli with bell pepper. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 61: Greek Yogurt + Brussels Sprouts",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "greek yogurt",
+        "grams": 250
+      },
+      {
+        "name": "brussels sprouts",
+        "grams": 180
+      },
+      {
+        "name": "quinoa",
+        "grams": 170
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "olive oil",
+        "grams": 10
+      }
+    ],
+    "steps": "Cook greek yogurt and quinoa. Sauté brussels sprouts with olive oil. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 62: Greek Yogurt + Brussels Sprouts",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "greek yogurt",
+        "grams": 250
+      },
+      {
+        "name": "brussels sprouts",
+        "grams": 180
+      },
+      {
+        "name": "brown rice",
+        "grams": 180
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "avocado",
+        "grams": 90
+      }
+    ],
+    "steps": "Cook greek yogurt and brown rice. Sauté brussels sprouts with avocado. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 63: Greek Yogurt + Brussels Sprouts",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "greek yogurt",
+        "grams": 250
+      },
+      {
+        "name": "brussels sprouts",
+        "grams": 180
+      },
+      {
+        "name": "sweet potato",
+        "grams": 220
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "tomato",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook greek yogurt and sweet potato. Sauté brussels sprouts with tomato. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 64: Greek Yogurt + Brussels Sprouts",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "greek yogurt",
+        "grams": 250
+      },
+      {
+        "name": "brussels sprouts",
+        "grams": 180
+      },
+      {
+        "name": "whole grain bread",
+        "grams": 90
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "bell pepper",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook greek yogurt and whole grain bread. Sauté brussels sprouts with bell pepper. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 65: Chickpeas + Kale",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "chickpeas",
+        "grams": 180
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "quinoa",
+        "grams": 170
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "olive oil",
+        "grams": 10
+      }
+    ],
+    "steps": "Cook chickpeas and quinoa. Sauté kale with olive oil. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 66: Chickpeas + Kale",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "chickpeas",
+        "grams": 180
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "brown rice",
+        "grams": 180
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "avocado",
+        "grams": 90
+      }
+    ],
+    "steps": "Cook chickpeas and brown rice. Sauté kale with avocado. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 67: Chickpeas + Kale",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "chickpeas",
+        "grams": 180
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "sweet potato",
+        "grams": 220
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "tomato",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook chickpeas and sweet potato. Sauté kale with tomato. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 68: Chickpeas + Kale",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "chickpeas",
+        "grams": 180
+      },
+      {
+        "name": "kale",
+        "grams": 170
+      },
+      {
+        "name": "whole grain bread",
+        "grams": 90
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "bell pepper",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook chickpeas and whole grain bread. Sauté kale with bell pepper. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 69: Chickpeas + Spinach",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "chickpeas",
+        "grams": 180
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "quinoa",
+        "grams": 170
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "olive oil",
+        "grams": 10
+      }
+    ],
+    "steps": "Cook chickpeas and quinoa. Sauté spinach with olive oil. Serve with berries on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 70: Chickpeas + Spinach",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {
+        "name": "chickpeas",
+        "grams": 180
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "brown rice",
+        "grams": 180
+      },
+      {
+        "name": "orange",
+        "grams": 200
+      },
+      {
+        "name": "avocado",
+        "grams": 90
+      }
+    ],
+    "steps": "Cook chickpeas and brown rice. Sauté spinach with avocado. Serve with orange on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 71: Chickpeas + Spinach",
+    "meal_type": "lunch",
+    "ingredients": [
+      {
+        "name": "chickpeas",
+        "grams": 180
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "sweet potato",
+        "grams": 220
+      },
+      {
+        "name": "kiwifruit",
+        "grams": 180
+      },
+      {
+        "name": "tomato",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook chickpeas and sweet potato. Sauté spinach with tomato. Serve with kiwifruit on the side."
+  },
+  {
+    "name": "SuppSwap Fit Meal 72: Chickpeas + Spinach",
+    "meal_type": "dinner",
+    "ingredients": [
+      {
+        "name": "chickpeas",
+        "grams": 180
+      },
+      {
+        "name": "spinach",
+        "grams": 180
+      },
+      {
+        "name": "whole grain bread",
+        "grams": 90
+      },
+      {
+        "name": "berries",
+        "grams": 160
+      },
+      {
+        "name": "bell pepper",
+        "grams": 120
+      }
+    ],
+    "steps": "Cook chickpeas and whole grain bread. Sauté spinach with bell pepper. Serve with berries on the side."
+  }
+]
