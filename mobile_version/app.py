@@ -66,6 +66,7 @@ GITHUB_MODELS_MODEL_TEXT = ""
 GITHUB_MODELS_MODEL_VISION = ""
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip()
 OLLAMA_MODEL_TEXT = os.getenv("OLLAMA_MODEL_TEXT", "llama3.1:8b-instruct-q4_K_M").strip()
+OLLAMA_MODEL_VISION = os.getenv("OLLAMA_MODEL_VISION", "").strip()
 ENABLE_LOCAL_OLLAMA = os.getenv("ENABLE_LOCAL_OLLAMA", "1").strip() != "0"
 TESSERACT_CMD = os.getenv("TESSERACT_CMD", "")
 
@@ -5674,6 +5675,58 @@ def call_local_ollama_text(system_prompt: str, user_prompt: str) -> str:
     return _ollama_chat(system_prompt, user_prompt)
 
 
+def call_local_ollama_vision_ocr(image_bytes: bytes, prompt: str) -> str:
+    global LAST_OLLAMA_ERROR
+    LAST_OLLAMA_ERROR = ""
+
+    if not ENABLE_LOCAL_OLLAMA:
+        LAST_OLLAMA_ERROR = "Local Ollama is disabled"
+        return ""
+    if not OLLAMA_MODEL_VISION:
+        LAST_OLLAMA_ERROR = "No local vision model configured (set OLLAMA_MODEL_VISION)"
+        return ""
+
+    base = OLLAMA_BASE_URL.rstrip("/")
+    b64 = base64.b64encode(image_bytes).decode("utf-8")
+    payload = {
+        "model": OLLAMA_MODEL_VISION,
+        "stream": False,
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt,
+                "images": [b64],
+            }
+        ],
+        "options": {"temperature": 0},
+    }
+
+    try:
+        response = requests.post(
+            f"{base}/api/chat",
+            json=payload,
+            timeout=max(HTTP_TIMEOUT, 90),
+        )
+    except Exception as exc:
+        LAST_OLLAMA_ERROR = f"Ollama vision connection error: {exc}"
+        return ""
+
+    if response.status_code != 200:
+        LAST_OLLAMA_ERROR = f"Ollama vision error {response.status_code}: {response.text[:220]}"
+        return ""
+
+    try:
+        data = response.json()
+        content = (((data or {}).get("message") or {}).get("content") or "").strip()
+        if content:
+            return content
+        LAST_OLLAMA_ERROR = "Empty Ollama vision response"
+        return ""
+    except Exception as exc:
+        LAST_OLLAMA_ERROR = f"Invalid Ollama vision response: {exc}"
+        return ""
+
+
 def call_openrouter_text(system_prompt: str, user_prompt: str, model: str | None = None) -> str:
     global LAST_TEXT_PROVIDER
     LAST_TEXT_PROVIDER = ""
@@ -5739,12 +5792,23 @@ def call_openrouter_vision_ocr(image_bytes: bytes) -> str:
     global LAST_OLLAMA_ERROR
     global LAST_VISION_PROVIDER
     LAST_VISION_PROVIDER = ""
+
+    system_prompt, _ = _build_vision_extraction_prompt()
+    vision_prompt = (
+        "Extract supplement facts text from this image. "
+        "Return clean text with one nutrient per line when possible, preserving doses/units. "
+        "Do not invent values."
+    )
+    vision_text = call_local_ollama_vision_ocr(image_bytes, vision_prompt)
+    if vision_text and passes_extraction_gate(vision_text):
+        LAST_VISION_PROVIDER = "Local Ollama Vision"
+        return vision_text
+
     local_ocr_text = try_tesseract_ocr(image_bytes)
-    if not local_ocr_text:
+    if not local_ocr_text and not vision_text:
         LAST_OLLAMA_ERROR = "Local OCR returned no text"
         return ""
 
-    system_prompt, _ = _build_vision_extraction_prompt()
     user_prompt = (
         "You are refining OCR output from a supplement label using offline OCR text only. "
         "Return clean supplement facts text with one nutrient per line when possible, preserving doses and units. "
@@ -5753,12 +5817,25 @@ def call_openrouter_vision_ocr(image_bytes: bytes) -> str:
     )
 
     refined_text = call_local_ollama_text(system_prompt, user_prompt)
+    merged_candidates = [x for x in [refined_text, vision_text, local_ocr_text] if str(x or "").strip()]
+    if merged_candidates:
+        merged_text = "\n".join(merged_candidates)
+        if passes_extraction_gate(merged_text):
+            LAST_VISION_PROVIDER = "Local Ollama + Tesseract"
+            return merged_text
+
     if refined_text and passes_extraction_gate(refined_text):
         LAST_VISION_PROVIDER = "Local Ollama + Tesseract"
         return refined_text
+    if vision_text:
+        LAST_VISION_PROVIDER = "Local Ollama Vision"
+        return vision_text
+    if local_ocr_text:
+        LAST_VISION_PROVIDER = "Tesseract"
+        return local_ocr_text
 
-    LAST_VISION_PROVIDER = "Tesseract"
-    return local_ocr_text
+    LAST_OLLAMA_ERROR = "No image extraction route produced usable text"
+    return ""
 
 
 
