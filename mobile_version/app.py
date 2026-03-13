@@ -16,6 +16,7 @@ import sys
 import subprocess
 import time
 import unicodedata
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -77,6 +78,12 @@ LLAMA_CPP_MODEL_REPO = os.getenv("LLAMA_CPP_MODEL_REPO", "microsoft/Phi-3-mini-4
 LLAMA_CPP_MODEL_FILE = os.getenv("LLAMA_CPP_MODEL_FILE", "Phi-3-mini-4k-instruct-q4.gguf").strip()
 LLAMA_CPP_MODEL_DIR = APP_DIR / "models"
 LLAMA_CPP_MODEL_PATH = LLAMA_CPP_MODEL_DIR / LLAMA_CPP_MODEL_FILE
+LLAMA_CPP_RUNTIME_DIR = APP_DIR / "runtime" / "llama_cpp"
+LLAMA_CPP_WINDOWS_CPU_ZIP_URL = os.getenv(
+    "LLAMA_CPP_WINDOWS_CPU_ZIP_URL",
+    "https://github.com/ggml-org/llama.cpp/releases/download/b8304/llama-b8304-bin-win-cpu-x64.zip",
+).strip()
+LLAMA_CPP_CLI_PATH = LLAMA_CPP_RUNTIME_DIR / "llama-cli.exe"
 LLAMA_CPP_N_CTX = int(os.getenv("LLAMA_CPP_N_CTX", "4096").strip() or "4096")
 LLAMA_CPP_N_THREADS = int(os.getenv("LLAMA_CPP_N_THREADS", str(max(2, (os.cpu_count() or 4) - 1))).strip() or "4")
 LLAMA_CPP_N_GPU_LAYERS = int(os.getenv("LLAMA_CPP_N_GPU_LAYERS", "0").strip() or "0")
@@ -5828,9 +5835,48 @@ def _ensure_llama_cpp_runtime() -> bool:
         LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = ""
         return True
     except Exception as exc:
-        LAST_OLLAMA_ERROR = f"llama.cpp runtime unavailable: {exc}"
+        LAST_OLLAMA_ERROR = f"llama.cpp Python bindings unavailable: {exc}"
+
+    if LLAMA_CPP_CLI_PATH.exists():
+        LLAMA_CPP_BOOTSTRAP_STATE["runtime_checked"] = True
+        LLAMA_CPP_BOOTSTRAP_STATE["runtime_ready"] = True
+        LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = ""
+        return True
+
+    if not LLAMA_CPP_AUTO_BOOTSTRAP or os.name != "nt":
         LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = LAST_OLLAMA_ERROR
         return False
+
+    try:
+        LLAMA_CPP_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        zip_path = LLAMA_CPP_RUNTIME_DIR / "llama_cpp_runtime.zip"
+        with requests.get(LLAMA_CPP_WINDOWS_CPU_ZIP_URL, stream=True, timeout=300) as response:
+            response.raise_for_status()
+            with open(zip_path, "wb") as handle:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        handle.write(chunk)
+        with zipfile.ZipFile(zip_path, "r") as archive:
+            archive.extractall(LLAMA_CPP_RUNTIME_DIR)
+        try:
+            zip_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        cli_candidates = list(LLAMA_CPP_RUNTIME_DIR.rglob("llama-cli.exe"))
+        if cli_candidates:
+            cli_path = cli_candidates[0]
+            if cli_path != LLAMA_CPP_CLI_PATH:
+                shutil.copy2(cli_path, LLAMA_CPP_CLI_PATH)
+        if LLAMA_CPP_CLI_PATH.exists():
+            LLAMA_CPP_BOOTSTRAP_STATE["runtime_checked"] = True
+            LLAMA_CPP_BOOTSTRAP_STATE["runtime_ready"] = True
+            LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = ""
+            return True
+    except Exception as exc:
+        LAST_OLLAMA_ERROR = f"Failed to bootstrap llama.cpp runtime: {exc}"
+
+    LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = LAST_OLLAMA_ERROR
+    return False
 
 
 def _ensure_phi_model_available() -> bool:
@@ -5888,19 +5934,55 @@ def _get_llama_cpp_instance() -> Any | None:
         return None
 
 
+def _run_llama_cpp_cli(prompt: str) -> str:
+    global LAST_OLLAMA_ERROR
+    if not _ensure_llama_cpp_runtime():
+        return ""
+    if not _ensure_phi_model_available():
+        return ""
+    if not LLAMA_CPP_CLI_PATH.exists():
+        LAST_OLLAMA_ERROR = "llama.cpp CLI runtime is unavailable"
+        return ""
+
+    command = [
+        str(LLAMA_CPP_CLI_PATH),
+        "-m",
+        str(LLAMA_CPP_MODEL_PATH),
+        "-c",
+        str(LLAMA_CPP_N_CTX),
+        "-n",
+        str(LLAMA_CPP_MAX_TOKENS),
+        "-t",
+        str(LLAMA_CPP_N_THREADS),
+        "--temp",
+        "0",
+        "-p",
+        prompt,
+        "-no-cnv",
+    ]
+    if LLAMA_CPP_N_GPU_LAYERS > 0:
+        command.extend(["-ngl", str(LLAMA_CPP_N_GPU_LAYERS)])
+
+    ok, output = _run_local_command(command, timeout=600)
+    if not ok:
+        LAST_OLLAMA_ERROR = f"llama.cpp CLI inference failed: {output[:240]}"
+        return ""
+    return str(output or "").strip()
+
+
 def _ollama_chat(system_prompt: str, user_prompt: str) -> str:
     global LAST_OLLAMA_ERROR
     LAST_OLLAMA_ERROR = ""
 
     llm = _get_llama_cpp_instance()
-    if llm is None:
-        return ""
-
     prompt = (
         f"<|system|>\n{system_prompt.strip()}<|end|>\n"
         f"<|user|>\n{user_prompt.strip()}<|end|>\n"
         "<|assistant|>\n"
     )
+    if llm is None:
+        return _run_llama_cpp_cli(prompt)
+
     try:
         response = llm(
             prompt,
