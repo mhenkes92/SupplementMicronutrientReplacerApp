@@ -5356,11 +5356,11 @@ STRUCTURED_CORE_RECOVERY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("folic acid", re.compile(r"\b(?:folic\s+acid|folate|vit(?:amin|main)?\s*b9)\b", re.I)),
     ("vitamin b12", re.compile(r"\b(?:vit(?:amin|main)?\s*b12|cobalamin)\b", re.I)),
     ("calcium", re.compile(r"\bcalcium\b", re.I)),
-    ("phosphorus", re.compile(r"\bphosphor(?:us|ous)\b", re.I)),
+    ("phosphorus", re.compile(r"\bphosph(?:or(?:us|ous)|orous|0rous|0rus)\b", re.I)),
     ("potassium", re.compile(r"\bpotass(?:ium|um|lum)\b", re.I)),
     ("magnesium", re.compile(r"\bmagnes(?:ium|lum|iurn)\b", re.I)),
     ("iron", re.compile(r"\b(?:iron|ion)\b", re.I)),
-    ("copper", re.compile(r"\bcopper\b", re.I)),
+    ("copper", re.compile(r"\b(?:copper|coper|copp?r|cupr(?:ic)?)\b", re.I)),
     ("manganese", re.compile(r"\bmanganese\b", re.I)),
     ("boron", re.compile(r"\bboron\b", re.I)),
     ("iodine", re.compile(r"\b(?:iodine|jodine|l[o0]dine)\b", re.I)),
@@ -5374,8 +5374,8 @@ STRUCTURED_CORE_RECOVERY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 def _recover_core_micronutrient_rows_from_text(input_text: str) -> list[dict[str, Any]]:
     recovered: list[dict[str, Any]] = []
     seen: set[tuple[str, float | None, str]] = set()
-    for raw_line in input_text.splitlines():
-        line = str(raw_line or "").strip()
+    lines = [str(raw_line or "").strip() for raw_line in input_text.splitlines()]
+    for idx, line in enumerate(lines):
         if not line:
             continue
         if len(line) > 160:
@@ -5383,10 +5383,16 @@ def _recover_core_micronutrient_rows_from_text(input_text: str) -> list[dict[str
         if re.search(r"\b(?:ingredients|other\s+ingredients|daily\s+value\s+not\s+established|serving\s+size)\b", line, re.I):
             continue
 
+        candidate_line = line
+        if idx + 1 < len(lines):
+            next_line = str(lines[idx + 1] or "").strip()
+            if next_line and len(next_line) <= 90 and re.search(r"\b\d+(?:[\.,]\d+)?\s*(?:mg|mcg|meg|ug|µg|μg|fg|iu|g)\b", next_line, re.I):
+                candidate_line = f"{line} {next_line}".strip()
+
         for canonical_component, pattern in STRUCTURED_CORE_RECOVERY_PATTERNS:
-            for match in pattern.finditer(line):
-                right_window = line[match.end():match.end() + 28]
-                left_window = line[max(0, match.start() - 18):match.start()]
+            for match in pattern.finditer(candidate_line):
+                right_window = candidate_line[match.end():match.end() + 72]
+                left_window = candidate_line[max(0, match.start() - 18):match.start()]
                 dose_match = OCR_DOSE_TOKEN_PATTERN.search(right_window) or OCR_DOSE_TOKEN_PATTERN.search(left_window)
                 if not dose_match:
                     continue
