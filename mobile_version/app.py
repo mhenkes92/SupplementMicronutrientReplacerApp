@@ -6216,6 +6216,361 @@ def _structured_vlm_response_to_text(raw_text: str) -> str:
     return "\n".join(lines).strip()
 
 
+# ---------------------------------------------------------------------------
+# Stage 1 — Image preprocessing (improves OCR accuracy before model runs)
+# ---------------------------------------------------------------------------
+
+def _preprocess_label_image(image_bytes: bytes) -> bytes:
+    """
+    Apply production-style preprocessing to a nutrition-label image:
+    auto-contrast, deskew, desnoise, resize to minimum 1400px wide.
+    Returns processed image as JPEG bytes. Falls back to original on any error.
+    """
+    try:
+        try:
+            import cv2
+            import numpy as np
+            _CV2_AVAILABLE = True
+        except ImportError:
+            _CV2_AVAILABLE = False
+
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+
+        # Resize: minimum 1400px on the longer side for better OCR.
+        w, h = img.size
+        min_side = 1400
+        if max(w, h) < min_side:
+            scale = min_side / max(w, h)
+            img = img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
+
+        if _CV2_AVAILABLE:
+            import cv2
+            import numpy as np
+
+            img_np = np.array(img)
+            gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+
+            # Deskew using moments (works on text-heavy label images).
+            coords = np.column_stack(np.where(gray < 200))
+            if coords.shape[0] > 100:
+                angle = cv2.minAreaRect(coords)[-1]
+                if angle < -45:
+                    angle = -(90 + angle)
+                else:
+                    angle = -angle
+                if abs(angle) < 15:
+                    center = (gray.shape[1] // 2, gray.shape[0] // 2)
+                    M = cv2.getRotationMatrix2D(center, angle, 1.0)
+                    gray = cv2.warpAffine(gray, M, (gray.shape[1], gray.shape[0]),
+                                          flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+
+            # Remove shadows: divide by blurred background.
+            blur = cv2.GaussianBlur(gray, (51, 51), 0)
+            normalized = cv2.divide(gray, blur, scale=255)
+
+            # CLAHE for local contrast enhancement.
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            enhanced = clahe.apply(normalized)
+
+            # Mild denoise.
+            denoised = cv2.fastNlMeansDenoising(enhanced, h=10)
+
+            img = Image.fromarray(denoised).convert("RGB")
+        else:
+            # PIL-only fallback: autocontrast + sharpen.
+            img = ImageOps.autocontrast(img.convert("L"), cutoff=2).convert("RGB")
+            img = img.filter(ImageFilter.SHARPEN)
+
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=92)
+        return buf.getvalue()
+    except Exception:
+        return image_bytes
+
+
+# ---------------------------------------------------------------------------
+# Stage 2 — PaddleOCR with bounding-box table reconstruction
+# ---------------------------------------------------------------------------
+
+def _reconstruct_table_rows_from_paddle(image_bytes: bytes) -> str:
+    """
+    Run PaddleOCR, then reconstruct table rows from bounding-box Y positions
+    (row-clustering heuristic).  Returns plain text with one row per line,
+    left column and right column joined by a tab.
+    """
+    try:
+        import numpy as np
+        from paddleocr import PaddleOCR
+
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        img_np = np.array(image)
+        ocr_engine = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
+        raw_result = ocr_engine.ocr(img_np, cls=True) or []
+
+        # Collect boxes: (y_center, x_left, text, confidence)
+        tokens: list[tuple[float, float, str, float]] = []
+        for block in raw_result:
+            for row in block or []:
+                try:
+                    box = (row or [[]])[0]
+                    text_conf = (row or [None, ["", 0]])[1] or ["", 0]
+                    text = str(text_conf[0] or "").strip()
+                    conf = float(text_conf[1] if len(text_conf) > 1 else 0.9)
+                    if not text:
+                        continue
+                    # bounding box is [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
+                    ys = [pt[1] for pt in box]
+                    xs = [pt[0] for pt in box]
+                    y_center = sum(ys) / len(ys)
+                    x_left = min(xs)
+                    tokens.append((y_center, x_left, text, conf))
+                except Exception:
+                    continue
+
+        if not tokens:
+            return ""
+
+        # Cluster tokens into rows by Y proximity (within ~12px of row median).
+        tokens.sort(key=lambda t: t[0])
+        rows: list[list[tuple[float, float, str, float]]] = []
+        current_row: list[tuple[float, float, str, float]] = [tokens[0]]
+        row_band = (tokens[-1][0] - tokens[0][0]) * 0.02 + 12  # 2% of image height + 12px
+
+        for tok in tokens[1:]:
+            if abs(tok[0] - current_row[-1][0]) <= row_band:
+                current_row.append(tok)
+            else:
+                rows.append(current_row)
+                current_row = [tok]
+        rows.append(current_row)
+
+        # Within each row sort left-to-right; reconstruct as tab-delimited line.
+        lines: list[str] = []
+        for row_tokens in rows:
+            row_tokens.sort(key=lambda t: t[1])
+            line = "\t".join(t[2] for t in row_tokens)
+            lines.append(line)
+
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Stage 3 — Fuzzy nutrient dictionary (core of domain-specific post-processing)
+# ---------------------------------------------------------------------------
+
+# Full ~60-entry nutrition-label nutrient vocabulary.
+_NUTRIENT_DICTIONARY: list[str] = [
+    # Energy
+    "energy", "calories",
+    # Macros
+    "protein", "fat", "total fat", "saturated fat", "saturated fatty acids",
+    "trans fat", "trans fatty acids", "monounsaturated fat", "polyunsaturated fat",
+    "carbohydrate", "total carbohydrate", "carbohydrates", "sugar", "total sugar",
+    "added sugar", "dietary fiber", "fiber",
+    # Minerals
+    "sodium", "salt", "potassium", "calcium", "iron", "magnesium", "zinc",
+    "phosphorus", "selenium", "iodine", "copper", "manganese", "chromium",
+    "molybdenum", "fluoride", "chloride",
+    # Vitamins
+    "vitamin a", "vitamin c", "vitamin d", "vitamin e", "vitamin k",
+    "vitamin b1", "thiamin", "thiamine",
+    "vitamin b2", "riboflavin",
+    "vitamin b3", "niacin",
+    "vitamin b5", "pantothenic acid",
+    "vitamin b6",
+    "vitamin b7", "biotin",
+    "vitamin b9", "folate", "folic acid",
+    "vitamin b12",
+    # Fatty acids / others
+    "omega 3", "omega 6", "epa", "dha", "cholesterol",
+    # Common supplement label terms
+    "choline", "inositol", "taurine", "l-carnitine", "coenzyme q10", "lutein",
+    "lycopene", "beta-carotene",
+]
+# Pre-compute lowercase version once.
+_NUTRIENT_DICT_LOWER: list[str] = [n.lower() for n in _NUTRIENT_DICTIONARY]
+
+# OCR-specific label corrections applied before fuzzy matching.
+_OCR_LABEL_CORRECTIONS: dict[str, str] = {
+    # protein variants
+    "proteln": "protein", "protien": "protein", "proten": "protein",
+    "proteín": "protein", "protelm": "protein",
+    # carbohydrate variants
+    "carbohydrat": "carbohydrate", "carbohydates": "carbohydrates",
+    "carboh": "carbohydrate", "carbs": "carbohydrates",
+    # fat variants
+    "saturatd fat": "saturated fat", "saturatedfat": "saturated fat",
+    # fiber
+    "dietaryfiber": "dietary fiber", "dietry fiber": "dietary fiber",
+    # sodium / salt
+    "sodlum": "sodium", "sodiurn": "sodium",
+    # vitamins
+    "vltamin": "vitamin", "vlitamin": "vitamin", "vitarnin": "vitamin",
+    "vit c": "vitamin c", "vit d": "vitamin d", "vit a": "vitamin a",
+    "vit b6": "vitamin b6", "vit b12": "vitamin b12",
+    # minerals
+    "calclum": "calcium", "calcíum": "calcium",
+    "magneslum": "magnesium", "magnesiurn": "magnesium",
+    "phosphours": "phosphorus",
+    "potassum": "potassium", "potasslum": "potassium",
+    "lodine": "iodine", "lodlne": "iodine",
+    "seleniurn": "selenium",
+    "zincl": "zinc",
+    # energy
+    "enery": "energy", "eneray": "energy", "kcals": "calories",
+    # sugar
+    "sugars": "sugar", "suger": "sugar",
+    # cholesterol
+    "cholestrol": "cholesterol", "cholesteral": "cholesterol",
+}
+
+
+def _fuzzy_match_nutrient(raw_name: str, cutoff: float = 0.78) -> str:
+    """
+    Given a raw OCR nutrient name, return the canonical nutrient name from the
+    dictionary.  Steps:
+    1. Apply direct OCR-correction lookup.
+    2. Exact match against dictionary.
+    3. difflib fuzzy match (very tolerant — 0.78 — to handle OCR noise).
+    Returns the matched canonical name, or the normalized original if no match.
+    """
+    if not raw_name:
+        return raw_name
+    normalized = raw_name.strip().lower()
+    normalized = re.sub(r"\s+", " ", normalized)
+
+    # Step 1: direct correction map.
+    if normalized in _OCR_LABEL_CORRECTIONS:
+        return _OCR_LABEL_CORRECTIONS[normalized]
+
+    # Step 2: exact dictionary match.
+    if normalized in _NUTRIENT_DICT_LOWER:
+        return normalized
+
+    # Step 3: fuzzy match.
+    matches = difflib.get_close_matches(normalized, _NUTRIENT_DICT_LOWER, n=1, cutoff=cutoff)
+    if matches:
+        return matches[0]
+
+    return normalized
+
+
+def _apply_fuzzy_nutrient_correction_to_rows(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Run fuzzy nutrient name correction on a list of parsed component rows.
+    Only replaces the component name when the fuzzy match is confident.
+    """
+    corrected: list[dict[str, Any]] = []
+    for row in rows:
+        component = str(row.get("component", "") or "")
+        matched = _fuzzy_match_nutrient(component)
+        corrected.append({**row, "component": matched})
+    return corrected
+
+
+# ---------------------------------------------------------------------------
+# Stage 4 — Unit sanity + energy cross-check validation
+# ---------------------------------------------------------------------------
+
+# Expected unit domains per nutrient group.
+_MACRO_NUTRIENTS: set[str] = {
+    "protein", "fat", "total fat", "saturated fat", "trans fat",
+    "monounsaturated fat", "polyunsaturated fat",
+    "carbohydrate", "total carbohydrate", "carbohydrates",
+    "sugar", "total sugar", "added sugar", "dietary fiber", "fiber",
+    "cholesterol",
+}
+_MICROGRAM_PREFERRED_NUTRIENTS: set[str] = {
+    "vitamin a", "vitamin d", "vitamin k", "vitamin b12",
+    "biotin", "folate", "folic acid", "selenium", "iodine",
+    "chromium", "molybdenum",
+}
+
+
+def _validate_nutrition_label_sanity(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """
+    Production validation layer — two checks:
+
+    1. Unit domain check: macros must be g, vitamins/minerals mg or mcg/iu.
+       Flag rows with unexpected units; demote those rows' confidence.
+
+    2. Energy cross-check: if protein_g, carbs_g, fat_g, and energy_kcal are
+       all present, verify 4×P + 4×C + 9×F ≈ kcal (±25%).
+       Flag discrepancy as a warning (possible OCR digit error).
+
+    Returns (validated_rows, warnings_list).  Rows are never removed — only
+    flagged so the caller can surface warnings to the user.
+    """
+    warnings: list[str] = []
+    validated: list[dict[str, Any]] = []
+
+    # Build lookup dict for cross-check.
+    values: dict[str, tuple[float, str]] = {}
+
+    for row in rows:
+        component = str(row.get("component", "") or "").lower().strip()
+        dose_value = row.get("dose_value")
+        dose_unit = str(row.get("dose_unit", "") or "").lower().strip()
+        row_out = dict(row)
+
+        if dose_value is not None and dose_unit:
+            # --- Unit domain check ---
+            if component in _MACRO_NUTRIENTS:
+                if dose_unit not in {"g", "mg"}:
+                    warnings.append(
+                        f"unit_domain: '{component}' has unit '{dose_unit}', expected 'g'"
+                    )
+            elif component in _MICROGRAM_PREFERRED_NUTRIENTS:
+                if dose_unit not in {"mcg", "ug", "µg", "μg", "mg", "iu"}:
+                    warnings.append(
+                        f"unit_domain: '{component}' has unit '{dose_unit}', expected 'mcg' or 'mg'"
+                    )
+
+            # Store for energy check
+            values[component] = (float(dose_value), dose_unit)
+
+        validated.append(row_out)
+
+    # --- Energy cross-check ---
+    def _get_grams(name: str) -> float | None:
+        val, unit = values.get(name, (None, ""))
+        if val is None:
+            return None
+        if unit == "g":
+            return val
+        if unit == "mg":
+            return val / 1000.0
+        return None
+
+    protein_g = _get_grams("protein")
+    # Accept both spellings
+    carb_g = _get_grams("carbohydrate") or _get_grams("carbohydrates") or _get_grams("total carbohydrate")
+    fat_g = _get_grams("fat") or _get_grams("total fat")
+    energy_val, energy_unit = values.get("energy", (None, ""))
+    if energy_val is None:
+        energy_val, energy_unit = values.get("calories", (None, ""))
+
+    if None not in (protein_g, carb_g, fat_g, energy_val):
+        energy_unit_l = str(energy_unit or "").lower()
+        if energy_unit_l in {"kcal", "cal", "calories", ""}:
+            calculated_kcal = 4.0 * protein_g + 4.0 * carb_g + 9.0 * fat_g
+            ratio = energy_val / calculated_kcal if calculated_kcal > 0 else 0.0
+            if not (0.75 <= ratio <= 1.35):
+                warnings.append(
+                    f"energy_sanity: declared {energy_val:.0f} kcal vs "
+                    f"calculated {calculated_kcal:.0f} kcal "
+                    f"(4×P + 4×C + 9×F) — possible OCR digit error"
+                )
+
+    return validated, warnings
+
+
 def try_paddleocr_ocr(image_bytes: bytes) -> str:
     try:
         import numpy as np
@@ -6245,8 +6600,14 @@ def extract_image_text_with_local_stack(image_bytes: bytes) -> str:
     LAST_VISION_PROVIDER = ""
 
     system_prompt, user_prompt = _build_vision_extraction_prompt()
-    paddle_text = try_paddleocr_ocr(image_bytes)
-    tesseract_text = try_tesseract_ocr(image_bytes)
+
+    # Stage 1: preprocess image to improve OCR accuracy.
+    processed_bytes = _preprocess_label_image(image_bytes)
+
+    # Stage 2: table-aware PaddleOCR (bounding-box row reconstruction) + plain OCR.
+    table_text = _reconstruct_table_rows_from_paddle(processed_bytes)
+    paddle_text = try_paddleocr_ocr(processed_bytes) if not table_text else table_text
+    tesseract_text = try_tesseract_ocr(processed_bytes)
     local_ocr_text = "\n".join([x for x in [paddle_text, tesseract_text] if str(x or "").strip()]).strip()
 
     if not local_ocr_text:
@@ -7217,6 +7578,13 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
             best_score = max(best_score, _score_component_rows(best_rows))
 
     warnings: list[str] = []
+
+    # Stage 3+: apply fuzzy nutrient-name correction to resolve OCR label errors.
+    best_rows = _apply_fuzzy_nutrient_correction_to_rows(best_rows)
+
+    # Stage 4: unit domain + energy sanity validation (non-destructive — adds warnings).
+    best_rows, sanity_warnings = _validate_nutrition_label_sanity(best_rows)
+    warnings.extend(sanity_warnings)
 
     if best_rows:
         if best_source == "local_llm_primary":
