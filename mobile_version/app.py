@@ -5370,6 +5370,35 @@ STRUCTURED_CORE_RECOVERY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("zinc", re.compile(r"\bzinc\b", re.I)),
 ]
 
+STRUCTURED_MG_REPEAT_SUSPICIOUS_GROUPS: set[str] = {
+    "calcium",
+    "magnesium",
+    "zinc",
+    "iron",
+    "phosphorus",
+    "potassium",
+}
+
+
+def _is_suspicious_structured_group_dose(group_key: str, dose_value: float | None, dose_unit: str, repeated_count: int) -> bool:
+    if dose_value is None:
+        return False
+    unit = _normalize_component_unit_token(dose_unit)
+    value = float(dose_value)
+    if value <= 0:
+        return True
+    if unit == "mg" and group_key in STRUCTURED_MG_REPEAT_SUSPICIOUS_GROUPS and repeated_count >= 3 and value <= 5:
+        return True
+    if group_key == "iron" and unit == "mg" and value >= 12 and abs((value * 10.0) - round(value * 10.0)) < 1e-9 and abs((value % 1.0) - 0.5) < 1e-9:
+        return True
+    if group_key == "vitamin d" and unit == "mcg" and value > 50:
+        return True
+    if group_key == "biotin" and unit == "mcg" and value > 300:
+        return True
+    if group_key == "vitamin b6" and unit == "mg" and value > 5:
+        return True
+    return False
+
 
 def _recover_core_micronutrient_rows_from_text(
     input_text: str,
@@ -5378,10 +5407,39 @@ def _recover_core_micronutrient_rows_from_text(
     recovered: list[dict[str, Any]] = []
     seen: set[tuple[str, float | None, str]] = set()
     existing_group_keys: set[str] = set()
+    suspicious_existing_group_keys: set[str] = set()
+
+    dose_bucket_counts: dict[tuple[float, str], int] = {}
+    for row in existing_rows or []:
+        try:
+            dv = row.get("dose_value")
+            if dv is None:
+                continue
+            dose_value = round(float(dv), 2)
+        except Exception:
+            continue
+        dose_unit = _normalize_component_unit_token(str(row.get("dose_unit", "") or ""))
+        if not dose_unit:
+            continue
+        key = (dose_value, dose_unit)
+        dose_bucket_counts[key] = int(dose_bucket_counts.get(key, 0)) + 1
+
     for row in existing_rows or []:
         group_key = _structured_component_group_key(str(row.get("component", "") or ""))
         if group_key:
             existing_group_keys.add(group_key)
+            dose_value_raw = row.get("dose_value")
+            try:
+                dose_value = float(dose_value_raw) if dose_value_raw is not None else None
+            except Exception:
+                dose_value = None
+            dose_unit = _normalize_component_unit_token(str(row.get("dose_unit", "") or ""))
+            repeated_count = 0
+            if dose_value is not None and dose_unit:
+                repeated_count = int(dose_bucket_counts.get((round(float(dose_value), 2), dose_unit), 0))
+            if _is_suspicious_structured_group_dose(group_key, dose_value, dose_unit, repeated_count):
+                suspicious_existing_group_keys.add(group_key)
+
     lines = [str(raw_line or "").strip() for raw_line in input_text.splitlines()]
     for idx, line in enumerate(lines):
         if not line:
@@ -5399,7 +5457,11 @@ def _recover_core_micronutrient_rows_from_text(
 
         for canonical_component, pattern in STRUCTURED_CORE_RECOVERY_PATTERNS:
             target_group_key = _structured_component_group_key(canonical_component)
-            if target_group_key and target_group_key in existing_group_keys:
+            if (
+                target_group_key
+                and target_group_key in existing_group_keys
+                and target_group_key not in suspicious_existing_group_keys
+            ):
                 continue
             for match in pattern.finditer(candidate_line):
                 right_window = candidate_line[match.end():match.end() + 72]
@@ -6801,6 +6863,7 @@ def _collapse_structured_label_rows(rows: list[dict[str, Any]]) -> list[dict[str
         best = max(
             enumerate(group_rows),
             key=lambda item: (
+                int(item[1].get("_structured_recovery_score", 0) or 0),
                 _structured_preferred_name_rank(group_key, str(item[1].get("component", "") or "")),
                 _structured_unit_rank(group_key, str(item[1].get("dose_unit", "") or "")),
                 0 if item[0] in decimal_shift_larger_ids else 1,
