@@ -71,14 +71,18 @@ LOCAL_LLM_RUNTIME = os.getenv("LOCAL_LLM_RUNTIME", "llama_cpp").strip().lower()
 LLAMA_CPP_AUTO_BOOTSTRAP = os.getenv("LLAMA_CPP_AUTO_BOOTSTRAP", "1").strip() != "0"
 LLAMA_CPP_MODEL_REPO = os.getenv("LLAMA_CPP_MODEL_REPO", "microsoft/Phi-3-mini-4k-instruct-gguf").strip()
 LLAMA_CPP_MODEL_FILE = os.getenv("LLAMA_CPP_MODEL_FILE", "Phi-3-mini-4k-instruct-q4.gguf").strip()
-LLAMA_CPP_MODEL_DIR = APP_DIR / "models"
+LLAMA_CPP_STORAGE_DIR = APP_DIR / "local_llm"
+LLAMA_CPP_MODEL_DIR = LLAMA_CPP_STORAGE_DIR / "models"
 LLAMA_CPP_MODEL_PATH = LLAMA_CPP_MODEL_DIR / LLAMA_CPP_MODEL_FILE
-LLAMA_CPP_RUNTIME_DIR = APP_DIR / "runtime" / "llama_cpp"
+LLAMA_CPP_RUNTIME_DIR = LLAMA_CPP_STORAGE_DIR / "runtime" / "llama_cpp"
 LLAMA_CPP_WINDOWS_CPU_ZIP_URL = os.getenv(
     "LLAMA_CPP_WINDOWS_CPU_ZIP_URL",
     "https://github.com/ggml-org/llama.cpp/releases/download/b8304/llama-b8304-bin-win-cpu-x64.zip",
 ).strip()
 LLAMA_CPP_CLI_PATH = LLAMA_CPP_RUNTIME_DIR / "llama-cli.exe"
+LLAMA_CPP_MODEL_MIN_BYTES = int(os.getenv("LLAMA_CPP_MODEL_MIN_BYTES", "100000000").strip() or "100000000")
+LLAMA_CPP_RUNTIME_MARKER = LLAMA_CPP_RUNTIME_DIR / "runtime_ready.json"
+LLAMA_CPP_MODEL_MARKER = LLAMA_CPP_MODEL_DIR / "model_ready.json"
 LLAMA_CPP_N_CTX = int(os.getenv("LLAMA_CPP_N_CTX", "4096").strip() or "4096")
 LLAMA_CPP_N_THREADS = int(os.getenv("LLAMA_CPP_N_THREADS", str(max(2, (os.cpu_count() or 4) - 1))).strip() or "4")
 LLAMA_CPP_N_GPU_LAYERS = int(os.getenv("LLAMA_CPP_N_GPU_LAYERS", "0").strip() or "0")
@@ -5822,6 +5826,21 @@ def _run_local_command(command: list[str], timeout: int = 120) -> tuple[bool, st
         return False, str(exc)
 
 
+def _is_valid_local_file(path: Path, min_bytes: int = 1) -> bool:
+    try:
+        return path.exists() and path.is_file() and path.stat().st_size >= max(1, int(min_bytes))
+    except Exception:
+        return False
+
+
+def _write_local_marker(path: Path, payload: dict[str, Any]) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _ensure_llama_cpp_runtime() -> bool:
     global LAST_LOCAL_LLM_ERROR
     if LLAMA_CPP_BOOTSTRAP_STATE.get("runtime_ready"):
@@ -5836,10 +5855,18 @@ def _ensure_llama_cpp_runtime() -> bool:
     except Exception as exc:
         LAST_LOCAL_LLM_ERROR = f"llama.cpp Python bindings unavailable: {exc}"
 
-    if LLAMA_CPP_CLI_PATH.exists():
+    if _is_valid_local_file(LLAMA_CPP_CLI_PATH, min_bytes=1024 * 100):
         LLAMA_CPP_BOOTSTRAP_STATE["runtime_checked"] = True
         LLAMA_CPP_BOOTSTRAP_STATE["runtime_ready"] = True
         LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = ""
+        _write_local_marker(
+            LLAMA_CPP_RUNTIME_MARKER,
+            {
+                "runtime": "llama_cpp_cli",
+                "path": str(LLAMA_CPP_CLI_PATH),
+                "checked_at_utc": datetime.now(timezone.utc).isoformat(),
+            },
+        )
         return True
 
     if not LLAMA_CPP_AUTO_BOOTSTRAP or os.name != "nt":
@@ -5848,6 +5875,25 @@ def _ensure_llama_cpp_runtime() -> bool:
 
     try:
         LLAMA_CPP_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        # Re-scan extracted runtime folder first to avoid unnecessary re-downloads.
+        cli_candidates = list(LLAMA_CPP_RUNTIME_DIR.rglob("llama-cli.exe"))
+        if cli_candidates and _is_valid_local_file(cli_candidates[0], min_bytes=1024 * 100):
+            cli_path = cli_candidates[0]
+            if cli_path != LLAMA_CPP_CLI_PATH:
+                shutil.copy2(cli_path, LLAMA_CPP_CLI_PATH)
+            LLAMA_CPP_BOOTSTRAP_STATE["runtime_checked"] = True
+            LLAMA_CPP_BOOTSTRAP_STATE["runtime_ready"] = True
+            LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = ""
+            _write_local_marker(
+                LLAMA_CPP_RUNTIME_MARKER,
+                {
+                    "runtime": "llama_cpp_cli",
+                    "path": str(LLAMA_CPP_CLI_PATH),
+                    "checked_at_utc": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            return True
+
         zip_path = LLAMA_CPP_RUNTIME_DIR / "llama_cpp_runtime.zip"
         with requests.get(LLAMA_CPP_WINDOWS_CPU_ZIP_URL, stream=True, timeout=300) as response:
             response.raise_for_status()
@@ -5866,10 +5912,18 @@ def _ensure_llama_cpp_runtime() -> bool:
             cli_path = cli_candidates[0]
             if cli_path != LLAMA_CPP_CLI_PATH:
                 shutil.copy2(cli_path, LLAMA_CPP_CLI_PATH)
-        if LLAMA_CPP_CLI_PATH.exists():
+        if _is_valid_local_file(LLAMA_CPP_CLI_PATH, min_bytes=1024 * 100):
             LLAMA_CPP_BOOTSTRAP_STATE["runtime_checked"] = True
             LLAMA_CPP_BOOTSTRAP_STATE["runtime_ready"] = True
             LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = ""
+            _write_local_marker(
+                LLAMA_CPP_RUNTIME_MARKER,
+                {
+                    "runtime": "llama_cpp_cli",
+                    "path": str(LLAMA_CPP_CLI_PATH),
+                    "checked_at_utc": datetime.now(timezone.utc).isoformat(),
+                },
+            )
             return True
     except Exception as exc:
         LAST_LOCAL_LLM_ERROR = f"Failed to bootstrap llama.cpp runtime: {exc}"
@@ -5880,8 +5934,18 @@ def _ensure_llama_cpp_runtime() -> bool:
 
 def _ensure_phi_model_available() -> bool:
     global LAST_LOCAL_LLM_ERROR
-    if LLAMA_CPP_MODEL_PATH.exists():
+    if _is_valid_local_file(LLAMA_CPP_MODEL_PATH, min_bytes=LLAMA_CPP_MODEL_MIN_BYTES):
         LLAMA_CPP_BOOTSTRAP_STATE["model_ready"] = True
+        _write_local_marker(
+            LLAMA_CPP_MODEL_MARKER,
+            {
+                "repo": LLAMA_CPP_MODEL_REPO,
+                "file": LLAMA_CPP_MODEL_FILE,
+                "path": str(LLAMA_CPP_MODEL_PATH),
+                "size_bytes": LLAMA_CPP_MODEL_PATH.stat().st_size,
+                "checked_at_utc": datetime.now(timezone.utc).isoformat(),
+            },
+        )
         return True
     if not LLAMA_CPP_AUTO_BOOTSTRAP:
         LAST_LOCAL_LLM_ERROR = f"Phi GGUF model missing: {LLAMA_CPP_MODEL_PATH}"
@@ -5896,8 +5960,24 @@ def _ensure_phi_model_available() -> bool:
             local_dir=str(LLAMA_CPP_MODEL_DIR),
             local_dir_use_symlinks=False,
         )
-        if downloaded and Path(downloaded).exists():
+        if downloaded and _is_valid_local_file(Path(downloaded), min_bytes=LLAMA_CPP_MODEL_MIN_BYTES):
+            if Path(downloaded) != LLAMA_CPP_MODEL_PATH:
+                try:
+                    shutil.copy2(downloaded, LLAMA_CPP_MODEL_PATH)
+                except Exception:
+                    pass
             LLAMA_CPP_BOOTSTRAP_STATE["model_ready"] = True
+            model_path = LLAMA_CPP_MODEL_PATH if LLAMA_CPP_MODEL_PATH.exists() else Path(downloaded)
+            _write_local_marker(
+                LLAMA_CPP_MODEL_MARKER,
+                {
+                    "repo": LLAMA_CPP_MODEL_REPO,
+                    "file": LLAMA_CPP_MODEL_FILE,
+                    "path": str(model_path),
+                    "size_bytes": model_path.stat().st_size if model_path.exists() else 0,
+                    "checked_at_utc": datetime.now(timezone.utc).isoformat(),
+                },
+            )
             return True
     except Exception as exc:
         LAST_LOCAL_LLM_ERROR = f"Failed to download Phi GGUF model: {exc}"

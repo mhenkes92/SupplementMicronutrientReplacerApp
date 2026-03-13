@@ -146,3 +146,5 @@
 2026-03-13 08:34:29,992 - __main__ - INFO - Extracted 50 nutrients from ingredient list
 2026-03-13 11:10:56,369 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf "HTTP/1.1 302 Found"
 2026-03-13 11:10:57,404 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/microsoft/Phi-3-mini-4k-instruct-gguf/xet-read-token/a64113399c2f6b8ad3e11c394733a2ddadaa7f33 "HTTP/1.1 200 OK"
+2026-03-13 11:15:13,042 - httpx - INFO - HTTP Request: HEAD https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf "HTTP/1.1 302 Found"
+2026-03-13 11:15:13,300 - httpx - INFO - HTTP Request: GET https://huggingface.co/api/models/microsoft/Phi-3-mini-4k-instruct-gguf/xet-read-token/a64113399c2f6b8ad3e11c394733a2ddadaa7f33 "HTTP/1.1 200 OK"
