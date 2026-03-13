@@ -4920,6 +4920,7 @@ def normalize_component_name(raw_name: str) -> str:
 
 OCR_VITAMIN_PREFIX_PATTERN = re.compile(r"^(vitamin\s+[a-z](?:\d{1,2})?)\b", re.I)
 OCR_VITAMIN_TOKEN_PATTERN = re.compile(r"\b(?:vit(?:amin|main)|vitarnin)\s*([a-z])\s*(\d{0,2})\b", re.I)
+OCR_VITAMIN_SHORTHAND_PATTERN = re.compile(r"\b([bdk])\s*(12|[1-9])\b", re.I)
 OCR_DOSE_TOKEN_PATTERN = re.compile(r"(?P<val>\d+(?:[\.,]\d+)?|\d+[oO])\s*(?P<unit>mg|mcg|ug|µg|μg|iu|g)\b", re.I)
 OCR_MICROGRAM_COMPONENTS: set[str] = {
     "vitamin a",
@@ -5016,6 +5017,42 @@ def _recover_missing_vitamin_rows_from_text(
             dose_unit = ""
             right_window = line[match.end():match.end() + 30]
             left_window = line[max(0, match.start() - 20):match.start()]
+            dose_match = OCR_DOSE_TOKEN_PATTERN.search(right_window) or OCR_DOSE_TOKEN_PATTERN.search(left_window)
+            if dose_match:
+                raw_value = str(dose_match.group("val") or "").replace("O", "0").replace("o", "0")
+                try:
+                    dose_value = float(raw_value.replace(",", "."))
+                except Exception:
+                    dose_value = None
+                dose_unit = str(dose_match.group("unit") or "")
+
+            component, dose_value, dose_unit = _repair_ocr_dose_entry(component, dose_value, dose_unit)
+            recovered.append(
+                {
+                    "component": component,
+                    "dose_value": dose_value,
+                    "dose_unit": dose_unit,
+                }
+            )
+            existing_components.add(normalized_component)
+
+        # Recovery path for OCR lines that keep subtype token (e.g., K2, D3)
+        # but lose the leading word "Vitamin".
+        for short_match in OCR_VITAMIN_SHORTHAND_PATTERN.finditer(line):
+            letter = str(short_match.group(1) or "").lower()
+            suffix = str(short_match.group(2) or "").strip()
+            if not suffix:
+                continue
+
+            component = _repair_ocr_component_name(f"vitamin {letter}{suffix}")
+            normalized_component = normalize_lookup_key(component)
+            if not normalized_component or normalized_component in existing_components:
+                continue
+
+            dose_value: float | None = None
+            dose_unit = ""
+            right_window = line[short_match.end():short_match.end() + 24]
+            left_window = line[max(0, short_match.start() - 20):short_match.start()]
             dose_match = OCR_DOSE_TOKEN_PATTERN.search(right_window) or OCR_DOSE_TOKEN_PATTERN.search(left_window)
             if dose_match:
                 raw_value = str(dose_match.group("val") or "").replace("O", "0").replace("o", "0")
@@ -7173,6 +7210,13 @@ The local RAG library is built from curated expert nutrition notes and evidence 
             prep_progress = st.progress(0, text="Preparing whole-food matches and estimated costs...")
             total_rows = max(1, len(components))
 
+            st.markdown("### 1) Whole Food Alternative Found")
+            st.caption("1a) Component dropdowns (collapsed by default)")
+            mapped_section = st.container()
+            st.markdown("### 2) No Whole Food Alternative Found")
+            st.caption("2a) Component dropdowns (collapsed by default)")
+            unmapped_section = st.container()
+
             for index, item in enumerate(components):
                 prep_progress.progress(int((index / total_rows) * 100), text=f"Preparing component {index + 1}/{len(components)}...")
                 component_raw = str(item.get("component", "")).strip()
@@ -7201,232 +7245,234 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                         }
                     )
 
-                with st.expander(f"{status_symbol} {component_display} • {dose_label} • {status_chip}", expanded=(index == 0)):
-                    st.markdown(
-                        f"**Supplement dose:** <span class='linked-value-chip'>{dose_label}</span>",
-                        unsafe_allow_html=True,
-                    )
-                    if detail and detail.get("proxy_rationale"):
-                        st.caption(f"Proxy note: {detail['proxy_rationale']}")
+                target_section = mapped_section if foods else unmapped_section
+                with target_section:
+                    with st.expander(f"{status_symbol} {component_display} • {dose_label} • {status_chip}", expanded=False):
+                        st.markdown(
+                            f"**Supplement dose:** <span class='linked-value-chip'>{dose_label}</span>",
+                            unsafe_allow_html=True,
+                        )
+                        if detail and detail.get("proxy_rationale"):
+                            st.caption(f"Proxy note: {detail['proxy_rationale']}")
 
-                    if usda_status != "ok":
-                        st.warning("USDA DB unavailable")
-                        continue
-
-                    if not detail:
-                        st.info("No whole-food alternative found in USDA ranking data")
-                        continue
-
-                    if not foods:
-                        if foods_raw:
-                            st.info("No alternatives left after dietary restriction filtering")
-                        else:
-                            st.info("No ranked alternatives found")
-                        continue
-
-                    removed_count = max(0, len(foods_raw) - len(foods))
-                    if removed_count > 0:
-                        st.caption(f"Dietary filtering removed {removed_count} option(s) for this component.")
-
-                    option_labels: list[str] = []
-                    display_foods: list[dict[str, Any]] = []
-                    for food in foods:
-                        try:
-                            amount_per_100g = float(food.get("amount_per_100g", 0.0) or 0.0)
-                        except Exception:
-                            amount_per_100g = 0.0
-                        unit_raw = str(food.get("unit", "") or "")
-                        amt, display_unit = format_amount_unit_for_dropdown(amount_per_100g, unit_raw)
-                        if not amt:
+                        if usda_status != "ok":
+                            st.warning("USDA DB unavailable")
                             continue
-                        option_labels.append(
-                            f"{food.get('food_description', '')} ({amt} {display_unit}/100g)"
+
+                        if not detail:
+                            st.info("No whole-food alternative found in USDA ranking data")
+                            continue
+
+                        if not foods:
+                            if foods_raw:
+                                st.info("No alternatives left after dietary restriction filtering")
+                            else:
+                                st.info("No ranked alternatives found")
+                            continue
+
+                        removed_count = max(0, len(foods_raw) - len(foods))
+                        if removed_count > 0:
+                            st.caption(f"Dietary filtering removed {removed_count} option(s) for this component.")
+
+                        option_labels: list[str] = []
+                        display_foods: list[dict[str, Any]] = []
+                        for food in foods:
+                            try:
+                                amount_per_100g = float(food.get("amount_per_100g", 0.0) or 0.0)
+                            except Exception:
+                                amount_per_100g = 0.0
+                            unit_raw = str(food.get("unit", "") or "")
+                            amt, display_unit = format_amount_unit_for_dropdown(amount_per_100g, unit_raw)
+                            if not amt:
+                                continue
+                            option_labels.append(
+                                f"{food.get('food_description', '')} ({amt} {display_unit}/100g)"
+                            )
+                            display_foods.append(food)
+
+                        if not option_labels:
+                            st.info("No alternatives with non-zero measurable concentration per 100g")
+                            continue
+
+                        selected_label = st.selectbox(
+                            "Whole food alternative",
+                            options=option_labels,
+                            index=0,
+                            key=(
+                                f"alt_select_cell_{index}_{component_key}_"
+                                f"{normalize_lookup_key(selected_profile_label)}"
+                            ),
                         )
-                        display_foods.append(food)
+                        selected_idx = option_labels.index(selected_label)
+                        selected_food = display_foods[selected_idx]
+                        selected_amt = float(selected_food.get("amount_per_100g", 0.0))
+                        selected_unit = str(selected_food.get("unit", ""))
 
-                    if not option_labels:
-                        st.info("No alternatives with non-zero measurable concentration per 100g")
-                        continue
-
-                    selected_label = st.selectbox(
-                        "Whole food alternative",
-                        options=option_labels,
-                        index=0,
-                        key=(
-                            f"alt_select_cell_{index}_{component_key}_"
-                            f"{normalize_lookup_key(selected_profile_label)}"
-                        ),
-                    )
-                    selected_idx = option_labels.index(selected_label)
-                    selected_food = display_foods[selected_idx]
-                    selected_amt = float(selected_food.get("amount_per_100g", 0.0))
-                    selected_unit = str(selected_food.get("unit", ""))
-
-                    grams_needed = grams_needed_to_match_dose(
-                        dose_value,
-                        dose_unit,
-                        selected_amt,
-                        selected_unit,
-                    )
-
-                    match_label = "Not available"
-                    if grams_needed is not None:
-                        match_label = f"~{format_float(grams_needed)} g"
-                    st.markdown(
-                        f"**Amount needed to match dose:** <span class='linked-value-chip'>{match_label}</span>",
-                        unsafe_allow_html=True,
-                    )
-                    if grams_needed is not None:
-                        st.caption(format_weight_equivalents(float(grams_needed)))
-
-                        whole_units_hint = estimate_whole_food_units(
-                            str(selected_food.get("food_description", "") or ""),
-                            float(grams_needed),
+                        grams_needed = grams_needed_to_match_dose(
+                            dose_value,
+                            dose_unit,
+                            selected_amt,
+                            selected_unit,
                         )
-                        if whole_units_hint:
-                            st.caption(whole_units_hint)
 
-                        volume_units_hint = estimate_volume_units(
-                            str(selected_food.get("food_description", "") or ""),
-                            float(grams_needed),
+                        match_label = "Not available"
+                        if grams_needed is not None:
+                            match_label = f"~{format_float(grams_needed)} g"
+                        st.markdown(
+                            f"**Amount needed to match dose:** <span class='linked-value-chip'>{match_label}</span>",
+                            unsafe_allow_html=True,
                         )
-                        if volume_units_hint:
-                            st.caption(volume_units_hint)
+                        if grams_needed is not None:
+                            st.caption(format_weight_equivalents(float(grams_needed)))
 
-                    meal_component_candidates.append(
-                        {
-                            "component": component_display,
-                            "dose_value": dose_value,
-                            "dose_unit": dose_unit,
-                            "foods": foods,
-                            "selected_food_name": str(selected_food.get("food_description", "") or ""),
-                            "selected_grams_needed": float(grams_needed) if grams_needed is not None else None,
-                        }
-                    )
+                            whole_units_hint = estimate_whole_food_units(
+                                str(selected_food.get("food_description", "") or ""),
+                                float(grams_needed),
+                            )
+                            if whole_units_hint:
+                                st.caption(whole_units_hint)
 
-                    cost_label = "Not available"
-                    price_info: dict[str, Any] | None = None
-                    auto_live_fallback_used = False
-                    if grams_needed is not None and grams_needed > 0:
-                        ean_hint = _extract_ean_from_text(component_raw)
-                        cache_key = (
-                            normalize_lookup_key(str(selected_food.get("food_description", ""))),
-                            selected_country,
-                            selected_currency,
-                            selected_market,
-                            str(enable_live_price_fallback),
-                            str(use_serpapi),
-                            str(use_dataforseo),
-                            format_float(float(grams_needed), 3),
-                            ean_hint,
+                            volume_units_hint = estimate_volume_units(
+                                str(selected_food.get("food_description", "") or ""),
+                                float(grams_needed),
+                            )
+                            if volume_units_hint:
+                                st.caption(volume_units_hint)
+
+                        meal_component_candidates.append(
+                            {
+                                "component": component_display,
+                                "dose_value": dose_value,
+                                "dose_unit": dose_unit,
+                                "foods": foods,
+                                "selected_food_name": str(selected_food.get("food_description", "") or ""),
+                                "selected_grams_needed": float(grams_needed) if grams_needed is not None else None,
+                            }
                         )
-                        auto_cache_key = (
-                            normalize_lookup_key(str(selected_food.get("food_description", ""))),
-                            selected_country,
-                            selected_currency,
-                            selected_market,
-                            "auto_live_on_miss",
-                            str(use_serpapi),
-                            str(use_dataforseo),
-                            format_float(float(grams_needed), 3),
-                            ean_hint,
-                        )
-                        price_cache: dict[str, Any] = st.session_state.get("price_cache", {})
-                        cached = price_cache.get(cache_key)
-                        if cached and cached.get("price_per_kg") is not None:
-                            price_info = cached
-                        else:
-                            price_info = get_food_price_estimate(
-                                str(selected_food.get("food_description", "")),
+
+                        cost_label = "Not available"
+                        price_info: dict[str, Any] | None = None
+                        auto_live_fallback_used = False
+                        if grams_needed is not None and grams_needed > 0:
+                            ean_hint = _extract_ean_from_text(component_raw)
+                            cache_key = (
+                                normalize_lookup_key(str(selected_food.get("food_description", ""))),
                                 selected_country,
                                 selected_currency,
                                 selected_market,
-                                enable_live_price_fallback,
-                                grams_needed,
+                                str(enable_live_price_fallback),
+                                str(use_serpapi),
+                                str(use_dataforseo),
+                                format_float(float(grams_needed), 3),
                                 ean_hint,
-                                use_serpapi,
-                                use_dataforseo,
                             )
-                            if price_info and price_info.get("price_per_kg") is not None:
-                                price_cache[cache_key] = price_info
-                                st.session_state["price_cache"] = price_cache
-
-                        # UX default: if local estimate misses, try live fallback automatically.
-                        if (not price_info or price_info.get("price_per_kg") is None) and not enable_live_price_fallback:
-                            cached_auto = price_cache.get(auto_cache_key)
-                            if cached_auto and cached_auto.get("price_per_kg") is not None:
-                                price_info = cached_auto
-                                auto_live_fallback_used = True
+                            auto_cache_key = (
+                                normalize_lookup_key(str(selected_food.get("food_description", ""))),
+                                selected_country,
+                                selected_currency,
+                                selected_market,
+                                "auto_live_on_miss",
+                                str(use_serpapi),
+                                str(use_dataforseo),
+                                format_float(float(grams_needed), 3),
+                                ean_hint,
+                            )
+                            price_cache: dict[str, Any] = st.session_state.get("price_cache", {})
+                            cached = price_cache.get(cache_key)
+                            if cached and cached.get("price_per_kg") is not None:
+                                price_info = cached
                             else:
-                                auto_price = get_food_price_estimate(
+                                price_info = get_food_price_estimate(
                                     str(selected_food.get("food_description", "")),
                                     selected_country,
                                     selected_currency,
                                     selected_market,
-                                    True,
+                                    enable_live_price_fallback,
                                     grams_needed,
                                     ean_hint,
                                     use_serpapi,
                                     use_dataforseo,
                                 )
-                                if auto_price and auto_price.get("price_per_kg") is not None:
-                                    price_cache[auto_cache_key] = auto_price
+                                if price_info and price_info.get("price_per_kg") is not None:
+                                    price_cache[cache_key] = price_info
                                     st.session_state["price_cache"] = price_cache
-                                    price_info = auto_price
+
+                            # UX default: if local estimate misses, try live fallback automatically.
+                            if (not price_info or price_info.get("price_per_kg") is None) and not enable_live_price_fallback:
+                                cached_auto = price_cache.get(auto_cache_key)
+                                if cached_auto and cached_auto.get("price_per_kg") is not None:
+                                    price_info = cached_auto
                                     auto_live_fallback_used = True
+                                else:
+                                    auto_price = get_food_price_estimate(
+                                        str(selected_food.get("food_description", "")),
+                                        selected_country,
+                                        selected_currency,
+                                        selected_market,
+                                        True,
+                                        grams_needed,
+                                        ean_hint,
+                                        use_serpapi,
+                                        use_dataforseo,
+                                    )
+                                    if auto_price and auto_price.get("price_per_kg") is not None:
+                                        price_cache[auto_cache_key] = auto_price
+                                        st.session_state["price_cache"] = price_cache
+                                        price_info = auto_price
+                                        auto_live_fallback_used = True
 
-                        if price_info and price_info.get("price_per_kg") is not None:
-                            try:
-                                price_per_kg = float(price_info.get("price_per_kg"))
-                                required_cost = (float(grams_needed) / 1000.0) * price_per_kg
-                                symbol = CURRENCY_SYMBOL.get(str(price_info.get("currency", selected_currency)), str(price_info.get("currency", selected_currency)))
-                                source = str(price_info.get("source", "price db"))
-                                cost_label = f"~{symbol}{format_float(required_cost)} ({source})"
-                                total_cost += required_cost
-                                priced_rows += 1
-                            except Exception:
-                                cost_label = "Not available"
+                            if price_info and price_info.get("price_per_kg") is not None:
+                                try:
+                                    price_per_kg = float(price_info.get("price_per_kg"))
+                                    required_cost = (float(grams_needed) / 1000.0) * price_per_kg
+                                    symbol = CURRENCY_SYMBOL.get(str(price_info.get("currency", selected_currency)), str(price_info.get("currency", selected_currency)))
+                                    source = str(price_info.get("source", "price db"))
+                                    cost_label = f"~{symbol}{format_float(required_cost)} ({source})"
+                                    total_cost += required_cost
+                                    priced_rows += 1
+                                except Exception:
+                                    cost_label = "Not available"
 
-                    st.markdown(f"**Estimated cost for required amount:** {cost_label}")
-                    if cost_label != "Not available" and isinstance(price_info, dict):
-                        if auto_live_fallback_used:
-                            st.caption("Price came from automatic live fallback because no local price match was found.")
-                        score = format_float(float(price_info.get("final_score", 0.0)), 3)
-                        match_method = str(price_info.get("match_method", "title_similarity") or "title_similarity")
-                        confidence = str(price_info.get("confidence", "low") or "low")
-                        ppk = format_float(float(price_info.get("price_per_kg", 0.0)), 2)
-                        curr = str(price_info.get("currency", selected_currency) or selected_currency)
-                        st.caption(
-                            f"{curr}/{ppk} per kg • confidence: {confidence} • match: {match_method} • score: {score}"
+                        st.markdown(f"**Estimated cost for required amount:** {cost_label}")
+                        if cost_label != "Not available" and isinstance(price_info, dict):
+                            if auto_live_fallback_used:
+                                st.caption("Price came from automatic live fallback because no local price match was found.")
+                            score = format_float(float(price_info.get("final_score", 0.0)), 3)
+                            match_method = str(price_info.get("match_method", "title_similarity") or "title_similarity")
+                            confidence = str(price_info.get("confidence", "low") or "low")
+                            ppk = format_float(float(price_info.get("price_per_kg", 0.0)), 2)
+                            curr = str(price_info.get("currency", selected_currency) or selected_currency)
+                            st.caption(
+                                f"{curr}/{ppk} per kg • confidence: {confidence} • match: {match_method} • score: {score}"
+                            )
+                            top_candidates = price_info.get("audit_top_candidates") or []
+                            if top_candidates:
+                                short = []
+                                for cand in top_candidates[:3]:
+                                    c_src = str(cand.get("source", "unknown") or "unknown")
+                                    c_score = format_float(float(cand.get("final_score", 0.0)), 2)
+                                    c_ppk = format_float(float(cand.get("price_per_kg", 0.0)), 2)
+                                    c_cur = str(cand.get("currency", selected_currency) or selected_currency)
+                                    short.append(f"{c_src}: {c_cur} {c_ppk}/kg (score {c_score})")
+                                st.caption(" | ".join(short))
+
+                        selected_component_matches.append(
+                            {
+                                "component": component_display,
+                                "food_description": str(selected_food.get("food_description", "") or ""),
+                                "grams_needed": grams_needed,
+                                "price_per_kg": (
+                                    float(price_info.get("price_per_kg"))
+                                    if isinstance(price_info, dict) and price_info.get("price_per_kg") is not None
+                                    else None
+                                ),
+                                "currency": (
+                                    str(price_info.get("currency", selected_currency) or selected_currency)
+                                    if isinstance(price_info, dict)
+                                    else selected_currency
+                                ),
+                            }
                         )
-                        top_candidates = price_info.get("audit_top_candidates") or []
-                        if top_candidates:
-                            short = []
-                            for cand in top_candidates[:3]:
-                                c_src = str(cand.get("source", "unknown") or "unknown")
-                                c_score = format_float(float(cand.get("final_score", 0.0)), 2)
-                                c_ppk = format_float(float(cand.get("price_per_kg", 0.0)), 2)
-                                c_cur = str(cand.get("currency", selected_currency) or selected_currency)
-                                short.append(f"{c_src}: {c_cur} {c_ppk}/kg (score {c_score})")
-                            st.caption(" | ".join(short))
-
-                    selected_component_matches.append(
-                        {
-                            "component": component_display,
-                            "food_description": str(selected_food.get("food_description", "") or ""),
-                            "grams_needed": grams_needed,
-                            "price_per_kg": (
-                                float(price_info.get("price_per_kg"))
-                                if isinstance(price_info, dict) and price_info.get("price_per_kg") is not None
-                                else None
-                            ),
-                            "currency": (
-                                str(price_info.get("currency", selected_currency) or selected_currency)
-                                if isinstance(price_info, dict)
-                                else selected_currency
-                            ),
-                        }
-                    )
 
             prep_progress.progress(100, text="Alternative matching and pricing ready")
             prep_progress.empty()
@@ -7487,44 +7533,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     st.info(top_sentence)
 
             if unmapped_components:
-                with st.expander(f"Unmapped micronutrients ({len(unmapped_components)})", expanded=False):
-                    st.caption("These components could not be matched to a USDA nutrient profile in the current local mapping.")
-
-                    options = [f"❌ {row['component']} • {row['dose']}" for row in unmapped_components]
-                    selected_unmapped = st.selectbox(
-                        "Select unmapped component",
-                        options=options,
-                        key="unmapped_component_dropdown",
-                    )
-                    selected_row = next(
-                        (row for row in unmapped_components if f"❌ {row['component']} • {row['dose']}" == selected_unmapped),
-                        unmapped_components[0],
-                    )
-                    st.info(f"Reason: {selected_row['reason']}")
-
-                    fallback_query = (
-                        f"{selected_row['component']} whole food sources per 100g USDA data "
-                        f"and evidence-based intake guidance"
-                    )
-                    st.caption("Suggested web-search fallback query")
-                    st.code(fallback_query)
-
-                    if st.button("Generate LLM web-search fallback hints", key="generate_unmapped_fallback_hints", use_container_width=True):
-                        component_list = ", ".join([row["component"] for row in unmapped_components])
-                        llm_hints = call_openrouter_text(
-                            "You create concise web-search queries for nutrition research.",
-                            (
-                                "Generate short, practical web-search queries to find reliable whole-food alternatives "
-                                "for these unmapped supplement components: "
-                                f"{component_list}. "
-                                "Prefer queries that mention USDA, NIH fact sheet, EFSA, or peer-reviewed evidence."
-                            ),
-                        )
-                        if llm_hints:
-                            st.markdown("**LLM fallback queries**")
-                            st.write(llm_hints)
-                        else:
-                            st.info("LLM fallback is unavailable right now. Use the suggested query above.")
+                st.caption("Unmapped components are listed above in section 2 with their reason details.")
 
             st.session_state["meal_component_candidates"] = meal_component_candidates
 
