@@ -7282,7 +7282,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
         analyze = st.button("Analyze input", type="primary", use_container_width=True, key="analyze_input_btn")
 
         if analyze:
-            extracted_chunks: list[str] = []
+            extracted_chunks: list[tuple[str, str]] = []
 
             with st.status("Processing", expanded=True) as status:
                 status.write("Step 1/4: Collecting input")
@@ -7312,7 +7312,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     if ocr_text:
                         ocr_gate = extraction_gate_report(ocr_text)
                         if ocr_gate["passed"]:
-                            extracted_chunks.append(ocr_text)
+                            extracted_chunks.append(("image", ocr_text))
                             if LAST_VISION_PROVIDER:
                                 st.success(f"Image text extracted via {LAST_VISION_PROVIDER}")
                             else:
@@ -7365,7 +7365,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     if url_text:
                         url_gate = extraction_gate_report(url_text)
                         if url_gate["passed"]:
-                            extracted_chunks.append(url_text)
+                            extracted_chunks.append(("url", url_text))
                             if LAST_TEXT_PROVIDER:
                                 st.success(f"Link content parsed via {LAST_TEXT_PROVIDER}")
                             else:
@@ -7395,7 +7395,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                 if manual_text.strip():
                     manual_text_clean = manual_text.strip()
                     manual_gate = extraction_gate_report(manual_text_clean)
-                    extracted_chunks.append(manual_text_clean)
+                    extracted_chunks.append(("manual", manual_text_clean))
                     if manual_gate["passed"]:
                         status.write(
                             f"Manual text gate check passed (score={manual_gate['score']}, doses={manual_gate['dose_hits']})"
@@ -7405,7 +7405,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                             "Manual text gate check flagged low structure; continuing because it is user-entered input."
                         )
 
-                combined = "\n\n".join([x for x in extracted_chunks if x.strip()])
+                combined = "\n\n".join([x for _, x in extracted_chunks if x.strip()])
 
                 if not combined:
                     st.session_state["analysis_ready"] = False
@@ -7416,7 +7416,58 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     st.error("Please provide at least one input source: image, link, or text.")
                 else:
                     status.write("Step 4/4: Extracting supplement components")
-                    structured_payload = build_structured_nutrients_json(combined)
+                    # Evaluate each source independently first to avoid cross-source contamination.
+                    # This prevents stale URL/manual content from overriding clean image OCR rows.
+                    source_candidates: list[dict[str, Any]] = []
+                    for source_label, source_text in extracted_chunks:
+                        if not str(source_text or "").strip():
+                            continue
+                        payload = build_structured_nutrients_json(source_text)
+                        nutrients = list(payload.get("nutrients", []) or [])
+                        dosed_rows = sum(
+                            1
+                            for row in nutrients
+                            if row.get("component")
+                            and row.get("dose_value") is not None
+                            and str(row.get("dose_unit", "") or "").strip().lower() in ALLOWED_DOSE_UNITS
+                        )
+                        try:
+                            conf = float(payload.get("confidence", 0.0) or 0.0)
+                        except Exception:
+                            conf = 0.0
+                        source_candidates.append(
+                            {
+                                "label": source_label,
+                                "text": source_text,
+                                "payload": payload,
+                                "dosed_rows": dosed_rows,
+                                "confidence": conf,
+                                "has_structured_table": _has_structured_table_cues(source_text),
+                            }
+                        )
+
+                    if source_candidates:
+                        source_priority = {"image": 3, "manual": 2, "url": 1}
+                        source_candidates.sort(
+                            key=lambda c: (
+                                int(c.get("dosed_rows", 0) or 0),
+                                int(bool(c.get("has_structured_table", False))),
+                                float(c.get("confidence", 0.0) or 0.0),
+                                source_priority.get(str(c.get("label", "")), 0),
+                            ),
+                            reverse=True,
+                        )
+                        best = source_candidates[0]
+                        structured_payload = dict(best.get("payload", {}) or {})
+                        combined = str(best.get("text", "") or "")
+                        status.write(
+                            "Selected extraction source: "
+                            f"{best.get('label', 'n/a')} "
+                            f"(dosed_rows={best.get('dosed_rows', 0)}, "
+                            f"confidence={best.get('confidence', 0.0)})"
+                        )
+                    else:
+                        structured_payload = build_structured_nutrients_json(combined)
                     components = list(structured_payload.get("nutrients", []) or [])
                     if LAST_TEXT_PROVIDER:
                         status.write(f"Testing info: component parsing used {LAST_TEXT_PROVIDER}")
