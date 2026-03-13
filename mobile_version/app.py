@@ -5049,8 +5049,12 @@ def _prepare_text_for_structured_parsing(input_text: str) -> str:
             start_idx = i
             break
 
-    stop_markers = re.compile(
-        r"(?:^\s*ingredients\s*[:\-]|\bingredients\s+full\s+list\b|\brecommended\s+usage\b|\busage\s+level\b|\bprocessed\s+in\s+a\s+plant\b|\bvisit\b|www\.|\bmanufactured\b|\bins\s*\d{2,4}\b)",
+    hard_stop_markers = re.compile(
+        r"(?:^\s*ingredients\s*[:\-]|\bingredients\s+full\s+list\b)",
+        re.I,
+    )
+    soft_skip_markers = re.compile(
+        r"(?:\brecommended\s+usage\b|\busage\s+level\b|\bprocessed\s+in\s+a\s+plant\b|\bvisit\b|www\.|\bmanufactured\b|\bins\s*\d{2,4}\b)",
         re.I,
     )
     row_hint = re.compile(
@@ -5060,15 +5064,26 @@ def _prepare_text_for_structured_parsing(input_text: str) -> str:
     dose_hint = re.compile(r"\b\d+(?:[\.,]\d+)?\s*(?:mg|mcg|ug|µg|μg|fg|g|iu|kcal)\b", re.I)
 
     selected: list[str] = []
+    selected_dose_rows = 0
     for line in lines[start_idx:]:
-        if stop_markers.search(line):
-            break
+        if hard_stop_markers.search(line):
+            # Only hard-stop after capturing enough table rows; otherwise keep scanning
+            # because merged OCR can interleave ingredients/prose with nutrient rows.
+            if selected_dose_rows >= 5:
+                break
+            continue
+        if soft_skip_markers.search(line):
+            continue
         if len(line) > 110 and not dose_hint.search(line):
             continue
         if row_hint.search(line) or dose_hint.search(line) or re.search(r"\b(?:nutrition\s+information|quantity\s+per\s+serving|%\s*rda|nrv|tagesdosis|inhaltsstoffe)\b", line, re.I):
             selected.append(line)
+            if dose_hint.search(line):
+                selected_dose_rows += 1
 
-    if selected:
+    # Safety fallback: if filtering became too strict and kept too little dose structure,
+    # return original OCR text so rule-based parsing still has full context.
+    if selected and selected_dose_rows >= 3:
         return "\n".join(selected)
     return text
 
