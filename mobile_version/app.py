@@ -5050,7 +5050,7 @@ def _prepare_text_for_structured_parsing(input_text: str) -> str:
             break
 
     stop_markers = re.compile(
-        r"\b(?:ingredients?|recommended\s+usage|usage\s+level|processed\s+in\s+a\s+plant|visit\s+|www\.|manufactured|ins\s*\d{2,4})\b",
+        r"(?:^\s*ingredients\s*[:\-]|\bingredients\s+full\s+list\b|\brecommended\s+usage\b|\busage\s+level\b|\bprocessed\s+in\s+a\s+plant\b|\bvisit\b|www\.|\bmanufactured\b|\bins\s*\d{2,4}\b)",
         re.I,
     )
     row_hint = re.compile(
