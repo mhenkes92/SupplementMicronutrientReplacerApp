@@ -87,7 +87,7 @@ DECIMAL_PRECISION_MIN = 2
 DECIMAL_PRECISION_MAX = 8
 
 EXTRACTION_DOSE_PATTERN = re.compile(
-    r"\b\d+(?:[\.,]\d+)?\s*(?:mg|mcg|ug|µg|μg|g|iu|kcal)\b",
+    r"\b\d+(?:[\.,]\d+)?\s*(?:mg|mcg|ug|µg|μg|fg|g|iu|kcal)\b",
     re.I,
 )
 LOCAL_URL_KEYWORD_WINDOW_PATTERN = re.compile(
@@ -4922,7 +4922,7 @@ def normalize_component_name(raw_name: str) -> str:
 OCR_VITAMIN_PREFIX_PATTERN = re.compile(r"^(vitamin\s+[a-z](?:\d{1,2})?)\b", re.I)
 OCR_VITAMIN_TOKEN_PATTERN = re.compile(r"\b(?:vit(?:amin|main)|vitarnin)\s*([a-z])\s*(\d{0,2})\b", re.I)
 OCR_VITAMIN_SHORTHAND_PATTERN = re.compile(r"\b([bdk])\s*[-:]?\s*(12|[1-9])\b", re.I)
-OCR_DOSE_TOKEN_PATTERN = re.compile(r"(?P<val>\d+(?:[\.,]\d+)?|\d+[oO])\s*(?P<unit>mg|mcg|ug|µg|μg|iu|g)\b", re.I)
+OCR_DOSE_TOKEN_PATTERN = re.compile(r"(?P<val>\d+(?:[\.,]\d+)?|\d+[oO])\s*(?P<unit>mg|mcg|ug|µg|μg|fg|iu|g)\b", re.I)
 OCR_MICROGRAM_COMPONENTS: set[str] = {
     "vitamin a",
     "vitamin d",
@@ -5268,7 +5268,7 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
 
     lines = [ln.strip() for ln in input_text.splitlines() if ln.strip()]
     dose_pattern = re.compile(
-        r"(?P<val>\d+(?:[\.,]\d+)?)\s*(?P<unit>mg|mcg|ug|µg|μg|iu|g|kcal)\b",
+        r"(?P<val>\d+(?:[\.,]\d+)?)\s*(?P<unit>mg|mcg|ug|µg|μg|fg|iu|g|kcal)\b",
         re.I,
     )
     nutrient_line_pattern = re.compile(
@@ -5864,8 +5864,8 @@ def try_tesseract_ocr(image_bytes: bytes) -> str:
         """Higher-contrast variant for dark/low-light bottle label photos."""
         gray = image.convert("L")
         width, height = gray.size
-        if min(width, height) < 1200:
-            scale = 3
+        if min(width, height) < 900:
+            scale = 2
             gray = gray.resize((width * scale, height * scale), Image.Resampling.LANCZOS)
         gray = ImageOps.autocontrast(gray, cutoff=5)
         gray = gray.filter(ImageFilter.SHARPEN)
@@ -5926,17 +5926,14 @@ def try_tesseract_ocr(image_bytes: bytes) -> str:
             pytesseract.pytesseract.tesseract_cmd = resolved_cmd
 
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-            # Three image variants: standard normalised, high-contrast (for dark/under-exposed
-            # bottle photos), and plain greyscale.  Running all three × three PSM modes gives
-            # nine passes, maximising the chance of picking up every row on the label.
+        # Three image variants: standard normalised, high-contrast (for dark/under-exposed
+        # bottle photos), and plain greyscale.
         variants = [
             preprocess_for_tesseract(image),
-                preprocess_high_contrast(image),
+            preprocess_high_contrast(image),
             image.convert("L"),
         ]
 
-        best_text = ""
-        best_score = -1
         # Determine available language(s).  Prefer deu+eng for European supplement labels.
         try:
             available_langs = set(pytesseract.get_languages(config=""))
@@ -5944,10 +5941,10 @@ def try_tesseract_ocr(image_bytes: bytes) -> str:
         except Exception:
             lang_config = "eng"
 
-        # PSM modes to try: 6=uniform block (default), 4=single column, 11=sparse text.
+        # PSM modes to try: 6=uniform block (default), 11=sparse text.
         # Sparse-text mode helps recover rows from curved bottle labels where lines are
         # distorted and Tesseract would otherwise skip them.
-        psm_modes = [6, 4, 11]
+        psm_modes = [6, 11]
 
         all_reconstructed: list[str] = []
         best_text = ""
@@ -5961,10 +5958,11 @@ def try_tesseract_ocr(image_bytes: bytes) -> str:
                         variant,
                         config=cfg,
                         output_type=pytesseract.Output.DICT,
+                        timeout=20,
                     )
                     rebuilt_rows = rebuild_rows_from_tesseract(ocr_data)
                     reconstructed_text = "\n".join(rebuilt_rows)
-                    raw_text = pytesseract.image_to_string(variant, config=cfg)
+                    raw_text = pytesseract.image_to_string(variant, config=cfg, timeout=20)
                     candidate_text = "\n".join(
                         [x for x in [reconstructed_text, raw_text] if str(x).strip()]
                     ).strip()
@@ -6085,7 +6083,7 @@ def build_gate_result(
 
 def _normalize_component_unit_token(unit: str) -> str:
     u = str(unit or "").strip().lower()
-    if u in {"ug", "µg", "μg"}:
+    if u in {"ug", "µg", "μg", "fg"}:
         return "mcg"
     return u
 
