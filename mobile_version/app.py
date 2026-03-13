@@ -68,38 +68,31 @@ load_dotenv()
 # Also load .env from the app directory so VS Code Play/Run works from any CWD.
 load_dotenv(APP_DIR / ".env")
 
-# All API keys revealed in source.
-# Primary provider: Blockbrain (company-funded, no cost)
-BLOCKBRAIN_API_KEY = "sk-kb-qmtQGRF--vCahDg_KBIk2i1eZeScwTbdT4QfOpKulUo"
-BLOCKBRAIN_BOT_ID = os.getenv("BLOCKBRAIN_BOT_ID", "default-bot")
+# Offline-only configuration.
+# Cloud LLM providers are intentionally disabled. All synthesis routes through the
+# local Ollama runtime, while OCR remains local via Tesseract.
+BLOCKBRAIN_API_KEY = ""
+BLOCKBRAIN_BOT_ID = ""
 
-# Fallback providers
-PRIMARY_OPENROUTER_API_KEY = "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"
-PRIMARY_OPENAI_API_KEY = "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"
-PRIMARY_GITHUB_MODELS_TOKEN = "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"
-
-OPENROUTER_API_KEY = PRIMARY_OPENROUTER_API_KEY
-OPENROUTER_MODEL_TEXT = os.getenv("OPENROUTER_MODEL_TEXT", "openai/gpt-4o-mini")
-OPENROUTER_MODEL_VISION = os.getenv("OPENROUTER_MODEL_VISION", "openai/gpt-4o-mini")
-OPENAI_API_KEY = PRIMARY_OPENAI_API_KEY or os.getenv("OPENAI_API_KEY", "").strip()
-OPENAI_MODEL_TEXT = os.getenv("OPENAI_MODEL_TEXT", "gpt-4o-mini")
-OPENAI_MODEL_VISION = os.getenv("OPENAI_MODEL_VISION", "gpt-4o-mini")
-GITHUB_MODELS_TOKEN = PRIMARY_GITHUB_MODELS_TOKEN or os.getenv("GITHUB_MODELS_TOKEN", "").strip()
-GITHUB_MODELS_MODEL_TEXT = os.getenv("GITHUB_MODELS_MODEL_TEXT", "gpt-4o-mini")
-GITHUB_MODELS_MODEL_VISION = os.getenv("GITHUB_MODELS_MODEL_VISION", "gpt-4o-mini")
+OPENROUTER_API_KEY = ""
+OPENROUTER_MODEL_TEXT = ""
+OPENROUTER_MODEL_VISION = ""
+OPENAI_API_KEY = ""
+OPENAI_MODEL_TEXT = ""
+OPENAI_MODEL_VISION = ""
+GITHUB_MODELS_TOKEN = ""
+GITHUB_MODELS_MODEL_TEXT = ""
+GITHUB_MODELS_MODEL_VISION = ""
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip()
 OLLAMA_MODEL_TEXT = os.getenv("OLLAMA_MODEL_TEXT", "llama3.1:8b-instruct-q4_K_M").strip()
 ENABLE_LOCAL_OLLAMA = os.getenv("ENABLE_LOCAL_OLLAMA", "1").strip() != "0"
 TESSERACT_CMD = os.getenv("TESSERACT_CMD", "")
 
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENAI_URL = "https://api.openai.com/v1/chat/completions"
-GITHUB_MODELS_URL = os.getenv(
-    "GITHUB_MODELS_URL",
-    "https://models.inference.ai.azure.com/chat/completions",
-).strip()
-BLOCKBRAIN_API_GATEWAY = "https://blocky.theblockbrain.ai"
-BLOCKBRAIN_CHAT_ENDPOINT = f"{BLOCKBRAIN_API_GATEWAY}/chat"
+OPENROUTER_URL = ""
+OPENAI_URL = ""
+GITHUB_MODELS_URL = ""
+BLOCKBRAIN_API_GATEWAY = ""
+BLOCKBRAIN_CHAT_ENDPOINT = ""
 HTTP_TIMEOUT = 30
 OPENROUTER_DEFAULT_MAX_TOKENS = 500
 LOCAL_URL_KEYWORD_WINDOW_CHARS = 260
@@ -1036,7 +1029,7 @@ def resolve_component_to_nutrients(
         if close:
             add_candidate(close[0], "medium", "fuzzy", priority=4)
 
-    if not resolved and ENABLE_LLM_COMPONENT_MAPPING and (OPENROUTER_API_KEY or OPENAI_API_KEY or GITHUB_MODELS_TOKEN):
+    if not resolved and ENABLE_LLM_COMPONENT_MAPPING and ENABLE_LOCAL_OLLAMA:
         llm_prompt = (
             "Map this supplement component to one USDA nutrient name if clearly mappable. "
             "Return only the nutrient name or NONE."
@@ -2158,7 +2151,7 @@ def fetch_dataforseo_shopping_offers(food_name: str, country: str, currency: str
 
 
 def estimate_price_with_llm(food_name: str, country: str, currency: str) -> dict[str, Any] | None:
-    if not (OPENROUTER_API_KEY or OPENAI_API_KEY or GITHUB_MODELS_TOKEN):
+    if not ENABLE_LOCAL_OLLAMA:
         return None
 
     system_prompt = (
@@ -3108,7 +3101,7 @@ def find_local_meal_suggestions(requirements: list[dict[str, Any]], max_results:
 def generate_llm_meal_suggestions(requirements: list[dict[str, Any]], max_results: int = 3) -> list[dict[str, Any]]:
     if not requirements:
         return []
-    if not (OPENROUTER_API_KEY or OPENAI_API_KEY or GITHUB_MODELS_TOKEN):
+    if not ENABLE_LOCAL_OLLAMA:
         return []
 
     target_lines: list[str] = []
@@ -4678,9 +4671,9 @@ def answer_rag_question(query: str, chunks: list[dict[str, str]]) -> tuple[str, 
     source_note = ", ".join(citations[:3]) if citations else "the local reference set"
     if asks_guideline_table:
         fallback = (
-            "I found relevant local guideline excerpts, but the answer model is unavailable right now, "
+            "I found relevant local guideline excerpts, but the local answer model is unavailable right now, "
             "so I cannot safely synthesize a complete daily micronutrient list from those excerpts yet. "
-            f"Please use the web fallback resources below (prioritize NIH ODS / EFSA) or retry once provider access is restored. "
+            f"Please use the web fallback resources below (prioritize NIH ODS / EFSA) or retry once the local model is available. "
             f"Top retrieved sources: {source_note}."
         )
     else:
@@ -5326,88 +5319,10 @@ def expand_umbrella_components(rows: list[dict[str, Any]]) -> list[dict[str, Any
 
 
 def check_openrouter_key_status() -> tuple[bool, str]:
-    if not OPENROUTER_API_KEY:
-        return False, "OPENROUTER_API_KEY is missing"
-
-    reply = _openrouter_chat(
-        {
-            "model": OPENROUTER_MODEL_TEXT,
-            "temperature": 0,
-            "max_tokens": 64,
-            "messages": [
-                {"role": "system", "content": "You are a health check endpoint."},
-                {"role": "user", "content": "Reply with exactly: ok"},
-            ],
-        }
-    )
-    if reply:
-        return True, "OpenRouter key/token is working"
-
-    if LAST_OPENROUTER_ERROR:
-        return False, LAST_OPENROUTER_ERROR
-    return False, "OpenRouter request failed"
+    return False, "OpenRouter is disabled in offline-only mode"
 
 
 def check_provider_status() -> tuple[bool, str]:
-    if BLOCKBRAIN_API_KEY:
-        reply = call_blockbrain_text(
-            "You are a health check endpoint.",
-            "Reply with exactly: ok",
-        )
-        if reply:
-            return True, "Blockbrain: token is working"
-        if LAST_BLOCKBRAIN_ERROR:
-            blockbrain_message = LAST_BLOCKBRAIN_ERROR
-        else:
-            blockbrain_message = ""
-    else:
-        blockbrain_message = ""
-
-    if GITHUB_MODELS_TOKEN:
-        reply = _github_models_chat(
-            {
-                "model": GITHUB_MODELS_MODEL_TEXT,
-                "temperature": 0,
-                "max_tokens": 64,
-                "messages": [
-                    {"role": "system", "content": "You are a health check endpoint."},
-                    {"role": "user", "content": "Reply with exactly: ok"},
-                ],
-            }
-        )
-        if reply:
-            return True, "GitHub Models: token is working"
-        if LAST_GITHUB_MODELS_ERROR:
-            github_message = LAST_GITHUB_MODELS_ERROR
-        else:
-            github_message = ""
-    else:
-        github_message = ""
-
-    if OPENAI_API_KEY:
-        reply = _openai_chat(
-            {
-                "model": OPENAI_MODEL_TEXT,
-                "temperature": 0,
-                "max_tokens": 64,
-                "messages": [
-                    {"role": "system", "content": "You are a health check endpoint."},
-                    {"role": "user", "content": "Reply with exactly: ok"},
-                ],
-            }
-        )
-        if reply:
-            return True, "OpenAI: key/token is working"
-        if LAST_OPENAI_ERROR:
-            openai_message = LAST_OPENAI_ERROR
-    else:
-        openai_message = ""
-
-    if OPENROUTER_API_KEY:
-        ok, message = check_openrouter_key_status()
-        if ok:
-            return True, f"OpenRouter: {message}"
-
     if ENABLE_LOCAL_OLLAMA:
         reply = call_local_ollama_text(
             "You are a health check endpoint.",
@@ -5415,18 +5330,9 @@ def check_provider_status() -> tuple[bool, str]:
         )
         if reply:
             return True, "Local Ollama: model is working"
-
-    if blockbrain_message:
-        return False, blockbrain_message
-    if github_message:
-        return False, github_message
-    if openai_message:
-        return False, openai_message
-    if LAST_OPENROUTER_ERROR:
-        return False, LAST_OPENROUTER_ERROR
     if LAST_OLLAMA_ERROR:
         return False, LAST_OLLAMA_ERROR
-    return False, "No working provider found (Blockbrain/GitHub Models/OpenAI/OpenRouter/Ollama)"
+    return False, "No working local provider found (Ollama)"
 
 
 def resolve_tesseract_cmd() -> str:
@@ -5449,26 +5355,15 @@ def resolve_tesseract_cmd() -> str:
 
 
 def openrouter_headers() -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "http://localhost",
-        "X-Title": "SuppSwap",
-    }
+    return {}
 
 
 def openai_headers() -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
-        "Content-Type": "application/json",
-    }
+    return {}
 
 
 def github_models_headers() -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {GITHUB_MODELS_TOKEN}",
-        "Content-Type": "application/json",
-    }
+    return {}
 
 
 def _extract_affordable_tokens(error_text: str, fallback: int = OPENROUTER_DEFAULT_MAX_TOKENS) -> int:
@@ -5484,160 +5379,34 @@ def _extract_affordable_tokens(error_text: str, fallback: int = OPENROUTER_DEFAU
 
 def _openrouter_chat(payload: dict[str, Any]) -> str:
     global LAST_OPENROUTER_ERROR
-    LAST_OPENROUTER_ERROR = ""
-
-    payload = dict(payload)
-    payload.setdefault("max_tokens", OPENROUTER_DEFAULT_MAX_TOKENS)
-
-    try:
-        response = requests.post(
-            OPENROUTER_URL,
-            headers=openrouter_headers(),
-            json=payload,
-            timeout=HTTP_TIMEOUT,
-        )
-    except Exception as exc:
-        LAST_OPENROUTER_ERROR = f"Connection error: {exc}"
-        return ""
-
-    if response.status_code == 402:
-        affordable = _extract_affordable_tokens(response.text)
-        payload["max_tokens"] = affordable
-        try:
-            response = requests.post(
-                OPENROUTER_URL,
-                headers=openrouter_headers(),
-                json=payload,
-                timeout=HTTP_TIMEOUT,
-            )
-        except Exception as exc:
-            LAST_OPENROUTER_ERROR = f"Connection error after 402 retry: {exc}"
-            return ""
-
-    if response.status_code != 200:
-        LAST_OPENROUTER_ERROR = f"OpenRouter error {response.status_code}: {response.text[:220]}"
-        return ""
-
-    try:
-        data = response.json()
-        return data["choices"][0]["message"]["content"].strip()
-    except Exception as exc:
-        LAST_OPENROUTER_ERROR = f"Invalid API response: {exc}"
-        return ""
+    del payload
+    LAST_OPENROUTER_ERROR = "OpenRouter is disabled in offline-only mode"
+    return ""
 
 
 def _openai_chat(payload: dict[str, Any]) -> str:
     global LAST_OPENAI_ERROR
-    LAST_OPENAI_ERROR = ""
-
-    if not OPENAI_API_KEY:
-        LAST_OPENAI_ERROR = "OPENAI_API_KEY is missing"
-        return ""
-
-    payload = dict(payload)
-    payload.setdefault("max_tokens", OPENROUTER_DEFAULT_MAX_TOKENS)
-
-    try:
-        response = requests.post(
-            OPENAI_URL,
-            headers=openai_headers(),
-            json=payload,
-            timeout=HTTP_TIMEOUT,
-        )
-    except Exception as exc:
-        LAST_OPENAI_ERROR = f"OpenAI connection error: {exc}"
-        return ""
-
-    if response.status_code != 200:
-        LAST_OPENAI_ERROR = f"OpenAI error {response.status_code}: {response.text[:220]}"
-        return ""
-
-    try:
-        data = response.json()
-        return data["choices"][0]["message"]["content"].strip()
-    except Exception as exc:
-        LAST_OPENAI_ERROR = f"Invalid OpenAI response: {exc}"
-        return ""
+    del payload
+    LAST_OPENAI_ERROR = "OpenAI is disabled in offline-only mode"
+    return ""
 
 
 def _github_models_chat(payload: dict[str, Any]) -> str:
     global LAST_GITHUB_MODELS_ERROR
-    LAST_GITHUB_MODELS_ERROR = ""
-
-    if not GITHUB_MODELS_TOKEN:
-        LAST_GITHUB_MODELS_ERROR = "GITHUB_MODELS_TOKEN is missing"
-        return ""
-
-    payload = dict(payload)
-    payload.setdefault("max_tokens", OPENROUTER_DEFAULT_MAX_TOKENS)
-
-    try:
-        response = requests.post(
-            GITHUB_MODELS_URL,
-            headers=github_models_headers(),
-            json=payload,
-            timeout=HTTP_TIMEOUT,
-        )
-    except Exception as exc:
-        LAST_GITHUB_MODELS_ERROR = f"GitHub Models connection error: {exc}"
-        return ""
-
-    if response.status_code != 200:
-        LAST_GITHUB_MODELS_ERROR = f"GitHub Models error {response.status_code}: {response.text[:220]}"
-        return ""
-
-    try:
-        data = response.json()
-        return data["choices"][0]["message"]["content"].strip()
-    except Exception as exc:
-        LAST_GITHUB_MODELS_ERROR = f"Invalid GitHub Models response: {exc}"
-        return ""
+    del payload
+    LAST_GITHUB_MODELS_ERROR = "GitHub Models is disabled in offline-only mode"
+    return ""
 
 
 def blockbrain_headers() -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {BLOCKBRAIN_API_KEY}",
-        "Content-Type": "application/json",
-    }
+    return {}
 
 
 def _blockbrain_chat(payload: dict[str, Any]) -> str:
     global LAST_BLOCKBRAIN_ERROR
-    LAST_BLOCKBRAIN_ERROR = ""
-
-    if not BLOCKBRAIN_API_KEY:
-        LAST_BLOCKBRAIN_ERROR = "BLOCKBRAIN_API_KEY is missing"
-        return ""
-
-    try:
-        response = requests.post(
-            BLOCKBRAIN_CHAT_ENDPOINT,
-            headers=blockbrain_headers(),
-            json=dict(payload),
-            timeout=HTTP_TIMEOUT,
-        )
-    except Exception as exc:
-        LAST_BLOCKBRAIN_ERROR = f"Blockbrain connection error: {exc}"
-        return ""
-
-    if response.status_code != 200:
-        LAST_BLOCKBRAIN_ERROR = f"Blockbrain error {response.status_code}: {response.text[:220]}"
-        return ""
-
-    try:
-        data = response.json()
-        if isinstance(data, dict):
-            if isinstance(data.get("response"), str):
-                return data["response"].strip()
-            if isinstance(data.get("result"), str):
-                return data["result"].strip()
-            if isinstance(data.get("message"), str):
-                return data["message"].strip()
-        LAST_BLOCKBRAIN_ERROR = "Unexpected Blockbrain response format"
-        return ""
-    except Exception as exc:
-        LAST_BLOCKBRAIN_ERROR = f"Invalid Blockbrain response: {exc}"
-        return ""
+    del payload
+    LAST_BLOCKBRAIN_ERROR = "Blockbrain is disabled in offline-only mode"
+    return ""
 
 
 def _ollama_chat(system_prompt: str, user_prompt: str) -> str:
@@ -5714,43 +5483,7 @@ def call_local_ollama_text(system_prompt: str, user_prompt: str) -> str:
 def call_openrouter_text(system_prompt: str, user_prompt: str, model: str | None = None) -> str:
     global LAST_TEXT_PROVIDER
     LAST_TEXT_PROVIDER = ""
-
-    # Try Blockbrain first (primary provider)
-    blockbrain_reply = call_blockbrain_text(system_prompt, user_prompt, model)
-    if blockbrain_reply:
-        LAST_TEXT_PROVIDER = "Blockbrain"
-        return blockbrain_reply
-
-    payload = {
-        "model": model or OPENROUTER_MODEL_TEXT,
-        "temperature": 0,
-        "max_tokens": OPENROUTER_DEFAULT_MAX_TOKENS,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-    }
-    if GITHUB_MODELS_TOKEN:
-        github_payload = dict(payload)
-        github_payload["model"] = GITHUB_MODELS_MODEL_TEXT
-        github_reply = _github_models_chat(github_payload)
-        if github_reply:
-            LAST_TEXT_PROVIDER = "GitHub Models"
-            return github_reply
-
-    if OPENAI_API_KEY:
-        openai_payload = dict(payload)
-        openai_payload["model"] = OPENAI_MODEL_TEXT
-        openai_reply = _openai_chat(openai_payload)
-        if openai_reply:
-            LAST_TEXT_PROVIDER = "OpenAI"
-            return openai_reply
-
-    if OPENROUTER_API_KEY:
-        openrouter_reply = _openrouter_chat(payload)
-        if openrouter_reply:
-            LAST_TEXT_PROVIDER = "OpenRouter"
-            return openrouter_reply
+    del model
 
     ollama_reply = call_local_ollama_text(system_prompt, user_prompt)
     if ollama_reply:
@@ -5809,64 +5542,29 @@ def _build_vision_extraction_prompt() -> tuple[str, str]:
 
 
 def call_openrouter_vision_ocr(image_bytes: bytes) -> str:
+    global LAST_OLLAMA_ERROR
     global LAST_VISION_PROVIDER
     LAST_VISION_PROVIDER = ""
+    local_ocr_text = try_tesseract_ocr(image_bytes)
+    if not local_ocr_text:
+        LAST_OLLAMA_ERROR = "Local OCR returned no text"
+        return ""
 
-    # Try Blockbrain first (primary provider)
-    blockbrain_reply = call_blockbrain_vision(image_bytes)
-    if blockbrain_reply:
-        LAST_VISION_PROVIDER = "Blockbrain"
-        return blockbrain_reply
+    system_prompt, _ = _build_vision_extraction_prompt()
+    user_prompt = (
+        "You are refining OCR output from a supplement label using offline OCR text only. "
+        "Return clean supplement facts text with one nutrient per line when possible, preserving doses and units. "
+        "Do not invent values.\n\n"
+        f"OCR TEXT:\n{local_ocr_text}"
+    )
 
-    b64 = base64.b64encode(image_bytes).decode("utf-8")
-    image_url = f"data:image/jpeg;base64,{b64}"
+    refined_text = call_local_ollama_text(system_prompt, user_prompt)
+    if refined_text and passes_extraction_gate(refined_text):
+        LAST_VISION_PROVIDER = "Local Ollama + Tesseract"
+        return refined_text
 
-    system_prompt, user_prompt = _build_vision_extraction_prompt()
-
-    payload = {
-        "model": OPENROUTER_MODEL_VISION,
-        "temperature": 0,
-        "max_tokens": OPENROUTER_DEFAULT_MAX_TOKENS,
-        "messages": [
-            {
-                "role": "system",
-                "content": system_prompt,
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": user_prompt,
-                    },
-                    {"type": "image_url", "image_url": {"url": image_url}},
-                ],
-            },
-        ],
-    }
-    if GITHUB_MODELS_TOKEN:
-        github_payload = dict(payload)
-        github_payload["model"] = GITHUB_MODELS_MODEL_VISION
-        github_reply = _github_models_chat(github_payload)
-        if github_reply:
-            LAST_VISION_PROVIDER = "GitHub Models"
-            return github_reply
-
-    if OPENAI_API_KEY:
-        openai_payload = dict(payload)
-        openai_payload["model"] = OPENAI_MODEL_VISION
-        openai_reply = _openai_chat(openai_payload)
-        if openai_reply:
-            LAST_VISION_PROVIDER = "OpenAI"
-            return openai_reply
-
-    if OPENROUTER_API_KEY:
-        openrouter_reply = _openrouter_chat(payload)
-        if openrouter_reply:
-            LAST_VISION_PROVIDER = "OpenRouter"
-            return openrouter_reply
-
-    return ""
+    LAST_VISION_PROVIDER = "Tesseract"
+    return local_ocr_text
 
 
 
@@ -6988,7 +6686,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
     with tab_analyze:
         st.subheader("Provide your supplement input")
 
-        if st.button("Check API key/token", use_container_width=True, key="check_provider_health"):
+        if st.button("Check local model status", use_container_width=True, key="check_provider_health"):
             ok, message = check_provider_status()
             if ok:
                 st.success(message)
@@ -7035,18 +6733,14 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     image_bytes = uploaded_image.read()
 
                 if image_bytes:
-                    status.write("Step 2/4: OCR from image (LLM vision first, Tesseract fallback)")
+                    status.write("Step 2/4: OCR from image (Tesseract first, local LLM refinement second)")
                     ocr_text = call_openrouter_vision_ocr(image_bytes)
                     if ocr_text and LAST_VISION_PROVIDER:
                         image_provider_label = LAST_VISION_PROVIDER
                     if not ocr_text:
-                        if LAST_OPENROUTER_ERROR:
-                            status.write(f"OpenRouter vision issue: {LAST_OPENROUTER_ERROR}")
-                        if LAST_OPENAI_ERROR:
-                            status.write(f"OpenAI vision issue: {LAST_OPENAI_ERROR}")
-                        if LAST_GITHUB_MODELS_ERROR:
-                            status.write(f"GitHub Models vision issue: {LAST_GITHUB_MODELS_ERROR}")
-                        status.write("Cloud OCR unavailable, trying local Tesseract fallback")
+                        if LAST_OLLAMA_ERROR:
+                            status.write(f"Local LLM refinement issue: {LAST_OLLAMA_ERROR}")
+                        status.write("Local LLM refinement unavailable, using direct Tesseract OCR fallback")
                         ocr_text = try_tesseract_ocr(image_bytes)
                         if ocr_text:
                             LAST_VISION_PROVIDER = "Tesseract"
