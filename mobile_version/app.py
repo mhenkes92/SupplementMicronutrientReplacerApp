@@ -5371,9 +5371,17 @@ STRUCTURED_CORE_RECOVERY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 
-def _recover_core_micronutrient_rows_from_text(input_text: str) -> list[dict[str, Any]]:
+def _recover_core_micronutrient_rows_from_text(
+    input_text: str,
+    existing_rows: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     recovered: list[dict[str, Any]] = []
     seen: set[tuple[str, float | None, str]] = set()
+    existing_group_keys: set[str] = set()
+    for row in existing_rows or []:
+        group_key = _structured_component_group_key(str(row.get("component", "") or ""))
+        if group_key:
+            existing_group_keys.add(group_key)
     lines = [str(raw_line or "").strip() for raw_line in input_text.splitlines()]
     for idx, line in enumerate(lines):
         if not line:
@@ -5390,6 +5398,9 @@ def _recover_core_micronutrient_rows_from_text(input_text: str) -> list[dict[str
                 candidate_line = f"{line} {next_line}".strip()
 
         for canonical_component, pattern in STRUCTURED_CORE_RECOVERY_PATTERNS:
+            target_group_key = _structured_component_group_key(canonical_component)
+            if target_group_key and target_group_key in existing_group_keys:
+                continue
             for match in pattern.finditer(candidate_line):
                 right_window = candidate_line[match.end():match.end() + 72]
                 left_window = candidate_line[max(0, match.start() - 18):match.start()]
@@ -5404,6 +5415,8 @@ def _recover_core_micronutrient_rows_from_text(input_text: str) -> list[dict[str
                 dose_unit = str(dose_match.group("unit") or "")
                 component, dose_value, dose_unit = _repair_ocr_dose_entry(canonical_component, dose_value, dose_unit)
                 if dose_value is None or not dose_unit:
+                    continue
+                if dose_value <= 0:
                     continue
                 key = (component, dose_value, dose_unit)
                 if key in seen:
@@ -6788,7 +6801,6 @@ def _collapse_structured_label_rows(rows: list[dict[str, Any]]) -> list[dict[str
         best = max(
             enumerate(group_rows),
             key=lambda item: (
-                int(item[1].get("_structured_recovery_score", 0) or 0),
                 _structured_preferred_name_rank(group_key, str(item[1].get("component", "") or "")),
                 _structured_unit_rank(group_key, str(item[1].get("dose_unit", "") or "")),
                 0 if item[0] in decimal_shift_larger_ids else 1,
@@ -7026,7 +7038,12 @@ def try_tesseract_ocr(image_bytes: bytes) -> str:
                 conf = -1.0
             # Keep low-confidence tokens that look like nutrient names, doses, or units.
             # Threshold kept low (10) so curved/distorted label areas are not silently dropped.
-            nutrient_kw = re.search(r"\d|mg|mcg|ug|iu|vitamin|mineral|zinc|iron|calcium|selenium|niacin|biotin", word, re.I)
+            nutrient_kw = re.search(
+                r"\d|mg|mcg|meg|ug|iu|vitamin|mineral|zinc|iron|calcium|selenium|niacin|biotin|"
+                r"copper|chromium|molybdenum|manganese|potassium|phosph(?:or|0r)",
+                word,
+                re.I,
+            )
             if conf >= 0 and conf < 10 and not nutrient_kw:
                 continue
             try:
@@ -7915,7 +7932,7 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
     best_rows = _apply_fuzzy_nutrient_correction_to_rows(best_rows)
 
     if has_structured_table_cues:
-        best_rows.extend(_recover_core_micronutrient_rows_from_text(parse_input_text))
+        best_rows.extend(_recover_core_micronutrient_rows_from_text(parse_input_text, existing_rows=best_rows))
         best_rows = _collapse_structured_label_rows(best_rows)
 
     # Stage 4: unit domain + energy sanity validation (non-destructive — adds warnings).
