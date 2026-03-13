@@ -52,8 +52,8 @@ load_dotenv()
 load_dotenv(APP_DIR / ".env")
 
 # Offline-only configuration.
-# Cloud LLM providers are intentionally disabled. All synthesis routes through the
-# local Ollama runtime, while OCR remains local via Tesseract.
+# Cloud LLM providers are intentionally disabled. OCR remains local, and all local
+# language-model features route through a llama.cpp-backed Phi GGUF runtime.
 BLOCKBRAIN_API_KEY = ""
 BLOCKBRAIN_BOT_ID = ""
 
@@ -67,11 +67,6 @@ GITHUB_MODELS_TOKEN = ""
 GITHUB_MODELS_MODEL_TEXT = ""
 GITHUB_MODELS_MODEL_VISION = ""
 LOCAL_LLM_RUNTIME = os.getenv("LOCAL_LLM_RUNTIME", "llama_cpp").strip().lower()
-ENABLE_LOCAL_OLLAMA = False
-AUTO_BOOTSTRAP_LOCAL_OLLAMA = False
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip()
-OLLAMA_MODEL_TEXT = ""
-OLLAMA_MODEL_VISION = ""
 
 LLAMA_CPP_AUTO_BOOTSTRAP = os.getenv("LLAMA_CPP_AUTO_BOOTSTRAP", "1").strip() != "0"
 LLAMA_CPP_MODEL_REPO = os.getenv("LLAMA_CPP_MODEL_REPO", "microsoft/Phi-3-mini-4k-instruct-gguf").strip()
@@ -131,7 +126,7 @@ _FALLBACK_STATE = {
     "last_openai_error": "",
     "last_github_models_error": "",
     "last_blockbrain_error": "",
-    "last_ollama_error": "",
+    "last_local_llm_error": "",
     "last_vision_provider": "",
     "last_text_provider": "",
     "last_url_parse_reason": "",
@@ -161,11 +156,15 @@ LAST_OPENROUTER_ERROR = ""
 LAST_OPENAI_ERROR = ""
 LAST_GITHUB_MODELS_ERROR = ""
 LAST_BLOCKBRAIN_ERROR = ""
-LAST_OLLAMA_ERROR = ""
+LAST_LOCAL_LLM_ERROR = ""
 LAST_VISION_PROVIDER = ""
 LAST_TEXT_PROVIDER = ""
 LAST_URL_PARSE_REASON = ""
 LAST_RAG_ERROR = ""
+
+
+def _local_text_llm_enabled() -> bool:
+    return LOCAL_LLM_RUNTIME == "llama_cpp"
 
 ALLOWED_DOSE_UNITS: set[str] = {"", "mg", "mcg", "g", "iu", "kcal"}
 MAX_REASONABLE_DOSE_BY_UNIT: dict[str, float] = {
@@ -1039,7 +1038,7 @@ def resolve_component_to_nutrients(
         if close:
             add_candidate(close[0], "medium", "fuzzy", priority=4)
 
-    if not resolved and ENABLE_LLM_COMPONENT_MAPPING and ENABLE_LOCAL_OLLAMA:
+    if not resolved and ENABLE_LLM_COMPONENT_MAPPING and _local_text_llm_enabled():
         llm_prompt = (
             "Map this supplement component to one USDA nutrient name if clearly mappable. "
             "Return only the nutrient name or NONE."
@@ -2161,7 +2160,7 @@ def fetch_dataforseo_shopping_offers(food_name: str, country: str, currency: str
 
 
 def estimate_price_with_llm(food_name: str, country: str, currency: str) -> dict[str, Any] | None:
-    if not ENABLE_LOCAL_OLLAMA:
+    if not _local_text_llm_enabled():
         return None
 
     system_prompt = (
@@ -3111,7 +3110,7 @@ def find_local_meal_suggestions(requirements: list[dict[str, Any]], max_results:
 def generate_llm_meal_suggestions(requirements: list[dict[str, Any]], max_results: int = 3) -> list[dict[str, Any]]:
     if not requirements:
         return []
-    if not ENABLE_LOCAL_OLLAMA:
+    if not _local_text_llm_enabled():
         return []
 
     target_lines: list[str] = []
@@ -5824,7 +5823,7 @@ def _run_local_command(command: list[str], timeout: int = 120) -> tuple[bool, st
 
 
 def _ensure_llama_cpp_runtime() -> bool:
-    global LAST_OLLAMA_ERROR
+    global LAST_LOCAL_LLM_ERROR
     if LLAMA_CPP_BOOTSTRAP_STATE.get("runtime_ready"):
         return True
 
@@ -5835,7 +5834,7 @@ def _ensure_llama_cpp_runtime() -> bool:
         LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = ""
         return True
     except Exception as exc:
-        LAST_OLLAMA_ERROR = f"llama.cpp Python bindings unavailable: {exc}"
+        LAST_LOCAL_LLM_ERROR = f"llama.cpp Python bindings unavailable: {exc}"
 
     if LLAMA_CPP_CLI_PATH.exists():
         LLAMA_CPP_BOOTSTRAP_STATE["runtime_checked"] = True
@@ -5844,7 +5843,7 @@ def _ensure_llama_cpp_runtime() -> bool:
         return True
 
     if not LLAMA_CPP_AUTO_BOOTSTRAP or os.name != "nt":
-        LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = LAST_OLLAMA_ERROR
+        LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = LAST_LOCAL_LLM_ERROR
         return False
 
     try:
@@ -5873,19 +5872,19 @@ def _ensure_llama_cpp_runtime() -> bool:
             LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = ""
             return True
     except Exception as exc:
-        LAST_OLLAMA_ERROR = f"Failed to bootstrap llama.cpp runtime: {exc}"
+        LAST_LOCAL_LLM_ERROR = f"Failed to bootstrap llama.cpp runtime: {exc}"
 
-    LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = LAST_OLLAMA_ERROR
+    LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = LAST_LOCAL_LLM_ERROR
     return False
 
 
 def _ensure_phi_model_available() -> bool:
-    global LAST_OLLAMA_ERROR
+    global LAST_LOCAL_LLM_ERROR
     if LLAMA_CPP_MODEL_PATH.exists():
         LLAMA_CPP_BOOTSTRAP_STATE["model_ready"] = True
         return True
     if not LLAMA_CPP_AUTO_BOOTSTRAP:
-        LAST_OLLAMA_ERROR = f"Phi GGUF model missing: {LLAMA_CPP_MODEL_PATH}"
+        LAST_LOCAL_LLM_ERROR = f"Phi GGUF model missing: {LLAMA_CPP_MODEL_PATH}"
         return False
     try:
         from huggingface_hub import hf_hub_download
@@ -5901,15 +5900,15 @@ def _ensure_phi_model_available() -> bool:
             LLAMA_CPP_BOOTSTRAP_STATE["model_ready"] = True
             return True
     except Exception as exc:
-        LAST_OLLAMA_ERROR = f"Failed to download Phi GGUF model: {exc}"
+        LAST_LOCAL_LLM_ERROR = f"Failed to download Phi GGUF model: {exc}"
         return False
-    LAST_OLLAMA_ERROR = f"Phi GGUF model missing after download attempt: {LLAMA_CPP_MODEL_PATH}"
+    LAST_LOCAL_LLM_ERROR = f"Phi GGUF model missing after download attempt: {LLAMA_CPP_MODEL_PATH}"
     return False
 
 
 def _get_llama_cpp_instance() -> Any | None:
     global LLAMA_CPP_INSTANCE
-    global LAST_OLLAMA_ERROR
+    global LAST_LOCAL_LLM_ERROR
 
     if LLAMA_CPP_INSTANCE is not None:
         return LLAMA_CPP_INSTANCE
@@ -5930,18 +5929,18 @@ def _get_llama_cpp_instance() -> Any | None:
         )
         return LLAMA_CPP_INSTANCE
     except Exception as exc:
-        LAST_OLLAMA_ERROR = f"Failed to load Phi GGUF with llama.cpp: {exc}"
+        LAST_LOCAL_LLM_ERROR = f"Failed to load Phi GGUF with llama.cpp: {exc}"
         return None
 
 
 def _run_llama_cpp_cli(prompt: str) -> str:
-    global LAST_OLLAMA_ERROR
+    global LAST_LOCAL_LLM_ERROR
     if not _ensure_llama_cpp_runtime():
         return ""
     if not _ensure_phi_model_available():
         return ""
     if not LLAMA_CPP_CLI_PATH.exists():
-        LAST_OLLAMA_ERROR = "llama.cpp CLI runtime is unavailable"
+        LAST_LOCAL_LLM_ERROR = "llama.cpp CLI runtime is unavailable"
         return ""
 
     command = [
@@ -5965,14 +5964,14 @@ def _run_llama_cpp_cli(prompt: str) -> str:
 
     ok, output = _run_local_command(command, timeout=600)
     if not ok:
-        LAST_OLLAMA_ERROR = f"llama.cpp CLI inference failed: {output[:240]}"
+        LAST_LOCAL_LLM_ERROR = f"llama.cpp CLI inference failed: {output[:240]}"
         return ""
     return str(output or "").strip()
 
 
-def _ollama_chat(system_prompt: str, user_prompt: str) -> str:
-    global LAST_OLLAMA_ERROR
-    LAST_OLLAMA_ERROR = ""
+def _local_llm_chat(system_prompt: str, user_prompt: str) -> str:
+    global LAST_LOCAL_LLM_ERROR
+    LAST_LOCAL_LLM_ERROR = ""
 
     llm = _get_llama_cpp_instance()
     prompt = (
@@ -5994,10 +5993,10 @@ def _ollama_chat(system_prompt: str, user_prompt: str) -> str:
         content = str((((response or {}).get("choices") or [{}])[0].get("text") or "")).strip()
         if content:
             return content
-        LAST_OLLAMA_ERROR = "Empty llama.cpp response"
+        LAST_LOCAL_LLM_ERROR = "Empty llama.cpp response"
         return ""
     except Exception as exc:
-        LAST_OLLAMA_ERROR = f"llama.cpp inference error: {exc}"
+        LAST_LOCAL_LLM_ERROR = f"llama.cpp inference error: {exc}"
         return ""
 
 
@@ -6023,16 +6022,8 @@ def call_blockbrain_vision(image_bytes: bytes) -> str:
     return _blockbrain_chat(payload)
 
 
-def call_local_ollama_text(system_prompt: str, user_prompt: str) -> str:
-    return _ollama_chat(system_prompt, user_prompt)
-
-
-def call_local_ollama_vision_ocr(image_bytes: bytes, prompt: str) -> str:
-    global LAST_OLLAMA_ERROR
-    LAST_OLLAMA_ERROR = ""
-    del image_bytes, prompt
-    LAST_OLLAMA_ERROR = "Vision model path disabled: using PaddleOCR + Phi-3-mini GGUF text cleanup instead"
-    return ""
+def call_local_text_llm(system_prompt: str, user_prompt: str) -> str:
+    return _local_llm_chat(system_prompt, user_prompt)
 
 
 def call_openrouter_text(system_prompt: str, user_prompt: str, model: str | None = None) -> str:
@@ -6040,10 +6031,10 @@ def call_openrouter_text(system_prompt: str, user_prompt: str, model: str | None
     LAST_TEXT_PROVIDER = ""
     del model
 
-    ollama_reply = call_local_ollama_text(system_prompt, user_prompt)
-    if ollama_reply:
-        LAST_TEXT_PROVIDER = "Local Ollama"
-        return ollama_reply
+    local_reply = call_local_text_llm(system_prompt, user_prompt)
+    if local_reply:
+        LAST_TEXT_PROVIDER = "Local Phi-3-mini GGUF"
+        return local_reply
 
     return ""
 
@@ -6168,8 +6159,8 @@ def try_paddleocr_ocr(image_bytes: bytes) -> str:
         return ""
 
 
-def call_openrouter_vision_ocr(image_bytes: bytes) -> str:
-    global LAST_OLLAMA_ERROR
+def extract_image_text_with_local_stack(image_bytes: bytes) -> str:
+    global LAST_LOCAL_LLM_ERROR
     global LAST_VISION_PROVIDER
     LAST_VISION_PROVIDER = ""
 
@@ -6179,7 +6170,7 @@ def call_openrouter_vision_ocr(image_bytes: bytes) -> str:
     local_ocr_text = "\n".join([x for x in [paddle_text, tesseract_text] if str(x or "").strip()]).strip()
 
     if not local_ocr_text:
-        LAST_OLLAMA_ERROR = "Local OCR returned no text"
+        LAST_LOCAL_LLM_ERROR = "Local OCR returned no text"
         return ""
 
     structured_prompt = (
@@ -6189,7 +6180,7 @@ def call_openrouter_vision_ocr(image_bytes: bytes) -> str:
         f"{local_ocr_text}"
     )
 
-    refined_text = call_local_ollama_text(system_prompt, structured_prompt)
+    refined_text = call_local_text_llm(system_prompt, structured_prompt)
     refined_text = _structured_vlm_response_to_text(refined_text)
     merged_candidates = [x for x in [refined_text, local_ocr_text] if str(x or "").strip()]
     if merged_candidates:
@@ -6205,7 +6196,7 @@ def call_openrouter_vision_ocr(image_bytes: bytes) -> str:
         LAST_VISION_PROVIDER = "PaddleOCR + Tesseract"
         return local_ocr_text
 
-    LAST_OLLAMA_ERROR = "No image extraction route produced usable text"
+    LAST_LOCAL_LLM_ERROR = "No image extraction route produced usable text"
     return ""
 
 
@@ -6931,7 +6922,7 @@ def extract_nutrition_doses_from_product_image(product_url: str) -> list[dict[st
             logger.info("Trying nutrition extraction from image: %s", image_url[:120])
 
             vision_rows: list[dict[str, Any]] = []
-            vision_text = call_openrouter_vision_ocr(image_bytes)
+            vision_text = extract_image_text_with_local_stack(image_bytes)
             if vision_text:
                 vision_rows = _rows_with_doses(vision_text)
 
@@ -7080,7 +7071,7 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
     merged_meta: dict[str, Any] = {"issues": []}
     merged_score = 0.0
 
-    if ENABLE_LOCAL_OLLAMA:
+    if _local_text_llm_enabled():
         llm_with_dose, llm_name_only = _parse_rows_with_local_llm(parse_input_text)
         llm_rows = merge_component_rows(llm_with_dose, llm_name_only)
         llm_expanded = expand_umbrella_components(llm_rows)
@@ -7494,12 +7485,12 @@ The local RAG library is built from curated expert nutrition notes and evidence 
 
                 if image_bytes:
                     status.write("Step 2/4: OCR from image (local LLM extraction primary, deterministic fallback)")
-                    ocr_text = call_openrouter_vision_ocr(image_bytes)
+                    ocr_text = extract_image_text_with_local_stack(image_bytes)
                     if ocr_text and LAST_VISION_PROVIDER:
                         image_provider_label = LAST_VISION_PROVIDER
                     if not ocr_text:
-                        if LAST_OLLAMA_ERROR:
-                            status.write(f"Local LLM refinement issue: {LAST_OLLAMA_ERROR}")
+                        if LAST_LOCAL_LLM_ERROR:
+                            status.write(f"Local LLM refinement issue: {LAST_LOCAL_LLM_ERROR}")
                         status.write("Local LLM refinement unavailable, using direct Tesseract OCR fallback")
                         ocr_text = try_tesseract_ocr(image_bytes)
                         if ocr_text:
