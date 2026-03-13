@@ -14,6 +14,7 @@ import sqlite3
 import statistics
 import sys
 import subprocess
+import time
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,10 +66,40 @@ GITHUB_MODELS_TOKEN = ""
 GITHUB_MODELS_MODEL_TEXT = ""
 GITHUB_MODELS_MODEL_VISION = ""
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip()
-OLLAMA_MODEL_TEXT = os.getenv("OLLAMA_MODEL_TEXT", "llama3.1:8b-instruct-q4_K_M").strip()
-OLLAMA_MODEL_VISION = os.getenv("OLLAMA_MODEL_VISION", "").strip()
+OLLAMA_MODEL_TEXT = os.getenv("OLLAMA_MODEL_TEXT", "phi3.5").strip()
+OLLAMA_MODEL_VISION = os.getenv("OLLAMA_MODEL_VISION", "llava-phi3").strip()
 ENABLE_LOCAL_OLLAMA = os.getenv("ENABLE_LOCAL_OLLAMA", "1").strip() != "0"
+AUTO_BOOTSTRAP_LOCAL_OLLAMA = os.getenv("AUTO_BOOTSTRAP_LOCAL_OLLAMA", "1").strip() != "0"
 TESSERACT_CMD = os.getenv("TESSERACT_CMD", "")
+
+# Phi-primary local model policy.
+# Ollama does not currently expose a dedicated Phi-3.5 vision tag, so the closest
+# practical Phi-family multimodal model is llava-phi3.  Keep Phi-3.5 as the shared
+# text model for other in-app LLM features.
+OLLAMA_TEXT_MODEL_CANDIDATES = [
+    x.strip()
+    for x in os.getenv(
+        "OLLAMA_TEXT_MODEL_CANDIDATES",
+        f"{OLLAMA_MODEL_TEXT},phi3.5,llama3.1:8b-instruct-q4_K_M",
+    ).split(",")
+    if x.strip()
+]
+OLLAMA_VISION_MODEL_CANDIDATES = [
+    x.strip()
+    for x in os.getenv(
+        "OLLAMA_VISION_MODEL_CANDIDATES",
+        f"{OLLAMA_MODEL_VISION},llava-phi3,moondream,qwen2.5vl:3b",
+    ).split(",")
+    if x.strip()
+]
+OLLAMA_WINDOWS_INSTALL_ID = "Ollama.Ollama"
+OLLAMA_BOOTSTRAP_STATE: dict[str, Any] = {
+    "runtime_checked": False,
+    "runtime_ready": False,
+    "runtime_error": "",
+    "text_model_ready": False,
+    "vision_model_ready": False,
+}
 
 OPENROUTER_URL = ""
 OPENAI_URL = ""
@@ -5780,12 +5811,200 @@ def _blockbrain_chat(payload: dict[str, Any]) -> str:
     return ""
 
 
+def _resolve_ollama_command() -> str:
+    cmd = shutil.which("ollama")
+    if cmd:
+        return cmd
+    if os.name == "nt":
+        candidates = [
+            Path(os.getenv("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama.exe",
+            Path("C:/Program Files/Ollama/ollama.exe"),
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
+    return ""
+
+
+def _run_local_command(command: list[str], timeout: int = 120) -> tuple[bool, str]:
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        output = (completed.stdout or "") + (completed.stderr or "")
+        return completed.returncode == 0, output.strip()
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _ollama_tags() -> set[str]:
+    base = OLLAMA_BASE_URL.rstrip("/")
+    try:
+        response = requests.get(f"{base}/api/tags", timeout=8)
+        if response.status_code != 200:
+            return set()
+        data = response.json() or {}
+        models = data.get("models", []) or []
+        names: set[str] = set()
+        for model in models:
+            name = str(model.get("name", "") or "").strip()
+            if name:
+                names.add(name)
+                names.add(name.split(":", 1)[0])
+        return names
+    except Exception:
+        return set()
+
+
+def _ollama_server_ready() -> bool:
+    return bool(_ollama_tags())
+
+
+def _start_ollama_service(ollama_cmd: str) -> bool:
+    if not ollama_cmd:
+        return False
+    try:
+        subprocess.Popen(
+            [ollama_cmd, "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            creationflags=(
+                getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                | getattr(subprocess, "DETACHED_PROCESS", 0)
+                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            ),
+        )
+    except Exception:
+        return False
+
+    for _ in range(20):
+        if _ollama_server_ready():
+            return True
+        time.sleep(1.5)
+    return False
+
+
+def _install_ollama_runtime_if_needed() -> bool:
+    if _resolve_ollama_command():
+        return True
+    if os.name != "nt":
+        return False
+    winget_cmd = shutil.which("winget")
+    if not winget_cmd:
+        return False
+    ok, _ = _run_local_command(
+        [
+            winget_cmd,
+            "install",
+            "-e",
+            "--id",
+            OLLAMA_WINDOWS_INSTALL_ID,
+            "--silent",
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+        ],
+        timeout=5400,
+    )
+    return ok and bool(_resolve_ollama_command())
+
+
+def _ensure_ollama_runtime() -> bool:
+    global ENABLE_LOCAL_OLLAMA
+    global LAST_OLLAMA_ERROR
+
+    if OLLAMA_BOOTSTRAP_STATE.get("runtime_ready"):
+        ENABLE_LOCAL_OLLAMA = True
+        return True
+
+    ollama_cmd = _resolve_ollama_command()
+    if not ollama_cmd and AUTO_BOOTSTRAP_LOCAL_OLLAMA:
+        if not _install_ollama_runtime_if_needed():
+            LAST_OLLAMA_ERROR = "Local Ollama runtime is unavailable and automatic install failed"
+            OLLAMA_BOOTSTRAP_STATE["runtime_error"] = LAST_OLLAMA_ERROR
+            return False
+        ollama_cmd = _resolve_ollama_command()
+
+    if not ollama_cmd:
+        LAST_OLLAMA_ERROR = "Local Ollama runtime is not installed"
+        OLLAMA_BOOTSTRAP_STATE["runtime_error"] = LAST_OLLAMA_ERROR
+        return False
+
+    if not _ollama_server_ready():
+        if not _start_ollama_service(ollama_cmd):
+            LAST_OLLAMA_ERROR = "Local Ollama service is not running and auto-start failed"
+            OLLAMA_BOOTSTRAP_STATE["runtime_error"] = LAST_OLLAMA_ERROR
+            return False
+
+    ENABLE_LOCAL_OLLAMA = True
+    OLLAMA_BOOTSTRAP_STATE["runtime_checked"] = True
+    OLLAMA_BOOTSTRAP_STATE["runtime_ready"] = True
+    OLLAMA_BOOTSTRAP_STATE["runtime_error"] = ""
+    return True
+
+
+def _ensure_ollama_model_available(model_name: str) -> bool:
+    global LAST_OLLAMA_ERROR
+    if not model_name:
+        return False
+    tags = _ollama_tags()
+    if model_name in tags or model_name.split(":", 1)[0] in tags:
+        return True
+
+    ollama_cmd = _resolve_ollama_command()
+    if not ollama_cmd:
+        LAST_OLLAMA_ERROR = "Cannot pull Ollama model because ollama executable is missing"
+        return False
+
+    ok, output = _run_local_command([ollama_cmd, "pull", model_name], timeout=7200)
+    if not ok:
+        LAST_OLLAMA_ERROR = f"Failed to pull Ollama model {model_name}: {output[:240]}"
+        return False
+
+    tags = _ollama_tags()
+    if model_name in tags or model_name.split(":", 1)[0] in tags:
+        return True
+    LAST_OLLAMA_ERROR = f"Ollama model {model_name} did not appear after pull"
+    return False
+
+
+def _ensure_local_ollama_capability(needs_vision: bool = False) -> bool:
+    global OLLAMA_MODEL_TEXT
+    global OLLAMA_MODEL_VISION
+    global LAST_OLLAMA_ERROR
+
+    if not _ensure_ollama_runtime():
+        return False
+
+    if needs_vision:
+        candidates = OLLAMA_VISION_MODEL_CANDIDATES or ([OLLAMA_MODEL_VISION] if OLLAMA_MODEL_VISION else [])
+        for candidate in candidates:
+            if _ensure_ollama_model_available(candidate):
+                OLLAMA_MODEL_VISION = candidate
+                OLLAMA_BOOTSTRAP_STATE["vision_model_ready"] = True
+                return True
+        LAST_OLLAMA_ERROR = LAST_OLLAMA_ERROR or "No usable local vision model could be prepared"
+        return False
+
+    candidates = OLLAMA_TEXT_MODEL_CANDIDATES or ([OLLAMA_MODEL_TEXT] if OLLAMA_MODEL_TEXT else [])
+    for candidate in candidates:
+        if _ensure_ollama_model_available(candidate):
+            OLLAMA_MODEL_TEXT = candidate
+            OLLAMA_BOOTSTRAP_STATE["text_model_ready"] = True
+            return True
+    LAST_OLLAMA_ERROR = LAST_OLLAMA_ERROR or "No usable local text model could be prepared"
+    return False
+
+
 def _ollama_chat(system_prompt: str, user_prompt: str) -> str:
     global LAST_OLLAMA_ERROR
     LAST_OLLAMA_ERROR = ""
 
-    if not ENABLE_LOCAL_OLLAMA:
-        LAST_OLLAMA_ERROR = "Local Ollama is disabled"
+    if not _ensure_local_ollama_capability(needs_vision=False):
         return ""
 
     base = OLLAMA_BASE_URL.rstrip("/")
@@ -5855,11 +6074,7 @@ def call_local_ollama_vision_ocr(image_bytes: bytes, prompt: str) -> str:
     global LAST_OLLAMA_ERROR
     LAST_OLLAMA_ERROR = ""
 
-    if not ENABLE_LOCAL_OLLAMA:
-        LAST_OLLAMA_ERROR = "Local Ollama is disabled"
-        return ""
-    if not OLLAMA_MODEL_VISION:
-        LAST_OLLAMA_ERROR = "No local vision model configured (set OLLAMA_MODEL_VISION)"
+    if not _ensure_local_ollama_capability(needs_vision=True):
         return ""
 
     base = OLLAMA_BASE_URL.rstrip("/")
@@ -5917,51 +6132,123 @@ def call_openrouter_text(system_prompt: str, user_prompt: str, model: str | None
 
 
 def _build_vision_extraction_prompt() -> tuple[str, str]:
-    """
-    Build system + user prompts for high-accuracy nutrition label extraction.
-    Uses structured multi-pass approach: table reconstruction → extraction → normalization.
-    """
     system_prompt = (
-        "You are a nutrition label data extraction system.\n\n"
-        "Your task is to extract micronutrients and their doses from a nutrition or supplement label.\n\n"
-        "Follow the steps carefully.\n\n"
-        "STEP 1 — Identify Nutrition Table\n"
-        "Locate the nutrition table. Reconstruct the rows mentally before extracting.\n"
-        "Each row structure: Nutrient | Amount | Unit | % Daily Value\n"
-        "Ignore % Daily Value column.\n\n"
-        "STEP 2 — Extract Micronutrients Only\n"
-        "Ignore macronutrients: Calories, Energy, Fat, Carbohydrates, Sugar, Protein, Salt, Sodium.\n\n"
-        "STEP 3 — Map Synonyms to Canonical Names\n"
-        "Thiamine→Vitamin B1, Riboflavin→Vitamin B2, Niacin→Vitamin B3, Pantothenic Acid→Vitamin B5,\n"
-        "Biotin→Vitamin B7, Folate/Folic Acid→Vitamin B9, Cobalamin/Cyanocobalamin/Methylcobalamin→Vitamin B12,\n"
-        "Retinol/Beta-Carotene→Vitamin A, Cholecalciferol/Ergocalciferol→Vitamin D,\n"
-        "Phylloquinone/Menaquinone→Vitamin K.\n\n"
-        "STEP 4 — Normalize Units\n"
-        "µg or mcg → mcg, mg → mg, g → mg (multiply by 1000), IU → IU\n\n"
-        "STEP 5 — Extraction Rules\n"
-        "• Only extract nutrients explicitly visible in the image.\n"
-        "• Do NOT infer missing nutrients.\n"
-        "• If amount cannot be read return null.\n"
-        "• Return NO explanations, only JSON.\n"
+        "You are an AI system specialized in extracting structured nutrition information "
+        "from images of supplement or food labels.\n\n"
+        "TASK\n"
+        "Analyze the image and extract:\n"
+        "1. Nutrition information\n"
+        "2. Ingredient list\n\n"
+        "RULES\n"
+        "- Only extract information that is clearly visible.\n"
+        "- Do not invent or guess values.\n"
+        "- Preserve original units (mg, mcg, IU, g).\n"
+        "- Normalize nutrient names to standard names.\n"
+        "- If nutrition information appears in a table, convert rows into individual nutrient entries.\n"
+        "- Ignore %RDA or % Daily Value unless explicitly requested.\n"
+        "- Extract ingredients as a flat list split by commas or semicolons.\n"
+        "- Remove ingredient phrases like may contain, colors, INS additives when possible.\n"
+        "- If text confidence is low or partially unreadable, set uncertain=true.\n"
+        "- Output JSON only. No markdown, no commentary.\n"
     )
-    
+
     user_prompt = (
-        "Extract micronutrients and their doses from this label.\n\n"
-        "Micronutrient whitelist (extract only these):\n"
-        "Vitamins: Vitamin A, Vitamin B1, Vitamin B2, Vitamin B3, Vitamin B5, Vitamin B6, "
-        "Vitamin B7, Vitamin B9, Vitamin B12, Vitamin C, Vitamin D, Vitamin E, Vitamin K\n"
-        "Minerals: Calcium, Magnesium, Iron, Zinc, Selenium, Copper, Manganese, Iodine, "
-        "Chromium, Molybdenum, Potassium, Phosphorus\n\n"
-        "Return JSON only:\n"
+        "Return JSON only in this schema:\n"
         "{\n"
-        '  "nutrients": [\n'
-        '    {"name": "Vitamin C", "amount": 80, "unit": "mg"},\n'
-        '    {"name": "Magnesium", "amount": 375, "unit": "mg"}\n'
-        "  ]\n"
+        '  "nutrition": [\n'
+        '    {"nutrient": "Vitamin C", "amount": 40, "unit": "mg"}\n'
+        "  ],\n"
+        '  "ingredients": ["dicalcium phosphate", "potassium chloride"],\n'
+        '  "uncertain": false\n'
         "}\n"
     )
-    
+
     return system_prompt, user_prompt
+
+
+def _extract_first_json_object(text: str) -> str:
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.S | re.I)
+    if fence_match:
+        return fence_match.group(1).strip()
+    start = raw.find("{")
+    if start < 0:
+        return ""
+    depth = 0
+    for i, ch in enumerate(raw[start:], start=start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return raw[start:i + 1].strip()
+    return ""
+
+
+def _coerce_structured_vlm_response(raw_text: str) -> dict[str, Any]:
+    json_blob = _extract_first_json_object(raw_text)
+    if not json_blob:
+        return {}
+    try:
+        data = json.loads(json_blob)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _structured_vlm_response_to_text(raw_text: str) -> str:
+    data = _coerce_structured_vlm_response(raw_text)
+    if not data:
+        return str(raw_text or "").strip()
+
+    nutrition_rows = data.get("nutrition", []) or data.get("nutrients", []) or []
+    ingredients = data.get("ingredients", []) or []
+    lines: list[str] = []
+
+    for row in nutrition_rows:
+        if not isinstance(row, dict):
+            continue
+        nutrient = str(row.get("nutrient", row.get("name", "")) or "").strip()
+        amount = row.get("amount", row.get("dose_value", ""))
+        unit = str(row.get("unit", row.get("dose_unit", "")) or "").strip()
+        if nutrient and amount not in (None, "") and unit:
+            lines.append(f"{nutrient} {amount} {unit}")
+        elif nutrient:
+            lines.append(nutrient)
+
+    flat_ingredients = [str(x or "").strip() for x in ingredients if str(x or "").strip()]
+    if flat_ingredients:
+        lines.append("INGREDIENTS: " + ", ".join(flat_ingredients))
+
+    if data.get("uncertain"):
+        lines.append("uncertain true")
+
+    return "\n".join(lines).strip()
+
+
+def try_paddleocr_ocr(image_bytes: bytes) -> str:
+    try:
+        import numpy as np
+        from paddleocr import PaddleOCR
+
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        img_np = np.array(image)
+        ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
+        result = ocr.ocr(img_np, cls=True) or []
+        lines: list[str] = []
+        for block in result:
+            for row in block or []:
+                try:
+                    text = str(((row or [None, [""]])[1] or [""])[0] or "").strip()
+                except Exception:
+                    text = ""
+                if text:
+                    lines.append(text)
+        return "\n".join(lines).strip()
+    except Exception:
+        return ""
 
 
 def call_openrouter_vision_ocr(image_bytes: bytes) -> str:
@@ -5969,45 +6256,49 @@ def call_openrouter_vision_ocr(image_bytes: bytes) -> str:
     global LAST_VISION_PROVIDER
     LAST_VISION_PROVIDER = ""
 
-    system_prompt, _ = _build_vision_extraction_prompt()
+    system_prompt, user_prompt = _build_vision_extraction_prompt()
+    paddle_text = try_paddleocr_ocr(image_bytes)
+    local_ocr_text = paddle_text or try_tesseract_ocr(image_bytes)
     vision_prompt = (
-        "Extract supplement facts text from this image. "
-        "Return clean text with one nutrient per line when possible, preserving doses/units. "
-        "Do not invent values."
+        f"{system_prompt}\n\n"
+        f"{user_prompt}\n\n"
+        "OCR SEED TEXT (may contain recognition errors; use it only as a hint, not as ground truth):\n"
+        f"{local_ocr_text[:10000]}"
     )
-    vision_text = call_local_ollama_vision_ocr(image_bytes, vision_prompt)
+    raw_vision_response = call_local_ollama_vision_ocr(image_bytes, vision_prompt)
+    vision_text = _structured_vlm_response_to_text(raw_vision_response)
     if vision_text and passes_extraction_gate(vision_text):
-        LAST_VISION_PROVIDER = "Local Ollama Vision"
+        LAST_VISION_PROVIDER = "Local Ollama Vision (structured JSON)"
         return vision_text
 
-    local_ocr_text = try_tesseract_ocr(image_bytes)
     if not local_ocr_text and not vision_text:
         LAST_OLLAMA_ERROR = "Local OCR returned no text"
         return ""
 
     user_prompt = (
-        "You are refining OCR output from a supplement label using offline OCR text only. "
-        "Return clean supplement facts text with one nutrient per line when possible, preserving doses and units. "
-        "Do not invent values.\n\n"
-        f"OCR TEXT:\n{local_ocr_text}"
+        f"{system_prompt}\n\n"
+        f"{user_prompt}\n\n"
+        "OCR TEXT ONLY (no image available in this pass):\n"
+        f"{local_ocr_text}"
     )
 
     refined_text = call_local_ollama_text(system_prompt, user_prompt)
+    refined_text = _structured_vlm_response_to_text(refined_text)
     merged_candidates = [x for x in [refined_text, vision_text, local_ocr_text] if str(x or "").strip()]
     if merged_candidates:
         merged_text = "\n".join(merged_candidates)
         if passes_extraction_gate(merged_text):
-            LAST_VISION_PROVIDER = "Local Ollama + Tesseract"
+            LAST_VISION_PROVIDER = "Local Phi Vision + OCR"
             return merged_text
 
     if refined_text and passes_extraction_gate(refined_text):
-        LAST_VISION_PROVIDER = "Local Ollama + Tesseract"
+        LAST_VISION_PROVIDER = "Local Phi Text + OCR"
         return refined_text
     if vision_text:
-        LAST_VISION_PROVIDER = "Local Ollama Vision"
+        LAST_VISION_PROVIDER = "Local Ollama Vision (structured JSON)"
         return vision_text
     if local_ocr_text:
-        LAST_VISION_PROVIDER = "Tesseract"
+        LAST_VISION_PROVIDER = "PaddleOCR/Tesseract"
         return local_ocr_text
 
     LAST_OLLAMA_ERROR = "No image extraction route produced usable text"
