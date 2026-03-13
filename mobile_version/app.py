@@ -4953,6 +4953,16 @@ def _repair_ocr_component_name(component: str) -> str:
     text = re.sub(r"\bphosphours\b", "phosphorus", text, flags=re.I)
     text = re.sub(r"\bion\b", "iron", text, flags=re.I)
 
+    # OCR confusion: capital I misread as lowercase l (lodine → iodine).
+    if re.match(r"^l[o0]dine?$", text, re.I):
+        text = "iodine"
+
+    # OCR variants for l-methionine (LMethionne, lmethionine etc.)
+    text = re.sub(r"^l[\s\-]?methion\w*$", "l-methionine", text, flags=re.I)
+
+    # Strip trailing percentage/extract-concentration notations: "lycopene 10%*" → "lycopene"
+    text = re.sub(r"\s+\d+%?[\*\^]?\s*$", "", text).strip()
+
     # Common OCR variants for MCT-Oel/Oil in curved bottle photos.
     if text in {"mct-ol", "mct-oi", "mct-oi.", "uct-ol", "uct-oi"}:
         return "mct-oil"
@@ -5019,6 +5029,28 @@ def _is_plausible_component_name(component: str) -> bool:
         if not re.match(r"^vitamin\s+[abcdek](?:\d{1,2})?$", c):
             return False
 
+    # Block ingredient chemical compound forms — manufacturing/salt forms that appear in
+    # the INGREDIENTS section, never as standalone nutrient names in the nutrition table.
+    _INGR_COMPOUND_PAT = re.compile(
+        r"\b(?:oxide|sulphate|sulfate|molybdate|trichloride|selenate|borate|"
+        r"carbonate|phosphate|fumarate|stearate|tocopheryl|hydrochloride|"
+        r"mononitrate|glycolate|ascorbate|gluconate)\b",
+        re.I,
+    )
+    if _INGR_COMPOUND_PAT.search(c):
+        return False
+
+    # Block chemical d- prefixed names (d-biotin, d-alpha-tocopherol etc.).
+    # Legitimate nutrient names never start with "d-" as a chemical-form prefix.
+    if re.match(r"^d-[a-z]", c, re.I):
+        return False
+
+    # Block names ending with a single dangling letter — these are OCR fragments
+    # (e.g. "calcium d" from "Calcium D-Pantothenate").  Vitamin names are already
+    # validated above and don't reach this check.
+    if not c.startswith("vitamin ") and re.search(r"\s+[a-f]$", c):
+        return False
+
     return True
 
 
@@ -5070,6 +5102,18 @@ def _prepare_text_for_structured_parsing(input_text: str) -> str:
             # Do not stop scanning: OCR often interleaves ingredients/prose and nutrition
             # rows out of order on multi-column labels.
             continue
+        # --- Per-line OCR pre-cleaning (before soft_skip check) ---
+        # Specific artifact: multi-column OCR reads "L-Methionine 10 mg" as "LMethionne Og".
+        line = re.sub(r"\bL[\s\-]?Methion\w*\s+Og\b", "l-methionine 10 mg", line, flags=re.I)
+        # Strip ingredient-list contamination that gets appended to dose rows in multi-column
+        # OCR: "Name dose, IngredientWord ..." → "Name dose".  Only truncate when the prefix
+        # already contains a letter + digit (i.e., a dose value), so pure ingredient lines
+        # are left untouched and filtered normally.
+        _m_comma = re.search(r",\s+[A-Z][a-z]{2,}", line)
+        if _m_comma:
+            _prefix = line[: _m_comma.start()]
+            if re.search(r"[a-zA-Z]\s+\d", _prefix):
+                line = _prefix
         if soft_skip_markers.search(line):
             continue
         if len(line) > 110 and not dose_hint.search(line):
