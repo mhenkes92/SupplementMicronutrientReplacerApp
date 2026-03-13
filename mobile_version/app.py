@@ -14,6 +14,7 @@ import sqlite3
 import statistics
 import sys
 import subprocess
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -4888,6 +4889,8 @@ def normalize_component_name(raw_name: str) -> str:
     if not text:
         return ""
 
+    text = text.replace("Öl", "Oil").replace("öl", "oil")
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
     text = text.replace("*", " ")
     text = text.replace("|", " ")
     text = re.sub(r"\([^)]*\)", "", text)
@@ -4910,6 +4913,63 @@ def normalize_component_name(raw_name: str) -> str:
             lowered = text.lower()
 
     return lowered
+
+
+OCR_VITAMIN_PREFIX_PATTERN = re.compile(r"^(vitamin\s+[a-z](?:\d{1,2})?)\b", re.I)
+OCR_MICROGRAM_COMPONENTS: set[str] = {
+    "vitamin a",
+    "vitamin d",
+    "vitamin d2",
+    "vitamin d3",
+    "vitamin k",
+    "vitamin k1",
+    "vitamin k2",
+    "vitamin b12",
+    "biotin",
+    "folate",
+    "folic acid",
+    "selenium",
+    "iodine",
+    "chromium",
+    "molybdenum",
+}
+
+
+def _repair_ocr_component_name(component: str) -> str:
+    text = normalize_component_name(component)
+    if not text:
+        return ""
+
+    vitamin_match = OCR_VITAMIN_PREFIX_PATTERN.match(text)
+    if vitamin_match:
+        return vitamin_match.group(1).lower()
+
+    text = re.sub(r"\b(?:we|ve|wv|nrv|rv|iv)\b$", "", text, flags=re.I).strip()
+    return text
+
+
+def _component_prefers_microgram_unit(component: str) -> bool:
+    key = normalize_lookup_key(component)
+    if not key:
+        return False
+    if key in OCR_MICROGRAM_COMPONENTS:
+        return True
+    return bool(re.match(r"^vitamin\s+[adk](?:\d{1,2})?$", key))
+
+
+def _repair_ocr_dose_entry(component: str, dose_value: float | None, dose_unit: str) -> tuple[str, float | None, str]:
+    repaired_component = _repair_ocr_component_name(component)
+    repaired_unit = _normalize_component_unit_token(dose_unit)
+
+    if dose_value is None:
+        return repaired_component, None, repaired_unit
+
+    repaired_value = float(dose_value)
+
+    if repaired_unit == "g" and repaired_value <= 5000 and _component_prefers_microgram_unit(repaired_component):
+        return repaired_component, repaired_value, "mcg"
+
+    return repaired_component, repaired_value, repaired_unit
 
 
 ECOMMERCE_NOISE_PATTERN = re.compile(
@@ -5118,7 +5178,7 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
     pending_component_from_previous_line = ""
 
     def _looks_like_component_candidate(text: str) -> bool:
-        candidate = normalize_component_name(text)
+        candidate = _repair_ocr_component_name(text)
         if not candidate:
             return False
         if _looks_like_nutrient_component(candidate):
@@ -5135,7 +5195,7 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
         name_raw = segment_text[:match_start]
         name_raw = re.sub(r"[\.:_\-]{2,}", " ", name_raw)
         name_raw = re.sub(r"\s+", " ", name_raw).strip(" -:|,*#_")
-        return normalize_component_name(name_raw)
+        return _repair_ocr_component_name(name_raw)
 
     for line in lines:
         lowered = line.lower()
@@ -5155,7 +5215,7 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
             matches = list(dose_pattern.finditer(segment))
             if not matches:
                 if _looks_like_component_candidate(segment):
-                    pending_component_from_previous_line = normalize_component_name(segment)
+                    pending_component_from_previous_line = _repair_ocr_component_name(segment)
                 continue
 
             for match in matches:
@@ -5179,8 +5239,7 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
                     continue
 
                 dose_unit = match.group("unit").lower()
-                if dose_unit in {"ug", "µg", "μg"}:
-                    dose_unit = "mcg"
+                component, dose_value, dose_unit = _repair_ocr_dose_entry(component, dose_value, dose_unit)
                 key = (component, dose_value, dose_unit)
                 if key in seen:
                     continue
@@ -5821,7 +5880,7 @@ def validate_parsed_components(rows: list[dict[str, Any]]) -> tuple[list[dict[st
             issues.append(schema_error)
             continue
 
-        component = normalize_component_name(str(validated_item.get("component", "")))
+        component = _repair_ocr_component_name(str(validated_item.get("component", "")))
         if not component:
             rejected += 1
             issues.append("missing component")
@@ -5833,7 +5892,8 @@ def validate_parsed_components(rows: list[dict[str, Any]]) -> tuple[list[dict[st
         except Exception:
             dose_value = None
 
-        dose_unit = _normalize_component_unit_token(str(validated_item.get("dose_unit", "") or ""))
+        dose_unit = str(validated_item.get("dose_unit", "") or "")
+        component, dose_value, dose_unit = _repair_ocr_dose_entry(component, dose_value, dose_unit)
         if dose_unit not in ALLOWED_DOSE_UNITS:
             rejected += 1
             issues.append(f"unsupported dose unit '{dose_unit}'")
@@ -6345,7 +6405,7 @@ Input:
                 for item in parsed:
                     if not isinstance(item, dict):
                         continue
-                    component = normalize_component_name(str(item.get("component", "")))
+                    component = _repair_ocr_component_name(str(item.get("component", "")))
                     if not component:
                         continue
                     dose_raw = item.get("dose_value")
@@ -6358,6 +6418,7 @@ Input:
                         unit = ""
                     if dose_value is None and not _looks_like_nutrient_component(component):
                         continue
+                    component, dose_value, unit = _repair_ocr_dose_entry(component, dose_value, unit)
                     normalized.append(
                         {
                             "component": component,
