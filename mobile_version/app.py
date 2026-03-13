@@ -4947,6 +4947,10 @@ def _repair_ocr_component_name(component: str) -> str:
     if not text:
         return ""
 
+    # Common OCR variants for MCT-Oel/Oil in curved bottle photos.
+    if text in {"mct-ol", "mct-oi", "mct-oi.", "uct-ol", "uct-oi"}:
+        return "mct-oil"
+
     shorthand_with_suffix = re.match(r"^([bdk])\s*[-:]?\s*(\d{1,2})$", text, re.I)
     if shorthand_with_suffix:
         return f"vitamin {shorthand_with_suffix.group(1).lower()}{shorthand_with_suffix.group(2)}"
@@ -4961,6 +4965,48 @@ def _repair_ocr_component_name(component: str) -> str:
 
     text = re.sub(r"\b(?:we|ve|wv|nrv|rv|iv)\b$", "", text, flags=re.I).strip()
     return text
+
+
+def _is_plausible_component_name(component: str) -> bool:
+    c = normalize_lookup_key(component)
+    if not c:
+        return False
+
+    if len(c) < 3:
+        return False
+
+    # Header/footer leakage from OCR should never be treated as a nutrient row.
+    junk_tokens = {
+        "inhaltsstoffe",
+        "tagesdosis",
+        "referenzmengen",
+        "internationale",
+        "einheiten",
+        "herstellung",
+        "vertrieb",
+        "nrv",
+        "durchschnittlichen",
+        "erwachsenen",
+    }
+    words = c.split()
+    if any(w in junk_tokens for w in words):
+        return False
+
+    if len(words) > 6:
+        return False
+
+    # Reject mostly single-letter fragments such as "a l".
+    short_words = sum(1 for w in words if len(w) <= 1)
+    if short_words >= 2 and not c.startswith("vitamin "):
+        return False
+
+    # Vitamin tokens should match canonical forms like vitamin a, vitamin d3, vitamin k2.
+    # Reject malformed OCR fragments such as "vitamin ka 2".
+    if c.startswith("vitamin "):
+        if not re.match(r"^vitamin\s+[abcdek](?:\d{1,2})?$", c):
+            return False
+
+    return True
 
 
 def _component_prefers_microgram_unit(component: str) -> bool:
@@ -6128,6 +6174,10 @@ def validate_parsed_components(rows: list[dict[str, Any]]) -> tuple[list[dict[st
         if not component:
             rejected += 1
             issues.append("missing component")
+            continue
+        if not _is_plausible_component_name(component):
+            rejected += 1
+            issues.append(f"implausible component name '{component}'")
             continue
 
         dose_raw = validated_item.get("dose_value")
