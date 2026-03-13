@@ -7283,6 +7283,8 @@ The local RAG library is built from curated expert nutrition notes and evidence 
 
         if analyze:
             extracted_chunks: list[tuple[str, str]] = []
+            image_locked_payload: dict[str, Any] | None = None
+            image_locked_text = ""
 
             with st.status("Processing", expanded=True) as status:
                 status.write("Step 1/4: Collecting input")
@@ -7313,6 +7315,24 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                         ocr_gate = extraction_gate_report(ocr_text)
                         if ocr_gate["passed"]:
                             extracted_chunks.append(("image", ocr_text))
+                            # Hard guard: if the image parse already yields a strong structured table,
+                            # lock analysis to image-only to prevent URL/manual contamination.
+                            image_payload_probe = build_structured_nutrients_json(ocr_text)
+                            image_rows_probe = list(image_payload_probe.get("nutrients", []) or [])
+                            image_dosed_rows = sum(
+                                1
+                                for row in image_rows_probe
+                                if row.get("component")
+                                and row.get("dose_value") is not None
+                                and str(row.get("dose_unit", "") or "").strip().lower() in ALLOWED_DOSE_UNITS
+                            )
+                            if _has_structured_table_cues(ocr_text) and image_dosed_rows >= 12:
+                                image_locked_payload = image_payload_probe
+                                image_locked_text = ocr_text
+                                status.write(
+                                    "Image-only lock enabled "
+                                    f"(structured_table=True, dosed_rows={image_dosed_rows})"
+                                )
                             if LAST_VISION_PROVIDER:
                                 st.success(f"Image text extracted via {LAST_VISION_PROVIDER}")
                             else:
@@ -7333,7 +7353,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                         else:
                             st.caption(f"Image OCR route: {image_provider_label} (primary)")
 
-                if product_url.strip():
+                if product_url.strip() and image_locked_payload is None:
                     status.write("Step 3/4: Parsing product link (LLM with local fallback)")
                     url_key = product_url.strip()
                     url_parse_cache = st.session_state.setdefault("url_parse_cache", {})
@@ -7392,7 +7412,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     else:
                         st.warning("Could not parse link content")
 
-                if manual_text.strip():
+                if manual_text.strip() and image_locked_payload is None:
                     manual_text_clean = manual_text.strip()
                     manual_gate = extraction_gate_report(manual_text_clean)
                     extracted_chunks.append(("manual", manual_text_clean))
@@ -7407,6 +7427,10 @@ The local RAG library is built from curated expert nutrition notes and evidence 
 
                 combined = "\n\n".join([x for _, x in extracted_chunks if x.strip()])
 
+                if image_locked_payload is not None:
+                    status.write("URL/manual inputs skipped because image-only lock is active.")
+                    combined = image_locked_text
+
                 if not combined:
                     st.session_state["analysis_ready"] = False
                     st.session_state["analysis_components"] = []
@@ -7416,58 +7440,62 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     st.error("Please provide at least one input source: image, link, or text.")
                 else:
                     status.write("Step 4/4: Extracting supplement components")
+                    if image_locked_payload is not None:
+                        structured_payload = image_locked_payload
+                        status.write("Selected extraction source: image (locked)")
+                    else:
                     # Evaluate each source independently first to avoid cross-source contamination.
                     # This prevents stale URL/manual content from overriding clean image OCR rows.
-                    source_candidates: list[dict[str, Any]] = []
-                    for source_label, source_text in extracted_chunks:
-                        if not str(source_text or "").strip():
-                            continue
-                        payload = build_structured_nutrients_json(source_text)
-                        nutrients = list(payload.get("nutrients", []) or [])
-                        dosed_rows = sum(
-                            1
-                            for row in nutrients
-                            if row.get("component")
-                            and row.get("dose_value") is not None
-                            and str(row.get("dose_unit", "") or "").strip().lower() in ALLOWED_DOSE_UNITS
-                        )
-                        try:
-                            conf = float(payload.get("confidence", 0.0) or 0.0)
-                        except Exception:
-                            conf = 0.0
-                        source_candidates.append(
-                            {
-                                "label": source_label,
-                                "text": source_text,
-                                "payload": payload,
-                                "dosed_rows": dosed_rows,
-                                "confidence": conf,
-                                "has_structured_table": _has_structured_table_cues(source_text),
-                            }
-                        )
+                        source_candidates: list[dict[str, Any]] = []
+                        for source_label, source_text in extracted_chunks:
+                            if not str(source_text or "").strip():
+                                continue
+                            payload = build_structured_nutrients_json(source_text)
+                            nutrients = list(payload.get("nutrients", []) or [])
+                            dosed_rows = sum(
+                                1
+                                for row in nutrients
+                                if row.get("component")
+                                and row.get("dose_value") is not None
+                                and str(row.get("dose_unit", "") or "").strip().lower() in ALLOWED_DOSE_UNITS
+                            )
+                            try:
+                                conf = float(payload.get("confidence", 0.0) or 0.0)
+                            except Exception:
+                                conf = 0.0
+                            source_candidates.append(
+                                {
+                                    "label": source_label,
+                                    "text": source_text,
+                                    "payload": payload,
+                                    "dosed_rows": dosed_rows,
+                                    "confidence": conf,
+                                    "has_structured_table": _has_structured_table_cues(source_text),
+                                }
+                            )
 
-                    if source_candidates:
-                        source_priority = {"image": 3, "manual": 2, "url": 1}
-                        source_candidates.sort(
-                            key=lambda c: (
-                                int(c.get("dosed_rows", 0) or 0),
-                                int(bool(c.get("has_structured_table", False))),
-                                float(c.get("confidence", 0.0) or 0.0),
-                                source_priority.get(str(c.get("label", "")), 0),
-                            ),
-                            reverse=True,
-                        )
-                        best = source_candidates[0]
-                        structured_payload = dict(best.get("payload", {}) or {})
-                        combined = str(best.get("text", "") or "")
-                        status.write(
-                            "Selected extraction source: "
-                            f"{best.get('label', 'n/a')} "
-                            f"(dosed_rows={best.get('dosed_rows', 0)}, "
-                            f"confidence={best.get('confidence', 0.0)})"
-                        )
-                    else:
-                        structured_payload = build_structured_nutrients_json(combined)
+                        if source_candidates:
+                            source_priority = {"image": 3, "manual": 2, "url": 1}
+                            source_candidates.sort(
+                                key=lambda c: (
+                                    int(c.get("dosed_rows", 0) or 0),
+                                    int(bool(c.get("has_structured_table", False))),
+                                    float(c.get("confidence", 0.0) or 0.0),
+                                    source_priority.get(str(c.get("label", "")), 0),
+                                ),
+                                reverse=True,
+                            )
+                            best = source_candidates[0]
+                            structured_payload = dict(best.get("payload", {}) or {})
+                            combined = str(best.get("text", "") or "")
+                            status.write(
+                                "Selected extraction source: "
+                                f"{best.get('label', 'n/a')} "
+                                f"(dosed_rows={best.get('dosed_rows', 0)}, "
+                                f"confidence={best.get('confidence', 0.0)})"
+                            )
+                        else:
+                            structured_payload = build_structured_nutrients_json(combined)
                     components = list(structured_payload.get("nutrients", []) or [])
                     if LAST_TEXT_PROVIDER:
                         status.write(f"Testing info: component parsing used {LAST_TEXT_PROVIDER}")
