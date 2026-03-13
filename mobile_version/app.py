@@ -6096,7 +6096,7 @@ def call_openrouter_vision_ocr(image_bytes: bytes) -> str:
     tesseract_text = try_tesseract_ocr(image_bytes)
     local_ocr_text = "\n".join([x for x in [paddle_text, tesseract_text] if str(x or "").strip()]).strip()
 
-    if not local_ocr_text and not vision_text:
+    if not local_ocr_text:
         LAST_OLLAMA_ERROR = "Local OCR returned no text"
         return ""
 
