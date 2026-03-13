@@ -5067,10 +5067,8 @@ def _prepare_text_for_structured_parsing(input_text: str) -> str:
     selected_dose_rows = 0
     for line in lines[start_idx:]:
         if hard_stop_markers.search(line):
-            # Only hard-stop after capturing enough table rows; otherwise keep scanning
-            # because merged OCR can interleave ingredients/prose with nutrient rows.
-            if selected_dose_rows >= 5:
-                break
+            # Do not stop scanning: OCR often interleaves ingredients/prose and nutrition
+            # rows out of order on multi-column labels.
             continue
         if soft_skip_markers.search(line):
             continue
