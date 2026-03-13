@@ -6345,12 +6345,16 @@ def extract_nutrition_doses_from_product_image(product_url: str) -> list[dict[st
         logger.warning(f"Image dose extraction failed: {e}")
         return []
 
-def parse_components(input_text: str) -> list[dict[str, Any]]:
-    global LAST_TEXT_PROVIDER
+def _score_component_rows(rows: list[dict[str, Any]]) -> float:
+    if not rows:
+        return 0.0
+    total = len(rows)
+    with_dose = sum(1 for row in rows if row.get("dose_value") is not None and row.get("dose_unit"))
+    nutrient_like = sum(1 for row in rows if _looks_like_nutrient_component(str(row.get("component", "") or "")))
+    return max(0.0, min(1.0, (0.6 * (with_dose / total)) + (0.4 * (nutrient_like / total))))
 
-    if not input_text.strip():
-        return []
 
+def _parse_rows_with_local_llm(input_text: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     system_prompt = (
         "You are a strict data extraction system for Supplement Facts labels. "
         "Extract one row per nutrient/component into JSON only."
@@ -6372,92 +6376,124 @@ Input:
 {input_text}
 """
 
-    regex_fallback = parse_components_rule_based(input_text)
-    name_only_fallback = parse_components_name_only(input_text)
-    ingredient_list_fallback = parse_components_from_ingredient_list(input_text)
-
-    # Local-first extraction: use deterministic parsing before any LLM call.
-    local_with_dose = regex_fallback
-    local_name_pool = ingredient_list_fallback if ingredient_list_fallback else name_only_fallback
-    local_rows = merge_component_rows(local_with_dose, local_name_pool)
-
-    local_dose_count = sum(1 for row in local_rows if row.get("dose_value") is not None)
-    local_component_count = len(local_rows)
-
-    # LLM fallback is triggered when dose coverage is weak.
-    expected_min_dose_count = max(2, int(local_component_count * 0.55)) if local_component_count else 2
-    needs_llm_fallback = local_component_count < 4 or local_dose_count < expected_min_dose_count
-
-    if not needs_llm_fallback and local_rows:
-        LAST_TEXT_PROVIDER = "Local deterministic parser"
-        return expand_umbrella_components(local_rows)
-
     llm_out = call_openrouter_text(system_prompt, user_prompt)
     candidate = clean_json_block(llm_out)
     llm_with_dose: list[dict[str, Any]] = []
     llm_name_only: list[dict[str, Any]] = []
 
-    if candidate:
-        try:
-            parsed = json.loads(candidate)
-            if isinstance(parsed, list):
-                normalized: list[dict[str, Any]] = []
-                for item in parsed:
-                    if not isinstance(item, dict):
-                        continue
-                    component = _repair_ocr_component_name(str(item.get("component", "")))
-                    if not component:
-                        continue
-                    dose_raw = item.get("dose_value")
-                    try:
-                        dose_value = float(dose_raw)
-                    except Exception:
-                        dose_value = None
-                    unit = str(item.get("dose_unit", "")).strip().lower()
-                    if dose_value is None:
-                        unit = ""
-                    if dose_value is None and not _looks_like_nutrient_component(component):
-                        continue
-                    component, dose_value, unit = _repair_ocr_dose_entry(component, dose_value, unit)
-                    normalized.append(
-                        {
-                            "component": component,
-                            "dose_value": dose_value,
-                            "dose_unit": unit,
-                        }
-                    )
+    if not candidate:
+        return llm_with_dose, llm_name_only
 
-                normalized = [x for x in normalized if x["component"]]
-                unique_components = {x["component"] for x in normalized}
-                suspicious_repeated_name = len(normalized) >= 3 and len(unique_components) == 1
-                if normalized and not suspicious_repeated_name:
-                    llm_with_dose = [x for x in normalized if x.get("dose_value") is not None]
-                    llm_name_only = [x for x in normalized if x.get("dose_value") is None]
-        except Exception as e:
-            logger.warning(f"Error parsing LLM component output: {e}")
+    try:
+        parsed = json.loads(candidate)
+        if not isinstance(parsed, list):
+            return llm_with_dose, llm_name_only
 
-    # Merge strategy with dose-priority:
-    # 1) keep rows with doses (local + LLM)
-    # 2) then fill missing components with name-only rows.
-    merged_with_dose = merge_component_rows(local_with_dose, llm_with_dose)
-    merged_name_pool = merge_component_rows(local_name_pool, llm_name_only)
-    merged_rows = merge_component_rows(merged_with_dose, merged_name_pool)
-    if not merged_rows:
-        if llm_name_only:
-            merged_rows = merge_component_rows(llm_name_only, local_name_pool)
-        elif local_rows:
-            merged_rows = local_rows
-        else:
-            merged_rows = local_name_pool
+        normalized: list[dict[str, Any]] = []
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            component = _repair_ocr_component_name(str(item.get("component", "")))
+            if not component:
+                continue
+            dose_raw = item.get("dose_value")
+            try:
+                dose_value = float(dose_raw)
+            except Exception:
+                dose_value = None
+            unit = str(item.get("dose_unit", "")).strip().lower()
+            if dose_value is None:
+                unit = ""
+            if dose_value is None and not _looks_like_nutrient_component(component):
+                continue
+            component, dose_value, unit = _repair_ocr_dose_entry(component, dose_value, unit)
+            normalized.append(
+                {
+                    "component": component,
+                    "dose_value": dose_value,
+                    "dose_unit": unit,
+                }
+            )
 
-    if merged_rows and local_rows:
-        LAST_TEXT_PROVIDER = "Local deterministic parser + LLM fallback"
-    elif merged_rows:
-        LAST_TEXT_PROVIDER = LAST_TEXT_PROVIDER or "LLM fallback"
+        normalized = [x for x in normalized if x["component"]]
+        unique_components = {x["component"] for x in normalized}
+        suspicious_repeated_name = len(normalized) >= 3 and len(unique_components) == 1
+        if normalized and not suspicious_repeated_name:
+            llm_with_dose = [x for x in normalized if x.get("dose_value") is not None]
+            llm_name_only = [x for x in normalized if x.get("dose_value") is None]
+    except Exception as e:
+        logger.warning(f"Error parsing local LLM component output: {e}")
+
+    return llm_with_dose, llm_name_only
+
+
+def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
+    global LAST_TEXT_PROVIDER
+
+    if not input_text.strip():
+        LAST_TEXT_PROVIDER = ""
+        return {
+            "nutrients": [],
+            "confidence": 0.0,
+            "source": "none",
+            "warnings": ["empty_input"],
+        }
+
+    regex_fallback = parse_components_rule_based(input_text)
+    name_only_fallback = parse_components_name_only(input_text)
+    ingredient_list_fallback = parse_components_from_ingredient_list(input_text)
+
+    local_with_dose = regex_fallback
+    local_name_pool = ingredient_list_fallback if ingredient_list_fallback else name_only_fallback
+    local_rows = merge_component_rows(local_with_dose, local_name_pool)
+    local_expanded = expand_umbrella_components(local_rows)
+    local_validated, local_meta = validate_parsed_components(local_expanded)
+    local_score = _score_component_rows(local_validated)
+
+    best_rows = local_validated
+    best_score = local_score
+    best_source = "local_deterministic"
+    warnings: list[str] = []
+
+    local_component_count = len(local_rows)
+    local_dose_count = sum(1 for row in local_rows if row.get("dose_value") is not None)
+    expected_min_dose_count = max(2, int(local_component_count * 0.55)) if local_component_count else 2
+    needs_llm_fallback = local_component_count < 4 or local_dose_count < expected_min_dose_count or local_score < 0.75
+
+    if needs_llm_fallback and ENABLE_LOCAL_OLLAMA:
+        llm_with_dose, llm_name_only = _parse_rows_with_local_llm(input_text)
+        merged_with_dose = merge_component_rows(local_with_dose, llm_with_dose)
+        merged_name_pool = merge_component_rows(local_name_pool, llm_name_only)
+        merged_rows = merge_component_rows(merged_with_dose, merged_name_pool)
+        merged_expanded = expand_umbrella_components(merged_rows)
+        merged_validated, merged_meta = validate_parsed_components(merged_expanded)
+        merged_score = _score_component_rows(merged_validated)
+
+        if merged_score >= best_score and merged_validated:
+            best_rows = merged_validated
+            best_score = merged_score
+            best_source = "local_deterministic_plus_local_llm"
+            local_meta = merged_meta
+
+    if best_rows:
+        LAST_TEXT_PROVIDER = "Local deterministic parser" if best_source == "local_deterministic" else "Local deterministic parser + local LLM fallback"
     else:
         LAST_TEXT_PROVIDER = "Local deterministic parser"
+        warnings.append("no_components_extracted")
 
-    return expand_umbrella_components(merged_rows)
+    warnings.extend([str(x) for x in (local_meta.get("issues", []) or [])[:6]])
+
+    return {
+        "nutrients": best_rows,
+        "confidence": round(best_score, 2),
+        "source": best_source,
+        "warnings": warnings,
+    }
+
+
+def parse_components(input_text: str) -> list[dict[str, Any]]:
+    structured = build_structured_nutrients_json(input_text)
+    return list(structured.get("nutrients", []) or [])
 
 
 def preliminary_recommendation(component: str, budget_priority: int) -> tuple[str, str]:
