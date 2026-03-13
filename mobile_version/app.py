@@ -66,7 +66,7 @@ OPENAI_MODEL_VISION = ""
 GITHUB_MODELS_TOKEN = ""
 GITHUB_MODELS_MODEL_TEXT = ""
 GITHUB_MODELS_MODEL_VISION = ""
-LOCAL_LLM_RUNTIME = os.getenv("LOCAL_LLM_RUNTIME", "llama_cpp").strip().lower()
+LOCAL_LLM_RUNTIME = os.getenv("LOCAL_LLM_RUNTIME", "none").strip().lower()
 
 LLAMA_CPP_AUTO_BOOTSTRAP = os.getenv("LLAMA_CPP_AUTO_BOOTSTRAP", "1").strip() != "0"
 LLAMA_CPP_MODEL_REPO = os.getenv("LLAMA_CPP_MODEL_REPO", "microsoft/Phi-3-mini-4k-instruct-gguf").strip()
@@ -6614,31 +6614,9 @@ def extract_image_text_with_local_stack(image_bytes: bytes) -> str:
         LAST_LOCAL_LLM_ERROR = "Local OCR returned no text"
         return ""
 
-    structured_prompt = (
-        f"{system_prompt}\n\n"
-        f"{user_prompt}\n\n"
-        "OCR TEXT ONLY (derived from PaddleOCR/Tesseract; use it as evidence, not as perfect ground truth):\n"
-        f"{local_ocr_text}"
-    )
-
-    refined_text = call_local_text_llm(system_prompt, structured_prompt)
-    refined_text = _structured_vlm_response_to_text(refined_text)
-    merged_candidates = [x for x in [refined_text, local_ocr_text] if str(x or "").strip()]
-    if merged_candidates:
-        merged_text = "\n".join(merged_candidates)
-        if passes_extraction_gate(merged_text):
-            LAST_VISION_PROVIDER = "PaddleOCR + Phi-3-mini GGUF"
-            return merged_text
-
-    if refined_text and passes_extraction_gate(refined_text):
-        LAST_VISION_PROVIDER = "Phi-3-mini GGUF"
-        return refined_text
-    if local_ocr_text:
-        LAST_VISION_PROVIDER = "PaddleOCR + Tesseract"
-        return local_ocr_text
-
-    LAST_LOCAL_LLM_ERROR = "No image extraction route produced usable text"
-    return ""
+    # Pure deterministic pipeline — no LLM, no download required.
+    LAST_VISION_PROVIDER = "PaddleOCR + Tesseract"
+    return local_ocr_text
 
 
 
@@ -7932,14 +7910,12 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     image_bytes = uploaded_image.read()
 
                 if image_bytes:
-                    status.write("Step 2/4: OCR from image (local LLM extraction primary, deterministic fallback)")
+                    status.write("Step 2/4: OCR from image (PaddleOCR + Tesseract, deterministic pipeline)")
                     ocr_text = extract_image_text_with_local_stack(image_bytes)
                     if ocr_text and LAST_VISION_PROVIDER:
                         image_provider_label = LAST_VISION_PROVIDER
                     if not ocr_text:
-                        if LAST_LOCAL_LLM_ERROR:
-                            status.write(f"Local LLM refinement issue: {LAST_LOCAL_LLM_ERROR}")
-                        status.write("Local LLM refinement unavailable, using direct Tesseract OCR fallback")
+                        status.write("OCR returned no text, retrying with Tesseract fallback")
                         ocr_text = try_tesseract_ocr(image_bytes)
                         if ocr_text:
                             LAST_VISION_PROVIDER = "Tesseract"
@@ -7988,7 +7964,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                             st.caption(f"Image OCR route: {image_provider_label} (primary)")
 
                 if product_url.strip() and image_locked_payload is None:
-                    status.write("Step 3/4: Parsing product link (LLM with local fallback)")
+                    status.write("Step 3/4: Parsing product link (local deterministic parser)")
                     url_key = product_url.strip()
                     url_parse_cache = st.session_state.setdefault("url_parse_cache", {})
                     cached_item = url_parse_cache.get(url_key, "")
