@@ -4947,6 +4947,12 @@ def _repair_ocr_component_name(component: str) -> str:
     if not text:
         return ""
 
+    # Common OCR misspellings for vitamin prefix and nutrient names.
+    text = re.sub(r"\bvit(?:amn|main|arnin)\b", "vitamin", text, flags=re.I)
+    text = re.sub(r"\bpotassum\b", "potassium", text, flags=re.I)
+    text = re.sub(r"\bphosphours\b", "phosphorus", text, flags=re.I)
+    text = re.sub(r"\bion\b", "iron", text, flags=re.I)
+
     # Common OCR variants for MCT-Oel/Oil in curved bottle photos.
     if text in {"mct-ol", "mct-oi", "mct-oi.", "uct-ol", "uct-oi"}:
         return "mct-oil"
@@ -5014,6 +5020,57 @@ def _is_plausible_component_name(component: str) -> bool:
             return False
 
     return True
+
+
+def _has_structured_table_cues(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:nutrition\s+information|supplement\s+facts|quantity\s+per\s+serving|%\s*rda|nrv|tagesdosis|inhaltsstoffe)\b",
+            text or "",
+            re.I,
+        )
+    )
+
+
+def _prepare_text_for_structured_parsing(input_text: str) -> str:
+    text = str(input_text or "")
+    if not text.strip():
+        return ""
+    if not _has_structured_table_cues(text):
+        return text
+
+    lines = [str(x or "").strip() for x in text.splitlines() if str(x or "").strip()]
+    if not lines:
+        return text
+
+    start_idx = 0
+    for i, line in enumerate(lines):
+        if re.search(r"\b(?:nutrition\s+information|supplement\s+facts|quantity\s+per\s+serving|tagesdosis|inhaltsstoffe)\b", line, re.I):
+            start_idx = i
+            break
+
+    stop_markers = re.compile(
+        r"\b(?:ingredients?|recommended\s+usage|usage\s+level|processed\s+in\s+a\s+plant|visit\s+|www\.|manufactured|ins\s*\d{2,4})\b",
+        re.I,
+    )
+    row_hint = re.compile(
+        r"\b(?:vit(?:amin|main)|biotin|folic|folate|iodine|selenium|chromium|molybdenum|zinc|iron|copper|manganese|magnesium|calcium|potassium|phosphorus|boron|l-arginine|l-methionine|l-lysine|green\s+tea\s+extract|beta-?carotene|lutein|lycopene|amino\s+acids|botanicals)\b",
+        re.I,
+    )
+    dose_hint = re.compile(r"\b\d+(?:[\.,]\d+)?\s*(?:mg|mcg|ug|µg|μg|fg|g|iu|kcal)\b", re.I)
+
+    selected: list[str] = []
+    for line in lines[start_idx:]:
+        if stop_markers.search(line):
+            break
+        if len(line) > 110 and not dose_hint.search(line):
+            continue
+        if row_hint.search(line) or dose_hint.search(line) or re.search(r"\b(?:nutrition\s+information|quantity\s+per\s+serving|%\s*rda|nrv|tagesdosis|inhaltsstoffe)\b", line, re.I):
+            selected.append(line)
+
+    if selected:
+        return "\n".join(selected)
+    return text
 
 
 def _component_prefers_microgram_unit(component: str) -> bool:
@@ -6740,17 +6797,12 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
             "warnings": ["empty_input"],
         }
 
-    regex_fallback = parse_components_rule_based(input_text)
-    name_only_fallback = parse_components_name_only(input_text)
-    ingredient_list_fallback = parse_components_from_ingredient_list(input_text)
+    parse_input_text = _prepare_text_for_structured_parsing(input_text)
+    has_structured_table_cues = _has_structured_table_cues(parse_input_text)
 
-    has_structured_table_cues = bool(
-        re.search(
-            r"\b(?:nutrition\s+information|supplement\s+facts|quantity\s+per\s+serving|%\s*rda|nrv|tagesdosis)\b",
-            input_text,
-            re.I,
-        )
-    )
+    regex_fallback = parse_components_rule_based(parse_input_text)
+    name_only_fallback = parse_components_name_only(parse_input_text)
+    ingredient_list_fallback = [] if has_structured_table_cues else parse_components_from_ingredient_list(parse_input_text)
 
     local_with_dose = regex_fallback
     if has_structured_table_cues and len(local_with_dose) >= 5:
@@ -6776,7 +6828,7 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
     merged_score = 0.0
 
     if ENABLE_LOCAL_OLLAMA:
-        llm_with_dose, llm_name_only = _parse_rows_with_local_llm(input_text)
+        llm_with_dose, llm_name_only = _parse_rows_with_local_llm(parse_input_text)
         llm_rows = merge_component_rows(llm_with_dose, llm_name_only)
         llm_expanded = expand_umbrella_components(llm_rows)
         llm_validated, llm_meta = validate_parsed_components(llm_expanded)
@@ -6819,7 +6871,7 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
             best_rows = dosed_rows
             best_score = max(best_score, _score_component_rows(best_rows))
 
-    recovered_vitamin_rows = _recover_missing_vitamin_rows_from_text(input_text, best_rows)
+    recovered_vitamin_rows = _recover_missing_vitamin_rows_from_text(parse_input_text, best_rows)
     if recovered_vitamin_rows:
         recovered_merged = merge_component_rows(best_rows, recovered_vitamin_rows)
         recovered_validated, recovered_meta = validate_parsed_components(recovered_merged)
