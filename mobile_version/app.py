@@ -4912,6 +4912,9 @@ def normalize_component_name(raw_name: str) -> str:
             text = text[len(prefix):].strip()
             lowered = text.lower()
 
+    # Common OCR/German transliteration variant: oel -> oil (e.g., MCT-OEl).
+    lowered = re.sub(r"\boel\b", "oil", lowered)
+
     return lowered
 
 
@@ -7140,7 +7143,6 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                             "reason": "No whole-food alternative found in USDA ranking data",
                         }
                     )
-                    continue
 
                 with st.expander(f"{status_symbol} {component_display} • {dose_label} • {status_chip}", expanded=(index == 0)):
                     st.markdown(

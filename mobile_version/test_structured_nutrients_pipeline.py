@@ -31,6 +31,7 @@ Vitamin K2 20 g
     assert 'vitamin d3' in by_component, 'vitamin d3 missing'
     assert 'vitamin e' in by_component, 'vitamin e missing'
     assert 'vitamin k2' in by_component, 'vitamin k2 missing'
+    assert 'mct-oil' in by_component, 'mct-oil normalization missing'
 
     assert by_component['vitamin a']['dose_unit'] == 'mcg', by_component['vitamin a']
     assert by_component['vitamin d3']['dose_unit'] == 'mcg', by_component['vitamin d3']
