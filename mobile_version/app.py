@@ -65,41 +65,31 @@ OPENAI_MODEL_VISION = ""
 GITHUB_MODELS_TOKEN = ""
 GITHUB_MODELS_MODEL_TEXT = ""
 GITHUB_MODELS_MODEL_VISION = ""
+LOCAL_LLM_RUNTIME = os.getenv("LOCAL_LLM_RUNTIME", "llama_cpp").strip().lower()
+ENABLE_LOCAL_OLLAMA = False
+AUTO_BOOTSTRAP_LOCAL_OLLAMA = False
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip()
-OLLAMA_MODEL_TEXT = os.getenv("OLLAMA_MODEL_TEXT", "phi3.5").strip()
-OLLAMA_MODEL_VISION = os.getenv("OLLAMA_MODEL_VISION", "llava-phi3").strip()
-ENABLE_LOCAL_OLLAMA = os.getenv("ENABLE_LOCAL_OLLAMA", "1").strip() != "0"
-AUTO_BOOTSTRAP_LOCAL_OLLAMA = os.getenv("AUTO_BOOTSTRAP_LOCAL_OLLAMA", "1").strip() != "0"
+OLLAMA_MODEL_TEXT = ""
+OLLAMA_MODEL_VISION = ""
+
+LLAMA_CPP_AUTO_BOOTSTRAP = os.getenv("LLAMA_CPP_AUTO_BOOTSTRAP", "1").strip() != "0"
+LLAMA_CPP_MODEL_REPO = os.getenv("LLAMA_CPP_MODEL_REPO", "microsoft/Phi-3-mini-4k-instruct-gguf").strip()
+LLAMA_CPP_MODEL_FILE = os.getenv("LLAMA_CPP_MODEL_FILE", "Phi-3-mini-4k-instruct-q4.gguf").strip()
+LLAMA_CPP_MODEL_DIR = APP_DIR / "models"
+LLAMA_CPP_MODEL_PATH = LLAMA_CPP_MODEL_DIR / LLAMA_CPP_MODEL_FILE
+LLAMA_CPP_N_CTX = int(os.getenv("LLAMA_CPP_N_CTX", "4096").strip() or "4096")
+LLAMA_CPP_N_THREADS = int(os.getenv("LLAMA_CPP_N_THREADS", str(max(2, (os.cpu_count() or 4) - 1))).strip() or "4")
+LLAMA_CPP_N_GPU_LAYERS = int(os.getenv("LLAMA_CPP_N_GPU_LAYERS", "0").strip() or "0")
+LLAMA_CPP_MAX_TOKENS = int(os.getenv("LLAMA_CPP_MAX_TOKENS", "700").strip() or "700")
 TESSERACT_CMD = os.getenv("TESSERACT_CMD", "")
 
-# Phi-primary local model policy.
-# Ollama does not currently expose a dedicated Phi-3.5 vision tag, so the closest
-# practical Phi-family multimodal model is llava-phi3.  Keep Phi-3.5 as the shared
-# text model for other in-app LLM features.
-OLLAMA_TEXT_MODEL_CANDIDATES = [
-    x.strip()
-    for x in os.getenv(
-        "OLLAMA_TEXT_MODEL_CANDIDATES",
-        f"{OLLAMA_MODEL_TEXT},phi3.5,llama3.1:8b-instruct-q4_K_M",
-    ).split(",")
-    if x.strip()
-]
-OLLAMA_VISION_MODEL_CANDIDATES = [
-    x.strip()
-    for x in os.getenv(
-        "OLLAMA_VISION_MODEL_CANDIDATES",
-        f"{OLLAMA_MODEL_VISION},llava-phi3,moondream,qwen2.5vl:3b",
-    ).split(",")
-    if x.strip()
-]
-OLLAMA_WINDOWS_INSTALL_ID = "Ollama.Ollama"
-OLLAMA_BOOTSTRAP_STATE: dict[str, Any] = {
+LLAMA_CPP_BOOTSTRAP_STATE: dict[str, Any] = {
     "runtime_checked": False,
     "runtime_ready": False,
     "runtime_error": "",
-    "text_model_ready": False,
-    "vision_model_ready": False,
+    "model_ready": False,
 }
+LLAMA_CPP_INSTANCE: Any | None = None
 
 OPENROUTER_URL = ""
 OPENAI_URL = ""
@@ -5811,21 +5801,6 @@ def _blockbrain_chat(payload: dict[str, Any]) -> str:
     return ""
 
 
-def _resolve_ollama_command() -> str:
-    cmd = shutil.which("ollama")
-    if cmd:
-        return cmd
-    if os.name == "nt":
-        candidates = [
-            Path(os.getenv("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama.exe",
-            Path("C:/Program Files/Ollama/ollama.exe"),
-        ]
-        for candidate in candidates:
-            if candidate.exists():
-                return str(candidate)
-    return ""
-
-
 def _run_local_command(command: list[str], timeout: int = 120) -> tuple[bool, str]:
     try:
         completed = subprocess.run(
@@ -5841,206 +5816,106 @@ def _run_local_command(command: list[str], timeout: int = 120) -> tuple[bool, st
         return False, str(exc)
 
 
-def _ollama_tags() -> set[str]:
-    base = OLLAMA_BASE_URL.rstrip("/")
+def _ensure_llama_cpp_runtime() -> bool:
+    global LAST_OLLAMA_ERROR
+    if LLAMA_CPP_BOOTSTRAP_STATE.get("runtime_ready"):
+        return True
+
     try:
-        response = requests.get(f"{base}/api/tags", timeout=8)
-        if response.status_code != 200:
-            return set()
-        data = response.json() or {}
-        models = data.get("models", []) or []
-        names: set[str] = set()
-        for model in models:
-            name = str(model.get("name", "") or "").strip()
-            if name:
-                names.add(name)
-                names.add(name.split(":", 1)[0])
-        return names
-    except Exception:
-        return set()
+        import llama_cpp  # noqa: F401
+        LLAMA_CPP_BOOTSTRAP_STATE["runtime_checked"] = True
+        LLAMA_CPP_BOOTSTRAP_STATE["runtime_ready"] = True
+        LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = ""
+        return True
+    except Exception as exc:
+        LAST_OLLAMA_ERROR = f"llama.cpp runtime unavailable: {exc}"
+        LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = LAST_OLLAMA_ERROR
+        return False
 
 
-def _ollama_server_ready() -> bool:
-    return bool(_ollama_tags())
-
-
-def _start_ollama_service(ollama_cmd: str) -> bool:
-    if not ollama_cmd:
+def _ensure_phi_model_available() -> bool:
+    global LAST_OLLAMA_ERROR
+    if LLAMA_CPP_MODEL_PATH.exists():
+        LLAMA_CPP_BOOTSTRAP_STATE["model_ready"] = True
+        return True
+    if not LLAMA_CPP_AUTO_BOOTSTRAP:
+        LAST_OLLAMA_ERROR = f"Phi GGUF model missing: {LLAMA_CPP_MODEL_PATH}"
         return False
     try:
-        subprocess.Popen(
-            [ollama_cmd, "serve"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            creationflags=(
-                getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                | getattr(subprocess, "DETACHED_PROCESS", 0)
-                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            ),
+        from huggingface_hub import hf_hub_download
+
+        LLAMA_CPP_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+        downloaded = hf_hub_download(
+            repo_id=LLAMA_CPP_MODEL_REPO,
+            filename=LLAMA_CPP_MODEL_FILE,
+            local_dir=str(LLAMA_CPP_MODEL_DIR),
+            local_dir_use_symlinks=False,
         )
-    except Exception:
-        return False
-
-    for _ in range(20):
-        if _ollama_server_ready():
+        if downloaded and Path(downloaded).exists():
+            LLAMA_CPP_BOOTSTRAP_STATE["model_ready"] = True
             return True
-        time.sleep(1.5)
+    except Exception as exc:
+        LAST_OLLAMA_ERROR = f"Failed to download Phi GGUF model: {exc}"
+        return False
+    LAST_OLLAMA_ERROR = f"Phi GGUF model missing after download attempt: {LLAMA_CPP_MODEL_PATH}"
     return False
 
 
-def _install_ollama_runtime_if_needed() -> bool:
-    if _resolve_ollama_command():
-        return True
-    if os.name != "nt":
-        return False
-    winget_cmd = shutil.which("winget")
-    if not winget_cmd:
-        return False
-    ok, _ = _run_local_command(
-        [
-            winget_cmd,
-            "install",
-            "-e",
-            "--id",
-            OLLAMA_WINDOWS_INSTALL_ID,
-            "--silent",
-            "--accept-package-agreements",
-            "--accept-source-agreements",
-        ],
-        timeout=5400,
-    )
-    return ok and bool(_resolve_ollama_command())
-
-
-def _ensure_ollama_runtime() -> bool:
-    global ENABLE_LOCAL_OLLAMA
+def _get_llama_cpp_instance() -> Any | None:
+    global LLAMA_CPP_INSTANCE
     global LAST_OLLAMA_ERROR
 
-    if OLLAMA_BOOTSTRAP_STATE.get("runtime_ready"):
-        ENABLE_LOCAL_OLLAMA = True
-        return True
+    if LLAMA_CPP_INSTANCE is not None:
+        return LLAMA_CPP_INSTANCE
+    if not _ensure_llama_cpp_runtime():
+        return None
+    if not _ensure_phi_model_available():
+        return None
 
-    ollama_cmd = _resolve_ollama_command()
-    if not ollama_cmd and AUTO_BOOTSTRAP_LOCAL_OLLAMA:
-        if not _install_ollama_runtime_if_needed():
-            LAST_OLLAMA_ERROR = "Local Ollama runtime is unavailable and automatic install failed"
-            OLLAMA_BOOTSTRAP_STATE["runtime_error"] = LAST_OLLAMA_ERROR
-            return False
-        ollama_cmd = _resolve_ollama_command()
+    try:
+        from llama_cpp import Llama
 
-    if not ollama_cmd:
-        LAST_OLLAMA_ERROR = "Local Ollama runtime is not installed"
-        OLLAMA_BOOTSTRAP_STATE["runtime_error"] = LAST_OLLAMA_ERROR
-        return False
-
-    if not _ollama_server_ready():
-        if not _start_ollama_service(ollama_cmd):
-            LAST_OLLAMA_ERROR = "Local Ollama service is not running and auto-start failed"
-            OLLAMA_BOOTSTRAP_STATE["runtime_error"] = LAST_OLLAMA_ERROR
-            return False
-
-    ENABLE_LOCAL_OLLAMA = True
-    OLLAMA_BOOTSTRAP_STATE["runtime_checked"] = True
-    OLLAMA_BOOTSTRAP_STATE["runtime_ready"] = True
-    OLLAMA_BOOTSTRAP_STATE["runtime_error"] = ""
-    return True
-
-
-def _ensure_ollama_model_available(model_name: str) -> bool:
-    global LAST_OLLAMA_ERROR
-    if not model_name:
-        return False
-    tags = _ollama_tags()
-    if model_name in tags or model_name.split(":", 1)[0] in tags:
-        return True
-
-    ollama_cmd = _resolve_ollama_command()
-    if not ollama_cmd:
-        LAST_OLLAMA_ERROR = "Cannot pull Ollama model because ollama executable is missing"
-        return False
-
-    ok, output = _run_local_command([ollama_cmd, "pull", model_name], timeout=7200)
-    if not ok:
-        LAST_OLLAMA_ERROR = f"Failed to pull Ollama model {model_name}: {output[:240]}"
-        return False
-
-    tags = _ollama_tags()
-    if model_name in tags or model_name.split(":", 1)[0] in tags:
-        return True
-    LAST_OLLAMA_ERROR = f"Ollama model {model_name} did not appear after pull"
-    return False
-
-
-def _ensure_local_ollama_capability(needs_vision: bool = False) -> bool:
-    global OLLAMA_MODEL_TEXT
-    global OLLAMA_MODEL_VISION
-    global LAST_OLLAMA_ERROR
-
-    if not _ensure_ollama_runtime():
-        return False
-
-    if needs_vision:
-        candidates = OLLAMA_VISION_MODEL_CANDIDATES or ([OLLAMA_MODEL_VISION] if OLLAMA_MODEL_VISION else [])
-        for candidate in candidates:
-            if _ensure_ollama_model_available(candidate):
-                OLLAMA_MODEL_VISION = candidate
-                OLLAMA_BOOTSTRAP_STATE["vision_model_ready"] = True
-                return True
-        LAST_OLLAMA_ERROR = LAST_OLLAMA_ERROR or "No usable local vision model could be prepared"
-        return False
-
-    candidates = OLLAMA_TEXT_MODEL_CANDIDATES or ([OLLAMA_MODEL_TEXT] if OLLAMA_MODEL_TEXT else [])
-    for candidate in candidates:
-        if _ensure_ollama_model_available(candidate):
-            OLLAMA_MODEL_TEXT = candidate
-            OLLAMA_BOOTSTRAP_STATE["text_model_ready"] = True
-            return True
-    LAST_OLLAMA_ERROR = LAST_OLLAMA_ERROR or "No usable local text model could be prepared"
-    return False
+        LLAMA_CPP_INSTANCE = Llama(
+            model_path=str(LLAMA_CPP_MODEL_PATH),
+            n_ctx=LLAMA_CPP_N_CTX,
+            n_threads=LLAMA_CPP_N_THREADS,
+            n_gpu_layers=LLAMA_CPP_N_GPU_LAYERS,
+            verbose=False,
+        )
+        return LLAMA_CPP_INSTANCE
+    except Exception as exc:
+        LAST_OLLAMA_ERROR = f"Failed to load Phi GGUF with llama.cpp: {exc}"
+        return None
 
 
 def _ollama_chat(system_prompt: str, user_prompt: str) -> str:
     global LAST_OLLAMA_ERROR
     LAST_OLLAMA_ERROR = ""
 
-    if not _ensure_local_ollama_capability(needs_vision=False):
+    llm = _get_llama_cpp_instance()
+    if llm is None:
         return ""
 
-    base = OLLAMA_BASE_URL.rstrip("/")
-    payload = {
-        "model": OLLAMA_MODEL_TEXT,
-        "stream": False,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        "options": {"temperature": 0},
-    }
-
+    prompt = (
+        f"<|system|>\n{system_prompt.strip()}<|end|>\n"
+        f"<|user|>\n{user_prompt.strip()}<|end|>\n"
+        "<|assistant|>\n"
+    )
     try:
-        response = requests.post(
-            f"{base}/api/chat",
-            json=payload,
-            timeout=max(HTTP_TIMEOUT, 60),
+        response = llm(
+            prompt,
+            max_tokens=LLAMA_CPP_MAX_TOKENS,
+            temperature=0,
+            stop=["<|end|>", "<|user|>", "<|system|>"],
+            echo=False,
         )
-    except Exception as exc:
-        LAST_OLLAMA_ERROR = f"Ollama connection error: {exc}"
-        return ""
-
-    if response.status_code != 200:
-        LAST_OLLAMA_ERROR = f"Ollama error {response.status_code}: {response.text[:220]}"
-        return ""
-
-    try:
-        data = response.json()
-        content = (((data or {}).get("message") or {}).get("content") or "").strip()
+        content = str((((response or {}).get("choices") or [{}])[0].get("text") or "")).strip()
         if content:
             return content
-        LAST_OLLAMA_ERROR = "Empty Ollama response"
+        LAST_OLLAMA_ERROR = "Empty llama.cpp response"
         return ""
     except Exception as exc:
-        LAST_OLLAMA_ERROR = f"Invalid Ollama response: {exc}"
+        LAST_OLLAMA_ERROR = f"llama.cpp inference error: {exc}"
         return ""
 
 
@@ -6073,49 +5948,9 @@ def call_local_ollama_text(system_prompt: str, user_prompt: str) -> str:
 def call_local_ollama_vision_ocr(image_bytes: bytes, prompt: str) -> str:
     global LAST_OLLAMA_ERROR
     LAST_OLLAMA_ERROR = ""
-
-    if not _ensure_local_ollama_capability(needs_vision=True):
-        return ""
-
-    base = OLLAMA_BASE_URL.rstrip("/")
-    b64 = base64.b64encode(image_bytes).decode("utf-8")
-    payload = {
-        "model": OLLAMA_MODEL_VISION,
-        "stream": False,
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt,
-                "images": [b64],
-            }
-        ],
-        "options": {"temperature": 0},
-    }
-
-    try:
-        response = requests.post(
-            f"{base}/api/chat",
-            json=payload,
-            timeout=max(HTTP_TIMEOUT, 90),
-        )
-    except Exception as exc:
-        LAST_OLLAMA_ERROR = f"Ollama vision connection error: {exc}"
-        return ""
-
-    if response.status_code != 200:
-        LAST_OLLAMA_ERROR = f"Ollama vision error {response.status_code}: {response.text[:220]}"
-        return ""
-
-    try:
-        data = response.json()
-        content = (((data or {}).get("message") or {}).get("content") or "").strip()
-        if content:
-            return content
-        LAST_OLLAMA_ERROR = "Empty Ollama vision response"
-        return ""
-    except Exception as exc:
-        LAST_OLLAMA_ERROR = f"Invalid Ollama vision response: {exc}"
-        return ""
+    del image_bytes, prompt
+    LAST_OLLAMA_ERROR = "Vision model path disabled: using PaddleOCR + Phi-3-mini GGUF text cleanup instead"
+    return ""
 
 
 def call_openrouter_text(system_prompt: str, user_prompt: str, model: str | None = None) -> str:
@@ -6258,47 +6093,34 @@ def call_openrouter_vision_ocr(image_bytes: bytes) -> str:
 
     system_prompt, user_prompt = _build_vision_extraction_prompt()
     paddle_text = try_paddleocr_ocr(image_bytes)
-    local_ocr_text = paddle_text or try_tesseract_ocr(image_bytes)
-    vision_prompt = (
-        f"{system_prompt}\n\n"
-        f"{user_prompt}\n\n"
-        "OCR SEED TEXT (may contain recognition errors; use it only as a hint, not as ground truth):\n"
-        f"{local_ocr_text[:10000]}"
-    )
-    raw_vision_response = call_local_ollama_vision_ocr(image_bytes, vision_prompt)
-    vision_text = _structured_vlm_response_to_text(raw_vision_response)
-    if vision_text and passes_extraction_gate(vision_text):
-        LAST_VISION_PROVIDER = "Local Ollama Vision (structured JSON)"
-        return vision_text
+    tesseract_text = try_tesseract_ocr(image_bytes)
+    local_ocr_text = "\n".join([x for x in [paddle_text, tesseract_text] if str(x or "").strip()]).strip()
 
     if not local_ocr_text and not vision_text:
         LAST_OLLAMA_ERROR = "Local OCR returned no text"
         return ""
 
-    user_prompt = (
+    structured_prompt = (
         f"{system_prompt}\n\n"
         f"{user_prompt}\n\n"
-        "OCR TEXT ONLY (no image available in this pass):\n"
+        "OCR TEXT ONLY (derived from PaddleOCR/Tesseract; use it as evidence, not as perfect ground truth):\n"
         f"{local_ocr_text}"
     )
 
-    refined_text = call_local_ollama_text(system_prompt, user_prompt)
+    refined_text = call_local_ollama_text(system_prompt, structured_prompt)
     refined_text = _structured_vlm_response_to_text(refined_text)
-    merged_candidates = [x for x in [refined_text, vision_text, local_ocr_text] if str(x or "").strip()]
+    merged_candidates = [x for x in [refined_text, local_ocr_text] if str(x or "").strip()]
     if merged_candidates:
         merged_text = "\n".join(merged_candidates)
         if passes_extraction_gate(merged_text):
-            LAST_VISION_PROVIDER = "Local Phi Vision + OCR"
+            LAST_VISION_PROVIDER = "PaddleOCR + Phi-3-mini GGUF"
             return merged_text
 
     if refined_text and passes_extraction_gate(refined_text):
-        LAST_VISION_PROVIDER = "Local Phi Text + OCR"
+        LAST_VISION_PROVIDER = "Phi-3-mini GGUF"
         return refined_text
-    if vision_text:
-        LAST_VISION_PROVIDER = "Local Ollama Vision (structured JSON)"
-        return vision_text
     if local_ocr_text:
-        LAST_VISION_PROVIDER = "PaddleOCR/Tesseract"
+        LAST_VISION_PROVIDER = "PaddleOCR + Tesseract"
         return local_ocr_text
 
     LAST_OLLAMA_ERROR = "No image extraction route produced usable text"
