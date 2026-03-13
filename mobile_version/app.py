@@ -5090,10 +5090,11 @@ def _prepare_text_for_structured_parsing(input_text: str) -> str:
         re.I,
     )
     row_hint = re.compile(
-        r"\b(?:vit(?:amin|main)|biotin|folic|folate|iodine|selenium|chromium|molybdenum|zinc|iron|copper|manganese|magnesium|calcium|potassium|phosphorus|boron|l-arginine|l-methionine|l-lysine|green\s+tea\s+extract|beta-?carotene|lutein|lycopene|amino\s+acids|botanicals)\b",
+        r"\b(?:vit(?:amin|main)|biotin|folic|folate|iodine|l[o0]dine|selenium|chromium|molybdenum|zinc|iron|copper|manganese|magnesium|calcium|potassium|phosphorus|boron|l-arginine|l-methionine|l-lysine|green\s+tea\s+extract|beta-?carotene|lutein|lycopene|amino\s+acids|botanicals)\b",
         re.I,
     )
-    dose_hint = re.compile(r"\b\d+(?:[\.,]\d+)?\s*(?:mg|mcg|ug|µg|μg|fg|g|iu|kcal)\b", re.I)
+    # "meg" is a common OCR misread of "mcg" — include it so those lines are selected.
+    dose_hint = re.compile(r"\b\d+(?:[\.,]\d+)?\s*(?:mg|mcg|meg|ug|µg|μg|fg|g|iu|kcal)\b", re.I)
 
     selected: list[str] = []
     selected_dose_rows = 0
@@ -6250,7 +6251,7 @@ def build_gate_result(
 
 def _normalize_component_unit_token(unit: str) -> str:
     u = str(unit or "").strip().lower()
-    if u in {"ug", "µg", "μg", "fg"}:
+    if u in {"ug", "µg", "μg", "fg", "meg"}:
         return "mcg"
     return u
 
