@@ -5000,6 +5000,13 @@ def _is_plausible_component_name(component: str) -> bool:
     if short_words >= 2 and not c.startswith("vitamin "):
         return False
 
+    # OCR often creates glued garbage such as "vaamm vitamin b2 b10".
+    # If a vitamin token appears, enforce canonical vitamin-leading format.
+    if "vitamin" in c and not c.startswith("vitamin "):
+        return False
+    if len(re.findall(r"\bvit(?:amin|amn|main)\b", c, flags=re.I)) > 1:
+        return False
+
     # Vitamin tokens should match canonical forms like vitamin a, vitamin d3, vitamin k2.
     # Reject malformed OCR fragments such as "vitamin ka 2".
     if c.startswith("vitamin "):
@@ -6737,8 +6744,23 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
     name_only_fallback = parse_components_name_only(input_text)
     ingredient_list_fallback = parse_components_from_ingredient_list(input_text)
 
+    has_structured_table_cues = bool(
+        re.search(
+            r"\b(?:nutrition\s+information|supplement\s+facts|quantity\s+per\s+serving|%\s*rda|nrv|tagesdosis)\b",
+            input_text,
+            re.I,
+        )
+    )
+
     local_with_dose = regex_fallback
-    local_name_pool = ingredient_list_fallback if ingredient_list_fallback else name_only_fallback
+    if has_structured_table_cues and len(local_with_dose) >= 5:
+        # For table-style labels, prioritize rows with explicit doses to avoid
+        # ingredient-list hallucinations and OCR duplicates flooding Results.
+        local_name_pool = []
+    elif ingredient_list_fallback:
+        local_name_pool = ingredient_list_fallback
+    else:
+        local_name_pool = name_only_fallback
     local_rows = merge_component_rows(local_with_dose, local_name_pool)
     local_expanded = expand_umbrella_components(local_rows)
     local_validated, local_meta = validate_parsed_components(local_expanded)
@@ -6788,6 +6810,15 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
 
     best_source, best_rows, best_meta, best_score = max(candidates, key=_candidate_rank)
 
+    if has_structured_table_cues:
+        dosed_rows = [
+            row for row in best_rows
+            if row.get("dose_value") is not None and str(row.get("dose_unit", "") or "").strip()
+        ]
+        if len(dosed_rows) >= 5:
+            best_rows = dosed_rows
+            best_score = max(best_score, _score_component_rows(best_rows))
+
     recovered_vitamin_rows = _recover_missing_vitamin_rows_from_text(input_text, best_rows)
     if recovered_vitamin_rows:
         recovered_merged = merge_component_rows(best_rows, recovered_vitamin_rows)
@@ -6799,6 +6830,15 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
             best_meta = {
                 "issues": ["vitamin_token_recovery_applied", *recovery_issues, *(best_meta.get("issues", []) or [])]
             }
+
+    if has_structured_table_cues:
+        dosed_rows_after_recovery = [
+            row for row in best_rows
+            if row.get("dose_value") is not None and str(row.get("dose_unit", "") or "").strip()
+        ]
+        if len(dosed_rows_after_recovery) >= 5:
+            best_rows = dosed_rows_after_recovery
+            best_score = max(best_score, _score_component_rows(best_rows))
 
     warnings: list[str] = []
 
