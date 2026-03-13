@@ -4921,7 +4921,7 @@ def normalize_component_name(raw_name: str) -> str:
 
 OCR_VITAMIN_PREFIX_PATTERN = re.compile(r"^(vitamin\s+[a-z](?:\d{1,2})?)\b", re.I)
 OCR_VITAMIN_TOKEN_PATTERN = re.compile(r"\b(?:vit(?:amin|main)|vitarnin)\s*([a-z])\s*(\d{0,2})\b", re.I)
-OCR_VITAMIN_SHORTHAND_PATTERN = re.compile(r"\b([bdk])\s*(12|[1-9])\b", re.I)
+OCR_VITAMIN_SHORTHAND_PATTERN = re.compile(r"\b([bdk])\s*[-:]?\s*(12|[1-9])\b", re.I)
 OCR_DOSE_TOKEN_PATTERN = re.compile(r"(?P<val>\d+(?:[\.,]\d+)?|\d+[oO])\s*(?P<unit>mg|mcg|ug|µg|μg|iu|g)\b", re.I)
 OCR_MICROGRAM_COMPONENTS: set[str] = {
     "vitamin a",
@@ -4946,6 +4946,14 @@ def _repair_ocr_component_name(component: str) -> str:
     text = normalize_component_name(component)
     if not text:
         return ""
+
+    shorthand_with_suffix = re.match(r"^([bdk])\s*[-:]?\s*(\d{1,2})$", text, re.I)
+    if shorthand_with_suffix:
+        return f"vitamin {shorthand_with_suffix.group(1).lower()}{shorthand_with_suffix.group(2)}"
+
+    shorthand_single = re.match(r"^([adek])$", text, re.I)
+    if shorthand_single:
+        return f"vitamin {shorthand_single.group(1).lower()}"
 
     vitamin_match = OCR_VITAMIN_PREFIX_PATTERN.match(text)
     if vitamin_match:
@@ -7614,130 +7622,131 @@ The local RAG library is built from curated expert nutrition notes and evidence 
 
             st.session_state["meal_component_candidates"] = meal_component_candidates
 
-            if priced_rows > 0:
-                symbol = CURRENCY_SYMBOL.get(selected_currency, selected_currency)
-                summary_cols = st.columns([1.4, 1.0])
-                summary_cols[0].markdown(
-                    f"**Estimated total whole-food cost for selected alternatives: {symbol}{format_float(total_cost)}**"
-                )
-                supplement_paid = summary_cols[1].number_input(
-                    "What did you pay for the supplement?",
-                    min_value=0.0,
-                    value=0.0,
-                    step=0.5,
-                    format="%.2f",
-                    key="supplement_paid_price",
-                    help="Enter the supplement purchase price in the selected currency for a direct cost comparison.",
-                )
+            with mapped_section:
+                if priced_rows > 0:
+                    symbol = CURRENCY_SYMBOL.get(selected_currency, selected_currency)
+                    summary_cols = st.columns([1.4, 1.0])
+                    summary_cols[0].markdown(
+                        f"**Estimated total whole-food cost for selected alternatives: {symbol}{format_float(total_cost)}**"
+                    )
+                    supplement_paid = summary_cols[1].number_input(
+                        "What did you pay for the supplement?",
+                        min_value=0.0,
+                        value=0.0,
+                        step=0.5,
+                        format="%.2f",
+                        key="supplement_paid_price",
+                        help="Enter the supplement purchase price in the selected currency for a direct cost comparison.",
+                    )
 
-                if supplement_paid > 0:
-                    difference = abs(float(supplement_paid) - float(total_cost))
-                    if total_cost < supplement_paid:
-                        st.success(
-                            f"For matched component concentrations, selected whole foods are cheaper by {symbol}{format_float(difference)}."
-                        )
-                    elif total_cost > supplement_paid:
-                        st.info(
-                            f"For matched component concentrations, the supplement is cheaper by {symbol}{format_float(difference)}."
+                    if supplement_paid > 0:
+                        difference = abs(float(supplement_paid) - float(total_cost))
+                        if total_cost < supplement_paid:
+                            st.success(
+                                f"For matched component concentrations, selected whole foods are cheaper by {symbol}{format_float(difference)}."
+                            )
+                        elif total_cost > supplement_paid:
+                            st.info(
+                                f"For matched component concentrations, the supplement is cheaper by {symbol}{format_float(difference)}."
+                            )
+                        else:
+                            st.info("For matched component concentrations, both options cost about the same.")
+
+                        if priced_rows < len(components):
+                            st.caption(
+                                f"Cost comparison currently covers {priced_rows} of {len(components)} components with available price matches."
+                            )
+
+                        st.caption(
+                            "Health framing: whole foods remain the preferred baseline choice because they provide broader nutrient synergy and dietary quality beyond isolated supplement economics."
                         )
                     else:
-                        st.info("For matched component concentrations, both options cost about the same.")
+                        st.caption("Enter your supplement price to compare supplement vs selected whole-food costs.")
+                else:
+                    st.caption("Total cost is unavailable until at least one row has both dose-match grams and a price source.")
 
-                    if priced_rows < len(components):
-                        st.caption(
-                            f"Cost comparison currently covers {priced_rows} of {len(components)} components with available price matches."
-                        )
+                st.divider()
+                st.caption("Adjust filters and pricing options below to recalculate results.")
 
-                    st.caption(
-                        "Health framing: whole foods remain the preferred baseline choice because they provide broader nutrient synergy and dietary quality beyond isolated supplement economics."
+                default_profile_index = profile_labels.index(default_profile_label) if default_profile_label in profile_labels else 0
+                selected_profile_index = (
+                    profile_labels.index(selected_profile_label)
+                    if selected_profile_label in profile_labels
+                    else default_profile_index
+                )
+
+                with st.expander("Dietary restriction", expanded=False):
+                    st.selectbox(
+                        "Apply restriction to whole-food alternatives",
+                        options=profile_labels,
+                        index=selected_profile_index,
+                        key="global_diet_profile",
                     )
-                else:
-                    st.caption("Enter your supplement price to compare supplement vs selected whole-food costs.")
-            else:
-                st.caption("Total cost is unavailable until at least one row has both dose-match grams and a price source.")
+                    selected_profile_after = profile_by_label.get(
+                        str(st.session_state.get("global_diet_profile", default_profile_label)),
+                        profiles[0] if profiles else None,
+                    )
+                    if selected_profile_after and selected_profile_after.get("description"):
+                        st.caption(f"Profile note: {selected_profile_after.get('description')}")
+                    st.caption("Filtering uses local keyword/rule screening and is not a medical, allergy, halal, or kosher certification.")
 
-            st.divider()
-            st.caption("Adjust filters and pricing options below to recalculate results.")
+                with st.expander("Pricing settings", expanded=False):
+                    country_options = list(COUNTRY_PRICE_CONFIG.keys())
+                    country_index = country_options.index(selected_country) if selected_country in country_options else 0
+                    st.selectbox(
+                        "Price region",
+                        country_options,
+                        index=country_index,
+                        key="price_region",
+                    )
+                    selected_country_after = str(st.session_state.get("price_region", selected_country))
+                    default_currency_after = COUNTRY_PRICE_CONFIG.get(selected_country_after, {}).get("currency", "USD")
+                    currency_options = ["EUR", "USD", "GBP", "INR", "BRL"]
+                    current_currency = str(st.session_state.get("price_currency", selected_currency))
+                    currency_index = currency_options.index(current_currency) if current_currency in currency_options else (
+                        currency_options.index(default_currency_after) if default_currency_after in currency_options else 1
+                    )
+                    st.selectbox(
+                        "Currency",
+                        currency_options,
+                        index=currency_index,
+                        key="price_currency",
+                    )
+                    market_options = ["Auto", "Rewe", "Walmart"]
+                    market_index = market_options.index(selected_market) if selected_market in market_options else 0
+                    st.selectbox(
+                        "Market fallback",
+                        market_options,
+                        index=market_index,
+                        key="price_market",
+                    )
+                    enable_live_after = st.toggle(
+                        "Enable live web/LLM fallback when local price DB has no match",
+                        value=enable_live_price_fallback,
+                        key="enable_live_price_fallback",
+                    )
+                    if enable_live_after:
+                        st.caption("Mode: Advanced (live web/API fallback enabled; richer but potentially slower)")
+                    else:
+                        st.caption("Mode: Fast (local price DB only; fastest results)")
 
-            default_profile_index = profile_labels.index(default_profile_label) if default_profile_label in profile_labels else 0
-            selected_profile_index = (
-                profile_labels.index(selected_profile_label)
-                if selected_profile_label in profile_labels
-                else default_profile_index
-            )
-
-            with st.expander("Dietary restriction", expanded=False):
-                st.selectbox(
-                    "Apply restriction to whole-food alternatives",
-                    options=profile_labels,
-                    index=selected_profile_index,
-                    key="global_diet_profile",
-                )
-                selected_profile_after = profile_by_label.get(
-                    str(st.session_state.get("global_diet_profile", default_profile_label)),
-                    profiles[0] if profiles else None,
-                )
-                if selected_profile_after and selected_profile_after.get("description"):
-                    st.caption(f"Profile note: {selected_profile_after.get('description')}")
-                st.caption("Filtering uses local keyword/rule screening and is not a medical, allergy, halal, or kosher certification.")
-
-            with st.expander("Pricing settings", expanded=False):
-                country_options = list(COUNTRY_PRICE_CONFIG.keys())
-                country_index = country_options.index(selected_country) if selected_country in country_options else 0
-                st.selectbox(
-                    "Price region",
-                    country_options,
-                    index=country_index,
-                    key="price_region",
-                )
-                selected_country_after = str(st.session_state.get("price_region", selected_country))
-                default_currency_after = COUNTRY_PRICE_CONFIG.get(selected_country_after, {}).get("currency", "USD")
-                currency_options = ["EUR", "USD", "GBP", "INR", "BRL"]
-                current_currency = str(st.session_state.get("price_currency", selected_currency))
-                currency_index = currency_options.index(current_currency) if current_currency in currency_options else (
-                    currency_options.index(default_currency_after) if default_currency_after in currency_options else 1
-                )
-                st.selectbox(
-                    "Currency",
-                    currency_options,
-                    index=currency_index,
-                    key="price_currency",
-                )
-                market_options = ["Auto", "Rewe", "Walmart"]
-                market_index = market_options.index(selected_market) if selected_market in market_options else 0
-                st.selectbox(
-                    "Market fallback",
-                    market_options,
-                    index=market_index,
-                    key="price_market",
-                )
-                enable_live_after = st.toggle(
-                    "Enable live web/LLM fallback when local price DB has no match",
-                    value=enable_live_price_fallback,
-                    key="enable_live_price_fallback",
-                )
-                if enable_live_after:
-                    st.caption("Mode: Advanced (live web/API fallback enabled; richer but potentially slower)")
-                else:
-                    st.caption("Mode: Fast (local price DB only; fastest results)")
-
-                st.toggle(
-                    "Use SerpApi",
-                    value=bool(st.session_state.get("use_serpapi_pricing", use_serpapi)),
-                    key="use_serpapi_pricing",
-                    help="Google Shopping offers via SerpApi",
-                    disabled=not enable_live_after,
-                )
-                st.toggle(
-                    "Use DataForSEO",
-                    value=bool(st.session_state.get("use_dataforseo_pricing", use_dataforseo)),
-                    key="use_dataforseo_pricing",
-                    help="Google Shopping offers via DataForSEO",
-                    disabled=not enable_live_after,
-                )
-                if st.button("Refresh price lookups", key="refresh_price_cache", use_container_width=True):
-                    st.session_state["price_cache"] = {}
-                    st.caption("Price cache cleared. Next render will fetch fresh prices.")
+                    st.toggle(
+                        "Use SerpApi",
+                        value=bool(st.session_state.get("use_serpapi_pricing", use_serpapi)),
+                        key="use_serpapi_pricing",
+                        help="Google Shopping offers via SerpApi",
+                        disabled=not enable_live_after,
+                    )
+                    st.toggle(
+                        "Use DataForSEO",
+                        value=bool(st.session_state.get("use_dataforseo_pricing", use_dataforseo)),
+                        key="use_dataforseo_pricing",
+                        help="Google Shopping offers via DataForSEO",
+                        disabled=not enable_live_after,
+                    )
+                    if st.button("Refresh price lookups", key="refresh_price_cache", use_container_width=True):
+                        st.session_state["price_cache"] = {}
+                        st.caption("Price cache cleared. Next render will fetch fresh prices.")
 
     with tab_meals:
         st.subheader("Meal ideas from suggested whole foods")
