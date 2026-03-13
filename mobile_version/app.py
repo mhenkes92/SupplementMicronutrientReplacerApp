@@ -5073,6 +5073,71 @@ def _prepare_text_for_structured_parsing(input_text: str) -> str:
     return text
 
 
+def _compact_extracted_text(input_text: str, max_lines: int = 260) -> str:
+    text = str(input_text or "")
+    if not text.strip():
+        return ""
+
+    lines = [str(x or "").strip() for x in text.splitlines() if str(x or "").strip()]
+    if not lines:
+        return ""
+
+    dose_hint = re.compile(r"\b\d+(?:[\.,]\d+)?\s*(?:mg|mcg|ug|µg|μg|fg|g|iu|kcal)\b", re.I)
+    nutrient_hint = re.compile(
+        r"\b(?:vit(?:amin|main)|biotin|folic|folate|iodine|selenium|chromium|molybdenum|zinc|iron|copper|manganese|magnesium|calcium|potassium|phosphorus|boron|arginine|methionine|lysine|lutein|lycopene|beta-?carotene|green\s+tea)\b",
+        re.I,
+    )
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        normalized = normalize_lookup_key(line)
+        if not normalized:
+            continue
+        if normalized in seen:
+            continue
+
+        # Skip very long prose/marketing lines unless they contain a nutrient-dose signal.
+        if len(line) > 220 and not (dose_hint.search(line) or nutrient_hint.search(line)):
+            continue
+
+        seen.add(normalized)
+        out.append(line)
+        if len(out) >= max_lines:
+            break
+
+    return "\n".join(out)
+
+
+def _dedupe_components_prefer_dose(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    chosen: dict[str, dict[str, Any]] = {}
+
+    def _has_dose(row: dict[str, Any]) -> bool:
+        return row.get("dose_value") is not None and bool(str(row.get("dose_unit", "") or "").strip())
+
+    for row in rows or []:
+        component = normalize_lookup_key(str(row.get("component", "") or ""))
+        if not component:
+            continue
+        current = chosen.get(component)
+        if current is None:
+            chosen[component] = {
+                "component": component,
+                "dose_value": row.get("dose_value"),
+                "dose_unit": str(row.get("dose_unit", "") or ""),
+            }
+            continue
+
+        if _has_dose(row) and not _has_dose(current):
+            chosen[component] = {
+                "component": component,
+                "dose_value": row.get("dose_value"),
+                "dose_unit": str(row.get("dose_unit", "") or ""),
+            }
+
+    return list(chosen.values())
+
+
 def _component_prefers_microgram_unit(component: str) -> bool:
     key = normalize_lookup_key(component)
     if not key:
@@ -6892,6 +6957,9 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
             best_rows = dosed_rows_after_recovery
             best_score = max(best_score, _score_component_rows(best_rows))
 
+    best_rows = _dedupe_components_prefer_dose(best_rows)
+    best_score = max(best_score, _score_component_rows(best_rows))
+
     warnings: list[str] = []
 
     if best_rows:
@@ -7347,7 +7415,8 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                             "Manual text gate check flagged low structure; continuing because it is user-entered input."
                         )
 
-                combined = "\n\n".join([x for x in extracted_chunks if x.strip()])
+                combined_raw = "\n\n".join([x for x in extracted_chunks if x.strip()])
+                combined = _compact_extracted_text(combined_raw)
 
                 if not combined:
                     st.session_state["analysis_ready"] = False
@@ -7407,9 +7476,22 @@ The local RAG library is built from curated expert nutrition notes and evidence 
         st.subheader("Your Supplement vs Whole Food Alternative")
 
         if not components:
-            st.info("Run Analyze first to populate this tab.")
             if combined:
-                st.text_area("Raw extracted text", combined[:6000], height=220, key="raw_text_preview_results")
+                debug_payload = st.session_state.get("analysis_structured_debug", {}) or {}
+                st.warning(
+                    "Analyze completed, but no structured components were extracted from the current OCR text. "
+                    "Try a clearer image or refine manual text input."
+                )
+                st.caption(
+                    "Extraction summary: "
+                    f"source={debug_payload.get('source', 'n/a')}, "
+                    f"confidence={debug_payload.get('confidence', 'n/a')}, "
+                    f"warnings={debug_payload.get('warnings', [])}"
+                )
+                with st.expander("Show cleaned extracted text", expanded=False):
+                    st.text_area("Cleaned extracted text", combined[:6000], height=240, key="raw_text_preview_results")
+            else:
+                st.info("Run Analyze first to populate this tab.")
         else:
             components_cache_key = json.dumps(
                 {
