@@ -6860,6 +6860,8 @@ body,
         st.session_state["analysis_components"] = []
     if "analysis_combined_text" not in st.session_state:
         st.session_state["analysis_combined_text"] = ""
+    if "analysis_structured_debug" not in st.session_state:
+        st.session_state["analysis_structured_debug"] = {}
     if "analysis_usda_cache_key" not in st.session_state:
         st.session_state["analysis_usda_cache_key"] = ""
     if "analysis_usda_summary" not in st.session_state:
@@ -7156,20 +7158,28 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     st.session_state["analysis_ready"] = False
                     st.session_state["analysis_components"] = []
                     st.session_state["analysis_combined_text"] = ""
+                    st.session_state["analysis_structured_debug"] = {}
                     status.update(label="No input detected", state="error")
                     st.error("Please provide at least one input source: image, link, or text.")
                 else:
                     status.write("Step 4/4: Extracting supplement components")
-                    components = parse_components(combined)
+                    structured_payload = build_structured_nutrients_json(combined)
+                    components = list(structured_payload.get("nutrients", []) or [])
                     if LAST_TEXT_PROVIDER:
                         status.write(f"Testing info: component parsing used {LAST_TEXT_PROVIDER}")
                     else:
                         status.write("Testing info: component parsing used local fallback logic")
+                    status.write(
+                        "Extraction summary: "
+                        f"{len(components)} components, source={structured_payload.get('source', 'n/a')}, "
+                        f"confidence={structured_payload.get('confidence', 'n/a')}"
+                    )
                     status.update(label="Done", state="complete")
 
                     st.session_state["analysis_ready"] = True
                     st.session_state["analysis_components"] = components
                     st.session_state["analysis_combined_text"] = combined
+                    st.session_state["analysis_structured_debug"] = structured_payload
                     st.session_state["analysis_usda_cache_key"] = ""
                     st.session_state["analysis_usda_summary"] = []
                     st.session_state["analysis_usda_details"] = []
@@ -7295,12 +7305,11 @@ The local RAG library is built from curated expert nutrition notes and evidence 
             prep_progress = st.progress(0, text="Preparing whole-food matches and estimated costs...")
             total_rows = max(1, len(components))
 
-            st.markdown("### 1) Whole Food Alternative Found")
-            st.caption("1a) Component dropdowns (collapsed by default)")
-            mapped_section = st.container()
-            st.markdown("### 2) No Whole Food Alternative Found")
-            st.caption("2a) Component dropdowns (collapsed by default)")
-            unmapped_section = st.container()
+            with st.expander("1) Whole Food Alternative Found", expanded=False):
+                mapped_section = st.container()
+
+            with st.expander("2) No Whole Food Alternative Found", expanded=False):
+                unmapped_section = st.container()
 
             for index, item in enumerate(components):
                 prep_progress.progress(int((index / total_rows) * 100), text=f"Preparing component {index + 1}/{len(components)}...")
@@ -7332,7 +7341,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
 
                 target_section = mapped_section if foods else unmapped_section
                 with target_section:
-                    with st.expander(f"{status_symbol} {component_display} • {dose_label} • {status_chip}", expanded=False):
+                    with st.expander(f"{status_symbol} {component_display} • {dose_label}", expanded=False):
                         st.markdown(
                             f"**Supplement dose:** <span class='linked-value-chip'>{dose_label}</span>",
                             unsafe_allow_html=True,
