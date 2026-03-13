@@ -5401,6 +5401,8 @@ def _is_suspicious_structured_group_dose(group_key: str, dose_value: float | Non
         return True
     if unit == "mg" and group_key in STRUCTURED_MG_REPEAT_SUSPICIOUS_GROUPS and repeated_count >= 3 and value <= 5:
         return True
+    if group_key == "zinc" and unit == "mg" and value < 5:
+        return True
     if group_key == "zinc" and unit == "mcg" and value >= 100:
         return True
     if group_key == "iron" and unit == "mg" and value >= 12 and abs((value * 10.0) - round(value * 10.0)) < 1e-9 and abs((value % 1.0) - 0.5) < 1e-9:
