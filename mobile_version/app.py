@@ -114,7 +114,7 @@ DECIMAL_PRECISION_MIN = 2
 DECIMAL_PRECISION_MAX = 8
 
 EXTRACTION_DOSE_PATTERN = re.compile(
-    r"\b\d+(?:[\.,]\d+)?\s*(?:mg|mcg|ug|µg|μg|fg|g|iu|kcal)\b",
+    r"\b\d+(?:[\.,]\d+)?\s*(?:mg|mcg|meg|ug|µg|μg|fg|g|iu|kcal)\b",
     re.I,
 )
 LOCAL_URL_KEYWORD_WINDOW_PATTERN = re.compile(
@@ -4955,7 +4955,7 @@ def normalize_component_name(raw_name: str) -> str:
 OCR_VITAMIN_PREFIX_PATTERN = re.compile(r"^(vitamin\s+[a-z](?:\d{1,2})?)\b", re.I)
 OCR_VITAMIN_TOKEN_PATTERN = re.compile(r"\b(?:vit(?:amin|main)|vitarnin)\s*([a-z])\s*(\d{0,2})\b", re.I)
 OCR_VITAMIN_SHORTHAND_PATTERN = re.compile(r"\b([bdk])\s*[-:]?\s*(12|[1-9])\b", re.I)
-OCR_DOSE_TOKEN_PATTERN = re.compile(r"(?P<val>\d+(?:[\.,]\d+)?|\d+[oO])\s*(?P<unit>mg|mcg|ug|µg|μg|fg|iu|g)\b", re.I)
+OCR_DOSE_TOKEN_PATTERN = re.compile(r"(?P<val>\d+(?:[\.,]\d+)?|\d+[oO])\s*(?P<unit>mg|mcg|meg|ug|µg|μg|fg|iu|g)\b", re.I)
 OCR_MICROGRAM_COMPONENTS: set[str] = {
     "vitamin a",
     "vitamin d",
@@ -5312,6 +5312,108 @@ def _recover_missing_vitamin_rows_from_text(
     return recovered
 
 
+STRUCTURED_CORE_COMPONENT_GROUPS: set[str] = {
+    "vitamin a",
+    "vitamin c",
+    "vitamin d",
+    "vitamin e",
+    "vitamin k_family",
+    "vitamin b1",
+    "vitamin b2",
+    "vitamin b3",
+    "vitamin b5",
+    "vitamin b6",
+    "biotin",
+    "folate_family",
+    "vitamin b12",
+    "calcium",
+    "phosphorus",
+    "potassium",
+    "magnesium",
+    "iron",
+    "copper",
+    "manganese",
+    "boron",
+    "iodine",
+    "chromium",
+    "selenium",
+    "molybdenum",
+    "zinc",
+}
+
+STRUCTURED_CORE_RECOVERY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("vitamin a", re.compile(r"\bvit(?:amin|main)?\s*a\b", re.I)),
+    ("vitamin c", re.compile(r"\b(?:vit(?:amin|main)?\s*c|ascorbic\s+acid)\b", re.I)),
+    ("vitamin d", re.compile(r"\bvit(?:amin|main)?\s*d(?:\d)?\b", re.I)),
+    ("vitamin e", re.compile(r"\bvit(?:amin|main)?\s*e\b", re.I)),
+    ("vitamin k1", re.compile(r"\bvit(?:amin|main)?\s*k1\b|\bvit(?:amin|main)?\s*k\b", re.I)),
+    ("vitamin b1", re.compile(r"\b(?:vit(?:amin|main)?\s*b1|thiamin(?:e)?)\b", re.I)),
+    ("vitamin b2", re.compile(r"\b(?:vit(?:amin|main)?\s*b2|riboflavin)\b", re.I)),
+    ("vitamin b3", re.compile(r"\b(?:vit(?:amin|main)?\s*b3|niacin)\b", re.I)),
+    ("vitamin b5", re.compile(r"\b(?:vit(?:amin|main)?\s*b5|pantothenic\s+acid)\b", re.I)),
+    ("vitamin b6", re.compile(r"\b(?:vit(?:amin|main)?\s*b6|pyridoxine)\b", re.I)),
+    ("biotin", re.compile(r"\b(?:vit(?:amin|main)?\s*b7|biotin)\b", re.I)),
+    ("folic acid", re.compile(r"\b(?:folic\s+acid|folate|vit(?:amin|main)?\s*b9)\b", re.I)),
+    ("vitamin b12", re.compile(r"\b(?:vit(?:amin|main)?\s*b12|cobalamin)\b", re.I)),
+    ("calcium", re.compile(r"\bcalcium\b", re.I)),
+    ("phosphorus", re.compile(r"\bphosphor(?:us|ous)\b", re.I)),
+    ("potassium", re.compile(r"\bpotass(?:ium|um|lum)\b", re.I)),
+    ("magnesium", re.compile(r"\bmagnes(?:ium|lum|iurn)\b", re.I)),
+    ("iron", re.compile(r"\b(?:iron|ion)\b", re.I)),
+    ("copper", re.compile(r"\bcopper\b", re.I)),
+    ("manganese", re.compile(r"\bmanganese\b", re.I)),
+    ("boron", re.compile(r"\bboron\b", re.I)),
+    ("iodine", re.compile(r"\b(?:iodine|jodine|l[o0]dine)\b", re.I)),
+    ("chromium", re.compile(r"\bchromium\b", re.I)),
+    ("selenium", re.compile(r"\bselen(?:ium|iurn)\b", re.I)),
+    ("molybdenum", re.compile(r"\bmolybdenum\b", re.I)),
+    ("zinc", re.compile(r"\bzinc\b", re.I)),
+]
+
+
+def _recover_core_micronutrient_rows_from_text(input_text: str) -> list[dict[str, Any]]:
+    recovered: list[dict[str, Any]] = []
+    seen: set[tuple[str, float | None, str]] = set()
+    for raw_line in input_text.splitlines():
+        line = str(raw_line or "").strip()
+        if not line:
+            continue
+        if len(line) > 160:
+            continue
+        if re.search(r"\b(?:ingredients|other\s+ingredients|daily\s+value\s+not\s+established|serving\s+size)\b", line, re.I):
+            continue
+
+        for canonical_component, pattern in STRUCTURED_CORE_RECOVERY_PATTERNS:
+            for match in pattern.finditer(line):
+                right_window = line[match.end():match.end() + 28]
+                left_window = line[max(0, match.start() - 18):match.start()]
+                dose_match = OCR_DOSE_TOKEN_PATTERN.search(right_window) or OCR_DOSE_TOKEN_PATTERN.search(left_window)
+                if not dose_match:
+                    continue
+                raw_value = str(dose_match.group("val") or "").replace("O", "0").replace("o", "0")
+                try:
+                    dose_value = float(raw_value.replace(",", "."))
+                except Exception:
+                    continue
+                dose_unit = str(dose_match.group("unit") or "")
+                component, dose_value, dose_unit = _repair_ocr_dose_entry(canonical_component, dose_value, dose_unit)
+                if dose_value is None or not dose_unit:
+                    continue
+                key = (component, dose_value, dose_unit)
+                if key in seen:
+                    continue
+                seen.add(key)
+                recovered.append(
+                    {
+                        "component": component,
+                        "dose_value": dose_value,
+                        "dose_unit": dose_unit,
+                        "_structured_recovery_score": 2,
+                    }
+                )
+    return recovered
+
+
 ECOMMERCE_NOISE_PATTERN = re.compile(
     r"\b(?:reviews?|regular\s+price|sale\s+price|mrp|inclusive\s+of\s+all\s+taxes|unit\s+price|buy\s+now|add\s+to\s+cart|wishlist|in\s+stock|out\s+of\s+stock|kg|lbs?)\b",
     re.I,
@@ -5496,7 +5598,7 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
 
     lines = [ln.strip() for ln in input_text.splitlines() if ln.strip()]
     dose_pattern = re.compile(
-        r"(?P<val>\d+(?:[\.,]\d+)?)\s*(?P<unit>mg|mcg|ug|µg|μg|fg|iu|g|kcal)\b",
+        r"(?P<val>\d+(?:[\.,]\d+)?)\s*(?P<unit>mg|mcg|meg|ug|µg|μg|fg|iu|g|kcal)\b",
         re.I,
     )
     nutrient_line_pattern = re.compile(
@@ -6680,6 +6782,7 @@ def _collapse_structured_label_rows(rows: list[dict[str, Any]]) -> list[dict[str
         best = max(
             enumerate(group_rows),
             key=lambda item: (
+                int(item[1].get("_structured_recovery_score", 0) or 0),
                 _structured_preferred_name_rank(group_key, str(item[1].get("component", "") or "")),
                 _structured_unit_rank(group_key, str(item[1].get("dose_unit", "") or "")),
                 0 if item[0] in decimal_shift_larger_ids else 1,
@@ -6699,7 +6802,22 @@ def _collapse_structured_label_rows(rows: list[dict[str, Any]]) -> list[dict[str
         if component == "beta-carotene" and "vitamin a" in component_keys:
             continue
         filtered.append(row)
-    return filtered
+
+    core_count = sum(
+        1
+        for row in filtered
+        if _structured_component_group_key(str(row.get("component", "") or "")) in STRUCTURED_CORE_COMPONENT_GROUPS
+    )
+    if core_count >= 10:
+        filtered = [
+            row
+            for row in filtered
+            if _structured_component_group_key(str(row.get("component", "") or "")) in STRUCTURED_CORE_COMPONENT_GROUPS
+        ]
+    cleaned: list[dict[str, Any]] = []
+    for row in filtered:
+        cleaned.append({k: v for k, v in row.items() if not str(k).startswith("_")})
+    return cleaned
 
 
 # ---------------------------------------------------------------------------
@@ -7791,6 +7909,7 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
     best_rows = _apply_fuzzy_nutrient_correction_to_rows(best_rows)
 
     if has_structured_table_cues:
+        best_rows.extend(_recover_core_micronutrient_rows_from_text(parse_input_text))
         best_rows = _collapse_structured_label_rows(best_rows)
 
     # Stage 4: unit domain + energy sanity validation (non-destructive — adds warnings).
