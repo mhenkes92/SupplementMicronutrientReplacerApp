@@ -24,26 +24,6 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from PIL import Image, ImageFilter, ImageOps
 
-# Local LLM inference function (Ollama)
-def query_local_llm(prompt, model="llama3.1:8b-instruct-q4_K_M"):
-    """Query a local LLM (Ollama) for a response."""
-    ollama_url = "http://127.0.0.1:11434/api/generate"
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False
-    }
-    try:
-        response = requests.post(ollama_url, json=payload, timeout=60)
-        response.raise_for_status()
-        return response.json().get("response", "")
-    except Exception as e:
-        logger.error(f"Ollama local LLM error: {e}")
-        return "Local LLM unavailable."
-
-    # Example usage:
-    # result = query_local_llm("What are the best sources of vitamin D?")
-
 try:
     from pydantic import BaseModel, ValidationError
 except Exception:
@@ -4908,11 +4888,13 @@ def normalize_component_name(raw_name: str) -> str:
     if not text:
         return ""
 
+    text = text.replace("*", " ")
     text = text.replace("|", " ")
     text = re.sub(r"\([^)]*\)", "", text)
     text = text.split("/")[0].strip()
     text = re.sub(r"^[\-•:;,.|\s]+", "", text)
     text = re.sub(r"[\-•:;,.|\s]+$", "", text)
+    text = re.sub(r"\s*:+\s*$", "", text)
     text = re.sub(r"\s+", " ", text)
 
     lowered = text.lower()
@@ -4930,9 +4912,50 @@ def normalize_component_name(raw_name: str) -> str:
     return lowered
 
 
+ECOMMERCE_NOISE_PATTERN = re.compile(
+    r"\b(?:reviews?|regular\s+price|sale\s+price|mrp|inclusive\s+of\s+all\s+taxes|unit\s+price|buy\s+now|add\s+to\s+cart|wishlist|in\s+stock|out\s+of\s+stock|kg|lbs?)\b",
+    re.I,
+)
+ECOMMERCE_COMPONENT_REJECTION_PATTERN = re.compile(
+    r"\b(?:reviews?|regular\s+price|sale\s+price|mrp|inclusive|unit\s+price|taxes|pre-workout|collagen|powder|standard)\b",
+    re.I,
+)
+
+
+def _looks_like_ecommerce_noise(text: str) -> bool:
+    normalized = normalize_lookup_key(text)
+    if not normalized:
+        return False
+    if ECOMMERCE_NOISE_PATTERN.search(normalized):
+        return True
+    digit_count = sum(1 for ch in normalized if ch.isdigit())
+    if digit_count >= 6:
+        return True
+    if len(normalized.split()) >= 8 and digit_count >= 3:
+        return True
+    return False
+
+
+def _is_valid_component_candidate(component: str) -> bool:
+    normalized = normalize_component_name(component)
+    if not normalized:
+        return False
+    if _looks_like_ecommerce_noise(normalized):
+        return False
+    if ECOMMERCE_COMPONENT_REJECTION_PATTERN.search(normalized):
+        return False
+    if len(normalized) < 3:
+        return False
+    if len(normalized.split()) > 6:
+        return False
+    return bool(re.search(r"[a-z]", normalized))
+
+
 def _looks_like_nutrient_component(component: str) -> bool:
     c = normalize_lookup_key(component)
     if not c:
+        return False
+    if _looks_like_ecommerce_noise(c):
         return False
 
     nutrient_hints = [
@@ -5038,6 +5061,8 @@ def parse_components_from_ingredient_list(input_text: str) -> list[dict[str, Any
         
         if len(item) < 3 or len(item) > 150:
             continue
+        if _looks_like_ecommerce_noise(item):
+            continue
             
         # Try to find nutrient pattern
         match = pattern.search(item)
@@ -5046,7 +5071,7 @@ def parse_components_from_ingredient_list(input_text: str) -> list[dict[str, Any
             matched_text = match.group(0)
             component = normalize_component_name(matched_text)
             
-            if not component or len(component) < 3:
+            if not _is_valid_component_candidate(component):
                 continue
                 
             # Avoid duplicates
@@ -5116,6 +5141,8 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
         lowered = line.lower()
         if lowered.startswith(ignored_starts):
             continue
+        if _looks_like_ecommerce_noise(line):
+            continue
 
         # Split list-style lines by separators that usually delimit components,
         # while preserving decimal commas (e.g., 1,5 mg).
@@ -5136,6 +5163,8 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
                 if not component:
                     component = pending_component_from_previous_line
                 if not component:
+                    continue
+                if not _is_valid_component_candidate(component):
                     continue
 
                 # Skip metadata/packaging info that looks like doses
@@ -5198,6 +5227,8 @@ def parse_components_name_only(input_text: str) -> list[dict[str, Any]]:
         lowered = line.lower()
         if lowered.startswith(ignored_starts):
             continue
+        if _looks_like_ecommerce_noise(line):
+            continue
 
         # Skip dense ingredient-list style lines.
         if "," in line and len(line.split(",")) >= 3:
@@ -5208,9 +5239,7 @@ def parse_components_name_only(input_text: str) -> list[dict[str, Any]]:
         component = normalize_component_name(line)
         if not component or component in ignored_exact:
             continue
-        if len(component) < 3 or not re.search(r"[a-z]", component):
-            continue
-        if len(component.split()) > 8:
+        if not _is_valid_component_candidate(component):
             continue
         if not _looks_like_nutrient_component(component):
             continue
