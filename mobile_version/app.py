@@ -5162,6 +5162,10 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
         r"(?P<val>\d+(?:[\.,]\d+)?)\s*(?P<unit>mg|mcg|ug|µg|μg|iu|g|kcal)\b",
         re.I,
     )
+    nutrient_line_pattern = re.compile(
+        r"\b(vit(?:amin|main)|minerals?|magnesium|calcium|zinc|iron|selenium|iodine|potassium|sodium|folate|folic|niacin|riboflavin|thiamin|thiamine|biotin|pantothenic|cobalamin|omega|epa|dha|b\d{1,2})\b",
+        re.I,
+    )
     ignored_starts = (
         "supplement facts",
         "serving size",
@@ -5204,7 +5208,9 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
         lowered = line.lower()
         if lowered.startswith(ignored_starts):
             continue
-        if _looks_like_ecommerce_noise(line):
+        if _looks_like_ecommerce_noise(line) and not (
+            dose_pattern.search(line) and nutrient_line_pattern.search(line)
+        ):
             continue
 
         # Split list-style lines by separators that usually delimit components,
@@ -5221,13 +5227,21 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
                     pending_component_from_previous_line = _repair_ocr_component_name(segment)
                 continue
 
+            previous_match_end = 0
             for match in matches:
-                component = _extract_component_from_segment(segment, match.start())
+                # When OCR collapses many nutrients onto one line, bind each dose to the
+                # nearest preceding text span instead of the full prefix from line start.
+                local_prefix = segment[previous_match_end:match.start()]
+                component = _extract_component_from_segment(local_prefix, len(local_prefix))
+                if not component:
+                    component = _extract_component_from_segment(segment, match.start())
                 if not component:
                     component = pending_component_from_previous_line
                 if not component:
+                    previous_match_end = match.end()
                     continue
                 if not _is_valid_component_candidate(component):
+                    previous_match_end = match.end()
                     continue
 
                 # Skip metadata/packaging info that looks like doses
@@ -5255,6 +5269,8 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
                         "dose_unit": dose_unit,
                     }
                 )
+
+                previous_match_end = match.end()
 
             pending_component_from_previous_line = ""
 
@@ -6453,18 +6469,22 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
     local_validated, local_meta = validate_parsed_components(local_expanded)
     local_score = _score_component_rows(local_validated)
 
-    best_rows = local_validated
-    best_score = local_score
-    best_source = "local_deterministic"
-    warnings: list[str] = []
+    llm_with_dose: list[dict[str, Any]] = []
+    llm_name_only: list[dict[str, Any]] = []
+    llm_validated: list[dict[str, Any]] = []
+    llm_meta: dict[str, Any] = {"issues": []}
+    llm_score = 0.0
+    merged_validated: list[dict[str, Any]] = []
+    merged_meta: dict[str, Any] = {"issues": []}
+    merged_score = 0.0
 
-    local_component_count = len(local_rows)
-    local_dose_count = sum(1 for row in local_rows if row.get("dose_value") is not None)
-    expected_min_dose_count = max(2, int(local_component_count * 0.55)) if local_component_count else 2
-    needs_llm_fallback = local_component_count < 4 or local_dose_count < expected_min_dose_count or local_score < 0.75
-
-    if needs_llm_fallback and ENABLE_LOCAL_OLLAMA:
+    if ENABLE_LOCAL_OLLAMA:
         llm_with_dose, llm_name_only = _parse_rows_with_local_llm(input_text)
+        llm_rows = merge_component_rows(llm_with_dose, llm_name_only)
+        llm_expanded = expand_umbrella_components(llm_rows)
+        llm_validated, llm_meta = validate_parsed_components(llm_expanded)
+        llm_score = _score_component_rows(llm_validated)
+
         merged_with_dose = merge_component_rows(local_with_dose, llm_with_dose)
         merged_name_pool = merge_component_rows(local_name_pool, llm_name_only)
         merged_rows = merge_component_rows(merged_with_dose, merged_name_pool)
@@ -6472,19 +6492,40 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
         merged_validated, merged_meta = validate_parsed_components(merged_expanded)
         merged_score = _score_component_rows(merged_validated)
 
-        if merged_score >= best_score and merged_validated:
-            best_rows = merged_validated
-            best_score = merged_score
-            best_source = "local_deterministic_plus_local_llm"
-            local_meta = merged_meta
+    candidates: list[tuple[str, list[dict[str, Any]], dict[str, Any], float]] = [
+        ("local_deterministic", local_validated, local_meta, local_score)
+    ]
+    if llm_validated:
+        candidates.append(("local_llm_primary", llm_validated, llm_meta, llm_score))
+    if merged_validated:
+        candidates.append(("local_deterministic_plus_local_llm", merged_validated, merged_meta, merged_score))
+
+    source_priority = {
+        "local_llm_primary": 3,
+        "local_deterministic_plus_local_llm": 2,
+        "local_deterministic": 1,
+    }
+
+    def _candidate_rank(item: tuple[str, list[dict[str, Any]], dict[str, Any], float]) -> tuple[float, int, int, int]:
+        source, rows, _meta, score = item
+        dose_count = sum(1 for row in rows if row.get("dose_value") is not None and row.get("dose_unit"))
+        return (score, dose_count, len(rows), source_priority.get(source, 0))
+
+    best_source, best_rows, best_meta, best_score = max(candidates, key=_candidate_rank)
+    warnings: list[str] = []
 
     if best_rows:
-        LAST_TEXT_PROVIDER = "Local deterministic parser" if best_source == "local_deterministic" else "Local deterministic parser + local LLM fallback"
+        if best_source == "local_llm_primary":
+            LAST_TEXT_PROVIDER = "Local LLM parser (primary)"
+        elif best_source == "local_deterministic_plus_local_llm":
+            LAST_TEXT_PROVIDER = "Local deterministic parser + local LLM"
+        else:
+            LAST_TEXT_PROVIDER = "Local deterministic parser"
     else:
         LAST_TEXT_PROVIDER = "Local deterministic parser"
         warnings.append("no_components_extracted")
 
-    warnings.extend([str(x) for x in (local_meta.get("issues", []) or [])[:6]])
+    warnings.extend([str(x) for x in (best_meta.get("issues", []) or [])[:6]])
 
     return {
         "nutrients": best_rows,
@@ -6815,22 +6856,6 @@ The local RAG library is built from curated expert nutrition notes and evidence 
     with tab_analyze:
         st.subheader("Provide your supplement input")
 
-        if st.button("Check local model status", use_container_width=True, key="check_provider_health"):
-            ok, message = check_provider_status()
-            if ok:
-                st.success(message)
-            else:
-                st.error(message)
-
-        st.slider(
-            "How important is budget/economics for your decision?",
-            min_value=1,
-            max_value=5,
-            value=4,
-            key="budget_priority",
-            help="Higher means you prefer the most cost-effective whole-food options.",
-        )
-
         camera_image = st.camera_input("Take a photo of supplement label", key="supp_camera")
         uploaded_image = st.file_uploader(
             "Upload label image from device",
@@ -6862,7 +6887,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     image_bytes = uploaded_image.read()
 
                 if image_bytes:
-                    status.write("Step 2/4: OCR from image (Tesseract first, local LLM refinement second)")
+                    status.write("Step 2/4: OCR from image (local LLM extraction primary, deterministic fallback)")
                     ocr_text = call_openrouter_vision_ocr(image_bytes)
                     if ocr_text and LAST_VISION_PROVIDER:
                         image_provider_label = LAST_VISION_PROVIDER
