@@ -1,0 +1,33 @@
+2026-03-10 12:39:48,394 - app - INFO - Extracted 31 nutrients from ingredient list
+2026-03-10 12:40:30,077 - app - WARNING - Error parsing LLM component output: Expecting ',' delimiter: line 25 column 46 (char 1811)
+2026-03-10 12:43:58,596 - app - INFO - Extracted 20 nutrients from ingredient list
+2026-03-10 12:45:10,453 - app - INFO - Extracted 32 nutrients from ingredient list
+2026-03-10 12:45:28,261 - app - INFO - Extracted 32 nutrients from ingredient list
+2026-03-10 12:46:10,443 - app - INFO - Extracted 32 nutrients from ingredient list
+2026-03-10 12:48:59,159 - app - INFO - Extracted 32 nutrients from ingredient list
+2026-03-10 12:49:19,493 - app - INFO - Extracted 32 nutrients from ingredient list
+2026-03-10 12:49:23,458 - __main__ - INFO - Extracted 32 nutrients from ingredient list
+2026-03-10 12:49:33,519 - __main__ - WARNING - Error parsing LLM component output: Expecting ',' delimiter: line 25 column 46 (char 1811)
+2026-03-10 12:49:33,520 - __main__ - INFO - Using ingredient list parser, found 32 components
+2026-03-10 12:50:11,519 - app - INFO - Extracted 32 nutrients from ingredient list
+2026-03-10 12:50:49,947 - app - INFO - Extracted 32 nutrients from ingredient list
+2026-03-10 13:13:35,990 - app - INFO - Extracted 32 nutrients from ingredient list
+2026-03-10 13:15:08,021 - app - INFO - Extracted 32 nutrients from ingredient list
+2026-03-10 13:15:31,133 - __main__ - INFO - Extracted 32 nutrients from ingredient list
+2026-03-10 13:15:41,908 - __main__ - WARNING - Error parsing LLM component output: Expecting ',' delimiter: line 25 column 46 (char 1811)
+2026-03-10 13:15:41,909 - __main__ - INFO - Using ingredient list parser, found 32 components
+2026-03-10 13:16:37,005 - app - INFO - Extracted 32 nutrients from ingredient list
+2026-03-10 13:29:33,132 - __main__ - INFO - Extracted 35 nutrients from ingredient list
+2026-03-10 13:34:02,334 - __main__ - INFO - Extracted 35 nutrients from ingredient list
+2026-03-10 13:37:41,722 - __main__ - INFO - Extracted 35 nutrients from ingredient list
+2026-03-10 13:39:55,301 - __main__ - INFO - Extracted 17 nutrients from ingredient list
+2026-03-10 13:46:58,937 - __main__ - INFO - Extracted 17 nutrients from ingredient list
+2026-03-10 13:57:06,231 - __main__ - INFO - Extracted 18 nutrients from ingredient list
+2026-03-10 18:00:54,670 - __main__ - INFO - Extracted 10 nutrients from ingredient list
+2026-03-10 18:20:40,677 - __main__ - INFO - Extracted 10 nutrients from ingredient list
+2026-03-11 03:30:28,501 - __main__ - INFO - Extracted 2 nutrients from ingredient list
+2026-03-11 03:36:26,077 - __main__ - INFO - Extracted 2 nutrients from ingredient list
+2026-03-11 03:52:30,590 - __main__ - INFO - Extracted 3 nutrients from ingredient list
+2026-03-11 04:09:28,852 - __main__ - INFO - Extracted 2 nutrients from ingredient list
+2026-03-11 04:21:13,527 - __main__ - INFO - Extracted 4 nutrients from ingredient list
+2026-03-11 04:35:17,536 - __main__ - INFO - Extracted 4 nutrients from ingredient list

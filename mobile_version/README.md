@@ -1,5 +1,7 @@
 # SuppSwap
 
+Architecture flowchart: see `docs/architecture_flow.md`.
+
 Single-screen mobile-friendly MVP for:
 - expert-style onboarding copy,
 - image upload/camera input,
@@ -35,6 +37,24 @@ python build_usda_rankings_db.py
 
 This creates `data/usda_rankings.db` used by the app for fast lookup.
 
+### Build official nutrient source table (offline prep step)
+
+Use this to automatically fetch/parse official source tables into the CSV used by the in-app Nutrient Guide.
+
+```powershell
+python build_official_nutrient_sources.py
+```
+
+Options:
+
+```powershell
+# overwrite table instead of merge-with-existing
+python build_official_nutrient_sources.py --replace
+
+# write to custom path
+python build_official_nutrient_sources.py --output data/official_nutrient_sources.csv
+```
+
 ## Environment variables
 
 - `OPENROUTER_API_KEY`: primary key for LLM parsing and vision OCR
@@ -56,9 +76,22 @@ This creates `data/usda_rankings.db` used by the app for fast lookup.
 
 - Tier 1: precomputed USDA nutrient rankings from local SQLite (`data/usda_rankings.db`)
 - Tier 2: alias mapping from `data/component_aliases.csv`
-- Tier 3: curated non-USDA proxy mapping from `data/component_proxy_rules.csv`
-- Tier 4: LLM fallback mapping for uncertain/non-standard component names
+- Tier 3: multi-target similarity/form mapping from `data/component_similarity_map.csv`
+- Tier 4: curated non-USDA proxy mapping from `data/component_proxy_rules.csv`
+- Tier 5: LLM fallback mapping for uncertain/non-standard component names
 - Confidence labels shown in app: `high`, `medium`, `low`
+
+### Unmapped-term feedback loop
+
+- Unresolved component terms are automatically logged to `data/unmapped_components_log.csv`.
+- Use this file to periodically expand `data/component_similarity_map.csv` and `data/component_aliases.csv`.
+- This keeps future runs local-first and reduces repeated LLM/network fallback usage.
+
+### Dietary restriction filtering (whole-food dropdown + meals)
+
+- Dietary profile selection now filters mapped whole-food alternatives before they appear in component dropdowns.
+- Local rules are read from `data/dietary_restriction_rules.json` and merged with `data/dietary_profiles.json` keywords.
+- Filtering is keyword/rule screening only; it is not medical advice or religious/allergen certification.
 
 ## Economic comparison (whole-food cost)
 

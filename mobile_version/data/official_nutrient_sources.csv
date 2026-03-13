@@ -1,0 +1,129 @@
+nutrient,unit,life_stage,sex,source_agency,recommended_value,upper_limit_value,source_url,notes
+Biotin,ug,Adults,Female,DGE,40.0,,https://www.dge.de/wissenschaft/referenzwerte/biotin/,Auto-imported from DGE nutrient page
+Biotin,ug,Adults,Male,DGE,40.0,,https://www.dge.de/wissenschaft/referenzwerte/biotin/,Auto-imported from DGE nutrient page
+Biotin,g,Adults,All,DRI,35.0,,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t2/?report=objectonly,Auto-imported from DRI table
+Biotin,g,Adults,Female,DRI,30.0,,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t2/?report=objectonly,Auto-imported from DRI table
+Biotin,g,Adults,Male,DRI,30.0,,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t2/?report=objectonly,Auto-imported from DRI table
+Calcium,mg,Adults,Female,DGE,1000.0,,https://www.dge.de/wissenschaft/referenzwerte/calcium/,Auto-imported from DGE nutrient page
+Calcium,mg,Adults,Male,DGE,1000.0,,https://www.dge.de/wissenschaft/referenzwerte/calcium/,Auto-imported from DGE nutrient page
+Calcium,mg,Adults,All,DRI,,2500.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Calcium,mg,Adults,Female,DRI,,2500.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Calcium,mg,Adults,Male,DRI,,2500.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Calcium,mg,Adults,Male,EFSA,1000,2500,https://www.efsa.europa.eu/en/topics/topic/dietary-reference-values,
+Calcium,mg,Adults,All,FAO,,,https://www.fao.org/3/x6877e/X6877E00.htm,Add FAO adult value from source table used in your workflow
+Calcium,mg,Adults,All,FDA,1300,,https://www.fda.gov/food/nutrition-facts-label/daily-value-new-nutrition-and-supplement-facts-labels,FDA Daily Value; not equivalent to all RDA frameworks
+Choline,g,Adults,All,DRI,,3.5,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Choline,g,Adults,Female,DRI,,3.5,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Choline,g,Adults,Male,DRI,,3.5,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Choline,mg,Adults,Female,DRI,425.0,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Web-verified DRI recommended intake (19-30 y)
+Choline,mg,Adults,Male,DRI,550.0,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Web-verified DRI recommended intake (19-30 y)
+Chromium,g,Adults,All,DRI,45.0,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Auto-imported from DRI table
+Chromium,g,Adults,Female,DRI,25.0,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Auto-imported from DRI table
+Chromium,g,Adults,Male,DRI,35.0,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Auto-imported from DRI table
+Copper,g,Adults,All,DRI,,10000.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Copper,g,Adults,Female,DRI,,10000.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Copper,g,Adults,Male,DRI,,10000.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Copper,ug,Adults,Female,DRI,900.0,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Web-verified DRI recommended intake (19-30 y)
+Copper,ug,Adults,Male,DRI,900.0,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Web-verified DRI recommended intake (19-30 y)
+Folate,ug,Adults,Female,DGE,300.0,,https://www.dge.de/wissenschaft/referenzwerte/folat/,Auto-imported from DGE nutrient page
+Folate,ug,Adults,Male,DGE,300.0,,https://www.dge.de/wissenschaft/referenzwerte/folat/,Auto-imported from DGE nutrient page
+Folate,g,Adults,All,DRI,,1000.0,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Folate,g,Adults,Female,DRI,,1000.0,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Folate,g,Adults,Male,DRI,,1000.0,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Iodine,ug,Adults,Female,DGE,150.0,,https://www.dge.de/wissenschaft/referenzwerte/jod/,Auto-imported from DGE nutrient page
+Iodine,ug,Adults,Male,DGE,150.0,,https://www.dge.de/wissenschaft/referenzwerte/jod/,Auto-imported from DGE nutrient page
+Iodine,g,Adults,All,DRI,,1100.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Iodine,g,Adults,Female,DRI,,1100.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Iodine,g,Adults,Male,DRI,,1100.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Iron,mg,Adults,All,DRI,,45.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Iron,mg,Adults,Female,DRI,,45.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Iron,mg,Adults,Male,DRI,,45.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Iron,mg,Adults,Male,EFSA,11,45,https://www.efsa.europa.eu/en/topics/topic/dietary-reference-values,
+Iron,mg,Adults,All,FDA,18,,https://www.fda.gov/food/nutrition-facts-label/daily-value-new-nutrition-and-supplement-facts-labels,FDA Daily Value; not equivalent to all RDA frameworks
+Magnesium,mg,Adults,Female,DGE,300.0,,https://www.dge.de/wissenschaft/referenzwerte/magnesium/,Auto-imported from DGE nutrient page
+Magnesium,mg,Adults,Male,DGE,350.0,,https://www.dge.de/wissenschaft/referenzwerte/magnesium/,Auto-imported from DGE nutrient page
+Magnesium,mg,Adults,All,DRI,,350.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Magnesium,mg,Adults,Female,DRI,,350.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Magnesium,mg,Adults,Male,DRI,,350.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Manganese,mg,Adults,All,DRI,,11.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Manganese,mg,Adults,Female,DRI,,11.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Manganese,mg,Adults,Male,DRI,,11.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Manganese,mg,Adults,Female,DRI,1.8,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Web-verified DRI recommended intake (19-30 y)
+Manganese,mg,Adults,Male,DRI,2.3,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Web-verified DRI recommended intake (19-30 y)
+Molybdenum,g,Adults,All,DRI,,2000.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Molybdenum,g,Adults,Female,DRI,,2000.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Molybdenum,g,Adults,Male,DRI,,2000.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Molybdenum,ug,Adults,Female,DRI,45.0,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Web-verified DRI recommended intake (19-30 y)
+Molybdenum,ug,Adults,Male,DRI,45.0,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Web-verified DRI recommended intake (19-30 y)
+Niacin,mg,Adults,Female,DGE,13.0,,https://www.dge.de/wissenschaft/referenzwerte/niacin/,Auto-imported from DGE nutrient page
+Niacin,mg,Adults,Male,DGE,16.0,,https://www.dge.de/wissenschaft/referenzwerte/niacin/,Auto-imported from DGE nutrient page
+Niacin,mg,Adults,All,DRI,,35.0,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Niacin,mg,Adults,Female,DRI,,35.0,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Niacin,mg,Adults,Male,DRI,,35.0,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Pantothenic acid,mg,Adults,Female,DGE,5.0,,https://www.dge.de/wissenschaft/referenzwerte/pantothensaeure/,Auto-imported from DGE nutrient page
+Pantothenic acid,mg,Adults,Male,DGE,5.0,,https://www.dge.de/wissenschaft/referenzwerte/pantothensaeure/,Auto-imported from DGE nutrient page
+Pantothenic acid,mg,Adults,All,DRI,7.0,,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t2/?report=objectonly,Auto-imported from DRI table
+Pantothenic acid,mg,Adults,Female,DRI,5.0,,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t2/?report=objectonly,Auto-imported from DRI table
+Pantothenic acid,mg,Adults,Male,DRI,5.0,,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t2/?report=objectonly,Auto-imported from DRI table
+Potassium,mg,Adults,Female,DGE,4000.0,,https://www.dge.de/wissenschaft/referenzwerte/kalium/,Auto-imported from DGE nutrient page
+Potassium,mg,Adults,Male,DGE,4000.0,,https://www.dge.de/wissenschaft/referenzwerte/kalium/,Auto-imported from DGE nutrient page
+Potassium,mg,Adults,All,DRI,2800.0,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Auto-imported from DRI table
+Potassium,mg,Adults,Female,DRI,2600.0,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Auto-imported from DRI table
+Potassium,mg,Adults,Male,DRI,3400.0,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Auto-imported from DRI table
+Riboflavin,mg,Adults,Female,DGE,11.0,,https://www.dge.de/wissenschaft/referenzwerte/riboflavin/,Auto-imported from DGE nutrient page
+Riboflavin,mg,Adults,Male,DGE,14.0,,https://www.dge.de/wissenschaft/referenzwerte/riboflavin/,Auto-imported from DGE nutrient page
+Riboflavin,mg,Adults,All,DRI,1.6,,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t2/?report=objectonly,Auto-imported from DRI table
+Riboflavin,mg,Adults,Female,DRI,1.1,,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t2/?report=objectonly,Auto-imported from DRI table
+Riboflavin,mg,Adults,Male,DRI,1.3,,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t2/?report=objectonly,Auto-imported from DRI table
+Selenium,ug,Adults,Female,DGE,60.0,,https://www.dge.de/wissenschaft/referenzwerte/selen/,Auto-imported from DGE nutrient page
+Selenium,ug,Adults,Male,DGE,70.0,,https://www.dge.de/wissenschaft/referenzwerte/selen/,Auto-imported from DGE nutrient page
+Selenium,g,Adults,All,DRI,,400.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Selenium,g,Adults,Female,DRI,,400.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Selenium,g,Adults,Male,DRI,,400.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Sodium,mg,Adults,Female,DGE,1500.0,,https://www.dge.de/wissenschaft/referenzwerte/natrium/,Auto-imported from DGE nutrient page
+Sodium,mg,Adults,Male,DGE,1500.0,,https://www.dge.de/wissenschaft/referenzwerte/natrium/,Auto-imported from DGE nutrient page
+Sodium,mg,Adults,All,DRI,1500.0,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Auto-imported from DRI table
+Sodium,mg,Adults,Female,DRI,1500.0,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Auto-imported from DRI table
+Sodium,mg,Adults,Male,DRI,1500.0,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Auto-imported from DRI table
+Thiamin,mg,Adults,Female,DGE,10.0,,https://www.dge.de/wissenschaft/referenzwerte/thiamin/,Auto-imported from DGE nutrient page
+Thiamin,mg,Adults,Male,DGE,13.0,,https://www.dge.de/wissenschaft/referenzwerte/thiamin/,Auto-imported from DGE nutrient page
+Thiamin,mg,Adults,All,DRI,1.4,,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t2/?report=objectonly,Auto-imported from DRI table
+Thiamin,mg,Adults,Female,DRI,1.1,,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t2/?report=objectonly,Auto-imported from DRI table
+Thiamin,mg,Adults,Male,DRI,1.2,,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t2/?report=objectonly,Auto-imported from DRI table
+Vitamin A,ug,Adults,Female,DGE,700.0,,https://www.dge.de/wissenschaft/referenzwerte/vitamin-a/,Auto-imported from DGE nutrient page
+Vitamin A,ug,Adults,Male,DGE,850.0,,https://www.dge.de/wissenschaft/referenzwerte/vitamin-a/,Auto-imported from DGE nutrient page
+Vitamin A,g,Adults,All,DRI,,3000.0,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Vitamin A,g,Adults,Female,DRI,,3000.0,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Vitamin A,g,Adults,Male,DRI,,3000.0,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Vitamin B12,ug,Adults,Female,DGE,40.0,,https://www.dge.de/wissenschaft/referenzwerte/vitamin-b12/,Auto-imported from DGE nutrient page
+Vitamin B12,ug,Adults,Male,DGE,40.0,,https://www.dge.de/wissenschaft/referenzwerte/vitamin-b12/,Auto-imported from DGE nutrient page
+Vitamin B6,mg,Adults,Female,DGE,14.0,,https://www.dge.de/wissenschaft/referenzwerte/vitamin-b6/,Auto-imported from DGE nutrient page
+Vitamin B6,mg,Adults,Male,DGE,16.0,,https://www.dge.de/wissenschaft/referenzwerte/vitamin-b6/,Auto-imported from DGE nutrient page
+Vitamin C,mg,Adults,Female,DGE,95.0,,https://www.dge.de/wissenschaft/referenzwerte/vitamin-c/,Auto-imported from DGE nutrient page
+Vitamin C,mg,Adults,Male,DGE,110.0,,https://www.dge.de/wissenschaft/referenzwerte/vitamin-c/,Auto-imported from DGE nutrient page
+Vitamin C,mg,Adults,All,DRI,,2000.0,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Vitamin C,mg,Adults,Female,DRI,,2000.0,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Vitamin C,mg,Adults,Male,DRI,,2000.0,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Vitamin C,mg,Adults,Male,EFSA,110,1000,https://www.efsa.europa.eu/en/topics/topic/dietary-reference-values,
+Vitamin C,mg,Adults,All,FAO,72.0,,https://www.fao.org/4/y2809e/y2809e0c.htm,Heuristic parse from FAO chapter text; verify before publication
+Vitamin C,mg,Adults,All,FDA,90,,https://www.fda.gov/food/nutrition-facts-label/daily-value-new-nutrition-and-supplement-facts-labels,FDA Daily Value; not equivalent to all RDA frameworks
+Vitamin D,g,Adults,All,DRI,,100.0,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Vitamin D,g,Adults,Female,DRI,,100.0,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Vitamin D,g,Adults,Male,DRI,,100.0,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Vitamin D,ug,Adults,Male,EFSA,15,100,https://www.efsa.europa.eu/en/topics/topic/dietary-reference-values,
+Vitamin D,ug,Adults,All,FDA,20,,https://www.fda.gov/food/nutrition-facts-label/daily-value-new-nutrition-and-supplement-facts-labels,FDA Daily Value; not equivalent to all RDA frameworks
+Vitamin E,mg,Adults,Female,DGE,8.0,,https://www.dge.de/wissenschaft/referenzwerte/vitamin-e/,Auto-imported from DGE nutrient page
+Vitamin E,mg,Adults,Male,DGE,8.0,,https://www.dge.de/wissenschaft/referenzwerte/vitamin-e/,Auto-imported from DGE nutrient page
+Vitamin E,mg,Adults,All,DRI,,1000.0,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Vitamin E,mg,Adults,Female,DRI,,1000.0,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Vitamin E,mg,Adults,Male,DRI,,1000.0,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t7/?report=objectonly,Auto-imported from DRI UL table
+Vitamin K,ug,Adults,Female,DGE,60.0,,https://www.dge.de/wissenschaft/referenzwerte/vitamin-k/,Auto-imported from DGE nutrient page
+Vitamin K,ug,Adults,Male,DGE,70.0,,https://www.dge.de/wissenschaft/referenzwerte/vitamin-k/,Auto-imported from DGE nutrient page
+Vitamin K,g,Adults,All,DRI,90.0,,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t2/?report=objectonly,Auto-imported from DRI table
+Vitamin K,g,Adults,Female,DRI,90.0,,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t2/?report=objectonly,Auto-imported from DRI table
+Vitamin K,g,Adults,Male,DRI,120.0,,https://www.ncbi.nlm.nih.gov/books/NBK56068/table/summarytables.t2/?report=objectonly,Auto-imported from DRI table
+Zinc,mg,Adults,All,DRI,,40.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Zinc,mg,Adults,Female,DRI,,40.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Zinc,mg,Adults,Male,DRI,,40.0,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab9/?report=objectonly,Auto-imported from DRI UL table
+Zinc,mg,Adults,Female,DRI,8.0,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Web-verified DRI recommended intake (19-30 y)
+Zinc,mg,Adults,Male,DRI,11.0,,https://www.ncbi.nlm.nih.gov/books/NBK545442/table/appJ_tab3/?report=objectonly,Web-verified DRI recommended intake (19-30 y)

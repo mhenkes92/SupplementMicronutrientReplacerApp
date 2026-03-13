@@ -6,5 +6,9 @@
     "streamlit",
     "run"
   ],
+  "code-runner.runInTerminal": true,
+  "code-runner.executorMap": {
+    "python": "python -m streamlit run \"$fullFileName\" --browser.gatherUsageStats false"
+  },
   "python-envs.pythonProjects": []
 }

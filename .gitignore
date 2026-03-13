@@ -12,3 +12,6 @@ mobile_version/.env
 # Temporary diagnostics
 mobile_version/_pdf_text_diagnose.py
 mobile_version/_rag_diag.py
+
+# Local large model (keep local, do not push)
+assets/models/*.gguf

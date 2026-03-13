@@ -1,0 +1,52 @@
+[
+  {
+    "id": "none",
+    "avoid_keywords": [],
+    "notes": "No restriction"
+  },
+  {
+    "id": "vegetarian",
+    "avoid_keywords": ["beef", "pork", "chicken", "turkey", "fish", "salmon", "sardine", "anchovy", "tuna", "shrimp", "crab", "lobster", "gelatin"],
+    "notes": "Keyword screening only"
+  },
+  {
+    "id": "vegan",
+    "avoid_keywords": ["beef", "pork", "chicken", "turkey", "fish", "salmon", "sardine", "egg", "milk", "yogurt", "cheese", "butter", "honey", "gelatin", "whey", "casein", "collagen"],
+    "notes": "Keyword screening only"
+  },
+  {
+    "id": "pescatarian",
+    "avoid_keywords": ["beef", "pork", "chicken", "turkey", "lamb", "ham", "bacon", "gelatin"],
+    "notes": "Keyword screening only"
+  },
+  {
+    "id": "halal_friendly",
+    "avoid_keywords": ["pork", "ham", "bacon", "lard", "alcohol", "wine", "beer", "gelatin"],
+    "notes": "Not halal certification"
+  },
+  {
+    "id": "kosher_style",
+    "avoid_keywords": ["pork", "ham", "bacon", "shrimp", "crab", "lobster", "clam", "mussel", "oyster", "scallop", "squid", "octopus"],
+    "notes": "Not kosher certification"
+  },
+  {
+    "id": "gluten_free",
+    "avoid_keywords": ["wheat", "barley", "rye", "spelt", "semolina", "durum", "malt", "bread", "pasta", "seitan", "couscous", "triticale"],
+    "notes": "Keyword screening only"
+  },
+  {
+    "id": "lactose_free",
+    "avoid_keywords": ["milk", "cream", "cheese", "yogurt", "whey", "casein", "butter", "ice cream"],
+    "notes": "Keyword screening only"
+  },
+  {
+    "id": "nut_free",
+    "avoid_keywords": ["peanut", "almond", "walnut", "cashew", "hazelnut", "pistachio", "pecan", "macadamia", "nut"],
+    "notes": "Keyword screening only"
+  },
+  {
+    "id": "low_sodium_aware",
+    "avoid_keywords": ["sausage", "bacon", "ham", "processed meat", "instant noodle", "soy sauce", "brined", "cured"],
+    "notes": "Keyword screening only"
+  }
+]

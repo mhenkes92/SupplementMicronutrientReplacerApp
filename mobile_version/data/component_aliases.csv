@@ -8,6 +8,8 @@ vitamin e,"Vitamin E (alpha-tocopherol)"
 vit e,"Vitamin E (alpha-tocopherol)"
 vitamin a,"Vitamin A, RAE"
 vit a,"Vitamin A, RAE"
+vitamin k,"Vitamin K (phylloquinone)"
+vit k,"Vitamin K (phylloquinone)"
 vitamin b1,Thiamin
 thiamine,Thiamin
 vitamin b2,Riboflavin
@@ -16,6 +18,11 @@ niacin,Niacin
 vitamin b5,Pantothenic acid
 pantothenic acid,Pantothenic acid
 vitamin b6,"Vitamin B-6"
+vit b6,"Vitamin B-6"
+b6,"Vitamin B-6"
+pyridoxine,"Vitamin B-6"
+pyridoxine hcl,"Vitamin B-6"
+pyridoxine hydrochloride,"Vitamin B-6"
 vitamin b7,Biotin
 vitamin b9,"Folate, total"
 folate,"Folate, total"
@@ -26,8 +33,15 @@ iron,"Iron, Fe"
 magnesium,"Magnesium, Mg"
 zinc,"Zinc, Zn"
 selenium,"Selenium, Se"
+copper,"Copper, Cu"
+manganese,"Manganese, Mn"
+iodine,"Iodine, I"
+chromium,"Chromium, Cr"
+molybdenum,"Molybdenum, Mo"
 potassium,"Potassium, K"
 sodium,"Sodium, Na"
+phosphorus,"Phosphorus, P"
+boron,Boron
 omega 3,"PUFA 22:6 n-3 (DHA)"
 omega-3,"PUFA 22:6 n-3 (DHA)"
 fish oil,"PUFA 22:6 n-3 (DHA)"
