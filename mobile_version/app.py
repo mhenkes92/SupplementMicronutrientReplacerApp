@@ -7305,11 +7305,22 @@ The local RAG library is built from curated expert nutrition notes and evidence 
             prep_progress = st.progress(0, text="Preparing whole-food matches and estimated costs...")
             total_rows = max(1, len(components))
 
+            no_whole_food_count = 0
+            if usda_status == "ok":
+                for item in components:
+                    component_key_probe = normalize_lookup_key(str(item.get("component", "")))
+                    detail_probe = detail_by_component.get(component_key_probe)
+                    foods_raw_probe = detail_probe.get("foods", []) if detail_probe else []
+                    if not detail_probe or not foods_raw_probe:
+                        no_whole_food_count += 1
+
             with st.expander("1) Whole Food Alternative Found", expanded=False):
                 mapped_section = st.container()
 
-            with st.expander("2) No Whole Food Alternative Found", expanded=False):
-                unmapped_section = st.container()
+            unmapped_section = None
+            if no_whole_food_count > 0:
+                with st.expander("2) No Whole Food Alternative Found", expanded=False):
+                    unmapped_section = st.container()
 
             for index, item in enumerate(components):
                 prep_progress.progress(int((index / total_rows) * 100), text=f"Preparing component {index + 1}/{len(components)}...")
@@ -7339,7 +7350,8 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                         }
                     )
 
-                target_section = mapped_section if foods else unmapped_section
+                is_no_whole_food = usda_status == "ok" and (not detail or not foods_raw)
+                target_section = unmapped_section if (is_no_whole_food and unmapped_section is not None) else mapped_section
                 with target_section:
                     with st.expander(f"{status_symbol} {component_display} • {dose_label}", expanded=False):
                         st.markdown(
