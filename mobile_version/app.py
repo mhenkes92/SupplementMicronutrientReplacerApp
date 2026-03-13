@@ -5850,7 +5850,7 @@ def call_openrouter_vision_ocr(image_bytes: bytes) -> str:
 def try_tesseract_ocr(image_bytes: bytes) -> str:
     def preprocess_for_tesseract(image: Image.Image) -> Image.Image:
         gray = image.convert("L")
-        # Upscale to improve OCR reliability on small label text.
+        # Upscale small labels for better OCR.
         width, height = gray.size
         if min(width, height) < 1200:
             scale = 2
@@ -5859,6 +5859,17 @@ def try_tesseract_ocr(image_bytes: bytes) -> str:
         gray = gray.filter(ImageFilter.MedianFilter(size=3))
         # Basic binarization for high-contrast nutrition tables.
         return gray.point(lambda px: 255 if px > 150 else 0)
+
+    def preprocess_high_contrast(image: Image.Image) -> Image.Image:
+        """Higher-contrast variant for dark/low-light bottle label photos."""
+        gray = image.convert("L")
+        width, height = gray.size
+        if min(width, height) < 1200:
+            scale = 3
+            gray = gray.resize((width * scale, height * scale), Image.Resampling.LANCZOS)
+        gray = ImageOps.autocontrast(gray, cutoff=5)
+        gray = gray.filter(ImageFilter.SHARPEN)
+        return gray.point(lambda px: 255 if px > 120 else 0)
 
     def rebuild_rows_from_tesseract(data: dict[str, Any]) -> list[str]:
         texts = data.get("text", []) or []
@@ -5886,8 +5897,10 @@ def try_tesseract_ocr(image_bytes: bytes) -> str:
                 conf = float(confs[i])
             except Exception:
                 conf = -1.0
-            # Keep low-confidence tokens when they include likely dose units.
-            if conf >= 0 and conf < 20 and not re.search(r"\d|mg|mcg|ug|iu|g", word, re.I):
+            # Keep low-confidence tokens that look like nutrient names, doses, or units.
+            # Threshold kept low (10) so curved/distorted label areas are not silently dropped.
+            nutrient_kw = re.search(r"\d|mg|mcg|ug|iu|vitamin|mineral|zinc|iron|calcium|selenium|niacin|biotin", word, re.I)
+            if conf >= 0 and conf < 10 and not nutrient_kw:
                 continue
             try:
                 top = int(float(tops[i]))
@@ -5913,29 +5926,71 @@ def try_tesseract_ocr(image_bytes: bytes) -> str:
             pytesseract.pytesseract.tesseract_cmd = resolved_cmd
 
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            # Three image variants: standard normalised, high-contrast (for dark/under-exposed
+            # bottle photos), and plain greyscale.  Running all three × three PSM modes gives
+            # nine passes, maximising the chance of picking up every row on the label.
         variants = [
             preprocess_for_tesseract(image),
+                preprocess_high_contrast(image),
             image.convert("L"),
         ]
 
         best_text = ""
         best_score = -1
+        # Determine available language(s).  Prefer deu+eng for European supplement labels.
+        try:
+            available_langs = set(pytesseract.get_languages(config=""))
+            lang_config = "deu+eng" if "deu" in available_langs else "eng"
+        except Exception:
+            lang_config = "eng"
+
+        # PSM modes to try: 6=uniform block (default), 4=single column, 11=sparse text.
+        # Sparse-text mode helps recover rows from curved bottle labels where lines are
+        # distorted and Tesseract would otherwise skip them.
+        psm_modes = [6, 4, 11]
+
+        all_reconstructed: list[str] = []
+        best_text = ""
+        best_score = -1
 
         for variant in variants:
-            ocr_data = pytesseract.image_to_data(
-                variant,
-                config="--oem 3 --psm 6",
-                output_type=pytesseract.Output.DICT,
-            )
-            rebuilt_rows = rebuild_rows_from_tesseract(ocr_data)
-            reconstructed_text = "\n".join(rebuilt_rows)
-            raw_text = pytesseract.image_to_string(variant, config="--oem 3 --psm 6")
-            candidate_text = "\n".join([x for x in [reconstructed_text, raw_text] if str(x).strip()]).strip()
-            gate = extraction_gate_report(candidate_text)
-            score = int(gate.get("score", 0)) * 10 + int(gate.get("dose_hits", 0)) * 3 + int(gate.get("nutrient_hint_hits", 0))
-            if score > best_score:
-                best_score = score
-                best_text = candidate_text
+            for psm in psm_modes:
+                cfg = f"--oem 3 --psm {psm} -l {lang_config}"
+                try:
+                    ocr_data = pytesseract.image_to_data(
+                        variant,
+                        config=cfg,
+                        output_type=pytesseract.Output.DICT,
+                    )
+                    rebuilt_rows = rebuild_rows_from_tesseract(ocr_data)
+                    reconstructed_text = "\n".join(rebuilt_rows)
+                    raw_text = pytesseract.image_to_string(variant, config=cfg)
+                    candidate_text = "\n".join(
+                        [x for x in [reconstructed_text, raw_text] if str(x).strip()]
+                    ).strip()
+                    if candidate_text:
+                        all_reconstructed.append(candidate_text)
+                    gate = extraction_gate_report(candidate_text)
+                    score = (
+                        int(gate.get("score", 0)) * 10
+                        + int(gate.get("dose_hits", 0)) * 3
+                        + int(gate.get("nutrient_hint_hits", 0))
+                    )
+                    if score > best_score:
+                        best_score = score
+                        best_text = candidate_text
+                except Exception:
+                    pass
+
+        # Merge ALL variant outputs so that rows captured by any single config are
+        # not lost.  Duplicate lines are harmless because parse_components_rule_based
+        # deduplicates by (component, dose_value, dose_unit) key.
+        if all_reconstructed:
+            merged_all = "\n".join(all_reconstructed)
+            merged_gate = extraction_gate_report(merged_all)
+            # Use merged text if it has a useful signal; otherwise fall back to best.
+            if merged_gate.get("passed") and len(all_reconstructed) > 1:
+                return merged_all.strip()
 
         return best_text.strip()
     except Exception:
