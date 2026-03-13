@@ -1,0 +1,54 @@
+=== 1. Test individual line noise detection ===
+  noise=False  comps=['vitamin k2']                                                line='Vitamin K2 20 ug 27'
+  noise=False  comps=['vitamin k2']                                                line='Vitamin K2 20 ug    27'
+  noise=True   comps=['vitamin d3']                                                line='Vitamin D3 125 ug 2500 5,0'
+  noise=True   comps=['vitamin d3']                                                line='Vitamin D3 125 ug 2500 5.0'
+  noise=True   comps=['vitamin a']                                                 line='Vitamin A 125 ug 15 42'
+  noise=False  comps=['mct-ol']                                                    line='MCT-Ol 16 mg'
+  noise=False  comps=['mct-oi']                                                    line='MCT-OI 16 mg'
+  noise=False  comps=['mct-oil']                                                   line='MCT-OEl 16 mg'
+  noise=False  comps=['mct-oil']                                                   line='MCT-Oel 16 mg'
+
+=== 2. Test realistic Tesseract output (with German + NRV% cols) ===
+  [OK] clean
+         FOUND:  ['mct-oil', 'vitamin a', 'vitamin d3', 'vitamin e', 'vitamin k2']
+  [OK] oe_becomes_oi
+         FOUND:  ['mct-oi', 'vitamin a', 'vitamin d3', 'vitamin e', 'vitamin k2']
+  [OK] merged_row_d3
+         FOUND:  ['mct-oil', 'vitamin a', 'vitamin d3', 'vitamin e', 'vitamin k2']
+  [OK] k2_line_corrupted_prefix
+         FOUND:  ['mct-oil', 'vitamin a', 'vitamin d3', 'vitamin e', 'vitamin k2']
+  [OK] all_on_two_lines
+         EXTRA:   {'inhaltsstoffe pro tagesdosis mct-oil', '25 vitamin k2', '15 42 vitamin d3'}
+         FOUND:  ['15 42 vitamin d3', '25 vitamin k2', 'inhaltsstoffe pro tagesdosis mct-oil', 'vitamin a', 'vitamin d3', 'vitamin e', 'vitamin k2']
+  [OK] jig_unit
+         FOUND:  ['mct-oil', 'vitamin a', 'vitamin d3', 'vitamin e', 'vitamin k2']
+  [OK] pg_unit
+         FOUND:  ['mct-oil', 'vitamin a', 'vitamin d3', 'vitamin e', 'vitamin k2']
+  [OK] no_space_dose
+         FOUND:  ['mct-oil', 'vitamin a', 'vitamin d3', 'vitamin e', 'vitamin k2']
+  [OK] k2_line_no_space
+         FOUND:  ['mct-oil', 'vitamin a', 'vitamin d3', 'vitamin e', 'vitamin k2']
+  [OK] d3_merged_e
+         EXTRA:   {'25 vitamin k2'}
+         FOUND:  ['25 vitamin k2', 'mct-oil', 'vitamin a', 'vitamin d3', 'vitamin e', 'vitamin k2']
+
+=== 3. Run actual Tesseract on saved images ===
+  Found supplement label: C:\Users\mhenk\AppData\Local\Temp\tmpdvf79x6c.jpg
+  OCR text (first 500 chars):
+Nutriti ati MULTI-VITAMIN SUPPLEMENT FOR ACTIVE LIFESTYLE
+on Inf orm on
+RECOMMENDED USAGE: 1 TABLET PER DAY
+Serving Size 1 Tablet (1.07 9)
+Servings Per Container 60
+Quantity Per Serving! %RDAT
+Recommended usage level: One tablet per day.
+ViaminG. 4When
+OG taken over time with regular resistance
+training. Processed in plant where nut(s), &
+Vitamin B3 20 mg 87% a soy
+Se. milk containing products are manufactured.
+Vitamin BIB mg To find out more about the science and ingredients
+QS BS behind our pr
+  Extracted: ['ascorbic acid', 'biotin', 'chromium trichloride', 'cupric oxide', 'cyanocobalamin', 'd-biotin', 'dicalcium phosphate', 'ergocalciferol', 'l-arginine', 'l-lysine', 'lutein', 'lycopene', 'lycopene 10', 'magnesium oxide', 'manganese sulphate', 'methionine', 'nicotinamide', 'pantothenate', 'phosphate', 'phytomenadione', 'potassium chloride', 'pteroyl-l- glutamic', 'pyridoxine', 'retinyl acetate', 'riboflavin', 'sodium borate', 'sodium molybdate', 'sodium selenate', 'thiamine', 'vitamin b3', 'vitamin e', 'zinc oxide']
+
