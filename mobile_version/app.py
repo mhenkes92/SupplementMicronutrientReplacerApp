@@ -791,10 +791,12 @@ def _lookup_nutrient_row(
             score = 0
         elif row_norm == target_norm:
             score = 1
-        elif target_raw in row_raw:
+        elif target_raw and (row_raw.startswith(f"{target_raw},") or row_raw.startswith(f"{target_raw} (") or row_raw.startswith(f"{target_raw} ")):
             score = 2
-        elif target_norm and target_norm in row_norm:
+        elif target_norm and (row_norm.startswith(f"{target_norm},") or row_norm.startswith(f"{target_norm} (") or row_norm.startswith(f"{target_norm} ")):
             score = 3
+        elif target_norm and re.search(rf"(?<![a-z0-9]){re.escape(target_norm)}(?![a-z0-9])", row_norm):
+            score = 4
 
         if score == 999:
             continue
@@ -4972,6 +4974,29 @@ OCR_MICROGRAM_COMPONENTS: set[str] = {
     "molybdenum",
 }
 
+OCR_MINERAL_FORM_COMPONENTS: set[str] = {
+    "calcium",
+    "iron",
+    "magnesium",
+    "zinc",
+    "selenium",
+    "copper",
+    "manganese",
+    "iodine",
+    "chromium",
+    "molybdenum",
+    "potassium",
+    "phosphorus",
+    "boron",
+}
+
+OCR_MINERAL_FORM_SUFFIX_PATTERN = re.compile(
+    r"^(?P<base>calcium|iron|magnesium|zinc|selenium|copper|manganese|iodine|chromium|molybdenum|potassium|phosphorus|boron)\s+"
+    r"(?:l-|d-|dl-)?(?:acid|arginine|lysine|methionine|citrate|chloride|iodide|phosphate|carbonate|oxide|"
+    r"sulfate|sulphate|fumarate|gluconate|chelate|picolinate|molybdate|selenate|borate|pantothenate)\b",
+    re.I,
+)
+
 
 def _repair_ocr_component_name(component: str) -> str:
     text = normalize_component_name(component)
@@ -4993,6 +5018,10 @@ def _repair_ocr_component_name(component: str) -> str:
 
     # Strip trailing percentage/extract-concentration notations: "lycopene 10%*" → "lycopene"
     text = re.sub(r"\s+\d+%?[\*\^]?\s*$", "", text).strip()
+
+    mineral_form_match = OCR_MINERAL_FORM_SUFFIX_PATTERN.match(text)
+    if mineral_form_match:
+        return str(mineral_form_match.group("base") or "").lower()
 
     # Common OCR variants for MCT-Oel/Oil in curved bottle photos.
     if text in {"mct-ol", "mct-oi", "mct-oi.", "uct-ol", "uct-oi"}:
@@ -6375,6 +6404,7 @@ _NUTRIENT_DICTIONARY: list[str] = [
     "molybdenum", "fluoride", "chloride",
     # Vitamins
     "vitamin a", "vitamin c", "vitamin d", "vitamin e", "vitamin k",
+    "vitamin k1", "vitamin k2",
     "vitamin b1", "thiamin", "thiamine",
     "vitamin b2", "riboflavin",
     "vitamin b3", "niacin",
@@ -6410,6 +6440,7 @@ _OCR_LABEL_CORRECTIONS: dict[str, str] = {
     "vltamin": "vitamin", "vlitamin": "vitamin", "vitarnin": "vitamin",
     "vit c": "vitamin c", "vit d": "vitamin d", "vit a": "vitamin a",
     "vit b6": "vitamin b6", "vit b12": "vitamin b12",
+    "vit k1": "vitamin k1", "vit k2": "vitamin k2",
     # minerals
     "calclum": "calcium", "calcíum": "calcium",
     "magneslum": "magnesium", "magnesiurn": "magnesium",
@@ -6470,6 +6501,205 @@ def _apply_fuzzy_nutrient_correction_to_rows(
         matched = _fuzzy_match_nutrient(component)
         corrected.append({**row, "component": matched})
     return corrected
+
+
+STRUCTURED_COMPONENT_GROUP_ALIASES: dict[str, str] = {
+    "thiamin": "vitamin b1",
+    "thiamine": "vitamin b1",
+    "riboflavin": "vitamin b2",
+    "niacin": "vitamin b3",
+    "pantothenic acid": "vitamin b5",
+    "folate": "folate_family",
+    "folic acid": "folate_family",
+    "vitamin b9": "folate_family",
+    "vitamin k": "vitamin k_family",
+    "vitamin k1": "vitamin k_family",
+}
+
+STRUCTURED_COMPONENT_PREFERRED_NAME_RANK: dict[str, dict[str, int]] = {
+    "folate_family": {
+        "folic acid": 3,
+        "folate": 2,
+        "vitamin b9": 1,
+    },
+    "vitamin k_family": {
+        "vitamin k1": 3,
+        "vitamin k": 2,
+        "vitamin k2": 1,
+    },
+    "vitamin b1": {
+        "vitamin b1": 3,
+        "thiamin": 2,
+        "thiamine": 2,
+    },
+    "vitamin b2": {
+        "vitamin b2": 3,
+        "riboflavin": 2,
+    },
+    "vitamin b3": {
+        "vitamin b3": 3,
+        "niacin": 2,
+    },
+    "vitamin b5": {
+        "vitamin b5": 3,
+        "pantothenic acid": 2,
+    },
+}
+
+STRUCTURED_DECIMAL_SHIFT_MAX_MG: dict[str, float] = {
+    "vitamin b1": 5.0,
+    "vitamin b2": 5.0,
+    "iron": 65.0,
+}
+
+
+def _structured_component_group_key(component: str) -> str:
+    key = normalize_lookup_key(component)
+    if not key:
+        return ""
+    return STRUCTURED_COMPONENT_GROUP_ALIASES.get(key, key)
+
+
+def _component_looks_like_mineral_form_noise(component: str) -> bool:
+    key = normalize_lookup_key(component)
+    if not key:
+        return False
+    if key in OCR_MINERAL_FORM_COMPONENTS:
+        return False
+    return OCR_MINERAL_FORM_SUFFIX_PATTERN.match(key) is not None
+
+
+def _normalize_structured_candidate_component(component: str) -> str:
+    key = normalize_lookup_key(component)
+    if not key:
+        return ""
+    mineral_form_match = OCR_MINERAL_FORM_SUFFIX_PATTERN.match(key)
+    if mineral_form_match:
+        return str(mineral_form_match.group("base") or "").lower()
+    return key
+
+
+def _structured_preferred_name_rank(group_key: str, component: str) -> int:
+    ranking = STRUCTURED_COMPONENT_PREFERRED_NAME_RANK.get(group_key, {})
+    return int(ranking.get(normalize_lookup_key(component), 0))
+
+
+def _structured_unit_rank(group_key: str, dose_unit: str) -> int:
+    unit = _normalize_component_unit_token(dose_unit)
+    if not unit:
+        return 0
+    if group_key in {"folate_family", "vitamin k_family"} or group_key in _MICROGRAM_PREFERRED_NUTRIENTS:
+        if unit == "mcg":
+            return 3
+        if unit == "iu":
+            return 2
+        if unit == "mg":
+            return 1
+        return 0
+    if unit == "mg":
+        return 3
+    if unit == "mcg":
+        return 1
+    return 0
+
+
+def _apply_structured_decimal_shift_fix(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    fixed: list[dict[str, Any]] = []
+    for row in rows:
+        updated = dict(row)
+        component = _structured_component_group_key(str(updated.get("component", "") or ""))
+        unit = _normalize_component_unit_token(str(updated.get("dose_unit", "") or ""))
+        dose_raw = updated.get("dose_value")
+        try:
+            dose_value = float(dose_raw) if dose_raw is not None else None
+        except Exception:
+            dose_value = None
+        max_expected = STRUCTURED_DECIMAL_SHIFT_MAX_MG.get(component)
+        if dose_value is not None and unit == "mg" and max_expected is not None:
+            if dose_value > max_expected and (dose_value / 10.0) <= max_expected:
+                updated["dose_value"] = round(dose_value / 10.0, 4)
+        fixed.append(updated)
+    return fixed
+
+
+def _collapse_structured_label_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not rows:
+        return []
+
+    normalized_rows: list[dict[str, Any]] = []
+    for row in rows:
+        component = _normalize_structured_candidate_component(str(row.get("component", "") or ""))
+        if not component:
+            continue
+        normalized_rows.append(
+            {
+                **row,
+                "component": component,
+                "dose_unit": _normalize_component_unit_token(str(row.get("dose_unit", "") or "")),
+            }
+        )
+
+    normalized_rows = _apply_structured_decimal_shift_fix(normalized_rows)
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in normalized_rows:
+        group_key = _structured_component_group_key(str(row.get("component", "") or ""))
+        if not group_key:
+            continue
+        grouped.setdefault(group_key, []).append(row)
+
+    collapsed: list[dict[str, Any]] = []
+    for group_key, group_rows in grouped.items():
+        decimal_shift_larger_ids: set[int] = set()
+        for idx, candidate in enumerate(group_rows):
+            cand_value = candidate.get("dose_value")
+            cand_unit = str(candidate.get("dose_unit", "") or "")
+            try:
+                cand_num = float(cand_value) if cand_value is not None else None
+            except Exception:
+                cand_num = None
+            if cand_num is None or cand_num <= 0:
+                continue
+            for other_idx, other in enumerate(group_rows):
+                if idx == other_idx:
+                    continue
+                if normalize_lookup_key(str(other.get("component", "") or "")) != normalize_lookup_key(str(candidate.get("component", "") or "")):
+                    continue
+                if str(other.get("dose_unit", "") or "") != cand_unit:
+                    continue
+                try:
+                    other_num = float(other.get("dose_value")) if other.get("dose_value") is not None else None
+                except Exception:
+                    other_num = None
+                if other_num is None or other_num <= 0:
+                    continue
+                larger = max(cand_num, other_num)
+                smaller = min(cand_num, other_num)
+                if smaller > 0 and 9.5 <= (larger / smaller) <= 10.5 and cand_num == larger:
+                    decimal_shift_larger_ids.add(idx)
+
+        best = max(
+            enumerate(group_rows),
+            key=lambda item: (
+                _structured_preferred_name_rank(group_key, str(item[1].get("component", "") or "")),
+                _structured_unit_rank(group_key, str(item[1].get("dose_unit", "") or "")),
+                0 if item[0] in decimal_shift_larger_ids else 1,
+                0 if _component_looks_like_mineral_form_noise(str(item[1].get("component", "") or "")) else 1,
+                0 if item[1].get("dose_value") is None else 1,
+                -len(str(item[1].get("component", "") or "")),
+            ),
+        )[1]
+        collapsed.append(best)
+
+    collapsed.sort(key=lambda row: normalize_lookup_key(str(row.get("component", "") or "")))
+    component_keys = {normalize_lookup_key(str(row.get("component", "") or "")) for row in collapsed}
+
+    filtered: list[dict[str, Any]] = []
+    for row in collapsed:
+        component = normalize_lookup_key(str(row.get("component", "") or ""))
+        if component == "beta-carotene" and "vitamin a" in component_keys:
+            continue
+        filtered.append(row)
+    return filtered
 
 
 # ---------------------------------------------------------------------------
@@ -7559,6 +7789,9 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
 
     # Stage 3+: apply fuzzy nutrient-name correction to resolve OCR label errors.
     best_rows = _apply_fuzzy_nutrient_correction_to_rows(best_rows)
+
+    if has_structured_table_cues:
+        best_rows = _collapse_structured_label_rows(best_rows)
 
     # Stage 4: unit domain + energy sanity validation (non-destructive — adds warnings).
     best_rows, sanity_warnings = _validate_nutrition_label_sanity(best_rows)
