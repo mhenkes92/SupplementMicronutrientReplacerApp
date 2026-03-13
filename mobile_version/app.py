@@ -4955,7 +4955,7 @@ def normalize_component_name(raw_name: str) -> str:
 OCR_VITAMIN_PREFIX_PATTERN = re.compile(r"^(vitamin\s+[a-z](?:\d{1,2})?)\b", re.I)
 OCR_VITAMIN_TOKEN_PATTERN = re.compile(r"\b(?:vit(?:amin|main)|vitarnin)\s*([a-z])\s*(\d{0,2})\b", re.I)
 OCR_VITAMIN_SHORTHAND_PATTERN = re.compile(r"\b([bdk])\s*[-:]?\s*(12|[1-9])\b", re.I)
-OCR_DOSE_TOKEN_PATTERN = re.compile(r"(?P<val>\d+(?:[\.,]\d+)?|\d+[oO])\s*(?P<unit>mg|mcg|meg|ug|µg|μg|fg|iu|g)\b", re.I)
+OCR_DOSE_TOKEN_PATTERN = re.compile(r"(?P<val>(?:\d|[lI|])[0-9oO]*(?:[\.,][0-9oO]+)?)\s*(?P<unit>mg|mcg|meg|ug|µg|μg|fg|iu|g)\b", re.I)
 OCR_MICROGRAM_COMPONENTS: set[str] = {
     "vitamin a",
     "vitamin d",
@@ -5041,6 +5041,24 @@ def _repair_ocr_component_name(component: str) -> str:
 
     text = re.sub(r"\b(?:we|ve|wv|nrv|rv|iv)\b$", "", text, flags=re.I).strip()
     return text
+
+
+def _parse_ocr_numeric_value(raw_value: str) -> float | None:
+    token = str(raw_value or "").strip()
+    if not token:
+        return None
+    token = token.replace("O", "0").replace("o", "0")
+    # OCR often confuses 1 with l, I, or | in small table fonts.
+    if token and token[0] in {"l", "I", "|"}:
+        token = "1" + token[1:]
+    token = token.replace(",", ".")
+    token = re.sub(r"[^0-9\.]", "", token)
+    if not token:
+        return None
+    try:
+        return float(token)
+    except Exception:
+        return None
 
 
 def _is_plausible_component_name(component: str) -> bool:
@@ -5256,11 +5274,8 @@ def _recover_missing_vitamin_rows_from_text(
             left_window = line[max(0, match.start() - 20):match.start()]
             dose_match = OCR_DOSE_TOKEN_PATTERN.search(right_window) or OCR_DOSE_TOKEN_PATTERN.search(left_window)
             if dose_match:
-                raw_value = str(dose_match.group("val") or "").replace("O", "0").replace("o", "0")
-                try:
-                    dose_value = float(raw_value.replace(",", "."))
-                except Exception:
-                    dose_value = None
+                raw_value = str(dose_match.group("val") or "")
+                dose_value = _parse_ocr_numeric_value(raw_value)
                 dose_unit = str(dose_match.group("unit") or "")
 
             component, dose_value, dose_unit = _repair_ocr_dose_entry(component, dose_value, dose_unit)
@@ -5292,11 +5307,8 @@ def _recover_missing_vitamin_rows_from_text(
             left_window = line[max(0, short_match.start() - 20):short_match.start()]
             dose_match = OCR_DOSE_TOKEN_PATTERN.search(right_window) or OCR_DOSE_TOKEN_PATTERN.search(left_window)
             if dose_match:
-                raw_value = str(dose_match.group("val") or "").replace("O", "0").replace("o", "0")
-                try:
-                    dose_value = float(raw_value.replace(",", "."))
-                except Exception:
-                    dose_value = None
+                raw_value = str(dose_match.group("val") or "")
+                dose_value = _parse_ocr_numeric_value(raw_value)
                 dose_unit = str(dose_match.group("unit") or "")
 
             component, dose_value, dose_unit = _repair_ocr_dose_entry(component, dose_value, dose_unit)
@@ -5389,6 +5401,8 @@ def _is_suspicious_structured_group_dose(group_key: str, dose_value: float | Non
         return True
     if unit == "mg" and group_key in STRUCTURED_MG_REPEAT_SUSPICIOUS_GROUPS and repeated_count >= 3 and value <= 5:
         return True
+    if group_key == "zinc" and unit == "mcg" and value >= 100:
+        return True
     if group_key == "iron" and unit == "mg" and value >= 12 and abs((value * 10.0) - round(value * 10.0)) < 1e-9 and abs((value % 1.0) - 0.5) < 1e-9:
         return True
     if group_key == "vitamin d" and unit == "mcg" and value > 50:
@@ -5470,9 +5484,8 @@ def _recover_core_micronutrient_rows_from_text(
                 if not dose_match:
                     continue
                 raw_value = str(dose_match.group("val") or "").replace("O", "0").replace("o", "0")
-                try:
-                    dose_value = float(raw_value.replace(",", "."))
-                except Exception:
+                dose_value = _parse_ocr_numeric_value(raw_value)
+                if dose_value is None:
                     continue
                 dose_unit = str(dose_match.group("unit") or "")
                 component, dose_value, dose_unit = _repair_ocr_dose_entry(canonical_component, dose_value, dose_unit)
@@ -5679,7 +5692,7 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
 
     lines = [ln.strip() for ln in input_text.splitlines() if ln.strip()]
     dose_pattern = re.compile(
-        r"(?P<val>\d+(?:[\.,]\d+)?)\s*(?P<unit>mg|mcg|meg|ug|µg|μg|fg|iu|g|kcal)\b",
+        r"(?P<val>(?:\d|[lI|])[0-9oO]*(?:[\.,][0-9oO]+)?)\s*(?P<unit>mg|mcg|meg|ug|µg|μg|fg|iu|g|kcal)\b",
         re.I,
     )
     nutrient_line_pattern = re.compile(
@@ -5771,8 +5784,10 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
                     continue
 
                 try:
-                    dose_value = float(match.group("val").replace(",", "."))
+                    dose_value = _parse_ocr_numeric_value(str(match.group("val") or ""))
                 except Exception:
+                    continue
+                if dose_value is None:
                     continue
 
                 dose_unit = match.group("unit").lower()
