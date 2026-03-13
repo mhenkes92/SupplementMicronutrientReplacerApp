@@ -4919,6 +4919,8 @@ def normalize_component_name(raw_name: str) -> str:
 
 
 OCR_VITAMIN_PREFIX_PATTERN = re.compile(r"^(vitamin\s+[a-z](?:\d{1,2})?)\b", re.I)
+OCR_VITAMIN_TOKEN_PATTERN = re.compile(r"\b(?:vit(?:amin|main)|vitarnin)\s*([a-z])\s*(\d{0,2})\b", re.I)
+OCR_DOSE_TOKEN_PATTERN = re.compile(r"(?P<val>\d+(?:[\.,]\d+)?|\d+[oO])\s*(?P<unit>mg|mcg|ug|µg|μg|iu|g)\b", re.I)
 OCR_MICROGRAM_COMPONENTS: set[str] = {
     "vitamin a",
     "vitamin d",
@@ -4973,6 +4975,67 @@ def _repair_ocr_dose_entry(component: str, dose_value: float | None, dose_unit: 
         return repaired_component, repaired_value, "mcg"
 
     return repaired_component, repaired_value, repaired_unit
+
+
+def _recover_missing_vitamin_rows_from_text(
+    input_text: str,
+    existing_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    allowed_letters = {"a", "b", "c", "d", "e", "k"}
+    existing_components = {
+        normalize_lookup_key(str(row.get("component", "") or ""))
+        for row in existing_rows
+    }
+    recovered: list[dict[str, Any]] = []
+
+    for raw_line in input_text.splitlines():
+        line = str(raw_line or "").strip()
+        if not line:
+            continue
+
+        for match in OCR_VITAMIN_TOKEN_PATTERN.finditer(line):
+            letter = str(match.group(1) or "").lower()
+            suffix = str(match.group(2) or "").strip()
+            if letter not in allowed_letters:
+                continue
+
+            # Numeric vitamin subtypes are valid mainly for B/D/K families.
+            if suffix and letter not in {"b", "d", "k"}:
+                suffix = ""
+
+            component = f"vitamin {letter}{suffix}".strip()
+            component = _repair_ocr_component_name(component)
+            if not component:
+                continue
+
+            normalized_component = normalize_lookup_key(component)
+            if not normalized_component or normalized_component in existing_components:
+                continue
+
+            dose_value: float | None = None
+            dose_unit = ""
+            right_window = line[match.end():match.end() + 30]
+            left_window = line[max(0, match.start() - 20):match.start()]
+            dose_match = OCR_DOSE_TOKEN_PATTERN.search(right_window) or OCR_DOSE_TOKEN_PATTERN.search(left_window)
+            if dose_match:
+                raw_value = str(dose_match.group("val") or "").replace("O", "0").replace("o", "0")
+                try:
+                    dose_value = float(raw_value.replace(",", "."))
+                except Exception:
+                    dose_value = None
+                dose_unit = str(dose_match.group("unit") or "")
+
+            component, dose_value, dose_unit = _repair_ocr_dose_entry(component, dose_value, dose_unit)
+            recovered.append(
+                {
+                    "component": component,
+                    "dose_value": dose_value,
+                    "dose_unit": dose_unit,
+                }
+            )
+            existing_components.add(normalized_component)
+
+    return recovered
 
 
 ECOMMERCE_NOISE_PATTERN = re.compile(
@@ -5427,19 +5490,6 @@ def expand_umbrella_components(rows: list[dict[str, Any]]) -> list[dict[str, Any
 
 def check_openrouter_key_status() -> tuple[bool, str]:
     return False, "OpenRouter is disabled in offline-only mode"
-
-
-def check_provider_status() -> tuple[bool, str]:
-    if ENABLE_LOCAL_OLLAMA:
-        reply = call_local_ollama_text(
-            "You are a health check endpoint.",
-            "Reply with exactly: ok",
-        )
-        if reply:
-            return True, "Local Ollama: model is working"
-    if LAST_OLLAMA_ERROR:
-        return False, LAST_OLLAMA_ERROR
-    return False, "No working local provider found (Ollama)"
 
 
 def resolve_tesseract_cmd() -> str:
@@ -6512,6 +6562,19 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
         return (score, dose_count, len(rows), source_priority.get(source, 0))
 
     best_source, best_rows, best_meta, best_score = max(candidates, key=_candidate_rank)
+
+    recovered_vitamin_rows = _recover_missing_vitamin_rows_from_text(input_text, best_rows)
+    if recovered_vitamin_rows:
+        recovered_merged = merge_component_rows(best_rows, recovered_vitamin_rows)
+        recovered_validated, recovered_meta = validate_parsed_components(recovered_merged)
+        if len(recovered_validated) >= len(best_rows):
+            best_rows = recovered_validated
+            best_score = max(best_score, _score_component_rows(best_rows))
+            recovery_issues = [str(x) for x in (recovered_meta.get("issues", []) or [])[:3]]
+            best_meta = {
+                "issues": ["vitamin_token_recovery_applied", *recovery_issues, *(best_meta.get("issues", []) or [])]
+            }
+
     warnings: list[str] = []
 
     if best_rows:
@@ -6538,37 +6601,6 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
 def parse_components(input_text: str) -> list[dict[str, Any]]:
     structured = build_structured_nutrients_json(input_text)
     return list(structured.get("nutrients", []) or [])
-
-
-def preliminary_recommendation(component: str, budget_priority: int) -> tuple[str, str]:
-    c = component.lower()
-
-    food_first = {
-        "vitamin c", "magnesium", "zinc", "iron", "potassium", "folate", "calcium", "curcumin", "curcuma"
-    }
-    supplement_likely = {"vitamin d", "vitamin b12", "ashwagandha", "fish oil", "omega-3", "omega 3"}
-
-    if c in food_first:
-        if budget_priority >= 4:
-            return (
-                "Switch to food first",
-                "High chance of affordable whole-food replacement with added health synergy.",
-            )
-        return (
-            "Likely switch to food",
-            "Whole-food replacement is usually strong for this component.",
-        )
-
-    if c in supplement_likely:
-        return (
-            "Case-by-case: often keep supplement",
-            "For this component, food-only replacement can be inconsistent or impractical for many users.",
-        )
-
-    return (
-        "Case-by-case",
-        "Need deeper dose and food matching in the next step of the pipeline.",
-    )
 
 
 def build_mobile_ui() -> None:
