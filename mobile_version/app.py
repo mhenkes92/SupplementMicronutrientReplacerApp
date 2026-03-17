@@ -223,6 +223,7 @@ DIETARY_RESTRICTION_RULES_PATH = APP_DIR / "data" / "dietary_restriction_rules.j
 UNMAPPED_COMPONENT_LOG_PATH = APP_DIR / "data" / "unmapped_components_log.csv"
 FEEDBACK_REPORTS_PATH = APP_DIR / "data" / "feedback_reports.jsonl"
 OFFICIAL_NUTRIENT_SOURCES_PATH = APP_DIR / "data" / "official_nutrient_sources.csv"
+EAN_MICRONUTRIENT_DB_PATH = APP_DIR / "data" / "ean_micronutrient_db.csv"
 
 OFFICIAL_REFERENCE_CANONICAL_UNIT: dict[str, str] = {
     "Vitamin A": "ug",
@@ -497,6 +498,50 @@ def _parse_float(value: Any) -> float | None:
     except (ValueError, TypeError) as e:
         logger.debug(f"Unable to parse float from '{value}': {e}")
         return None
+
+
+def load_ean_micronutrient_rows() -> dict[str, list[dict[str, Any]]]:
+    return _load_ean_micronutrient_rows_cached(_file_mtime_or_minus_one(EAN_MICRONUTRIENT_DB_PATH))
+
+
+@functools.lru_cache(maxsize=4)
+def _load_ean_micronutrient_rows_cached(_mtime: float) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    if not EAN_MICRONUTRIENT_DB_PATH.exists():
+        return grouped
+
+    try:
+        with EAN_MICRONUTRIENT_DB_PATH.open("r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                barcode = _normalize_barcode_digits(str(row.get("ean", "") or ""))
+                component = str(row.get("component", "") or "").strip()
+                dose_value = _parse_float(row.get("dose_value"))
+                dose_unit = str(row.get("dose_unit", "") or "").strip()
+                product_name = str(row.get("product_name", "") or "").strip()
+                serving_size = str(row.get("serving_size", "") or "").strip()
+                provider = str(row.get("provider", "") or "").strip() or "LocalEANMicronutrientDB"
+                notes = str(row.get("notes", "") or "").strip()
+
+                if not barcode or not component or dose_value is None or dose_value <= 0:
+                    continue
+
+                grouped.setdefault(barcode, []).append(
+                    {
+                        "component": component,
+                        "dose_value": float(dose_value),
+                        "dose_unit": dose_unit,
+                        "product_name": product_name,
+                        "serving_size": serving_size,
+                        "provider": provider,
+                        "notes": notes,
+                    }
+                )
+    except Exception as e:
+        logger.error(f"Error loading EAN micronutrient DB from {EAN_MICRONUTRIENT_DB_PATH}: {e}")
+        return {}
+
+    return grouped
 
 
 def _normalize_reference_unit_token(unit: str) -> str:
@@ -1840,6 +1885,451 @@ def _extract_ean_from_text(text: str) -> str:
         return ""
     tokens.sort(key=len, reverse=True)
     return tokens[0]
+
+
+def _normalize_barcode_digits(value: str) -> str:
+    digits = re.sub(r"\D+", "", str(value or ""))
+    if 8 <= len(digits) <= 14:
+        return digits
+    return ""
+
+
+def detect_barcode_from_image(image_bytes: bytes) -> tuple[str, str]:
+    """Return (barcode, method). method is one of: pyzbar, ocr_fallback, none."""
+    if not image_bytes:
+        return "", "none"
+
+    try:
+        from pyzbar.pyzbar import decode as zbar_decode
+
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        decoded = zbar_decode(image)
+        candidates: list[str] = []
+        for item in decoded:
+            try:
+                val = item.data.decode("utf-8", errors="ignore")
+            except Exception:
+                val = ""
+            normalized = _normalize_barcode_digits(val)
+            if normalized:
+                candidates.append(normalized)
+        if candidates:
+            candidates.sort(key=len, reverse=True)
+            return candidates[0], "pyzbar"
+    except Exception:
+        pass
+
+    try:
+        # Fallback path: OCR near-barcode text and extract best EAN-like token.
+        ocr_text = try_tesseract_ocr(image_bytes)
+        token = _normalize_barcode_digits(_extract_ean_from_text(ocr_text))
+        if token:
+            return token, "ocr_fallback"
+    except Exception:
+        pass
+
+    return "", "none"
+
+
+def _lookup_local_ean_micronutrient_profile(barcode: str) -> tuple[str, str, str, str]:
+    normalized_barcode = _normalize_barcode_digits(barcode)
+    if not normalized_barcode:
+        return "", "", "", ""
+
+    grouped = load_ean_micronutrient_rows()
+    rows = grouped.get(normalized_barcode, [])
+    if not rows:
+        return "", "", "", ""
+
+    lines: list[str] = []
+    seen_components: set[str] = set()
+    product_name = ""
+    serving_size = ""
+    provider_name = "LocalEANMicronutrientDB"
+    for row in rows:
+        component = str(row.get("component", "") or "").strip()
+        if not component:
+            continue
+        value = _parse_float(row.get("dose_value"))
+        if value is None or value <= 0:
+            continue
+        unit = _normalize_component_unit_token(str(row.get("dose_unit", "") or ""))
+        if unit not in ALLOWED_DOSE_UNITS or not unit:
+            continue
+        normalized_component = normalize_lookup_key(component)
+        if normalized_component in seen_components:
+            continue
+        seen_components.add(normalized_component)
+        lines.append(f"{component} {format_float(float(value))} {unit}".strip())
+
+        if not product_name:
+            product_name = str(row.get("product_name", "") or "").strip()
+        if not serving_size:
+            serving_size = str(row.get("serving_size", "") or "").strip()
+        provider_candidate = str(row.get("provider", "") or "").strip()
+        if provider_candidate:
+            provider_name = provider_candidate
+
+    if not lines:
+        return "", "", "", ""
+
+    out_parts: list[str] = []
+    if product_name:
+        out_parts.append(f"Product: {product_name}")
+    if serving_size:
+        out_parts.append(f"Serving Size: {serving_size}")
+    out_parts.append("Nutrition Information")
+    out_parts.extend(lines)
+
+    return (
+        "\n".join([x for x in out_parts if x]).strip(),
+        provider_name,
+        "Barcode resolved from dedicated local EAN micronutrient database.",
+        str(EAN_MICRONUTRIENT_DB_PATH),
+    )
+
+
+def _lookup_secondary_barcode_identity(barcode: str) -> tuple[str, str, str, str]:
+    """
+    Secondary lookup for product identity only when OFF is missing/incomplete.
+    Returns (text, provider, reason, product_url).
+    """
+    normalized_barcode = _normalize_barcode_digits(barcode)
+    if not normalized_barcode:
+        return "", "", "", ""
+
+    upcitemdb_url = f"https://api.upcitemdb.com/prod/trial/lookup?upc={normalized_barcode}"
+    try:
+        resp = requests.get(
+            upcitemdb_url,
+            timeout=HTTP_TIMEOUT,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; SuppSwap/1.0; +https://example.local)",
+                "Accept": "application/json",
+            },
+        )
+        if resp.status_code != 200:
+            return "", "", "", ""
+        data = resp.json() if resp.content else {}
+        items = data.get("items", []) if isinstance(data, dict) else []
+        if not isinstance(items, list) or not items:
+            return "", "", "", ""
+
+        item = items[0] if isinstance(items[0], dict) else {}
+        title = str(item.get("title", "") or "").strip()
+        brand = str(item.get("brand", "") or "").strip()
+        if not title and not brand:
+            return "", "", "", ""
+
+        title_line = " ".join([x for x in [title, brand] if x]).strip()
+        result_text = f"Product: {title_line}" if title_line else ""
+        return (
+            result_text,
+            "UPCItemDB",
+            "Barcode identity resolved from secondary provider (no structured micronutrient facts provided).",
+            upcitemdb_url,
+        )
+    except Exception:
+        return "", "", "", ""
+
+
+def extract_supplement_text_from_barcode(barcode: str) -> tuple[str, str, str, str]:
+    """
+    Resolve product text from barcode using OpenFoodFacts.
+    Returns (text, provider, reason, product_url).
+    """
+    normalized_barcode = _normalize_barcode_digits(barcode)
+    if not normalized_barcode:
+        return "", "", "Invalid barcode format. Expected 8-14 digits.", ""
+
+    local_profile = _lookup_local_ean_micronutrient_profile(normalized_barcode)
+    if local_profile[0]:
+        return local_profile
+
+    api_url = f"https://world.openfoodfacts.org/api/v2/product/{normalized_barcode}.json"
+    product_url = f"https://world.openfoodfacts.org/product/{normalized_barcode}"
+
+    try:
+        response = requests.get(
+            api_url,
+            timeout=HTTP_TIMEOUT,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; SuppSwap/1.0; +https://example.local)",
+                "Accept": "application/json",
+            },
+        )
+        if response.status_code != 200:
+            secondary = _lookup_secondary_barcode_identity(normalized_barcode)
+            if secondary[0]:
+                return secondary
+            return "", "OpenFoodFacts", f"OpenFoodFacts HTTP {response.status_code}.", product_url
+
+        data = response.json() if response.content else {}
+        if int(data.get("status", 0) or 0) != 1:
+            secondary = _lookup_secondary_barcode_identity(normalized_barcode)
+            if secondary[0]:
+                return secondary
+            return "", "OpenFoodFacts", "Barcode not found in OpenFoodFacts.", product_url
+
+        product = data.get("product", {}) if isinstance(data, dict) else {}
+        name = str(product.get("product_name", "") or "").strip()
+        brands = str(product.get("brands", "") or "").strip()
+        ingredients = str(
+            product.get("ingredients_text_en", "")
+            or product.get("ingredients_text", "")
+            or ""
+        ).strip()
+
+        nutriments = product.get("nutriments", {}) if isinstance(product.get("nutriments", {}), dict) else {}
+
+        nutrient_aliases: list[tuple[str, str]] = [
+            ("vitamin-a", "Vitamin A"),
+            ("vitamin-c", "Vitamin C"),
+            ("vitamin-d", "Vitamin D"),
+            ("vitamin-e", "Vitamin E"),
+            ("vitamin-k", "Vitamin K1"),
+            ("vitamin-b1", "Vitamin B1"),
+            ("thiamin", "Vitamin B1"),
+            ("vitamin-b2", "Vitamin B2"),
+            ("riboflavin", "Vitamin B2"),
+            ("vitamin-b3", "Vitamin B3"),
+            ("niacin", "Vitamin B3"),
+            ("vitamin-b5", "Vitamin B5"),
+            ("pantothenic-acid", "Vitamin B5"),
+            ("vitamin-b6", "Vitamin B6"),
+            ("vitamin-b9", "Folic Acid"),
+            ("folates", "Folic Acid"),
+            ("folic-acid", "Folic Acid"),
+            ("vitamin-b12", "Vitamin B12"),
+            ("biotin", "Biotin"),
+            ("calcium", "Calcium"),
+            ("phosphorus", "Phosphorus"),
+            ("potassium", "Potassium"),
+            ("magnesium", "Magnesium"),
+            ("iron", "Iron"),
+            ("copper", "Copper"),
+            ("manganese", "Manganese"),
+            ("boron", "Boron"),
+            ("iodine", "Iodine"),
+            ("chromium", "Chromium"),
+            ("selenium", "Selenium"),
+            ("molybdenum", "Molybdenum"),
+            ("zinc", "Zinc"),
+        ]
+
+        def _pick_nutriment_value(base_key: str) -> tuple[float | None, str]:
+            candidates = [base_key, f"{base_key}_serving", f"{base_key}_100g"]
+            for cand in candidates:
+                raw_val = nutriments.get(cand)
+                try:
+                    val = float(str(raw_val).replace(",", "."))
+                except Exception:
+                    continue
+                if val <= 0:
+                    continue
+                unit = str(
+                    nutriments.get(f"{cand}_unit", "")
+                    or nutriments.get(f"{base_key}_unit", "")
+                    or ""
+                ).strip()
+                return val, unit
+            return None, ""
+
+        lines: list[str] = []
+        used_page_table_fallback = False
+        seen_names: set[str] = set()
+        for base_key, label in nutrient_aliases:
+            if label.lower() in seen_names:
+                continue
+            value, unit = _pick_nutriment_value(base_key)
+            if value is None:
+                continue
+            seen_names.add(label.lower())
+            unit_out = _normalize_component_unit_token(unit)
+            lines.append(f"{label} {format_float(value)} {unit_out}".strip())
+
+        # Fallback for products that expose only macro-style nutriments in OFF.
+        if not lines:
+            macro_aliases: list[tuple[str, str]] = [
+                ("energy-kcal", "Energy"),
+                ("energy", "Energy"),
+                ("proteins", "Protein"),
+                ("protein", "Protein"),
+                ("fat", "Fat"),
+                ("saturated-fat", "Saturated Fat"),
+                ("carbohydrates", "Carbohydrates"),
+                ("carbohydrate", "Carbohydrate"),
+                ("sugars", "Sugars"),
+                ("fiber", "Fiber"),
+                ("salt", "Salt"),
+                ("sodium", "Sodium"),
+            ]
+            for base_key, label in macro_aliases:
+                if label.lower() in seen_names:
+                    continue
+                value, unit = _pick_nutriment_value(base_key)
+                if value is None:
+                    continue
+                unit_out = _normalize_component_unit_token(unit)
+                if unit_out not in ALLOWED_DOSE_UNITS or not unit_out:
+                    continue
+                seen_names.add(label.lower())
+                lines.append(f"{label} {format_float(value)} {unit_out}".strip())
+
+        # Deterministic OFF page-table fallback when API nutriments are sparse or zero.
+        if not lines and product_url:
+            page_rows = _extract_openfoodfacts_rows_from_product_page(product_url)
+            if page_rows:
+                lines.extend(page_rows)
+                used_page_table_fallback = True
+
+        serving_size = str(product.get("serving_size", "") or "").strip()
+
+        out_parts: list[str] = []
+        title = " ".join([x for x in [name, brands] if x]).strip()
+        if title:
+            out_parts.append(f"Product: {title}")
+        if serving_size:
+            out_parts.append(f"Serving Size: {serving_size}")
+        if lines:
+            out_parts.append("Nutrition Information")
+            out_parts.extend(lines)
+        if ingredients:
+            out_parts.append(f"Ingredients: {ingredients}")
+
+        result_text = "\n".join([x for x in out_parts if str(x).strip()]).strip()
+        if not result_text:
+            secondary = _lookup_secondary_barcode_identity(normalized_barcode)
+            if secondary[0]:
+                return secondary
+            return "", "OpenFoodFacts", "Barcode resolved but no parseable product fields found.", product_url
+
+        if used_page_table_fallback:
+            return (
+                result_text,
+                "OpenFoodFacts+PageTable",
+                "Barcode resolved; used OpenFoodFacts product-page nutrition table fallback.",
+                product_url,
+            )
+        return result_text, "OpenFoodFacts", "Barcode resolved from OpenFoodFacts product data.", product_url
+    except Exception as e:
+        secondary = _lookup_secondary_barcode_identity(normalized_barcode)
+        if secondary[0]:
+            return secondary
+        return "", "OpenFoodFacts", f"Barcode lookup failed: {e}", product_url
+
+
+def _barcode_text_has_micronutrient_signal(text: str) -> bool:
+    raw = str(text or "")
+    if not raw.strip():
+        return False
+
+    micro_hint = re.compile(
+        r"\b(?:vitamin\s+[abcekd](?:\d{0,2})?|thiamin|riboflavin|niacin|folate|folic\s+acid|biotin|"
+        r"calcium|iron|magnesium|zinc|selenium|iodine|chromium|molybdenum|copper|manganese|potassium|phosphorus)\b",
+        re.I,
+    )
+    dose_hint = re.compile(r"\b\d+(?:[\.,]\d+)?\s*(?:mg|mcg|ug|µg|μg|iu)\b", re.I)
+    macro_hint = re.compile(
+        r"\b(?:energy|kcal|fat|saturated\s+fat|carbohydrate|carbohydrates|sugar|sugars|fiber|protein|salt|sodium)\b",
+        re.I,
+    )
+
+    micro_count = len(micro_hint.findall(raw))
+    dose_count = len(dose_hint.findall(raw))
+    macro_count = len(macro_hint.findall(raw))
+    return micro_count >= 2 and dose_count >= 2 and micro_count >= macro_count
+
+
+def _barcode_data_needs_label_retry(barcode_text: str, provider: str, reason: str) -> bool:
+    provider_key = str(provider or "").strip().lower()
+    reason_key = str(reason or "").strip().lower()
+    has_micro_signal = _barcode_text_has_micronutrient_signal(barcode_text)
+    if "upcitemdb" in provider_key and not has_micro_signal:
+        return True
+    if "pagetable" in provider_key or "sparse" in reason_key:
+        return not has_micro_signal
+    return False
+
+
+def _extract_openfoodfacts_rows_from_product_page(product_url: str) -> list[str]:
+    if not str(product_url or "").strip():
+        return []
+
+    try:
+        response = requests.get(
+            product_url,
+            timeout=HTTP_TIMEOUT,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; SuppSwap/1.0; +https://example.local)",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
+        )
+        if response.status_code != 200:
+            return []
+        soup = BeautifulSoup(response.text, "html.parser")
+        rows: list[str] = []
+        seen_names: set[str] = set()
+        nutrient_name_hint = re.compile(
+            r"\b(?:energy|fat|saturated\s+fat|carbohydrate|carbohydrates|sugar|sugars|fiber|proteins?|salt|sodium|"
+            r"vitamin|folate|folic|niacin|riboflavin|thiamin|biotin|iron|zinc|magnesium|calcium|iodine|selenium|"
+            r"chromium|molybdenum|potassium|phosphorus|copper|manganese)\b",
+            re.I,
+        )
+
+        for tr in soup.find_all("tr"):
+            row_text = " ".join(str(tr.get_text(" ", strip=True) or "").split())
+            if not row_text or len(row_text) > 180:
+                continue
+            if not nutrient_name_hint.search(row_text):
+                continue
+
+            dose_matches = list(
+                re.finditer(r"(\d+(?:[\.,]\d+)?)\s*(mg|mcg|ug|µg|μg|g|iu|kcal|kj)\b", row_text, re.I)
+            )
+            if not dose_matches:
+                continue
+
+            chosen_match = None
+            for m in reversed(dose_matches):
+                try:
+                    candidate_val = float(str(m.group(1)).replace(",", "."))
+                except Exception:
+                    continue
+                if candidate_val > 0:
+                    chosen_match = m
+                    break
+            if chosen_match is None:
+                continue
+
+            name_raw = row_text[: chosen_match.start()]
+            name = re.sub(r"\s+", " ", re.sub(r"[^A-Za-z\s\-]", " ", name_raw)).strip()
+            name = re.sub(r"\b(?:mg|mcg|ug|g|iu|kcal|kj)\b\s*$", "", name, flags=re.I).strip()
+            if not name:
+                continue
+            if not nutrient_name_hint.search(name):
+                continue
+
+            try:
+                value = float(str(chosen_match.group(1)).replace(",", "."))
+            except Exception:
+                continue
+            unit = _normalize_component_unit_token(str(chosen_match.group(2) or ""))
+            if unit == "kj":
+                value = value / 4.184
+                unit = "kcal"
+            if unit not in ALLOWED_DOSE_UNITS or not unit or value <= 0:
+                continue
+
+            normalized_name = normalize_lookup_key(name)
+            if normalized_name in seen_names:
+                continue
+            seen_names.add(normalized_name)
+            rows.append(f"{name} {format_float(value)} {unit}".strip())
+
+        return rows
+    except Exception:
+        return []
 
 
 def _extract_price_per_kg_from_text(text: str, currency: str) -> float | None:
@@ -8332,19 +8822,193 @@ The local RAG library is built from curated expert nutrition notes and evidence 
     with tab_analyze:
         st.subheader("Provide your supplement input")
 
-        camera_image = st.camera_input("Take a photo of supplement label", key="supp_camera")
+        camera_mode_key = "analyze_camera_mode"
+        label_capture_key = "analyze_label_capture_bytes"
+        barcode_capture_key = "analyze_barcode_capture_bytes"
+        label_confirmed_key = "analyze_label_capture_confirmed"
+        barcode_scanned_value_key = "analyze_barcode_scanned_value"
+        barcode_scan_method_key = "analyze_barcode_scan_method"
+        active_input_source_key = "analyze_active_input_source"
+        if camera_mode_key not in st.session_state:
+            st.session_state[camera_mode_key] = ""
+        if active_input_source_key not in st.session_state:
+            st.session_state[active_input_source_key] = ""
+
+        active_input_source = str(st.session_state.get(active_input_source_key, "") or "")
+        allow_label_source = active_input_source in {"", "label"}
+        allow_barcode_source = active_input_source in {"", "barcode"}
+        allow_url_source = active_input_source in {"", "url"}
+        allow_manual_source = active_input_source in {"", "manual"}
+
+        if active_input_source:
+            st.caption(f"Active input source: {active_input_source}. Other input options are temporarily disabled.")
+            if st.button("Unlock input selection", use_container_width=True, key="unlock_input_source_btn"):
+                st.session_state[active_input_source_key] = ""
+                st.session_state[camera_mode_key] = ""
+                st.session_state[label_capture_key] = None
+                st.session_state[label_confirmed_key] = False
+                st.session_state[barcode_capture_key] = None
+                st.session_state[barcode_scanned_value_key] = ""
+                st.session_state[barcode_scan_method_key] = ""
+                # Reset widget-bound values so unlocking fully clears Analyze inputs.
+                for widget_key in [
+                    "supp_camera",
+                    "supp_upload",
+                    "supp_barcode",
+                    "supp_barcode_camera",
+                    "supp_barcode_upload",
+                    "supp_url",
+                    "supp_manual_text",
+                ]:
+                    if widget_key in st.session_state:
+                        st.session_state.pop(widget_key)
+                st.rerun()
+
+        scan_col_label, scan_col_barcode, scan_col_close = st.columns(3)
+        with scan_col_label:
+            if st.button(
+                "Scan Nutrition Label",
+                use_container_width=True,
+                key="start_label_scan_btn",
+                disabled=not allow_label_source,
+            ):
+                st.session_state[active_input_source_key] = "label"
+                st.session_state[camera_mode_key] = "label"
+        with scan_col_barcode:
+            if st.button(
+                "Scan Bar Code",
+                use_container_width=True,
+                key="start_barcode_scan_btn",
+                disabled=not allow_barcode_source,
+            ):
+                st.session_state[active_input_source_key] = "barcode"
+                st.session_state[camera_mode_key] = "barcode"
+                st.session_state[barcode_capture_key] = None
+        with scan_col_close:
+            if st.button(
+                "Close Camera",
+                use_container_width=True,
+                key="close_scan_camera_btn",
+                disabled=not bool(st.session_state.get(camera_mode_key, "")),
+            ):
+                st.session_state[camera_mode_key] = ""
+
+        camera_image = None
+        barcode_camera = None
+        active_camera_mode = str(st.session_state.get(camera_mode_key, "") or "")
+        if active_camera_mode == "label" and allow_label_source:
+            st.caption("Nutrition label camera is active.")
+            camera_image = st.camera_input("Take a photo of supplement label", key="supp_camera")
+            if camera_image is not None:
+                st.session_state[label_capture_key] = camera_image.getvalue()
+                st.session_state[label_confirmed_key] = False
+                st.session_state[camera_mode_key] = ""
+                st.rerun()
+        elif active_camera_mode == "barcode" and allow_barcode_source:
+            st.caption("Barcode camera is active.")
+            barcode_camera = st.camera_input("Scan barcode with camera", key="supp_barcode_camera")
+            if barcode_camera is not None:
+                barcode_bytes = barcode_camera.getvalue()
+                detected_barcode, scan_method = detect_barcode_from_image(barcode_bytes)
+                normalized_scanned = _normalize_barcode_digits(detected_barcode)
+                if normalized_scanned:
+                    st.session_state[active_input_source_key] = "barcode"
+                    st.session_state[barcode_scanned_value_key] = normalized_scanned
+                    st.session_state[barcode_scan_method_key] = scan_method or "camera"
+                    st.session_state[barcode_capture_key] = None
+                    st.session_state[camera_mode_key] = ""
+                    st.rerun()
+                st.warning("No barcode detected. Retake scan by centering the code and trying again.")
+
+        label_capture_bytes = st.session_state.get(label_capture_key)
+        label_confirmed = bool(st.session_state.get(label_confirmed_key, False))
+        scanned_barcode_value = _normalize_barcode_digits(str(st.session_state.get(barcode_scanned_value_key, "") or ""))
+
+        if label_capture_bytes and allow_label_source:
+            st.caption("Nutrition label photo preview")
+            st.image(label_capture_bytes, use_column_width=True)
+            label_action_col_use, label_action_col_retake = st.columns(2)
+            with label_action_col_use:
+                if st.button("Use this nutrition label photo", use_container_width=True, key="confirm_label_photo_btn"):
+                    st.session_state[active_input_source_key] = "label"
+                    st.session_state[label_confirmed_key] = True
+                    st.rerun()
+            with label_action_col_retake:
+                if st.button("Retake nutrition label photo", use_container_width=True, key="retake_label_photo_btn"):
+                    st.session_state[active_input_source_key] = "label"
+                    st.session_state[label_capture_key] = None
+                    st.session_state[label_confirmed_key] = False
+                    st.session_state[camera_mode_key] = "label"
+                    st.rerun()
+            if label_confirmed:
+                st.success("Nutrition label photo confirmed.")
+            else:
+                st.info("Is this nutrition label photo okay, or do you want to retake it?")
+
+        if scanned_barcode_value and allow_barcode_source:
+            st.success(f"Barcode scan detected: {scanned_barcode_value}")
+            clear_scan_col, _ = st.columns(2)
+            with clear_scan_col:
+                if st.button("Scan barcode again", use_container_width=True, key="scan_barcode_again_btn"):
+                    st.session_state[active_input_source_key] = "barcode"
+                    st.session_state[barcode_scanned_value_key] = ""
+                    st.session_state[barcode_scan_method_key] = ""
+                    st.session_state[camera_mode_key] = "barcode"
+                    st.rerun()
+
         uploaded_image = st.file_uploader(
             "Upload label image from device",
             type=["png", "jpg", "jpeg", "webp"],
             key="supp_upload",
+            disabled=not allow_label_source,
         )
-        product_url = st.text_input("Or paste a product link", key="supp_url")
+        barcode_input = st.text_input(
+            "Or scan/type barcode (EAN/UPC)",
+            key="supp_barcode",
+            disabled=not allow_barcode_source,
+        )
+        barcode_upload = st.file_uploader(
+            "Upload barcode image",
+            type=["png", "jpg", "jpeg", "webp"],
+            key="supp_barcode_upload",
+            disabled=not allow_barcode_source,
+        )
+        product_url = st.text_input("Or paste a product link", key="supp_url", disabled=not allow_url_source)
         manual_text = st.text_area(
             "Or type/paste supplement details (product or component + dose)",
             placeholder="Example: Vitamin C 500 mg\nFish oil 1000 mg\nAshwagandha 300 mg",
             height=150,
             key="supp_manual_text",
+            disabled=not allow_manual_source,
         )
+
+        # First non-empty source locks the tab into single-source mode until unlocked.
+        if not active_input_source:
+            if label_capture_bytes or uploaded_image is not None:
+                st.session_state[active_input_source_key] = "label"
+                st.rerun()
+            if scanned_barcode_value or barcode_upload is not None or _normalize_barcode_digits(barcode_input):
+                st.session_state[active_input_source_key] = "barcode"
+                st.rerun()
+            if product_url.strip():
+                st.session_state[active_input_source_key] = "url"
+                st.rerun()
+            if manual_text.strip():
+                st.session_state[active_input_source_key] = "manual"
+                st.rerun()
+
+        active_input_source = str(st.session_state.get(active_input_source_key, "") or "")
+        effective_label_capture_bytes = label_capture_bytes if active_input_source in {"", "label"} else None
+        effective_label_confirmed = bool(label_confirmed and active_input_source in {"", "label"})
+        effective_uploaded_image = uploaded_image if active_input_source in {"", "label"} else None
+        effective_scanned_barcode_value = scanned_barcode_value if active_input_source in {"", "barcode"} else ""
+        effective_barcode_input = barcode_input if active_input_source in {"", "barcode"} else ""
+        effective_barcode_upload = barcode_upload if active_input_source in {"", "barcode"} else None
+        effective_product_url = product_url if active_input_source in {"", "url"} else ""
+        effective_manual_text = manual_text if active_input_source in {"", "manual"} else ""
+
+        if effective_label_capture_bytes and not effective_label_confirmed:
+            st.caption("Confirm or retake the nutrition label photo before it is used for analysis.")
 
         analyze = st.button("Analyze input", type="primary", use_container_width=True, key="analyze_input_btn")
 
@@ -8352,6 +9016,8 @@ The local RAG library is built from curated expert nutrition notes and evidence 
             extracted_chunks: list[tuple[str, str]] = []
             image_locked_payload: dict[str, Any] | None = None
             image_locked_text = ""
+            image_ocr_text_fallback = ""
+            image_gate_failed = False
 
             with st.status("Processing", expanded=True) as status:
                 status.write("Step 1/4: Collecting input")
@@ -8361,8 +9027,10 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                 image_fallback_used = False
                 if camera_image is not None:
                     image_bytes = camera_image.getvalue()
-                elif uploaded_image is not None:
-                    image_bytes = uploaded_image.read()
+                elif effective_label_capture_bytes and effective_label_confirmed:
+                    image_bytes = effective_label_capture_bytes
+                elif effective_uploaded_image is not None:
+                    image_bytes = effective_uploaded_image.read()
 
                 if image_bytes:
                     status.write("Step 2/4: OCR from image (PaddleOCR + Tesseract, deterministic pipeline)")
@@ -8377,6 +9045,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                             image_provider_label = "Tesseract"
                             image_fallback_used = True
                     if ocr_text:
+                        image_ocr_text_fallback = ocr_text
                         ocr_gate = extraction_gate_report(ocr_text)
                         if ocr_gate["passed"]:
                             extracted_chunks.append(("image", ocr_text))
@@ -8406,6 +9075,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                                 f"Image gate check passed (score={ocr_gate['score']}, doses={ocr_gate['dose_hits']})"
                             )
                         else:
+                            image_gate_failed = True
                             st.warning(
                                 "Image extraction looked low-quality by deterministic gates; it was not used."
                             )
@@ -8418,9 +9088,71 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                         else:
                             st.caption(f"Image OCR route: {image_provider_label} (primary)")
 
-                if product_url.strip() and image_locked_payload is None:
-                    status.write("Step 3/4: Parsing product link (local deterministic parser)")
-                    url_key = product_url.strip()
+                if image_locked_payload is None:
+                    manual_barcode_value = _normalize_barcode_digits(effective_barcode_input)
+                    barcode_value = manual_barcode_value or effective_scanned_barcode_value
+                    barcode_method = "manual" if manual_barcode_value else str(st.session_state.get(barcode_scan_method_key, "camera") or "camera")
+                    barcode_image_bytes = None
+                    if barcode_camera is not None:
+                        barcode_image_bytes = barcode_camera.getvalue()
+                    elif effective_barcode_upload is not None:
+                        barcode_image_bytes = effective_barcode_upload.read()
+
+                    if not barcode_value and barcode_image_bytes:
+                        detected_barcode, barcode_method = detect_barcode_from_image(barcode_image_bytes)
+                        barcode_value = _normalize_barcode_digits(detected_barcode)
+
+                    if barcode_value:
+                        status.write("Step 3/5: Resolving product from barcode")
+                        barcode_cache = st.session_state.setdefault("barcode_parse_cache", {})
+                        cached_barcode_item = barcode_cache.get(barcode_value, {})
+
+                        barcode_text = ""
+                        barcode_provider = ""
+                        barcode_reason = ""
+                        barcode_product_url = ""
+                        if isinstance(cached_barcode_item, dict):
+                            barcode_text = str(cached_barcode_item.get("text", "") or "").strip()
+                            barcode_provider = str(cached_barcode_item.get("provider", "") or "").strip()
+                            barcode_reason = str(cached_barcode_item.get("reason", "") or "").strip()
+                            barcode_product_url = str(cached_barcode_item.get("product_url", "") or "").strip()
+
+                        if not barcode_text:
+                            barcode_text, barcode_provider, barcode_reason, barcode_product_url = extract_supplement_text_from_barcode(barcode_value)
+                            if barcode_text:
+                                barcode_cache[barcode_value] = {
+                                    "text": barcode_text,
+                                    "provider": barcode_provider,
+                                    "reason": barcode_reason,
+                                    "product_url": barcode_product_url,
+                                }
+
+                        if barcode_text:
+                            if _barcode_data_needs_label_retry(barcode_text, barcode_provider, barcode_reason):
+                                st.warning(
+                                    "Barcode was resolved, but the nutrition data looked incomplete for micronutrient analysis. "
+                                    "Please scan or upload the supplement facts label for accurate results."
+                                )
+                                status.write(
+                                    "Barcode resolved with low-confidence nutrient detail; waiting for label image input."
+                                )
+                                if barcode_product_url:
+                                    st.caption(f"Barcode product source: {barcode_product_url}")
+                            else:
+                                extracted_chunks.append(("barcode", barcode_text))
+                                provider_label = barcode_provider or "barcode lookup"
+                                st.success(f"Barcode {barcode_value} resolved via {provider_label}")
+                                status.write(f"Barcode source accepted (method={barcode_method})")
+                                if barcode_product_url:
+                                    st.caption(f"Barcode product source: {barcode_product_url}")
+                        else:
+                            st.warning(f"Could not resolve product from barcode {barcode_value}.")
+                            if barcode_reason:
+                                status.write(f"Barcode lookup note: {barcode_reason}")
+
+                if effective_product_url.strip() and image_locked_payload is None:
+                    status.write("Step 4/5: Parsing product link (local deterministic parser)")
+                    url_key = effective_product_url.strip()
                     url_parse_cache = st.session_state.setdefault("url_parse_cache", {})
                     cached_item = url_parse_cache.get(url_key, "")
                     cached_url_text = ""
@@ -8477,8 +9209,8 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     else:
                         st.warning("Could not parse link content")
 
-                if manual_text.strip() and image_locked_payload is None:
-                    manual_text_clean = manual_text.strip()
+                if effective_manual_text.strip() and image_locked_payload is None:
+                    manual_text_clean = effective_manual_text.strip()
                     manual_gate = extraction_gate_report(manual_text_clean)
                     extracted_chunks.append(("manual", manual_text_clean))
                     if manual_gate["passed"]:
@@ -8492,6 +9224,22 @@ The local RAG library is built from curated expert nutrition notes and evidence 
 
                 combined = "\n\n".join([x for _, x in extracted_chunks if x.strip()])
 
+                if (
+                    not combined
+                    and image_locked_payload is None
+                    and image_ocr_text_fallback.strip()
+                    and image_gate_failed
+                ):
+                    # If image OCR exists but gates are too strict, keep a low-confidence fallback
+                    # so users who only provide a photo do not hit a false "No input detected" block.
+                    extracted_chunks.append(("image_low_confidence", image_ocr_text_fallback))
+                    combined = image_ocr_text_fallback
+                    status.write("Image fallback enabled: continuing with low-confidence OCR text")
+                    st.warning(
+                        "Image text looked noisy, but it was still used as a fallback. "
+                        "Results may need manual cleanup."
+                    )
+
                 if image_locked_payload is not None:
                     status.write("URL/manual inputs skipped because image-only lock is active.")
                     combined = image_locked_text
@@ -8502,9 +9250,9 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     st.session_state["analysis_combined_text"] = ""
                     st.session_state["analysis_structured_debug"] = {}
                     status.update(label="No input detected", state="error")
-                    st.error("Please provide at least one input source: image, link, or text.")
+                    st.error("Please provide at least one input source: image, barcode, link, or text.")
                 else:
-                    status.write("Step 4/4: Extracting supplement components")
+                    status.write("Step 5/5: Extracting supplement components")
                     if image_locked_payload is not None:
                         structured_payload = image_locked_payload
                         status.write("Selected extraction source: image (locked)")
@@ -8562,6 +9310,22 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                         else:
                             structured_payload = build_structured_nutrients_json(combined)
                     components = list(structured_payload.get("nutrients", []) or [])
+                    if not components and combined.strip():
+                        relaxed_with_dose = parse_components_rule_based(combined)
+                        relaxed_name_only = parse_components_name_only(combined)
+                        relaxed_rows = merge_component_rows(relaxed_with_dose, relaxed_name_only)
+                        relaxed_rows = expand_umbrella_components(relaxed_rows)
+                        relaxed_validated, _relaxed_meta = validate_parsed_components(relaxed_rows)
+                        if relaxed_validated:
+                            components = relaxed_validated
+                            structured_payload = {
+                                **structured_payload,
+                                "nutrients": components,
+                                "source": f"{structured_payload.get('source', 'local_deterministic')}+relaxed_fallback",
+                            }
+                            status.write(
+                                f"Fallback parse recovered {len(components)} component(s) from low-quality text"
+                            )
                     if LAST_TEXT_PROVIDER:
                         status.write(f"Testing info: component parsing used {LAST_TEXT_PROVIDER}")
                     else:
@@ -8610,8 +9374,11 @@ The local RAG library is built from curated expert nutrition notes and evidence 
 
         if not components:
             st.info("Run Analyze first to populate this tab.")
-            if combined:
-                st.text_area("Raw extracted text", combined[:6000], height=220, key="raw_text_preview_results")
+            if st.session_state.get("analysis_ready", False) and combined:
+                st.warning(
+                    "Input text was captured but no usable nutrient rows were extracted. "
+                    "Try a clearer label photo or add manual text for best results."
+                )
         else:
             components_cache_key = json.dumps(
                 {
