@@ -9076,6 +9076,26 @@ The local RAG library is built from curated expert nutrition notes and evidence 
         if active_input_source_key not in st.session_state:
             st.session_state[active_input_source_key] = ""
 
+        def _reset_analyze_inputs_after_submit() -> None:
+            st.session_state[active_input_source_key] = ""
+            st.session_state[camera_mode_key] = ""
+            st.session_state[label_capture_key] = None
+            st.session_state[label_confirmed_key] = False
+            st.session_state[barcode_capture_key] = None
+            st.session_state[barcode_scanned_value_key] = ""
+            st.session_state[barcode_scan_method_key] = ""
+            for widget_key in [
+                "supp_camera",
+                "supp_upload",
+                "supp_barcode",
+                "supp_barcode_camera",
+                "supp_barcode_upload",
+                "supp_url",
+                "supp_manual_text",
+            ]:
+                if widget_key in st.session_state:
+                    st.session_state.pop(widget_key)
+
         def _clear_barcode_lock_after_failure() -> None:
             st.session_state[active_input_source_key] = ""
             st.session_state[camera_mode_key] = ""
@@ -9604,6 +9624,10 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     st.session_state["analysis_usda_summary"] = []
                     st.session_state["analysis_usda_details"] = []
                     st.session_state["analysis_usda_status"] = ""
+
+                    # Always unlock/reset Analyze inputs after submit so all fields are interactive again.
+                    _reset_analyze_inputs_after_submit()
+                    st.rerun()
 
         if st.session_state.get("analysis_ready"):
             st.success("Input analyzed. Open the Results tab to review alternatives and cost estimates.")
