@@ -9070,10 +9070,26 @@ The local RAG library is built from curated expert nutrition notes and evidence 
         barcode_scanned_value_key = "analyze_barcode_scanned_value"
         barcode_scan_method_key = "analyze_barcode_scan_method"
         active_input_source_key = "analyze_active_input_source"
+        barcode_fail_notice_key = "analyze_barcode_autounlock_notice"
         if camera_mode_key not in st.session_state:
             st.session_state[camera_mode_key] = ""
         if active_input_source_key not in st.session_state:
             st.session_state[active_input_source_key] = ""
+
+        def _clear_barcode_lock_after_failure() -> None:
+            st.session_state[active_input_source_key] = ""
+            st.session_state[camera_mode_key] = ""
+            st.session_state[barcode_capture_key] = None
+            st.session_state[barcode_scanned_value_key] = ""
+            st.session_state[barcode_scan_method_key] = ""
+            for widget_key in ["supp_barcode", "supp_barcode_upload", "supp_barcode_camera"]:
+                if widget_key in st.session_state:
+                    st.session_state.pop(widget_key)
+            st.session_state[barcode_fail_notice_key] = True
+
+        if st.session_state.get(barcode_fail_notice_key, False):
+            st.info("Barcode input was reset after a failed/low-confidence lookup. You can now use another input source.")
+            st.session_state[barcode_fail_notice_key] = False
 
         active_input_source = str(st.session_state.get(active_input_source_key, "") or "")
         allow_label_source = active_input_source in {"", "label"}
@@ -9379,6 +9395,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                                 )
                                 if barcode_product_url:
                                     st.caption(f"Barcode product source: {barcode_product_url}")
+                                _clear_barcode_lock_after_failure()
                             else:
                                 extracted_chunks.append(("barcode", barcode_text))
                                 provider_label = barcode_provider or "barcode lookup"
@@ -9390,6 +9407,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                             st.warning(f"Could not resolve product from barcode {barcode_value}.")
                             if barcode_reason:
                                 status.write(f"Barcode lookup note: {barcode_reason}")
+                            _clear_barcode_lock_after_failure()
 
                 if effective_product_url.strip() and image_locked_payload is None:
                     status.write("Step 4/5: Parsing product link (local deterministic parser)")
