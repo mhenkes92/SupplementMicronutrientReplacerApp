@@ -20,7 +20,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -2033,6 +2033,241 @@ def _lookup_secondary_barcode_identity(barcode: str) -> tuple[str, str, str, str
         return "", "", "", ""
 
 
+EAN_WEB_TRUSTED_DOMAINS: tuple[str, ...] = (
+    "optimumnutrition.com",
+    "hsnstore.com",
+    "hollandandbarrett.com",
+    "boots.com",
+    "superdrug.com",
+    "amazon.",
+    "iherb.com",
+    "bodybuilding.com",
+    "myprotein.",
+    "world.openfoodfacts.org",
+)
+
+
+def _normalize_search_result_url(raw_url: str) -> str:
+    url = str(raw_url or "").strip()
+    if not url:
+        return ""
+    try:
+        parsed = urlparse(url)
+        if "duckduckgo.com" in parsed.netloc.lower() and parsed.path.startswith("/l/"):
+            q = parse_qs(parsed.query)
+            uddg = str((q.get("uddg") or [""])[0] or "").strip()
+            if uddg:
+                return unquote(uddg)
+    except Exception:
+        return url
+    return url
+
+
+def _is_trusted_ean_source_url(url: str) -> bool:
+    try:
+        host = str(urlparse(str(url or "")).netloc or "").lower()
+    except Exception:
+        return False
+    if not host:
+        return False
+    return any(token in host for token in EAN_WEB_TRUSTED_DOMAINS)
+
+
+def _search_trusted_ean_urls(barcode: str, product_name: str = "") -> list[str]:
+    normalized_barcode = _normalize_barcode_digits(barcode)
+    if not normalized_barcode:
+        return []
+
+    queries = [
+        f"{normalized_barcode} supplement facts",
+        f"{normalized_barcode} nutrition label",
+    ]
+    if str(product_name or "").strip():
+        queries.append(f"{product_name} {normalized_barcode} supplement facts")
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for query in queries:
+        search_url = "https://duckduckgo.com/html/?q=" + quote_plus(query)
+        try:
+            response = requests.get(
+                search_url,
+                timeout=HTTP_TIMEOUT,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (compatible; SuppSwap/1.0; +https://example.local)",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                },
+            )
+            if response.status_code != 200:
+                continue
+            soup = BeautifulSoup(response.text, "html.parser")
+            for a in soup.find_all("a"):
+                href = str(a.get("href", "") or "").strip()
+                if not href:
+                    continue
+                resolved = _normalize_search_result_url(href)
+                if not resolved or not resolved.startswith(("http://", "https://")):
+                    continue
+                if not _is_trusted_ean_source_url(resolved):
+                    continue
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                out.append(resolved)
+                if len(out) >= 8:
+                    return out
+        except Exception:
+            continue
+
+    return out
+
+
+def _is_micronutrient_component_name(component: str) -> bool:
+    name = normalize_lookup_key(component)
+    if not name:
+        return False
+    macro_terms = {
+        "energy",
+        "fat",
+        "saturated fat",
+        "carbohydrate",
+        "carbohydrates",
+        "sugar",
+        "sugars",
+        "fiber",
+        "protein",
+        "proteins",
+        "salt",
+        "sodium",
+    }
+    if name in macro_terms:
+        return False
+    if any(name.startswith(x) for x in ("vitamin ",)):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:thiamin|riboflavin|niacin|folate|folic|biotin|calcium|iron|magnesium|zinc|selenium|"
+            r"iodine|chromium|molybdenum|copper|manganese|potassium|phosphorus)\b",
+            name,
+            re.I,
+        )
+    )
+
+
+def _rows_to_supplement_text(rows: list[dict[str, Any]], product_name: str = "") -> str:
+    if not rows:
+        return ""
+    lines: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        component = str(row.get("component", "") or "").strip()
+        if not _is_micronutrient_component_name(component):
+            continue
+        dose_value = _parse_float(row.get("dose_value"))
+        if dose_value is None or dose_value <= 0:
+            continue
+        dose_unit = _normalize_component_unit_token(str(row.get("dose_unit", "") or ""))
+        if dose_unit not in ALLOWED_DOSE_UNITS or dose_unit in {"", "g", "kcal"}:
+            continue
+        key = f"{normalize_lookup_key(component)}|{dose_value}|{dose_unit}"
+        if key in seen:
+            continue
+        seen.add(key)
+        lines.append(f"{component} {format_float(float(dose_value))} {dose_unit}".strip())
+
+    if len(lines) < 2:
+        return ""
+
+    out_parts: list[str] = []
+    if str(product_name or "").strip():
+        out_parts.append(f"Product: {product_name.strip()}")
+    out_parts.append("Nutrition Information")
+    out_parts.extend(lines)
+    return "\n".join(out_parts)
+
+
+def _extract_micronutrient_rows_from_url_deterministic(url: str) -> list[dict[str, Any]]:
+    rows_out: list[dict[str, Any]] = []
+    seen_components: set[str] = set()
+    host = str(urlparse(str(url or "")).netloc or "").lower()
+
+    # Page-text deterministic parsing.
+    page_text = fetch_clean_page_text(url)
+    if page_text:
+        local_text = extract_supplement_text_from_page_text_local(page_text)
+        if local_text:
+            payload = build_structured_nutrients_json(local_text)
+            for row in list(payload.get("nutrients", []) or []):
+                component = str(row.get("component", "") or "").strip()
+                if not _is_micronutrient_component_name(component):
+                    continue
+                key = normalize_lookup_key(component)
+                if key in seen_components:
+                    continue
+                seen_components.add(key)
+                rows_out.append(row)
+
+    # Nutrition-image deterministic OCR parsing (expensive): only run on likely
+    # product pages and skip OFF where we already have a dedicated table parser.
+    should_try_image_ocr = (
+        "openfoodfacts.org" not in host
+        and len(rows_out) < 3
+        and bool(re.search(r"\b(?:supplement\s+facts|nutrition\s+facts|ingredients|serving\s+size|vitamin)\b", page_text or "", re.I))
+    )
+    if should_try_image_ocr:
+        image_rows = extract_nutrition_doses_from_product_image(url)
+        for row in image_rows:
+            component = str(row.get("component", "") or "").strip()
+            if not _is_micronutrient_component_name(component):
+                continue
+            key = normalize_lookup_key(component)
+            if key in seen_components:
+                continue
+            seen_components.add(key)
+            rows_out.append(row)
+
+    validated, _ = validate_parsed_components(rows_out)
+    return validated
+
+
+def _lookup_ean_micronutrients_from_web(barcode: str, product_name: str = "") -> tuple[str, str, str, str]:
+    normalized_barcode = _normalize_barcode_digits(barcode)
+    if not normalized_barcode:
+        return "", "", "", ""
+
+    candidate_urls = _search_trusted_ean_urls(normalized_barcode, product_name)
+    if not candidate_urls:
+        return "", "", "", ""
+
+    best_text = ""
+    best_url = ""
+    best_count = 0
+    for url in candidate_urls[:5]:
+        rows = _extract_micronutrient_rows_from_url_deterministic(url)
+        text = _rows_to_supplement_text(rows, product_name=product_name)
+        if not text:
+            continue
+        row_count = len(rows)
+        if row_count > best_count:
+            best_count = row_count
+            best_text = text
+            best_url = url
+        if row_count >= 8:
+            break
+
+    if not best_text:
+        return "", "", "", ""
+    if not _barcode_text_has_micronutrient_signal(best_text):
+        return "", "", "", ""
+
+    return (
+        best_text,
+        "EANWebFallback",
+        "Barcode resolved; micronutrients extracted from trusted web source fallback.",
+        best_url,
+    )
+
+
 def extract_supplement_text_from_barcode(barcode: str) -> tuple[str, str, str, str]:
     """
     Resolve product text from barcode using OpenFoodFacts.
@@ -2147,6 +2382,12 @@ def extract_supplement_text_from_barcode(barcode: str) -> tuple[str, str, str, s
             seen_names.add(label.lower())
             unit_out = _normalize_component_unit_token(unit)
             lines.append(f"{label} {format_float(value)} {unit_out}".strip())
+
+        # Deterministic trusted-web fallback for micronutrients before macro fallbacks.
+        if not lines:
+            web_fallback = _lookup_ean_micronutrients_from_web(normalized_barcode, name)
+            if web_fallback[0]:
+                return web_fallback
 
         # Fallback for products that expose only macro-style nutriments in OFF.
         if not lines:
