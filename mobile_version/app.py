@@ -27,6 +27,8 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from PIL import Image, ImageFilter, ImageOps
 
+from dietary_food_classifier import normalize_profile_column_id
+
 try:
     from pydantic import BaseModel, ValidationError
 except Exception:
@@ -114,7 +116,7 @@ DECIMAL_PRECISION_MIN = 2
 DECIMAL_PRECISION_MAX = 8
 
 EXTRACTION_DOSE_PATTERN = re.compile(
-    r"\b\d+(?:[\.,]\d+)?\s*(?:mg|mcg|meg|ug|µg|μg|fg|g|iu|kcal)\b",
+    r"\b\d+(?:[\.,]\d+)?\s*(?:mg|mcg|meg|ug|µg|μg|fg|g|iu|ui|ie|kcal)\b",
     re.I,
 )
 LOCAL_URL_KEYWORD_WINDOW_PATTERN = re.compile(
@@ -165,6 +167,8 @@ LAST_VISION_PROVIDER = ""
 LAST_TEXT_PROVIDER = ""
 LAST_URL_PARSE_REASON = ""
 LAST_RAG_ERROR = ""
+PADDLE_OCR_ENGINE: Any | None = None
+PADDLE_OCR_UNAVAILABLE = False
 
 
 def _local_text_llm_enabled() -> bool:
@@ -209,6 +213,7 @@ USDA_RANK_DB_PATH = APP_DIR / "data" / "usda_rankings.db"
 COMPONENT_ALIASES_PATH = APP_DIR / "data" / "component_aliases.csv"
 COMPONENT_PROXY_RULES_PATH = APP_DIR / "data" / "component_proxy_rules.csv"
 COMPONENT_SIMILARITY_MAP_PATH = APP_DIR / "data" / "component_similarity_map.csv"
+NUTRIENT_RANK_FALLBACKS_PATH = APP_DIR / "data" / "nutrient_rank_fallbacks.csv"
 TOP_FOODS_PER_COMPONENT = 5
 OVERVIEW_ALT_LIMIT = 100
 RAG_TOP_K = 8
@@ -252,6 +257,7 @@ OFFICIAL_REFERENCE_CANONICAL_UNIT: dict[str, str] = {
     "Manganese": "mg",
     "Potassium": "mg",
     "Sodium": "mg",
+    "Fluoride": "mg",
 }
 
 OFFICIAL_REFERENCE_DRI_G_AS_UG_NUTRIENTS: set[str] = {
@@ -485,6 +491,50 @@ def _load_component_similarity_map_cached(_mtime: float) -> list[dict[str, str]]
         return []
 
     return rules
+
+
+def load_nutrient_rank_fallbacks() -> list[dict[str, Any]]:
+    return _load_nutrient_rank_fallbacks_cached(_file_mtime_or_minus_one(NUTRIENT_RANK_FALLBACKS_PATH))
+
+
+@functools.lru_cache(maxsize=4)
+def _load_nutrient_rank_fallbacks_cached(_mtime: float) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not NUTRIENT_RANK_FALLBACKS_PATH.exists():
+        return rows
+
+    try:
+        with NUTRIENT_RANK_FALLBACKS_PATH.open("r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                nutrient_id_raw = str(row.get("nutrient_id", "") or "").strip()
+                food_description = str(row.get("food_description", "") or "").strip()
+                if not nutrient_id_raw or not food_description:
+                    continue
+                try:
+                    nutrient_id = int(nutrient_id_raw)
+                except Exception:
+                    continue
+
+                amount = _parse_float(row.get("amount_per_100g"))
+                if amount is None or amount <= 0:
+                    continue
+
+                rows.append(
+                    {
+                        "nutrient_id": nutrient_id,
+                        "nutrient_name": str(row.get("nutrient_name", "") or "").strip(),
+                        "unit_name": str(row.get("unit_name", "") or "").strip(),
+                        "food_description": food_description,
+                        "food_category": str(row.get("food_category", "") or "").strip(),
+                        "amount_per_100g": float(amount),
+                    }
+                )
+    except Exception as e:
+        logger.error(f"Error loading nutrient rank fallbacks from {NUTRIENT_RANK_FALLBACKS_PATH}: {e}")
+        return []
+
+    return rows
 
 
 def _parse_float(value: Any) -> float | None:
@@ -806,6 +856,71 @@ def try_open_usda_db() -> sqlite3.Connection | None:
         return None
 
 
+@functools.lru_cache(maxsize=4)
+def _load_usda_food_dietary_flags_cached(db_mtime_ns: int) -> dict[str, dict[str, Any]]:
+    conn = try_open_usda_db()
+    if conn is None:
+        return {}
+
+    try:
+        cursor = conn.execute("SELECT * FROM food_dietary_flags")
+        columns = [str(col[0] or "") for col in (cursor.description or [])]
+        if not columns:
+            return {}
+
+        flags: dict[str, dict[str, Any]] = {}
+        for row in cursor.fetchall():
+            record = {columns[index]: row[index] for index in range(len(columns))}
+            food_key = normalize_lookup_key(str(record.get("food_key", "") or record.get("food_description", "") or ""))
+            if food_key:
+                flags[food_key] = record
+        return flags
+    except sqlite3.OperationalError:
+        return {}
+    except Exception as e:
+        logger.warning(f"Unable to load persisted USDA dietary flags: {e}")
+        return {}
+    finally:
+        conn.close()
+
+
+def load_usda_food_dietary_flags() -> dict[str, dict[str, Any]]:
+    if not USDA_RANK_DB_PATH.exists():
+        return {}
+    try:
+        db_mtime_ns = int(USDA_RANK_DB_PATH.stat().st_mtime_ns)
+    except OSError:
+        return {}
+    return _load_usda_food_dietary_flags_cached(db_mtime_ns)
+
+
+def _persisted_usda_food_allowed(food_description: str, profile: dict[str, Any] | None) -> bool | None:
+    if not profile:
+        return True
+
+    profile_id = normalize_lookup_key(str(profile.get("id", "") or ""))
+    if not profile_id or profile_id == "none":
+        return True
+
+    flags = load_usda_food_dietary_flags()
+    if not flags:
+        return None
+
+    record = flags.get(normalize_lookup_key(food_description))
+    if not record:
+        return None
+
+    allowed_col = f"allowed_{normalize_profile_column_id(profile_id)}"
+    value = record.get(allowed_col)
+    if value is None:
+        return None
+
+    try:
+        return bool(int(value))
+    except (TypeError, ValueError):
+        return bool(value)
+
+
 def _lookup_nutrient_row(
     conn: sqlite3.Connection,
     nutrient_name: str,
@@ -910,6 +1025,9 @@ def _build_dynamic_micronutrient_aliases(nutrient_rows: list[tuple[Any, ...]]) -
         "sodium",
         "phosphorus",
         "boron",
+        "fluoride",
+        "fluorine",
+        "cesium",
     }
 
     vitamin_letter_map = {
@@ -1132,6 +1250,119 @@ def resolve_component_to_nutrient(
 
 
 def get_top_ranked_foods(conn: sqlite3.Connection, nutrient_id: int, top_n: int = TOP_FOODS_PER_COMPONENT) -> list[dict[str, Any]]:
+    def _is_single_ingredient_whole_food_candidate(food_description: str, food_category: str) -> bool:
+        desc = normalize_lookup_key(food_description)
+        category = normalize_lookup_key(food_category)
+        if not desc:
+            return False
+
+        # Keep organ meats explicitly if present in the source dataset.
+        organ_tokens = {
+            "liver",
+            "heart",
+            "intestine",
+            "intestines",
+            "tripe",
+            "kidney",
+            "gizzard",
+            "tongue",
+        }
+        if any(tok in desc for tok in organ_tokens):
+            return True
+
+        blocked_categories = {
+            "restaurant foods",
+            "fast foods",
+            "sausages and luncheon meats",
+            "baked products",
+            "sweets",
+            "beverages",
+            "breakfast cereals",
+            "snacks",
+            "baby foods",
+            "soups sauces and gravies",
+            "meals entrees and side dishes",
+            "spices and herbs",
+            "fats and oils",
+        }
+        if category in blocked_categories:
+            return False
+
+        blocked_desc_tokens = {
+            "restaurant",
+            "restaruant",
+            "fast food",
+            "formulated bar",
+            "protein bar",
+            "granola bar",
+            "cereal bar",
+            "ready to eat",
+            "ready to drink",
+            "energy drink",
+            "nutritional shake",
+            "cured",
+            "bacon",
+            "canadian bacon",
+            "margarine",
+            "spread",
+            "butter",
+            "paste",
+            "pasteurized",
+            "processed",
+            "product",
+            "creamer",
+            "cheese",
+            "yogurt",
+            "cream",
+            "nonfat",
+            "low fat",
+            "reduced fat",
+            "ground",
+            "oil",
+            "substitute",
+            "meatless",
+            "luncheon slices",
+            "meat extender",
+            "cream substitute",
+            "cheese food",
+            "cheese spread",
+            "fish oil",
+            "miso",
+            "dulce de leche",
+            "noodles",
+            "papad",
+            "water added",
+            "milk dry",
+            "milk, dry",
+            "pickle",
+            "pickles",
+            "relish",
+            "ham",
+            "kippered",
+            "flour",
+            "bran",
+            "sandwich",
+            "pizza",
+            "burger",
+            "burrito",
+            "taco",
+            "pupusas",
+            "tamale",
+            "ketchup",
+            "mayonnaise",
+            "dressing",
+            "sauce",
+            "snacks",
+            "cereals ready to eat",
+            "beverages",
+            "spices",
+        }
+        if any(tok in desc for tok in blocked_desc_tokens):
+            return False
+
+        return True
+
+    fetch_limit = max(int(top_n) * 15, int(top_n) + 50)
     rows = conn.execute(
         """
         SELECT rank_desc, food_description, food_category, amount_per_100g, unit_name
@@ -1142,19 +1373,63 @@ def get_top_ranked_foods(conn: sqlite3.Connection, nutrient_id: int, top_n: int 
                 ORDER BY amount_per_100g DESC, rank_desc ASC
         LIMIT ?
         """,
-        (nutrient_id, top_n),
+        (nutrient_id, fetch_limit),
     ).fetchall()
     result: list[dict[str, Any]] = []
+    seen_foods: set[str] = set()
     for row in rows:
+        food_description = str(row[1] or "")
+        food_category = str(row[2] or "")
+        if not _is_single_ingredient_whole_food_candidate(food_description, food_category):
+            continue
+
+        desc_key = normalize_lookup_key(food_description)
+        if not desc_key or desc_key in seen_foods:
+            continue
+        seen_foods.add(desc_key)
+
         result.append(
             {
                 "rank": int(row[0]),
-                "food_description": str(row[1]),
-                "food_category": str(row[2] or ""),
+                "food_description": food_description,
+                "food_category": food_category,
                 "amount_per_100g": float(row[3] or 0.0),
                 "unit": str(row[4] or ""),
             }
         )
+        if len(result) >= int(top_n):
+            break
+
+    if len(result) < int(top_n):
+        fallback_rows = [
+            row for row in load_nutrient_rank_fallbacks()
+            if int(row.get("nutrient_id", -1)) == int(nutrient_id)
+        ]
+        if fallback_rows:
+            start_rank = (max([int(item.get("rank", 0) or 0) for item in result]) + 1) if result else 1
+            for row in fallback_rows:
+                food_description = str(row.get("food_description", "") or "")
+                food_category = str(row.get("food_category", "") or "")
+                if not _is_single_ingredient_whole_food_candidate(food_description, food_category):
+                    continue
+
+                desc_key = normalize_lookup_key(food_description)
+                if not desc_key or desc_key in seen_foods:
+                    continue
+                seen_foods.add(desc_key)
+
+                result.append(
+                    {
+                        "rank": start_rank,
+                        "food_description": food_description,
+                        "food_category": food_category,
+                        "amount_per_100g": float(row.get("amount_per_100g", 0.0) or 0.0),
+                        "unit": str(row.get("unit_name", "") or ""),
+                    }
+                )
+                start_rank += 1
+                if len(result) >= int(top_n):
+                    break
     return result
 
 
@@ -1169,16 +1444,51 @@ def unit_to_mg(unit: str) -> float | None:
     return None
 
 
+def _iu_unit_to_mg_for_component(component_name: str | None) -> float | None:
+    component_key = normalize_lookup_key(component_name or "")
+    if not component_key:
+        return None
+
+    # Vitamin D supplement labels commonly use IU.
+    # 1 IU vitamin D = 0.025 mcg = 0.000025 mg.
+    if component_key.startswith("vitamin d") or component_key in {"d", "d2", "d3"}:
+        return 0.000025
+
+    # Vitamin A (retinol activity equivalent approximation for supplement labels).
+    # 1 IU vitamin A = 0.3 mcg retinol equivalent = 0.0003 mg.
+    if component_key.startswith("vitamin a") or component_key == "retinol":
+        return 0.0003
+    if "beta carotene" in component_key or "beta-carotene" in component_key:
+        # Supplemental beta-carotene convention: 1 IU ~= 0.6 mcg.
+        return 0.0006
+
+    # Vitamin E IU conversion is form-dependent.
+    # Use a practical default and handle explicit natural-form hints when available.
+    # synthetic dl-alpha-tocopherol: 1 IU = 0.45 mg
+    # natural d-alpha-tocopherol: 1 IU = 0.67 mg
+    if component_key.startswith("vitamin e") or "tocopherol" in component_key:
+        if any(token in component_key for token in ["natural", "d alpha", "d-alpha", "rrr"]):
+            return 0.67
+        return 0.45
+
+    return None
+
+
 def grams_needed_to_match_dose(
     supplement_dose_value: float | None,
     supplement_dose_unit: str | None,
     nutrient_amount_per_100g: float,
     nutrient_unit: str,
+    component_name: str | None = None,
 ) -> float | None:
     if supplement_dose_value is None:
         return None
 
     supp_factor = unit_to_mg(supplement_dose_unit or "")
+    if supp_factor is None:
+        supp_unit_key = normalize_lookup_key(str(supplement_dose_unit or ""))
+        if supp_unit_key in {"iu", "ui", "ie"}:
+            supp_factor = _iu_unit_to_mg_for_component(component_name)
     food_factor = unit_to_mg(nutrient_unit or "")
     if supp_factor is None or food_factor is None:
         return None
@@ -1219,7 +1529,7 @@ def format_amount_unit_for_display(amount_per_100g: float, unit: str) -> tuple[s
             return "", "mcg"
         if raw in {"g", "gram", "grams"}:
             return "", "g"
-        if raw in {"iu"}:
+        if raw in {"iu", "ui", "ie"}:
             return "", "IU"
         return "", str(unit or "")
 
@@ -1231,7 +1541,7 @@ def format_amount_unit_for_display(amount_per_100g: float, unit: str) -> tuple[s
         source_unit = "mcg"
     elif raw in {"g", "gram", "grams"}:
         source_unit = "g"
-    elif raw in {"iu"}:
+    elif raw in {"iu", "ui", "ie"}:
         source_unit = "IU"
     else:
         source_unit = str(unit or "")
@@ -1542,24 +1852,58 @@ def summarize_combined_food_coverage(selected_matches: list[dict[str, Any]]) -> 
     }
 
 
+def _sunlight_guidance_note_from_coverage(
+    component_labels: dict[str, str],
+    uncovered_components: set[str],
+    min_single_food_grams: dict[str, float],
+) -> str:
+    vitamin_d_components: list[str] = []
+    for comp_key, label in component_labels.items():
+        norm = normalize_lookup_key(label)
+        if norm.startswith("vitamin d") or norm in {"d", "d2", "d3"}:
+            vitamin_d_components.append(comp_key)
+
+    if not vitamin_d_components:
+        return ""
+
+    if any(comp_key in uncovered_components for comp_key in vitamin_d_components):
+        return (
+            "Vitamin D appears difficult to cover with practical food servings under current filters. "
+            "For many people, discussing safe sunlight exposure timing with a clinician can be a practical complement."
+        )
+
+    large_threshold_g = 350.0
+    if any(float(min_single_food_grams.get(comp_key, 0.0) or 0.0) >= large_threshold_g for comp_key in vitamin_d_components):
+        return (
+            "Vitamin D replacement may require large food portions. "
+            "A practical option to discuss with a clinician is safe sunlight exposure as a complement."
+        )
+
+    return ""
+
+
 def build_auto_consolidated_food_plan(component_candidates: list[dict[str, Any]], max_foods: int = 10) -> dict[str, Any]:
+    # Joint optimization objective (heuristic): satisfy all component targets while
+    # minimizing total grams by leveraging secondary nutrient contributions per food.
     food_pool: dict[str, dict[str, Any]] = {}
-    components_all: set[str] = set()
+    component_labels: dict[str, str] = {}
 
     for cand in component_candidates:
-        component = str(cand.get("component", "") or "").strip()
+        component_label = str(cand.get("component", "") or "").strip()
+        component_key = normalize_lookup_key(component_label)
         dose_value = cand.get("dose_value")
         dose_unit = str(cand.get("dose_unit", "") or "")
         foods = cand.get("foods", []) or []
 
-        if not component or dose_value is None:
+        if not component_key or dose_value is None:
             continue
-        components_all.add(component)
+        component_labels.setdefault(component_key, component_label)
 
         for food in foods[:25]:
             food_name = str(food.get("food_description", "") or "").strip()
             if not food_name:
                 continue
+
             limits = get_practical_serving_limits(food_name)
             max_g = float(limits.get("max_g", DEFAULT_SERVING_MAX_G) or DEFAULT_SERVING_MAX_G)
             typical_g = float(limits.get("typical_g", DEFAULT_SERVING_TYPICAL_G) or DEFAULT_SERVING_TYPICAL_G)
@@ -1569,86 +1913,152 @@ def build_auto_consolidated_food_plan(component_candidates: list[dict[str, Any]]
                 logger.debug(f"Invalid amount_per_100g value: {e}")
                 amt = 0.0
             unit = str(food.get("unit", "") or "")
-            grams = grams_needed_to_match_dose(dose_value, dose_unit, amt, unit)
+
+            grams = grams_needed_to_match_dose(
+                dose_value,
+                dose_unit,
+                amt,
+                unit,
+                component_name=component_label,
+            )
             if grams is None or grams <= 0:
                 continue
-            # Feasibility guard: avoid unrealistic single-food quantities in top recommendation.
             if float(grams) > max_g:
                 continue
 
-            key = normalize_lookup_key(food_name)
-            if key not in food_pool:
-                food_pool[key] = {
+            food_key = normalize_lookup_key(food_name)
+            if food_key not in food_pool:
+                food_pool[food_key] = {
                     "food": food_name,
                     "grams_by_component": {},
                     "serving_typical_g": typical_g,
                     "serving_max_g": max_g,
                 }
 
-            existing = food_pool[key]["grams_by_component"].get(component)
+            existing = food_pool[food_key]["grams_by_component"].get(component_key)
             if existing is None or float(grams) < float(existing):
-                food_pool[key]["grams_by_component"][component] = float(grams)
+                food_pool[food_key]["grams_by_component"][component_key] = float(grams)
 
-    uncovered = set(components_all)
-    selected_rows: list[dict[str, Any]] = []
-    used_foods: set[str] = set()
+    components_all = set(component_labels.keys())
+    if not components_all:
+        return {
+            "rows": [],
+            "total_components": 0,
+            "covered_components": 0,
+            "uncovered_components": [],
+            "sunlight_note": "",
+        }
+
+    min_single_food_grams: dict[str, float] = {}
+    for comp_key in components_all:
+        best = None
+        for entry in food_pool.values():
+            grams_map = entry.get("grams_by_component", {})
+            if comp_key not in grams_map:
+                continue
+            value = float(grams_map[comp_key])
+            if best is None or value < best:
+                best = value
+        if best is not None:
+            min_single_food_grams[comp_key] = float(best)
+
+    deficits: dict[str, float] = {comp_key: 1.0 for comp_key in components_all}
+    allocated_grams: dict[str, float] = {food_key: 0.0 for food_key in food_pool.keys()}
 
     max_foods = max(1, int(max_foods))
-
-    while uncovered and len(selected_rows) < max_foods:
-        best_key = ""
-        best_covers: set[str] = set()
-        best_required_grams = float("inf")
-        best_burden = float("inf")
-
-        for key, entry in food_pool.items():
-            if key in used_foods:
-                continue
-            grams_map: dict[str, float] = entry.get("grams_by_component", {})
-            covers = {c for c in uncovered if c in grams_map}
-            if not covers:
-                continue
-            required_grams = max(float(grams_map[c]) for c in covers)
-            typical_g = float(entry.get("serving_typical_g", DEFAULT_SERVING_TYPICAL_G) or DEFAULT_SERVING_TYPICAL_G)
-            burden = required_grams / max(1.0, typical_g)
-
-            if len(covers) > len(best_covers):
-                best_key = key
-                best_covers = covers
-                best_required_grams = required_grams
-                best_burden = burden
-            elif len(covers) == len(best_covers) and covers and burden < best_burden:
-                best_key = key
-                best_covers = covers
-                best_required_grams = required_grams
-                best_burden = burden
-            elif len(covers) == len(best_covers) and covers and abs(burden - best_burden) <= 1e-9 and required_grams < best_required_grams:
-                best_key = key
-                best_covers = covers
-                best_required_grams = required_grams
-                best_burden = burden
-
-        if not best_covers:
+    max_iterations = 1200
+    for _ in range(max_iterations):
+        unmet = [comp for comp, deficit in deficits.items() if deficit > 1e-6]
+        if not unmet:
             break
 
-        entry = food_pool[best_key]
+        used_food_count = sum(1 for grams in allocated_grams.values() if grams > 1e-6)
+        best_choice: tuple[str, float, float, float] | None = None
+
+        for food_key, entry in food_pool.items():
+            current_g = float(allocated_grams.get(food_key, 0.0) or 0.0)
+            remaining_g = float(entry.get("serving_max_g", DEFAULT_SERVING_MAX_G) or DEFAULT_SERVING_MAX_G) - current_g
+            if remaining_g <= 1e-6:
+                continue
+            if current_g <= 1e-6 and used_food_count >= max_foods:
+                continue
+
+            grams_map: dict[str, float] = entry.get("grams_by_component", {})
+            feasible = [comp for comp in unmet if comp in grams_map and float(grams_map[comp]) > 0]
+            if not feasible:
+                continue
+
+            required_step = min(float(deficits[comp]) * float(grams_map[comp]) for comp in feasible)
+            step_g = min(remaining_g, required_step)
+            if step_g <= 1e-6:
+                continue
+
+            gain = 0.0
+            for comp in feasible:
+                gain += min(float(deficits[comp]), step_g / float(grams_map[comp]))
+            if gain <= 1e-9:
+                continue
+
+            typical_g = float(entry.get("serving_typical_g", DEFAULT_SERVING_TYPICAL_G) or DEFAULT_SERVING_TYPICAL_G)
+            burden = step_g / max(1.0, typical_g)
+            score = (gain / step_g) / (1.0 + 0.2 * burden)
+
+            if best_choice is None or score > best_choice[3] + 1e-12:
+                best_choice = (food_key, step_g, gain, score)
+            elif best_choice is not None and abs(score - best_choice[3]) <= 1e-12 and step_g < best_choice[1]:
+                best_choice = (food_key, step_g, gain, score)
+
+        if best_choice is None:
+            break
+
+        chosen_food_key, step_g, _, _ = best_choice
+        allocated_grams[chosen_food_key] = float(allocated_grams.get(chosen_food_key, 0.0) or 0.0) + float(step_g)
+        grams_map = food_pool[chosen_food_key].get("grams_by_component", {})
+        for comp in list(deficits.keys()):
+            grams_for_full = grams_map.get(comp)
+            if grams_for_full is None or float(grams_for_full) <= 0:
+                continue
+            deficits[comp] = max(0.0, float(deficits[comp]) - (float(step_g) / float(grams_for_full)))
+
+    selected_rows: list[dict[str, Any]] = []
+    covered_components: set[str] = set()
+    for food_key, grams in allocated_grams.items():
+        if float(grams) <= 1e-6:
+            continue
+        entry = food_pool[food_key]
+        grams_map: dict[str, float] = entry.get("grams_by_component", {})
+        covered_for_food: list[str] = []
+        for comp_key, target_grams in grams_map.items():
+            if float(target_grams) <= 0:
+                continue
+            contribution_ratio = float(grams) / float(target_grams)
+            if contribution_ratio >= 0.05:
+                covered_for_food.append(component_labels.get(comp_key, comp_key))
+            if contribution_ratio >= 1.0 - 1e-6:
+                covered_components.add(comp_key)
+
         selected_rows.append(
             {
                 "food": str(entry.get("food", "") or ""),
-                "components": sorted(list(best_covers)),
-                "required_grams": float(best_required_grams),
+                "components": sorted(covered_for_food),
+                "required_grams": float(grams),
                 "serving_typical_g": float(entry.get("serving_typical_g", DEFAULT_SERVING_TYPICAL_G) or DEFAULT_SERVING_TYPICAL_G),
                 "serving_max_g": float(entry.get("serving_max_g", DEFAULT_SERVING_MAX_G) or DEFAULT_SERVING_MAX_G),
             }
         )
-        used_foods.add(best_key)
-        uncovered -= best_covers
+
+    uncovered_components = {comp for comp in components_all if float(deficits.get(comp, 1.0)) > 0.02}
+    covered_count = len(components_all) - len(uncovered_components)
+
+    selected_rows.sort(key=lambda r: (-len(r.get("components", [])), float(r.get("required_grams", 0.0))))
+    sunlight_note = _sunlight_guidance_note_from_coverage(component_labels, uncovered_components, min_single_food_grams)
 
     return {
         "rows": selected_rows,
         "total_components": len(components_all),
-        "covered_components": len(components_all) - len(uncovered),
-        "uncovered_components": sorted(list(uncovered)),
+        "covered_components": covered_count,
+        "uncovered_components": sorted([component_labels.get(comp, comp) for comp in uncovered_components]),
+        "sunlight_note": sunlight_note,
     }
 
 
@@ -1793,17 +2203,23 @@ def format_top_recommendation_sentence(
         foods_txt += f", and {more_count} more"
 
     components_txt = ", ".join(sorted(component_names)) if component_names else "your listed nutrients"
+    sunlight_note = str(plan.get("sunlight_note", "") or "").strip()
 
+    sentence = ""
     if covered >= total:
-        return (
+        sentence = (
             "Instead of consuming your supplement containing "
             f"{components_txt}, you can simply eat {foods_txt}."
         )
+    else:
+        sentence = (
+            "Instead of consuming your supplement containing "
+            f"{components_txt}, you can simply eat {foods_txt}; you may still need extra foods for the remaining nutrients."
+        )
 
-    return (
-        "Instead of consuming your supplement containing "
-        f"{components_txt}, you can simply eat {foods_txt}; you may still need extra foods for the remaining nutrients."
-    )
+    if sunlight_note:
+        sentence = f"{sentence} {sunlight_note}".strip()
+    return sentence
 
 
 @functools.lru_cache(maxsize=1)
@@ -2147,7 +2563,7 @@ def _is_micronutrient_component_name(component: str) -> bool:
     return bool(
         re.search(
             r"\b(?:thiamin|riboflavin|niacin|folate|folic|biotin|calcium|iron|magnesium|zinc|selenium|"
-            r"iodine|chromium|molybdenum|copper|manganese|potassium|phosphorus)\b",
+            r"iodine|chromium|molybdenum|copper|manganese|potassium|phosphorus|fluoride|fluorine|cesium)\b",
             name,
             re.I,
         )
@@ -2345,6 +2761,9 @@ def extract_supplement_text_from_barcode(barcode: str) -> tuple[str, str, str, s
             ("copper", "Copper"),
             ("manganese", "Manganese"),
             ("boron", "Boron"),
+            ("fluoride", "Fluoride"),
+            ("fluorine", "Fluoride"),
+            ("cesium", "Cesium"),
             ("iodine", "Iodine"),
             ("chromium", "Chromium"),
             ("selenium", "Selenium"),
@@ -2467,10 +2886,10 @@ def _barcode_text_has_micronutrient_signal(text: str) -> bool:
 
     micro_hint = re.compile(
         r"\b(?:vitamin\s+[abcekd](?:\d{0,2})?|thiamin|riboflavin|niacin|folate|folic\s+acid|biotin|"
-        r"calcium|iron|magnesium|zinc|selenium|iodine|chromium|molybdenum|copper|manganese|potassium|phosphorus)\b",
+        r"calcium|iron|magnesium|zinc|selenium|iodine|chromium|molybdenum|copper|manganese|potassium|phosphorus|fluoride|fluorine|cesium)\b",
         re.I,
     )
-    dose_hint = re.compile(r"\b\d+(?:[\.,]\d+)?\s*(?:mg|mcg|ug|µg|μg|iu)\b", re.I)
+    dose_hint = re.compile(r"\b\d+(?:[\.,]\d+)?\s*(?:mg|mcg|ug|µg|μg|iu|ui|ie)\b", re.I)
     macro_hint = re.compile(
         r"\b(?:energy|kcal|fat|saturated\s+fat|carbohydrate|carbohydrates|sugar|sugars|fiber|protein|salt|sodium)\b",
         re.I,
@@ -2514,7 +2933,7 @@ def _extract_openfoodfacts_rows_from_product_page(product_url: str) -> list[str]
         nutrient_name_hint = re.compile(
             r"\b(?:energy|fat|saturated\s+fat|carbohydrate|carbohydrates|sugar|sugars|fiber|proteins?|salt|sodium|"
             r"vitamin|folate|folic|niacin|riboflavin|thiamin|biotin|iron|zinc|magnesium|calcium|iodine|selenium|"
-            r"chromium|molybdenum|potassium|phosphorus|copper|manganese)\b",
+            r"chromium|molybdenum|potassium|phosphorus|copper|manganese|fluoride|fluorine|cesium)\b",
             re.I,
         )
 
@@ -2526,7 +2945,7 @@ def _extract_openfoodfacts_rows_from_product_page(product_url: str) -> list[str]
                 continue
 
             dose_matches = list(
-                re.finditer(r"(\d+(?:[\.,]\d+)?)\s*(mg|mcg|ug|µg|μg|g|iu|kcal|kj)\b", row_text, re.I)
+                re.finditer(r"(\d+(?:[\.,]\d+)?)\s*(mg|mcg|ug|µg|μg|g|iu|ui|ie|kcal|kj)\b", row_text, re.I)
             )
             if not dose_matches:
                 continue
@@ -2545,7 +2964,7 @@ def _extract_openfoodfacts_rows_from_product_page(product_url: str) -> list[str]
 
             name_raw = row_text[: chosen_match.start()]
             name = re.sub(r"\s+", " ", re.sub(r"[^A-Za-z\s\-]", " ", name_raw)).strip()
-            name = re.sub(r"\b(?:mg|mcg|ug|g|iu|kcal|kj)\b\s*$", "", name, flags=re.I).strip()
+            name = re.sub(r"\b(?:mg|mcg|ug|g|iu|ui|ie|kcal|kj)\b\s*$", "", name, flags=re.I).strip()
             if not name:
                 continue
             if not nutrient_name_hint.search(name):
@@ -3351,6 +3770,61 @@ def load_dietary_profiles() -> list[dict[str, Any]]:
     return profiles
 
 
+def _dietary_profile_maps(
+    profiles: list[dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], dict[str, str], dict[str, str]]:
+    profile_by_id: dict[str, dict[str, Any]] = {}
+    profile_id_by_label: dict[str, str] = {}
+    profile_label_by_id: dict[str, str] = {}
+
+    for profile in profiles:
+        profile_id = normalize_lookup_key(str(profile.get("id", "") or ""))
+        label = str(profile.get("label", "No restriction") or "No restriction").strip()
+        if not profile_id:
+            continue
+        profile_by_id[profile_id] = profile
+        profile_id_by_label[label] = profile_id
+        profile_label_by_id[profile_id] = label
+
+    return profile_by_id, profile_id_by_label, profile_label_by_id
+
+
+def _default_dietary_profile_id(profiles: list[dict[str, Any]]) -> str:
+    profile_by_id, _, _ = _dietary_profile_maps(profiles)
+    if "none" in profile_by_id:
+        return "none"
+    return next(iter(profile_by_id), "")
+
+
+def _resolve_dietary_profile_selection(
+    profiles: list[dict[str, Any]],
+    selected_value: Any,
+) -> tuple[str, dict[str, Any] | None]:
+    profile_by_id, profile_id_by_label, _ = _dietary_profile_maps(profiles)
+    default_profile_id = _default_dietary_profile_id(profiles)
+
+    raw_value = str(selected_value or "").strip()
+    normalized_value = normalize_lookup_key(raw_value)
+
+    selected_profile_id = ""
+    if raw_value in profile_by_id:
+        selected_profile_id = raw_value
+    elif normalized_value in profile_by_id:
+        selected_profile_id = normalized_value
+    elif raw_value in profile_id_by_label:
+        selected_profile_id = profile_id_by_label[raw_value]
+    else:
+        for label, profile_id in profile_id_by_label.items():
+            if normalize_lookup_key(label) == normalized_value:
+                selected_profile_id = profile_id
+                break
+
+    if not selected_profile_id:
+        selected_profile_id = default_profile_id
+
+    return selected_profile_id, profile_by_id.get(selected_profile_id)
+
+
 @functools.lru_cache(maxsize=1)
 def load_dietary_restriction_rules() -> dict[str, dict[str, Any]]:
     if not DIETARY_RESTRICTION_RULES_PATH.exists():
@@ -3400,102 +3874,113 @@ def _keyword_matches_food_blob(keyword: str, blob: str, blob_compact: str) -> bo
     return False
 
 
-def apply_food_filters(foods: list[dict[str, Any]], profile: dict[str, Any] | None) -> list[dict[str, Any]]:
-    if not foods:
-        return []
+def _expanded_profile_avoid_keywords(profile: dict[str, Any] | None) -> list[str]:
     if not profile:
-        return foods
+        return []
 
     profile_id = normalize_lookup_key(str(profile.get("id", "") or ""))
-    profile_keywords = [normalize_lookup_key(str(x)) for x in (profile.get("avoid_keywords", []) or []) if str(x).strip()]
-    rule_map = load_dietary_restriction_rules()
-    rule_keywords = []
-    if profile_id and profile_id in rule_map:
-        rule_keywords = [normalize_lookup_key(str(x)) for x in (rule_map[profile_id].get("avoid_keywords", []) or []) if str(x).strip()]
-
-    avoid_keywords = sorted({x for x in (profile_keywords + rule_keywords) if x})
     profile_label = normalize_lookup_key(str(profile.get("label", "") or ""))
+    profile_keywords = [normalize_lookup_key(str(x)) for x in (profile.get("avoid_keywords", []) or []) if str(x).strip()]
+
+    rule_map = load_dietary_restriction_rules()
+    rule_keywords: list[str] = []
+    if profile_id and profile_id in rule_map:
+        rule_keywords = [
+            normalize_lookup_key(str(x))
+            for x in (rule_map[profile_id].get("avoid_keywords", []) or [])
+            if str(x).strip()
+        ]
+
+    avoid_keywords = {x for x in (profile_keywords + rule_keywords) if x}
+
+    marine_animal_tokens = {
+        "fish",
+        "salmon",
+        "sardine",
+        "anchovy",
+        "tuna",
+        "trout",
+        "mackerel",
+        "cod",
+        "herring",
+        "shellfish",
+        "mollusk",
+        "mollusks",
+        "shrimp",
+        "prawn",
+        "crab",
+        "lobster",
+        "clam",
+        "mussel",
+        "oyster",
+        "scallop",
+        "squid",
+        "octopus",
+        "whelk",
+        "roe",
+    }
+
+    land_animal_tokens = {
+        "beef",
+        "veal",
+        "pork",
+        "ham",
+        "bacon",
+        "chicken",
+        "turkey",
+        "lamb",
+        "mutton",
+        "goat",
+        "duck",
+        "goose",
+        "moose",
+        "deer",
+        "venison",
+        "bison",
+        "buffalo",
+        "elk",
+        "rabbit",
+        "caribou",
+        "emu",
+        "ostrich",
+        "boar",
+        "pheasant",
+        "quail",
+        "seal",
+        "whale",
+        "walrus",
+        "sea lion",
+        "meat",
+        "game meat",
+    }
+
+    organ_and_derivative_tokens = {
+        "liver",
+        "kidney",
+        "heart",
+        "tripe",
+        "gizzard",
+        "tongue",
+        "sweetbread",
+        "organ meat",
+        "offal",
+        "gelatin",
+        "collagen",
+    }
+
     if profile_id == "vegetarian" or profile_label == "vegetarian":
-        avoid_keywords = sorted(
-            {
-                *avoid_keywords,
-                "beef",
-                "veal",
-                "pork",
-                "ham",
-                "bacon",
-                "chicken",
-                "turkey",
-                "lamb",
-                "mutton",
-                "goat",
-                "duck",
-                "fish",
-                "salmon",
-                "sardine",
-                "anchovy",
-                "tuna",
-                "trout",
-                "mackerel",
-                "cod",
-                "herring",
-                "shellfish",
-                "shrimp",
-                "prawn",
-                "crab",
-                "lobster",
-                "clam",
-                "mussel",
-                "oyster",
-                "scallop",
-                "squid",
-                "octopus",
-                "liver",
-                "organ meat",
-                "offal",
-                "gelatin",
-                "collagen",
-            }
-        )
+        avoid_keywords.update(land_animal_tokens)
+        avoid_keywords.update(marine_animal_tokens)
+        avoid_keywords.update(organ_and_derivative_tokens)
+
     if profile_id == "vegan" or profile_label == "vegan":
-        avoid_keywords = sorted(
+        avoid_keywords.update(land_animal_tokens)
+        avoid_keywords.update(marine_animal_tokens)
+        avoid_keywords.update(organ_and_derivative_tokens)
+        avoid_keywords.update(
             {
-                *avoid_keywords,
-                "beef",
-                "veal",
-                "pork",
-                "ham",
-                "bacon",
-                "chicken",
-                "turkey",
-                "lamb",
-                "mutton",
-                "goat",
-                "duck",
-                "fish",
-                "salmon",
-                "sardine",
-                "anchovy",
-                "tuna",
-                "trout",
-                "mackerel",
-                "cod",
-                "herring",
-                "shellfish",
-                "shrimp",
-                "prawn",
-                "crab",
-                "lobster",
-                "clam",
-                "mussel",
-                "oyster",
-                "scallop",
-                "squid",
-                "octopus",
-                "liver",
-                "organ meat",
-                "offal",
                 "egg",
+                "eggs",
                 "milk",
                 "cream",
                 "cheese",
@@ -3504,14 +3989,16 @@ def apply_food_filters(foods: list[dict[str, Any]], profile: dict[str, Any] | No
                 "honey",
                 "whey",
                 "casein",
-                "gelatin",
-                "collagen",
             }
         )
+
+    if profile_id == "pescatarian" or profile_label == "pescatarian":
+        avoid_keywords.update(land_animal_tokens)
+        avoid_keywords.update(organ_and_derivative_tokens)
+
     if profile_id == "nut free" or profile_label == "nut free":
-        avoid_keywords = sorted(
+        avoid_keywords.update(
             {
-                *avoid_keywords,
                 "peanut",
                 "almond",
                 "almond butter",
@@ -3531,6 +4018,20 @@ def apply_food_filters(foods: list[dict[str, Any]], profile: dict[str, Any] | No
             }
         )
 
+    if profile_id == "kosher style" or profile_label == "kosher style":
+        avoid_keywords.update({"whelk", "mollusk", "mollusks"})
+
+    return sorted(avoid_keywords)
+
+
+def apply_food_filters(foods: list[dict[str, Any]], profile: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not foods:
+        return []
+    if not profile:
+        return foods
+
+    avoid_keywords = _expanded_profile_avoid_keywords(profile)
+
     if not avoid_keywords:
         return foods
 
@@ -3540,6 +4041,14 @@ def apply_food_filters(foods: list[dict[str, Any]], profile: dict[str, Any] | No
         blob_compact = blob.replace(" ", "")
         if not blob:
             continue
+
+        persisted_allowed = _persisted_usda_food_allowed(str(food.get("food_description", "") or ""), profile)
+        if persisted_allowed is True:
+            filtered.append(food)
+            continue
+        if persisted_allowed is False:
+            continue
+
         blocked = False
         for kw in avoid_keywords:
             if _keyword_matches_food_blob(kw, blob, blob_compact):
@@ -3565,103 +4074,7 @@ def apply_meal_filters(
     if not meals:
         return []
 
-    avoid_keywords = []
-    if profile:
-        profile_id = normalize_lookup_key(str(profile.get("id", "") or ""))
-        profile_label = normalize_lookup_key(str(profile.get("label", "") or ""))
-        avoid_keywords = [normalize_lookup_key(str(x)) for x in (profile.get("avoid_keywords", []) or []) if str(x).strip()]
-        if profile_id == "vegetarian" or profile_label == "vegetarian":
-            avoid_keywords.extend(
-                [
-                    "beef",
-                    "veal",
-                    "pork",
-                    "ham",
-                    "bacon",
-                    "chicken",
-                    "turkey",
-                    "lamb",
-                    "mutton",
-                    "goat",
-                    "duck",
-                    "fish",
-                    "salmon",
-                    "sardine",
-                    "anchovy",
-                    "tuna",
-                    "trout",
-                    "mackerel",
-                    "cod",
-                    "herring",
-                    "shellfish",
-                    "shrimp",
-                    "prawn",
-                    "crab",
-                    "lobster",
-                    "clam",
-                    "mussel",
-                    "oyster",
-                    "scallop",
-                    "squid",
-                    "octopus",
-                    "liver",
-                    "organ meat",
-                    "offal",
-                    "gelatin",
-                    "collagen",
-                ]
-            )
-        if profile_id == "vegan" or profile_label == "vegan":
-            avoid_keywords.extend(
-                [
-                    "beef",
-                    "veal",
-                    "pork",
-                    "ham",
-                    "bacon",
-                    "chicken",
-                    "turkey",
-                    "lamb",
-                    "mutton",
-                    "goat",
-                    "duck",
-                    "fish",
-                    "salmon",
-                    "sardine",
-                    "anchovy",
-                    "tuna",
-                    "trout",
-                    "mackerel",
-                    "cod",
-                    "herring",
-                    "shellfish",
-                    "shrimp",
-                    "prawn",
-                    "crab",
-                    "lobster",
-                    "clam",
-                    "mussel",
-                    "oyster",
-                    "scallop",
-                    "squid",
-                    "octopus",
-                    "liver",
-                    "organ meat",
-                    "offal",
-                    "egg",
-                    "milk",
-                    "cream",
-                    "cheese",
-                    "yogurt",
-                    "butter",
-                    "honey",
-                    "whey",
-                    "casein",
-                    "gelatin",
-                    "collagen",
-                ]
-            )
-        avoid_keywords = sorted({normalize_lookup_key(str(x)) for x in avoid_keywords if str(x).strip()})
+    avoid_keywords = _expanded_profile_avoid_keywords(profile)
     must_exclude_token = normalize_lookup_key(must_exclude_ingredient)
 
     filtered: list[dict[str, Any]] = []
@@ -4386,7 +4799,7 @@ def _macro_constraint_diagnostics(
         unit = str(dose_unit or "").strip().lower()
         if dose_value <= 0:
             return None
-        if unit in {"iu"}:
+        if unit in {"iu", "ui", "ie"}:
             return float(dose_value)
         if unit in {"mcg", "ug", "μg", "µg"}:
             return float(dose_value) * 40.0
@@ -4806,7 +5219,13 @@ def resolve_selected_meal_requirements(component_candidates: list[dict[str, Any]
             except Exception:
                 amount_per_100g = 0.0
             nutrient_unit = str(food.get("unit", "") or "")
-            grams_needed = grams_needed_to_match_dose(dose_value, dose_unit, amount_per_100g, nutrient_unit)
+            grams_needed = grams_needed_to_match_dose(
+                dose_value,
+                dose_unit,
+                amount_per_100g,
+                nutrient_unit,
+                component_name=str(cand.get("component", "") or ""),
+            )
             if grams_needed is None or grams_needed <= 0:
                 continue
             if best is None or float(grams_needed) < float(best):
@@ -4904,7 +5323,13 @@ def resolve_low_grams_meal_requirements(component_candidates: list[dict[str, Any
             except Exception:
                 amount_per_100g = 0.0
             nutrient_unit = str(food.get("unit", "") or "")
-            grams_needed = grams_needed_to_match_dose(dose_value, dose_unit, amount_per_100g, nutrient_unit)
+            grams_needed = grams_needed_to_match_dose(
+                dose_value,
+                dose_unit,
+                amount_per_100g,
+                nutrient_unit,
+                component_name=component,
+            )
             if grams_needed is None or grams_needed <= 0:
                 continue
             if best is None or float(grams_needed) < float(best.get("grams_needed", MAX_GRAMS_INFINITY_PLACEHOLDER)):
@@ -4968,7 +5393,13 @@ def resolve_cheapest_meal_requirements(
             except Exception:
                 amount_per_100g = 0.0
             nutrient_unit = str(food.get("unit", "") or "")
-            grams_needed = grams_needed_to_match_dose(dose_value, dose_unit, amount_per_100g, nutrient_unit)
+            grams_needed = grams_needed_to_match_dose(
+                dose_value,
+                dose_unit,
+                amount_per_100g,
+                nutrient_unit,
+                component_name=component,
+            )
             if grams_needed is None or grams_needed <= 0:
                 continue
 
@@ -5544,9 +5975,11 @@ def build_usda_matches(components: list[dict[str, Any]]) -> tuple[list[dict[str,
                 continue
 
             merged_foods: list[dict[str, Any]] = []
+            nutrient_food_previews: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
             for nutrient in nutrient_candidates:
                 nutrient_id = int(nutrient["nutrient_id"])
                 source_foods = get_cached_foods(nutrient_id)[:OVERVIEW_ALT_LIMIT]
+                nutrient_food_previews.append((nutrient, source_foods))
                 for food in source_foods:
                     merged_foods.append(
                         {
@@ -5576,6 +6009,16 @@ def build_usda_matches(components: list[dict[str, Any]]) -> tuple[list[dict[str,
 
             top_foods = deduped_foods[:TOP_FOODS_PER_COMPONENT]
             primary_nutrient = nutrient_candidates[0]
+            primary_foods = nutrient_food_previews[0][1] if nutrient_food_previews else []
+
+            if not primary_foods:
+                for candidate_nutrient, candidate_foods in nutrient_food_previews:
+                    if not candidate_foods:
+                        continue
+                    primary_nutrient = candidate_nutrient
+                    top_foods = candidate_foods[:TOP_FOODS_PER_COMPONENT]
+                    deduped_foods = candidate_foods[:OVERVIEW_ALT_LIMIT]
+                    break
 
             # Vitamin K2 (MK-4) data can be sparse in USDA for many common foods.
             # If no positive-food rows remain after filtering, fall back to K1 (phylloquinone)
@@ -5686,7 +6129,63 @@ def normalize_component_name(raw_name: str) -> str:
 OCR_VITAMIN_PREFIX_PATTERN = re.compile(r"^(vitamin\s+[a-z](?:\d{1,2})?)\b", re.I)
 OCR_VITAMIN_TOKEN_PATTERN = re.compile(r"\b(?:vit(?:amin|main)|vitarnin)\s*([a-z])\s*(\d{0,2})\b", re.I)
 OCR_VITAMIN_SHORTHAND_PATTERN = re.compile(r"\b([bdk])\s*[-:]?\s*(12|[1-9])\b", re.I)
-OCR_DOSE_TOKEN_PATTERN = re.compile(r"(?P<val>(?:\d|[lI|])[0-9oO]*(?:[\.,][0-9oO]+)?)\s*(?P<unit>mg|mcg|meg|ug|µg|μg|fg|iu|g)\b", re.I)
+OCR_DOSE_TOKEN_PATTERN = re.compile(r"(?P<val>(?:\d|[lI|])[0-9oO]*(?:[\.,][0-9oO]+)?)\s*(?P<unit>mg|mcg|meg|ug|µg|μg|fg|iu|ui|ie|g)\b", re.I)
+OCR_VITAMIN_INLINE_DOSE_PATTERN = re.compile(
+    r"\b(?:vit(?:amin|main)|vitarnin)\s*(?P<letter>[a-z])\s*(?P<suffix>\d{0,2})\b"
+    r"[^\n]{0,24}?"
+    r"(?P<val>(?:\d|[lI|])[0-9oO]*(?:[\.,][0-9oO]+)?)\s*"
+    r"(?P<unit>mg|mcg|meg|ug|µg|μg|fg|iu|ui|ie|g)\b",
+    re.I,
+)
+OCR_COMPONENT_NEAR_DOSE_PATTERN = re.compile(
+    r"\b(?:"
+    r"vit(?:amin|main)?\s*[a-z](?:\d{1,2})?"
+    r"|amino\s+blend"
+    r"|enzyme\s+blend"
+    r"|phyto\s+blend"
+    r"|viri\s+blend"
+    r"|thiamin(?:e)?"
+    r"|riboflavin"
+    r"|niacin"
+    r"|pantothenic\s+acid"
+    r"|pyridoxine"
+    r"|biotin"
+    r"|folic\s+acid"
+    r"|folate"
+    r"|cobalamin"
+    r"|choline"
+    r"|calcium"
+    r"|phosph(?:or(?:us|ous)|orous|0rous|0rus)"
+    r"|potass(?:ium|um|lum)"
+    r"|magnes(?:ium|lum|iurn)"
+    r"|iron"
+    r"|copper"
+    r"|manganese"
+    r"|boron"
+    r"|fluoride"
+    r"|fluorine"
+    r"|iodine"
+    r"|jodine"
+    r"|l[o0]dine"
+    r"|chromium"
+    r"|selen(?:ium|iurn)"
+    r"|molybdenum"
+    r"|alpha\s+lipoic\s+acid"
+    r"|paba"
+    r"|para\s*-?\s*aminobenzoic\s+acid"
+    r"|inositol"
+    r"|silica"
+    r"|alpha\s*-?\s*carotene"
+    r"|vanadium"
+    r"|cryptoxanthin"
+    r"|zeaxanthin"
+    r"|zinc"
+    r"|beta\s*-?\s*carotene"
+    r"|lutein"
+    r"|lycopene"
+    r")\b",
+    re.I,
+)
 OCR_MICROGRAM_COMPONENTS: set[str] = {
     "vitamin a",
     "vitamin d",
@@ -5719,12 +6218,15 @@ OCR_MINERAL_FORM_COMPONENTS: set[str] = {
     "potassium",
     "phosphorus",
     "boron",
+    "fluoride",
+    "fluorine",
+    "cesium",
 }
 
 OCR_MINERAL_FORM_SUFFIX_PATTERN = re.compile(
-    r"^(?P<base>calcium|iron|magnesium|zinc|selenium|copper|manganese|iodine|chromium|molybdenum|potassium|phosphorus|boron)\s+"
+    r"^(?P<base>calcium|iron|magnesium|zinc|selenium|copper|manganese|iodine|chromium|molybdenum|potassium|phosphorus|boron|fluoride|fluorine|cesium)\s+"
     r"(?:l-|d-|dl-)?(?:acid|arginine|lysine|methionine|citrate|chloride|iodide|phosphate|carbonate|oxide|"
-    r"sulfate|sulphate|fumarate|gluconate|chelate|picolinate|molybdate|selenate|borate|pantothenate)\b",
+    r"sulfate|sulphate|fumarate|gluconate|chelate|picolinate|molybdate|selenate|borate|fluoride|pantothenate)\b",
     re.I,
 )
 
@@ -5750,12 +6252,23 @@ def _repair_ocr_component_name(component: str) -> str:
     # Strip trailing percentage/extract-concentration notations: "lycopene 10%*" → "lycopene"
     text = re.sub(r"\s+\d+%?[\*\^]?\s*$", "", text).strip()
 
+    component_alias_map: dict[str, str] = {
+        "vitamin b1": "thiamin",
+        "vitamin b2": "riboflavin",
+        "vitamin b3": "niacin",
+        "vitamin b5": "pantothenic acid",
+        "para-aminobenzoic acid": "paba",
+        "para aminobenzoic acid": "paba",
+    }
+    if text in component_alias_map:
+        return component_alias_map[text]
+
     mineral_form_match = OCR_MINERAL_FORM_SUFFIX_PATTERN.match(text)
     if mineral_form_match:
         return str(mineral_form_match.group("base") or "").lower()
 
     # Common OCR variants for MCT-Oel/Oil in curved bottle photos.
-    if text in {"mct-ol", "mct-oi", "mct-oi.", "uct-ol", "uct-oi"}:
+    if text in {"mct-ol", "mct-oi", "mct-oi.", "uct-ol", "uct-oi", "nct-ol", "nct-oi"}:
         return "mct-oil"
 
     shorthand_with_suffix = re.match(r"^([bdk])\s*[-:]?\s*(\d{1,2})$", text, re.I)
@@ -5778,7 +6291,18 @@ def _parse_ocr_numeric_value(raw_value: str) -> float | None:
     token = str(raw_value or "").strip()
     if not token:
         return None
-    token = token.replace("O", "0").replace("o", "0")
+    # Conservative OCR digit correction: only apply high-confidence substitutions
+    # and avoid broad letter->digit replacements that can inflate values.
+    if re.search(r"[A-Za-z|$]", token):
+        corrections = [
+            (r"[Oo]", "0"),
+            (r"[lI|]", "1"),
+            (r"[Zz]", "2"),
+            (r"[Ss$]", "5"),
+            (r"[Bb]", "8"),
+        ]
+        for pattern, repl in corrections:
+            token = re.sub(pattern, repl, token)
     # OCR often confuses 1 with l, I, or | in small table fonts.
     if token and token[0] in {"l", "I", "|"}:
         token = "1" + token[1:]
@@ -5790,6 +6314,20 @@ def _parse_ocr_numeric_value(raw_value: str) -> float | None:
         return float(token)
     except Exception:
         return None
+
+
+def _extract_last_component_before_dose(prefix_text: str) -> str:
+    """Pick the nearest nutrient-like token before a dose within dense OCR text."""
+    text = str(prefix_text or "").strip()
+    if not text:
+        return ""
+
+    text = re.sub(r"\b\d+(?:[\.,]\d+)?\s*%\s*(?:dv|nrv|ri|we)?\b", " ", text, flags=re.I)
+    matches = list(OCR_COMPONENT_NEAR_DOSE_PATTERN.finditer(text))
+    if not matches:
+        return ""
+    candidate = str(matches[-1].group(0) or "").strip()
+    return _repair_ocr_component_name(candidate)
 
 
 def _is_plausible_component_name(component: str) -> bool:
@@ -5810,8 +6348,8 @@ def _is_plausible_component_name(component: str) -> bool:
         "herstellung",
         "vertrieb",
         "nrv",
+        "fur",
         "durchschnittlichen",
-        "erwachsenen",
     }
     words = c.split()
     if any(w in junk_tokens for w in words):
@@ -5899,11 +6437,11 @@ def _prepare_text_for_structured_parsing(input_text: str) -> str:
         re.I,
     )
     row_hint = re.compile(
-        r"\b(?:vit(?:amin|main)|biotin|folic|folate|iodine|l[o0]dine|selenium|chromium|molybdenum|zinc|iron|copper|manganese|magnesium|calcium|potassium|phosphorus|boron|l-arginine|l-methionine|l-lysine|green\s+tea\s+extract|beta-?carotene|lutein|lycopene|amino\s+acids|botanicals)\b",
+        r"\b(?:vit(?:amin|main)|biotin|folic|folate|iodine|l[o0]dine|selenium|chromium|molybdenum|zinc|iron|copper|manganese|magnesium|calcium|potassium|phosphorus|boron|fluoride|fluorine|cesium|l-arginine|l-methionine|l-lysine|green\s+tea\s+extract|beta-?carotene|lutein|lycopene|alpha\s+lipoic\s+acid|inositol|choline|paba|para-?aminobenzoic\s+acid|amino\s+blend|enzyme\s+blend|phyto\s+blend|viri\s+blend|amino\s+acids|botanicals)\b",
         re.I,
     )
     # "meg" is a common OCR misread of "mcg" — include it so those lines are selected.
-    dose_hint = re.compile(r"\b\d+(?:[\.,]\d+)?\s*(?:mg|mcg|meg|ug|µg|μg|fg|g|iu|kcal)\b", re.I)
+    dose_hint = re.compile(r"\b\d+(?:[\.,]\d+)?\s*(?:mg|mcg|meg|ug|µg|μg|fg|g|iu|ui|ie|kcal)\b", re.I)
 
     selected: list[str] = []
     selected_dose_rows = 0
@@ -5959,9 +6497,149 @@ def _repair_ocr_dose_entry(component: str, dose_value: float | None, dose_unit: 
     repaired_value = float(dose_value)
 
     if repaired_unit == "g" and repaired_value <= 5000 and _component_prefers_microgram_unit(repaired_component):
+        # µg OCR artifacts: trailing symbol can leak into the numeric token as 1 or 4,
+        # e.g. "20 µg" → "201g" or "204g". For these high, integer-like values,
+        # strip one trailing artifact digit before mapping bare "g" to "mcg".
+        # Threshold ≥ 100 prevents truncating small legitimate values (e.g., 54 µg).
+        v_int = round(repaired_value)
+        if v_int >= 100 and (v_int % 10 in {1, 4}) and abs(repaired_value - v_int) < 0.5:
+            repaired_value = float(v_int // 10)
+        return repaired_component, repaired_value, "mcg"
+
+    # OCR can misread mcg as mg for trace micronutrients (e.g., folate 600 mcg
+    # read as 600 mg). For known microgram-oriented nutrients, large mg values
+    # are far more likely to be mcg.
+    if repaired_unit == "mg" and _component_prefers_microgram_unit(repaired_component) and repaired_value >= 100:
         return repaired_component, repaired_value, "mcg"
 
     return repaired_component, repaired_value, repaired_unit
+
+
+def _extract_vitamin_dose_candidates_from_text(input_text: str) -> dict[str, tuple[float, str]]:
+    """Extract vitamin dose anchors from OCR text using targeted regex patterns."""
+    anchors: dict[str, tuple[float, str]] = {}
+    text = str(input_text or "")
+    if not text.strip():
+        return anchors
+
+    for line in text.splitlines():
+        raw_line = str(line or "").strip()
+        if not raw_line:
+            continue
+
+        for match in OCR_VITAMIN_INLINE_DOSE_PATTERN.finditer(raw_line):
+            letter = str(match.group("letter") or "").lower()
+            suffix = str(match.group("suffix") or "").strip()
+            if letter not in {"a", "b", "c", "d", "e", "k"}:
+                continue
+            if suffix and letter not in {"b", "d", "k"}:
+                suffix = ""
+            component = _repair_ocr_component_name(f"vitamin {letter}{suffix}")
+            if not component:
+                continue
+            value = _parse_ocr_numeric_value(str(match.group("val") or ""))
+            unit = _normalize_component_unit_token(str(match.group("unit") or ""))
+            component, value, unit = _repair_ocr_dose_entry(component, value, unit)
+            if value is None or not unit:
+                continue
+            anchors[normalize_lookup_key(component)] = (float(value), str(unit))
+
+    return anchors
+
+
+def _vitamin_consensus_lines_from_ocr(paddle_text: str, tesseract_text: str) -> list[str]:
+    """Cross-validate vitamin doses from both OCR engines and return canonical lines."""
+    paddle_map = _extract_vitamin_dose_candidates_from_text(paddle_text)
+    tesseract_map = _extract_vitamin_dose_candidates_from_text(tesseract_text)
+    lines: list[str] = []
+    keys = sorted(set(paddle_map.keys()) | set(tesseract_map.keys()))
+    for key in keys:
+        p = paddle_map.get(key)
+        t = tesseract_map.get(key)
+        chosen_val: float | None = None
+        chosen_unit = ""
+
+        if p and t and p[1] == t[1]:
+            p_val, p_unit = p
+            t_val, _ = t
+            larger = max(p_val, t_val)
+            smaller = max(1e-9, min(p_val, t_val))
+            ratio = larger / smaller
+            if ratio <= 1.35:
+                chosen_val = round((p_val + t_val) / 2.0, 4)
+                chosen_unit = p_unit
+            else:
+                # Decimal-shift disagreement: prefer the smaller value when values differ by ~10x.
+                if 8.5 <= ratio <= 11.5:
+                    chosen_val = round(min(p_val, t_val), 4)
+                    chosen_unit = p_unit
+                else:
+                    chosen_val = round(p_val if p_val <= t_val else t_val, 4)
+                    chosen_unit = p_unit
+        elif p:
+            chosen_val, chosen_unit = p
+        elif t:
+            chosen_val, chosen_unit = t
+
+        if chosen_val is None or not chosen_unit:
+            continue
+        pretty = key.title() if key else ""
+        if not pretty:
+            continue
+        lines.append(f"{pretty}\t{format_float(float(chosen_val))} {chosen_unit}")
+    return lines
+
+
+def _apply_contextual_vitamin_dose_corrections(
+    rows: list[dict[str, Any]],
+    source_text: str,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Use regex-extracted OCR anchors to correct obviously mismatched vitamin doses."""
+    anchors = _extract_vitamin_dose_candidates_from_text(source_text)
+    if not anchors:
+        return rows, []
+
+    corrected: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for row in rows:
+        out = dict(row)
+        comp = normalize_lookup_key(str(out.get("component", "") or ""))
+        anchor = anchors.get(comp)
+        if not anchor:
+            corrected.append(out)
+            continue
+
+        try:
+            cur_val = float(out.get("dose_value")) if out.get("dose_value") is not None else None
+        except Exception:
+            cur_val = None
+        cur_unit = _normalize_component_unit_token(str(out.get("dose_unit", "") or ""))
+        anc_val, anc_unit = anchor
+
+        if cur_val is None or not cur_unit:
+            out["dose_value"] = anc_val
+            out["dose_unit"] = anc_unit
+            warnings.append(f"context_correction: filled missing dose for {comp} from OCR anchor")
+            corrected.append(out)
+            continue
+
+        if cur_unit != anc_unit:
+            corrected.append(out)
+            continue
+
+        larger = max(cur_val, anc_val)
+        smaller = max(1e-9, min(cur_val, anc_val))
+        ratio = larger / smaller
+        # Correct only clear mismatches to avoid overfitting.
+        if ratio >= 1.5:
+            out["dose_value"] = anc_val
+            warnings.append(
+                f"context_correction: replaced {comp} {format_float(cur_val)} {cur_unit} with "
+                f"{format_float(anc_val)} {anc_unit}"
+            )
+        corrected.append(out)
+
+    return corrected, warnings
 
 
 def _recover_missing_vitamin_rows_from_text(
@@ -5977,6 +6655,9 @@ def _recover_missing_vitamin_rows_from_text(
 
     for raw_line in input_text.splitlines():
         line = str(raw_line or "").strip()
+        if not line:
+            continue
+        line = re.split(r"\b(?:other\s+ingredients|ingredients)\b", line, maxsplit=1, flags=re.I)[0].strip()
         if not line:
             continue
 
@@ -6077,6 +6758,8 @@ STRUCTURED_CORE_COMPONENT_GROUPS: set[str] = {
     "copper",
     "manganese",
     "boron",
+    "fluoride",
+    "cesium",
     "iodine",
     "chromium",
     "selenium",
@@ -6106,6 +6789,8 @@ STRUCTURED_CORE_RECOVERY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("copper", re.compile(r"\b(?:copper|coper|copp?r|cupr(?:ic)?)\b", re.I)),
     ("manganese", re.compile(r"\bmanganese\b", re.I)),
     ("boron", re.compile(r"\bboron\b", re.I)),
+    ("fluoride", re.compile(r"\b(?:fluoride|fluorine)\b", re.I)),
+    ("cesium", re.compile(r"\b(?:cesium|caesium)\b", re.I)),
     ("iodine", re.compile(r"\b(?:iodine|jodine|l[o0]dine)\b", re.I)),
     ("chromium", re.compile(r"\bchromium\b", re.I)),
     ("selenium", re.compile(r"\bselen(?:ium|iurn)\b", re.I)),
@@ -6139,6 +6824,14 @@ def _is_suspicious_structured_group_dose(group_key: str, dose_value: float | Non
     if group_key == "iron" and unit == "mg" and value >= 12 and abs((value * 10.0) - round(value * 10.0)) < 1e-9 and abs((value % 1.0) - 0.5) < 1e-9:
         return True
     if group_key == "vitamin d" and unit == "mcg" and value > 50:
+        return True
+    if group_key in {"vitamin k_family", "vitamin k"} and unit == "mg":
+        return True
+    if group_key in {"vitamin k_family", "vitamin k"} and unit == "iu" and value >= 100:
+        return True
+    if group_key == "vitamin e" and unit == "mcg":
+        return True
+    if group_key == "vitamin e" and unit == "iu" and value >= 250:
         return True
     if group_key == "biotin" and unit == "mcg" and value > 300:
         return True
@@ -6191,10 +6884,16 @@ def _recover_core_micronutrient_rows_from_text(
     for idx, line in enumerate(lines):
         if not line:
             continue
-        if len(line) > 160:
+        if len(line) > 6000:
             continue
-        if re.search(r"\b(?:ingredients|other\s+ingredients|daily\s+value\s+not\s+established|serving\s+size)\b", line, re.I):
+        line = re.split(r"\b(?:other\s+ingredients|ingredients)\b", line, maxsplit=1, flags=re.I)[0].strip()
+        if not line:
             continue
+        if re.search(r"\bdaily\s+value\s+not\s+established\b", line, re.I):
+            continue
+        if re.search(r"\bserving\s+size\b", line, re.I):
+            if len(OCR_DOSE_TOKEN_PATTERN.findall(line)) <= 2:
+                continue
 
         candidate_line = line
         if idx + 1 < len(lines):
@@ -6425,7 +7124,7 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
 
     lines = [ln.strip() for ln in input_text.splitlines() if ln.strip()]
     dose_pattern = re.compile(
-        r"(?P<val>(?:\d|[lI|])[0-9oO]*(?:[\.,][0-9oO]+)?)\s*(?P<unit>mg|mcg|meg|ug|µg|μg|fg|iu|g|kcal)\b",
+        r"(?P<val>(?:\d|[lI|])[0-9oO]*(?:[\.,][0-9oO]+)?)\s*(?P<unit>mg|mcg|meg|ug|µg|μg|fg|iu|ui|ie|g|kcal)\b",
         re.I,
     )
     nutrient_line_pattern = re.compile(
@@ -6458,7 +7157,7 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
             return True
         return bool(
             re.search(
-                r"\b(vit(?:amin|main)|mineral|b\d{1,2}|folic|folate|niacin|riboflavin|thiamin|biotin|iodine|selenium|zinc|iron|magnesium|calcium|potassium|sodium)\b",
+                r"\b(vit(?:amin|main)|mineral|b\d{1,2}|folic|folate|niacin|riboflavin|thiamin|biotin|iodine|selenium|zinc|iron|magnesium|calcium|potassium|sodium|choline|inositol|lutein|lycopene|alpha\s+lipoic|paba|amino\s+blend|enzyme\s+blend|phyto\s+blend|viri\s+blend)\b",
                 candidate,
                 re.I,
             )
@@ -6467,21 +7166,31 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
     def _extract_component_from_segment(segment_text: str, match_start: int) -> str:
         name_raw = segment_text[:match_start]
         name_raw = re.sub(r"[\.:_\-]{2,}", " ", name_raw)
+        name_raw = re.sub(r"\b\d+(?:[\.,]\d+)?\s*%\s*(?:dv|nrv|ri|we)?\b", " ", name_raw, flags=re.I)
         name_raw = re.sub(r"\s+", " ", name_raw).strip(" -:|,*#_")
         return _repair_ocr_component_name(name_raw)
 
     for line in lines:
         lowered = line.lower()
+        line_for_parse = line
         if lowered.startswith(ignored_starts):
-            continue
-        if _looks_like_ecommerce_noise(line) and not (
-            dose_pattern.search(line) and nutrient_line_pattern.search(line)
+            # Do not drop dense inline supplement-facts rows just because they start
+            # with header labels such as "Supplement Facts" or "Serving Size".
+            if not (dose_pattern.search(line_for_parse) and nutrient_line_pattern.search(line_for_parse)):
+                continue
+            first_nutrient = nutrient_line_pattern.search(line_for_parse)
+            if first_nutrient:
+                line_for_parse = line_for_parse[first_nutrient.start():].strip()
+            if not line_for_parse:
+                continue
+        if _looks_like_ecommerce_noise(line_for_parse) and not (
+            dose_pattern.search(line_for_parse) and nutrient_line_pattern.search(line_for_parse)
         ):
             continue
 
         # Split list-style lines by separators that usually delimit components,
         # while preserving decimal commas (e.g., 1,5 mg).
-        segments = re.split(r"\s*[;|]\s*|\s*,\s*(?=[a-zA-Z])", line)
+        segments = re.split(r"\s*[;|]\s*|\s*,\s*(?=[a-zA-Z])", line_for_parse)
         for seg in segments:
             segment = seg.strip()
             if not segment:
@@ -6498,7 +7207,11 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
                 # When OCR collapses many nutrients onto one line, bind each dose to the
                 # nearest preceding text span instead of the full prefix from line start.
                 local_prefix = segment[previous_match_end:match.start()]
-                component = _extract_component_from_segment(local_prefix, len(local_prefix))
+                component = _extract_last_component_before_dose(local_prefix)
+                if not component:
+                    component = _extract_component_from_segment(local_prefix, len(local_prefix))
+                if not component:
+                    component = _extract_last_component_before_dose(segment[:match.start()])
                 if not component:
                     component = _extract_component_from_segment(segment, match.start())
                 if not component:
@@ -6608,22 +7321,86 @@ def merge_component_rows(
     primary: list[dict[str, Any]],
     secondary: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    seen_components: set[str] = set()
+    selected_by_component: dict[str, dict[str, Any]] = {}
+
+    def _to_float(value: Any) -> float | None:
+        try:
+            return float(value) if value is not None else None
+        except Exception:
+            return None
+
+    def _unit_priority(component: str, unit: str) -> int:
+        normalized_unit = _normalize_component_unit_token(str(unit or ""))
+        comp_key = normalize_lookup_key(component)
+        if _component_prefers_microgram_unit(comp_key):
+            if normalized_unit == "mcg":
+                return 3
+            if normalized_unit == "iu":
+                return 2
+            if normalized_unit == "mg":
+                return 1
+            return 0
+        if normalized_unit == "mg":
+            return 3
+        if normalized_unit == "mcg":
+            return 2
+        if normalized_unit == "iu":
+            return 1
+        return 0
+
+    def _choose_better(component: str, existing: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+        existing_value = _to_float(existing.get("dose_value"))
+        candidate_value = _to_float(candidate.get("dose_value"))
+
+        existing_has_dose = existing_value is not None and bool(str(existing.get("dose_unit", "") or "").strip())
+        candidate_has_dose = candidate_value is not None and bool(str(candidate.get("dose_unit", "") or "").strip())
+
+        if candidate_has_dose and not existing_has_dose:
+            return candidate
+        if existing_has_dose and not candidate_has_dose:
+            return existing
+        if not existing_has_dose and not candidate_has_dose:
+            return existing
+
+        existing_unit = _normalize_component_unit_token(str(existing.get("dose_unit", "") or ""))
+        candidate_unit = _normalize_component_unit_token(str(candidate.get("dose_unit", "") or ""))
+
+        if existing_unit == candidate_unit:
+            if (candidate_value or 0.0) > (existing_value or 0.0):
+                return candidate
+            return existing
+
+        existing_unit_rank = _unit_priority(component, existing_unit)
+        candidate_unit_rank = _unit_priority(component, candidate_unit)
+        if candidate_unit_rank > existing_unit_rank:
+            return candidate
+        if existing_unit_rank > candidate_unit_rank:
+            return existing
+
+        # Final deterministic fallback: keep larger comparable dose if unit preference ties.
+        if (candidate_value or 0.0) > (existing_value or 0.0):
+            return candidate
+        return existing
 
     for row in primary + secondary:
-        component = str(row.get("component", "")).strip().lower()
-        if not component or component in seen_components:
+        component = normalize_lookup_key(str(row.get("component", "") or ""))
+        if not component:
             continue
-        seen_components.add(component)
-        merged.append(
-            {
-                "component": component,
-                "dose_value": row.get("dose_value"),
-                "dose_unit": row.get("dose_unit"),
-            }
-        )
 
+        candidate = {
+            "component": component,
+            "dose_value": row.get("dose_value"),
+            "dose_unit": _normalize_component_unit_token(str(row.get("dose_unit", "") or "")),
+        }
+
+        existing = selected_by_component.get(component)
+        if existing is None:
+            selected_by_component[component] = candidate
+            continue
+
+        selected_by_component[component] = _choose_better(component, existing, candidate)
+
+    merged = [selected_by_component[key] for key in selected_by_component.keys()]
     return merged
 
 
@@ -7196,9 +7973,9 @@ def _preprocess_label_image(image_bytes: bytes) -> bytes:
 
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-        # Resize: minimum 1400px on the longer side for better OCR.
+        # Resize: minimum 1800px on the longer side for better OCR on small labels.
         w, h = img.size
-        min_side = 1400
+        min_side = 1800
         if max(w, h) < min_side:
             scale = min_side / max(w, h)
             img = img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
@@ -7233,39 +8010,220 @@ def _preprocess_label_image(image_bytes: bytes) -> bytes:
             enhanced = clahe.apply(normalized)
 
             # Mild denoise.
-            denoised = cv2.fastNlMeansDenoising(enhanced, h=10)
+            denoised = cv2.fastNlMeansDenoising(enhanced, h=12)
 
-            img = Image.fromarray(denoised).convert("RGB")
+            # Dual binarization paths and conservative fusion.
+            _thr, binary_otsu = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            binary_adaptive = cv2.adaptiveThreshold(
+                denoised,
+                255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY,
+                21,
+                10,
+            )
+            binary_combined = cv2.bitwise_and(binary_otsu, binary_adaptive)
+            kernel_small = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+            binary_clean = cv2.morphologyEx(binary_combined, cv2.MORPH_OPEN, kernel_small)
+
+            # Unsharp mask to improve tiny glyph edges.
+            gaussian = cv2.GaussianBlur(binary_clean, (0, 0), 2.0)
+            unsharp = cv2.addWeighted(binary_clean, 2.0, gaussian, -1.0, 0)
+            img = Image.fromarray(unsharp).convert("RGB")
         else:
             # PIL-only fallback: autocontrast + sharpen.
             img = ImageOps.autocontrast(img.convert("L"), cutoff=2).convert("RGB")
             img = img.filter(ImageFilter.SHARPEN)
 
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=92)
+        img.save(buf, format="JPEG", quality=95)
         return buf.getvalue()
     except Exception:
         return image_bytes
+
+
+def _detect_nutrition_table_region(image_bytes: bytes) -> bytes | None:
+    """
+    Detect a likely nutrition-table region and return cropped JPEG bytes.
+    This is a conservative detector: returns None when confidence is low.
+    """
+    try:
+        try:
+            import cv2
+            import numpy as np
+        except ImportError:
+            return None
+
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        img_np = np.array(image)
+        if img_np.size == 0:
+            return None
+
+        h, w = img_np.shape[:2]
+        if h < 180 or w < 180:
+            return None
+
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+
+        grad = cv2.morphologyEx(
+            gray,
+            cv2.MORPH_GRADIENT,
+            cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)),
+        )
+        bw = cv2.threshold(grad, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+        bw = cv2.morphologyEx(
+            bw,
+            cv2.MORPH_CLOSE,
+            cv2.getStructuringElement(cv2.MORPH_RECT, (25, 5)),
+            iterations=2,
+        )
+        bw = cv2.dilate(
+            bw,
+            cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)),
+            iterations=1,
+        )
+
+        contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None
+
+        image_area = float(h * w)
+        best_rect: tuple[int, int, int, int] | None = None
+        best_score = -1.0
+
+        for cnt in contours:
+            x, y, cw, ch = cv2.boundingRect(cnt)
+            if cw <= 0 or ch <= 0:
+                continue
+
+            area = float(cw * ch)
+            area_ratio = area / image_area
+            if area_ratio < 0.12 or area_ratio > 0.95:
+                continue
+
+            aspect = float(cw) / float(max(ch, 1))
+            if aspect < 0.45 or aspect > 4.5:
+                continue
+
+            # Prefer sizeable, roughly table-like boxes while penalizing edge-hugging noise.
+            edge_penalty = 0.0
+            if x <= 2 or y <= 2 or (x + cw) >= (w - 2) or (y + ch) >= (h - 2):
+                edge_penalty = 0.03
+            score = area_ratio - 0.08 * abs(aspect - 1.6) - edge_penalty
+            if score > best_score:
+                best_score = score
+                best_rect = (x, y, cw, ch)
+
+        if best_rect is None:
+            return None
+
+        x, y, cw, ch = best_rect
+        pad_x = max(8, int(cw * 0.03))
+        pad_y = max(8, int(ch * 0.03))
+        x1 = max(0, x - pad_x)
+        y1 = max(0, y - pad_y)
+        x2 = min(w, x + cw + pad_x)
+        y2 = min(h, y + ch + pad_y)
+        if (x2 - x1) < 120 or (y2 - y1) < 120:
+            return None
+
+        crop = img_np[y1:y2, x1:x2]
+        if crop.size == 0:
+            return None
+
+        out = Image.fromarray(crop)
+        buf = io.BytesIO()
+        out.save(buf, format="JPEG", quality=92)
+        return buf.getvalue()
+    except Exception:
+        return None
+
+
+def _generate_focus_region_crops(image_bytes: bytes) -> list[tuple[str, bytes]]:
+    """Generate conservative fallback crops (center/right) when table detection is imperfect."""
+    crops: list[tuple[str, bytes]] = []
+    try:
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        w, h = image.size
+        if w < 220 or h < 220:
+            return crops
+
+        regions = [
+            ("center_crop", (int(w * 0.10), int(h * 0.08), int(w * 0.90), int(h * 0.92))),
+            ("right_crop", (int(w * 0.32), int(h * 0.05), int(w * 0.98), int(h * 0.95))),
+        ]
+        for name, (x1, y1, x2, y2) in regions:
+            if (x2 - x1) < 120 or (y2 - y1) < 120:
+                continue
+            crop = image.crop((x1, y1, x2, y2))
+            buf = io.BytesIO()
+            crop.save(buf, format="JPEG", quality=92)
+            crops.append((name, buf.getvalue()))
+    except Exception:
+        return []
+    return crops
+
+
+def _score_ocr_nutrition_signal(text: str) -> float:
+    raw = str(text or "").strip()
+    if not raw:
+        return 0.0
+
+    dose_hits = len(EXTRACTION_DOSE_PATTERN.findall(raw))
+    nutrient_hits = len(
+        re.findall(
+            r"\b(?:vitamin|thiamin|thiamine|riboflavin|niacin|folate|folic|biotin|calcium|iron|"
+            r"magnesium|zinc|selenium|iodine|chromium|molybdenum|copper|manganese|potassium|"
+            r"phosphorus|fluoride|fluorine|cesium|protein|fat|carbohydrate|fiber|energy|sodium)\b",
+            raw,
+            re.I,
+        )
+    )
+    line_count = len([ln for ln in raw.splitlines() if ln.strip()])
+    return (dose_hits * 3.0) + (nutrient_hits * 2.0) + min(12.0, float(line_count) * 0.2)
 
 
 # ---------------------------------------------------------------------------
 # Stage 2 — PaddleOCR with bounding-box table reconstruction
 # ---------------------------------------------------------------------------
 
-def _reconstruct_table_rows_from_paddle(image_bytes: bytes) -> str:
+def _get_paddleocr_engine() -> Any | None:
+    global PADDLE_OCR_ENGINE
+    global PADDLE_OCR_UNAVAILABLE
+    if PADDLE_OCR_UNAVAILABLE:
+        return None
+    if PADDLE_OCR_ENGINE is not None:
+        return PADDLE_OCR_ENGINE
+    try:
+        from paddleocr import PaddleOCR
+
+        PADDLE_OCR_ENGINE = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
+        return PADDLE_OCR_ENGINE
+    except Exception:
+        PADDLE_OCR_UNAVAILABLE = True
+        return None
+
+
+def _reconstruct_table_rows_from_paddle(
+    image_bytes: bytes,
+    raw_result: Any | None = None,
+) -> str:
     """
     Run PaddleOCR, then reconstruct table rows from bounding-box Y positions
     (row-clustering heuristic).  Returns plain text with one row per line,
     left column and right column joined by a tab.
     """
     try:
-        import numpy as np
-        from paddleocr import PaddleOCR
+        if raw_result is None:
+            import numpy as np
 
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        img_np = np.array(image)
-        ocr_engine = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
-        raw_result = ocr_engine.ocr(img_np, cls=True) or []
+            ocr_engine = _get_paddleocr_engine()
+            if ocr_engine is None:
+                return ""
+            image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            img_np = np.array(image)
+            raw_result = ocr_engine.ocr(img_np, cls=True) or []
 
         # Collect boxes: (y_center, x_left, text, confidence)
         tokens: list[tuple[float, float, str, float]] = []
@@ -7334,7 +8292,7 @@ _NUTRIENT_DICTIONARY: list[str] = [
     "phosphorus", "selenium", "iodine", "copper", "manganese", "chromium",
     "molybdenum", "fluoride", "chloride",
     # Vitamins
-    "vitamin a", "vitamin c", "vitamin d", "vitamin e", "vitamin k",
+    "vitamin a", "vitamin c", "vitamin d", "vitamin d2", "vitamin d3", "vitamin e", "vitamin k",
     "vitamin k1", "vitamin k2",
     "vitamin b1", "thiamin", "thiamine",
     "vitamin b2", "riboflavin",
@@ -7388,6 +8346,25 @@ _OCR_LABEL_CORRECTIONS: dict[str, str] = {
     "cholestrol": "cholesterol", "cholesteral": "cholesterol",
 }
 
+_OCR_LABEL_CORRECTIONS.update(
+    {
+        # Additional vitamin misspellings
+        "vitanin": "vitamin",
+        "vitmain": "vitamin",
+        "vitmin": "vitamin",
+        "vitamim": "vitamin",
+        # Unit confusions
+        "rng": "mg",
+        "rncg": "mcg",
+        "mq": "mg",
+        "mcq": "mcg",
+        # Mineral OCR confusions
+        "rnagnesium": "magnesium",
+        "calciurn": "calcium",
+        "chromiurn": "chromium",
+    }
+)
+
 
 def _fuzzy_match_nutrient(raw_name: str, cutoff: float = 0.78) -> str:
     """
@@ -7411,7 +8388,22 @@ def _fuzzy_match_nutrient(raw_name: str, cutoff: float = 0.78) -> str:
     if normalized in _NUTRIENT_DICT_LOWER:
         return normalized
 
-    # Step 3: fuzzy match.
+    # Step 3a: RapidFuzz (if installed) for stronger OCR-noise tolerance.
+    try:
+        from rapidfuzz import fuzz, process
+
+        rf_match = process.extractOne(
+            normalized,
+            _NUTRIENT_DICT_LOWER,
+            scorer=fuzz.WRatio,
+            score_cutoff=max(0.0, min(100.0, float(cutoff) * 100.0)),
+        )
+        if rf_match:
+            return str(rf_match[0])
+    except Exception:
+        pass
+
+    # Step 3b: fallback fuzzy match.
     matches = difflib.get_close_matches(normalized, _NUTRIENT_DICT_LOWER, n=1, cutoff=cutoff)
     if matches:
         return matches[0]
@@ -7443,8 +8435,12 @@ STRUCTURED_COMPONENT_GROUP_ALIASES: dict[str, str] = {
     "folate": "folate_family",
     "folic acid": "folate_family",
     "vitamin b9": "folate_family",
+    "vitamin d": "vitamin d_family",
+    "vitamin d2": "vitamin d_family",
+    "vitamin d3": "vitamin d_family",
     "vitamin k": "vitamin k_family",
     "vitamin k1": "vitamin k_family",
+    "vitamin k2": "vitamin k_family",
 }
 
 STRUCTURED_COMPONENT_PREFERRED_NAME_RANK: dict[str, dict[str, int]] = {
@@ -7453,10 +8449,15 @@ STRUCTURED_COMPONENT_PREFERRED_NAME_RANK: dict[str, dict[str, int]] = {
         "folate": 2,
         "vitamin b9": 1,
     },
+    "vitamin d_family": {
+        "vitamin d3": 3,
+        "vitamin d2": 2,
+        "vitamin d": 1,
+    },
     "vitamin k_family": {
+        "vitamin k2": 4,
         "vitamin k1": 3,
         "vitamin k": 2,
-        "vitamin k2": 1,
     },
     "vitamin b1": {
         "vitamin b1": 3,
@@ -7478,9 +8479,26 @@ STRUCTURED_COMPONENT_PREFERRED_NAME_RANK: dict[str, dict[str, int]] = {
 }
 
 STRUCTURED_DECIMAL_SHIFT_MAX_MG: dict[str, float] = {
-    "vitamin b1": 5.0,
-    "vitamin b2": 5.0,
     "iron": 65.0,
+}
+
+STRUCTURED_NONCORE_KEEP_COMPONENTS: set[str] = {
+    "alpha lipoic acid",
+    "paba",
+    "choline",
+    "inositol",
+    "silica",
+    "lycopene",
+    "lutein",
+    "alpha carotene",
+    "vanadium",
+    "cryptoxanthin",
+    "zeaxanthin",
+    "amino blend",
+    "enzyme blend",
+    "phyto blend",
+    "viri blend",
+    "mct-oil",
 }
 
 
@@ -7518,6 +8536,14 @@ def _structured_preferred_name_rank(group_key: str, component: str) -> int:
 def _structured_unit_rank(group_key: str, dose_unit: str) -> int:
     unit = _normalize_component_unit_token(dose_unit)
     if not unit:
+        return 0
+    if group_key == "vitamin e":
+        if unit == "iu":
+            return 3
+        if unit == "mg":
+            return 2
+        if unit == "mcg":
+            return 1
         return 0
     if group_key in {"folate_family", "vitamin k_family"} or group_key in _MICROGRAM_PREFERRED_NUTRIENTS:
         if unit == "mcg":
@@ -7562,11 +8588,19 @@ def _collapse_structured_label_rows(rows: list[dict[str, Any]]) -> list[dict[str
         component = _normalize_structured_candidate_component(str(row.get("component", "") or ""))
         if not component:
             continue
+        dose_raw = row.get("dose_value")
+        try:
+            dose_value = float(dose_raw) if dose_raw is not None else None
+        except Exception:
+            dose_value = None
+        dose_unit = _normalize_component_unit_token(str(row.get("dose_unit", "") or ""))
+        component, dose_value, dose_unit = _repair_ocr_dose_entry(component, dose_value, dose_unit)
         normalized_rows.append(
             {
                 **row,
                 "component": component,
-                "dose_unit": _normalize_component_unit_token(str(row.get("dose_unit", "") or "")),
+                "dose_value": dose_value,
+                "dose_unit": dose_unit,
             }
         )
 
@@ -7580,6 +8614,16 @@ def _collapse_structured_label_rows(rows: list[dict[str, Any]]) -> list[dict[str
 
     collapsed: list[dict[str, Any]] = []
     for group_key, group_rows in grouped.items():
+        def _dose_sort_value(candidate_row: dict[str, Any]) -> float:
+            try:
+                value = float(candidate_row.get("dose_value")) if candidate_row.get("dose_value") is not None else 0.0
+            except Exception:
+                value = 0.0
+            unit = str(candidate_row.get("dose_unit", "") or "")
+            if _is_suspicious_structured_group_dose(group_key, value, unit, 1):
+                return -1.0
+            return value
+
         decimal_shift_larger_ids: set[int] = set()
         for idx, candidate in enumerate(group_rows):
             cand_value = candidate.get("dose_value")
@@ -7612,8 +8656,21 @@ def _collapse_structured_label_rows(rows: list[dict[str, Any]]) -> list[dict[str
             enumerate(group_rows),
             key=lambda item: (
                 int(item[1].get("_structured_recovery_score", 0) or 0),
+                0
+                if _is_suspicious_structured_group_dose(
+                    group_key,
+                    (
+                        float(item[1].get("dose_value"))
+                        if item[1].get("dose_value") is not None
+                        else None
+                    ),
+                    str(item[1].get("dose_unit", "") or ""),
+                    1,
+                )
+                else 1,
                 _structured_preferred_name_rank(group_key, str(item[1].get("component", "") or "")),
                 _structured_unit_rank(group_key, str(item[1].get("dose_unit", "") or "")),
+                _dose_sort_value(item[1]),
                 0 if item[0] in decimal_shift_larger_ids else 1,
                 0 if _component_looks_like_mineral_form_noise(str(item[1].get("component", "") or "")) else 1,
                 0 if item[1].get("dose_value") is None else 1,
@@ -7637,11 +8694,14 @@ def _collapse_structured_label_rows(rows: list[dict[str, Any]]) -> list[dict[str
         for row in filtered
         if _structured_component_group_key(str(row.get("component", "") or "")) in STRUCTURED_CORE_COMPONENT_GROUPS
     )
-    if core_count >= 10:
+    if core_count >= 4:
         filtered = [
             row
             for row in filtered
-            if _structured_component_group_key(str(row.get("component", "") or "")) in STRUCTURED_CORE_COMPONENT_GROUPS
+            if (
+                _structured_component_group_key(str(row.get("component", "") or "")) in STRUCTURED_CORE_COMPONENT_GROUPS
+                or normalize_lookup_key(str(row.get("component", "") or "")) in STRUCTURED_NONCORE_KEEP_COMPONENTS
+            )
         ]
     cleaned: list[dict[str, Any]] = []
     for row in filtered:
@@ -7668,6 +8728,92 @@ _MICROGRAM_PREFERRED_NUTRIENTS: set[str] = {
 }
 
 
+def _detect_dosage_outliers(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Detect simple statistical outliers for key vitamins (normalized to mcg)."""
+    warnings: list[str] = []
+    grouped: dict[str, list[float]] = {
+        "vitamin d": [],
+        "vitamin b12": [],
+        "vitamin c": [],
+        "folate": [],
+    }
+
+    for row in rows:
+        component = normalize_lookup_key(str(row.get("component", "") or ""))
+        dose_value = row.get("dose_value")
+        dose_unit = _normalize_component_unit_token(str(row.get("dose_unit", "") or ""))
+        if dose_value is None or dose_unit not in {"mg", "mcg"}:
+            continue
+        try:
+            value = float(dose_value)
+        except Exception:
+            continue
+        value_mcg = value * 1000.0 if dose_unit == "mg" else value
+
+        if "vitamin d" in component:
+            grouped["vitamin d"].append(value_mcg)
+        elif "vitamin b12" in component or "cobalamin" in component:
+            grouped["vitamin b12"].append(value_mcg)
+        elif "vitamin c" in component or "ascorbic" in component:
+            grouped["vitamin c"].append(value_mcg)
+        elif "folate" in component or "folic" in component:
+            grouped["folate"].append(value_mcg)
+
+    expected_ranges = {
+        "vitamin d": (5.0, 100.0),
+        "vitamin b12": (2.0, 1000.0),
+        "vitamin c": (10000.0, 2000000.0),
+        "folate": (100.0, 1000.0),
+    }
+
+    for nutrient, values in grouped.items():
+        if len(values) < 1:
+            continue
+        try:
+            median_val = float(statistics.median(values))
+        except Exception:
+            continue
+        low, high = expected_ranges.get(nutrient, (0.0, float("inf")))
+        for value in values:
+            if median_val > 0 and value > (median_val * 5.0):
+                warnings.append(
+                    f"outlier: {nutrient} {format_float(value)} mcg is >5x median {format_float(median_val)} mcg"
+                )
+            if value < low or value > high:
+                warnings.append(
+                    f"range: {nutrient} {format_float(value)} mcg outside expected {format_float(low)}-{format_float(high)} mcg"
+                )
+
+    return rows, warnings
+
+
+def _apply_context_aware_unit_correction(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Apply conservative unit corrections for commonly misread vitamin rows."""
+    corrected: list[dict[str, Any]] = []
+    for row in rows:
+        out = dict(row)
+        component = normalize_lookup_key(str(out.get("component", "") or ""))
+        dose_unit = _normalize_component_unit_token(str(out.get("dose_unit", "") or ""))
+        try:
+            dose_value = float(out.get("dose_value")) if out.get("dose_value") is not None else None
+        except Exception:
+            dose_value = None
+
+        if dose_value is None:
+            corrected.append(out)
+            continue
+
+        if "vitamin c" in component and dose_unit == "mcg" and dose_value < 10:
+            out["dose_unit"] = "mg"
+            out["dose_value"] = dose_value
+        elif "vitamin d" in component and dose_unit == "mg" and dose_value <= 1:
+            out["dose_unit"] = "mcg"
+            out["dose_value"] = dose_value * 1000.0
+
+        corrected.append(out)
+    return corrected
+
+
 def _validate_nutrition_label_sanity(
     rows: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[str]]:
@@ -7684,7 +8830,8 @@ def _validate_nutrition_label_sanity(
     Returns (validated_rows, warnings_list).  Rows are never removed — only
     flagged so the caller can surface warnings to the user.
     """
-    warnings: list[str] = []
+    rows, outlier_warnings = _detect_dosage_outliers(rows)
+    warnings: list[str] = list(outlier_warnings)
     validated: list[dict[str, Any]] = []
 
     # Build lookup dict for cross-check.
@@ -7748,15 +8895,24 @@ def _validate_nutrition_label_sanity(
     return validated, warnings
 
 
-def try_paddleocr_ocr(image_bytes: bytes) -> str:
+def _is_strong_ocr_candidate(text: str) -> bool:
+    gate = extraction_gate_report(text)
+    return bool(
+        gate.get("passed")
+        and int(gate.get("dose_hits", 0)) >= 4
+        and int(gate.get("nutrient_hint_hits", 0)) >= 2
+    )
+
+
+def try_paddleocr_ocr(image_bytes: bytes, raw_result: Any | None = None) -> str:
     try:
         import numpy as np
-        from paddleocr import PaddleOCR
-
+        ocr = _get_paddleocr_engine()
+        if ocr is None:
+            return ""
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         img_np = np.array(image)
-        ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
-        result = ocr.ocr(img_np, cls=True) or []
+        result = raw_result if raw_result is not None else (ocr.ocr(img_np, cls=True) or [])
         lines: list[str] = []
         for block in result:
             for row in block or []:
@@ -7776,47 +8932,91 @@ def extract_image_text_with_local_stack(image_bytes: bytes) -> str:
     global LAST_VISION_PROVIDER
     LAST_VISION_PROVIDER = ""
 
-    system_prompt, user_prompt = _build_vision_extraction_prompt()
-
     # Stage 1: preprocess image to improve OCR accuracy.
-    processed_bytes = _preprocess_label_image(image_bytes)
+    processed_full = _preprocess_label_image(image_bytes)
 
-    # Stage 2: table-aware PaddleOCR (bounding-box row reconstruction) + plain OCR.
-    table_text = _reconstruct_table_rows_from_paddle(processed_bytes)
-    paddle_text = try_paddleocr_ocr(processed_bytes) if not table_text else table_text
-    tesseract_text = try_tesseract_ocr(processed_bytes)
-    local_ocr_text = "\n".join([x for x in [paddle_text, tesseract_text] if str(x or "").strip()]).strip()
+    # Process candidates in tiers (full -> table -> focus crops). This avoids
+    # always paying OCR cost for all crops when full/table already has strong signal.
+    tier_candidates: list[list[tuple[str, bytes]]] = [[("full", processed_full)]]
+    table_crop = _detect_nutrition_table_region(image_bytes)
+    if table_crop:
+        tier_candidates.append([("table_crop", _preprocess_label_image(table_crop))])
+    focus_candidates: list[tuple[str, bytes]] = []
+    for crop_name, crop_bytes in _generate_focus_region_crops(image_bytes):
+        focus_candidates.append((crop_name, _preprocess_label_image(crop_bytes)))
+    if focus_candidates:
+        tier_candidates.append(focus_candidates)
 
-    if not local_ocr_text:
+    best_text = ""
+    best_score = -1.0
+    best_source = ""
+    for tier in tier_candidates:
+        for source, candidate_bytes in tier:
+            paddle_raw = None
+            try:
+                import numpy as np
+
+                ocr_engine = _get_paddleocr_engine()
+                if ocr_engine is not None:
+                    image = Image.open(io.BytesIO(candidate_bytes)).convert("RGB")
+                    paddle_raw = ocr_engine.ocr(np.array(image), cls=True) or []
+            except Exception:
+                paddle_raw = None
+
+            table_text = _reconstruct_table_rows_from_paddle(candidate_bytes, raw_result=paddle_raw)
+            paddle_text = try_paddleocr_ocr(candidate_bytes, raw_result=paddle_raw) if not table_text else table_text
+            tesseract_text = try_tesseract_ocr(candidate_bytes)
+            consensus_lines = _vitamin_consensus_lines_from_ocr(paddle_text, tesseract_text)
+            merged = "\n".join([x for x in [paddle_text, tesseract_text] if str(x or "").strip()]).strip()
+            if consensus_lines:
+                merged = "\n".join([merged, *consensus_lines]).strip()
+            if not merged:
+                continue
+            score = _score_ocr_nutrition_signal(merged)
+            if score > best_score or (abs(score - best_score) < 1e-9 and len(merged) > len(best_text)):
+                best_score = score
+                best_text = merged
+                best_source = source
+
+        # Strong result found in this tier: skip deeper/fallback tiers.
+        if _is_strong_ocr_candidate(best_text):
+            break
+
+    if not best_text:
         LAST_LOCAL_LLM_ERROR = "Local OCR returned no text"
         return ""
 
     # Pure deterministic pipeline — no LLM, no download required.
-    LAST_VISION_PROVIDER = "PaddleOCR + Tesseract"
-    return local_ocr_text
+    if best_source == "table_crop":
+        LAST_VISION_PROVIDER = "PaddleOCR + Tesseract (table-crop best)"
+    else:
+        LAST_VISION_PROVIDER = "PaddleOCR + Tesseract"
+    return best_text
 
 
 
 def try_tesseract_ocr(image_bytes: bytes) -> str:
-    def preprocess_for_tesseract(image: Image.Image) -> Image.Image:
+    def preprocess_for_tesseract(image: Image.Image, scale: float = 1.0) -> Image.Image:
         gray = image.convert("L")
-        # Upscale small labels for better OCR.
+        # Upscale for better OCR when needed.
         width, height = gray.size
-        if min(width, height) < 1200:
-            scale = 2
-            gray = gray.resize((width * scale, height * scale), Image.Resampling.LANCZOS)
+        if scale > 1.0:
+            gray = gray.resize((int(width * scale), int(height * scale)), Image.Resampling.LANCZOS)
+        elif min(width, height) < 1200:
+            gray = gray.resize((width * 2, height * 2), Image.Resampling.LANCZOS)
         gray = ImageOps.autocontrast(gray)
         gray = gray.filter(ImageFilter.MedianFilter(size=3))
         # Basic binarization for high-contrast nutrition tables.
         return gray.point(lambda px: 255 if px > 150 else 0)
 
-    def preprocess_high_contrast(image: Image.Image) -> Image.Image:
+    def preprocess_high_contrast(image: Image.Image, scale: float = 1.0) -> Image.Image:
         """Higher-contrast variant for dark/low-light bottle label photos."""
         gray = image.convert("L")
         width, height = gray.size
-        if min(width, height) < 900:
-            scale = 2
-            gray = gray.resize((width * scale, height * scale), Image.Resampling.LANCZOS)
+        if scale > 1.0:
+            gray = gray.resize((int(width * scale), int(height * scale)), Image.Resampling.LANCZOS)
+        elif min(width, height) < 900:
+            gray = gray.resize((width * 2, height * 2), Image.Resampling.LANCZOS)
         gray = ImageOps.autocontrast(gray, cutoff=5)
         gray = gray.filter(ImageFilter.SHARPEN)
         return gray.point(lambda px: 255 if px > 120 else 0)
@@ -7850,7 +9050,7 @@ def try_tesseract_ocr(image_bytes: bytes) -> str:
             # Keep low-confidence tokens that look like nutrient names, doses, or units.
             # Threshold kept low (10) so curved/distorted label areas are not silently dropped.
             nutrient_kw = re.search(
-                r"\d|mg|mcg|meg|ug|iu|vitamin|mineral|zinc|iron|calcium|selenium|niacin|biotin|"
+                r"\d|mg|mcg|meg|ug|iu|ui|ie|vitamin|mineral|zinc|iron|calcium|selenium|niacin|biotin|"
                 r"copper|chromium|molybdenum|manganese|potassium|phosph(?:or|0r)",
                 word,
                 re.I,
@@ -7881,13 +9081,8 @@ def try_tesseract_ocr(image_bytes: bytes) -> str:
             pytesseract.pytesseract.tesseract_cmd = resolved_cmd
 
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        # Three image variants: standard normalised, high-contrast (for dark/under-exposed
-        # bottle photos), and plain greyscale.
-        variants = [
-            preprocess_for_tesseract(image),
-            preprocess_high_contrast(image),
-            image.convert("L"),
-        ]
+        w, h = image.size
+        is_small = min(w, h) < 1000
 
         # Determine available language(s).  Prefer deu+eng for European supplement labels.
         try:
@@ -7896,44 +9091,50 @@ def try_tesseract_ocr(image_bytes: bytes) -> str:
         except Exception:
             lang_config = "eng"
 
-        # PSM modes to try: 6=uniform block (default), 11=sparse text.
-        # Sparse-text mode helps recover rows from curved bottle labels where lines are
-        # distorted and Tesseract would otherwise skip them.
-        psm_modes = [6, 11]
+        # Adaptive OCR attempts: start fast and escalate only when needed.
+        attempts: list[tuple[Image.Image, int, int]] = [
+            (preprocess_for_tesseract(image, scale=1.0), 6, 8),
+            (preprocess_high_contrast(image, scale=1.0), 6, 8),
+        ]
+        if is_small:
+            attempts.append((preprocess_for_tesseract(image, scale=1.5), 6, 10))
+            attempts.append((preprocess_high_contrast(image, scale=1.5), 11, 10))
+        else:
+            attempts.append((preprocess_for_tesseract(image, scale=1.25), 11, 10))
 
         all_reconstructed: list[str] = []
         best_text = ""
         best_score = -1
-
-        for variant in variants:
-            for psm in psm_modes:
-                cfg = f"--oem 3 --psm {psm} -l {lang_config}"
-                try:
-                    ocr_data = pytesseract.image_to_data(
-                        variant,
-                        config=cfg,
-                        output_type=pytesseract.Output.DICT,
-                        timeout=20,
-                    )
-                    rebuilt_rows = rebuild_rows_from_tesseract(ocr_data)
-                    reconstructed_text = "\n".join(rebuilt_rows)
-                    raw_text = pytesseract.image_to_string(variant, config=cfg, timeout=20)
-                    candidate_text = "\n".join(
-                        [x for x in [reconstructed_text, raw_text] if str(x).strip()]
-                    ).strip()
-                    if candidate_text:
-                        all_reconstructed.append(candidate_text)
-                    gate = extraction_gate_report(candidate_text)
-                    score = (
-                        int(gate.get("score", 0)) * 10
-                        + int(gate.get("dose_hits", 0)) * 3
-                        + int(gate.get("nutrient_hint_hits", 0))
-                    )
-                    if score > best_score:
-                        best_score = score
-                        best_text = candidate_text
-                except Exception:
-                    pass
+        for variant, psm, timeout_sec in attempts:
+            cfg = f"--oem 3 --psm {psm} -l {lang_config}"
+            try:
+                ocr_data = pytesseract.image_to_data(
+                    variant,
+                    config=cfg,
+                    output_type=pytesseract.Output.DICT,
+                    timeout=timeout_sec,
+                )
+                rebuilt_rows = rebuild_rows_from_tesseract(ocr_data)
+                reconstructed_text = "\n".join(rebuilt_rows)
+                raw_text = pytesseract.image_to_string(variant, config=cfg, timeout=timeout_sec)
+                candidate_text = "\n".join(
+                    [x for x in [reconstructed_text, raw_text] if str(x).strip()]
+                ).strip()
+                if candidate_text:
+                    all_reconstructed.append(candidate_text)
+                gate = extraction_gate_report(candidate_text)
+                score = (
+                    int(gate.get("score", 0)) * 10
+                    + int(gate.get("dose_hits", 0)) * 3
+                    + int(gate.get("nutrient_hint_hits", 0))
+                )
+                if score > best_score:
+                    best_score = score
+                    best_text = candidate_text
+                if _is_strong_ocr_candidate(candidate_text):
+                    break
+            except Exception:
+                pass
 
         # Merge ALL variant outputs so that rows captured by any single config are
         # not lost.  Duplicate lines are harmless because parse_components_rule_based
@@ -8040,6 +9241,8 @@ def _normalize_component_unit_token(unit: str) -> str:
     u = str(unit or "").strip().lower()
     if u in {"ug", "µg", "μg", "fg", "meg"}:
         return "mcg"
+    if u in {"ui", "u.i", "u.i.", "i.u", "i.u.", "ie", "i.e", "i.e."}:
+        return "iu"
     return u
 
 
@@ -8333,15 +9536,28 @@ def extract_supplement_text_from_url(url: str) -> str:
 
     local_fallback_text = extract_supplement_text_from_page_text_local(page_text)
 
+    if local_fallback_text and passes_extraction_gate(local_fallback_text):
+        LAST_TEXT_PROVIDER = "Local URL parser"
+        LAST_URL_PARSE_REASON = "Local parser passed deterministic quality gates."
+        return local_fallback_text
+
+    if local_fallback_text and not _local_text_llm_enabled():
+        LAST_TEXT_PROVIDER = "Local URL parser"
+        LAST_URL_PARSE_REASON = "Local parser used because no local text-model runtime is enabled."
+        return local_fallback_text
+
+    prompt_source = local_fallback_text if local_fallback_text else page_text[:4000]
+
     system_prompt = (
         "You extract supplement facts from web page text. "
         "Return plain text only with ingredients/components, serving size, and doses."
     )
-    user_prompt = f"Extract supplement facts from this page content:\n\n{page_text}"
+    user_prompt = f"Extract supplement facts from this page content:\n\n{prompt_source}"
     llm_text = call_openrouter_text(system_prompt, user_prompt)
 
     if llm_text:
         if passes_extraction_gate(llm_text):
+            LAST_TEXT_PROVIDER = "Local text model"
             LAST_URL_PARSE_REASON = "LLM output passed deterministic quality gates."
             return llm_text
 
@@ -8633,6 +9849,41 @@ Input:
 def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
     global LAST_TEXT_PROVIDER
 
+    # --- Vitamin plausibility check (warning-only, unit-aware) ---
+    def _plausibility_check_vitamins(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+        """Flag implausible vitamin values using per-vitamin, unit-aware absolute ranges.
+        Never cross-compares numeric values across different units (mg vs mcg).
+        Warnings only — no auto-correction avoids overwrite regressions (e.g. E mg vs A mcg)."""
+        VITAMIN_RANGES: dict[tuple[str, str], tuple[float, float]] = {
+            ("vitamin a",   "mcg"): (10.0,    3000.0),
+            ("vitamin a",   "mg"):  (0.01,    3.0),
+            ("vitamin a",   "iu"):  (100.0,   30000.0),
+            ("vitamin d3",  "mcg"): (1.0,     500.0),
+            ("vitamin d3",  "mg"):  (0.001,   0.5),
+            ("vitamin d3",  "iu"):  (40.0,    50000.0),
+            ("vitamin e",   "mg"):  (0.5,     1200.0),
+            ("vitamin e",   "iu"):  (1.0,     1800.0),
+            ("vitamin e",   "mcg"): (500.0,   1200000.0),
+            ("vitamin k2",  "mcg"): (1.0,     1000.0),
+            ("vitamin k2",  "mg"):  (0.001,   1.0),
+        }
+        warnings: list[str] = []
+        for row in rows:
+            component = str(row.get("component", "")).strip().lower()
+            unit = str(row.get("dose_unit", "")).strip().lower()
+            key = (component, unit)
+            if key in VITAMIN_RANGES:
+                lo, hi = VITAMIN_RANGES[key]
+                try:
+                    val = float(row.get("dose_value", 0) or 0)
+                except Exception:
+                    continue
+                if val < lo or val > hi:
+                    warnings.append(
+                        f"implausible {component}: {val} {unit} (expected {lo}–{hi})"
+                    )
+        return rows, warnings
+
     if not input_text.strip():
         LAST_TEXT_PROVIDER = ""
         return {
@@ -8739,12 +9990,25 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
 
     warnings: list[str] = []
 
+
     # Stage 3+: apply fuzzy nutrient-name correction to resolve OCR label errors.
     best_rows = _apply_fuzzy_nutrient_correction_to_rows(best_rows)
+
+    # Context-aware correction: use regex anchors from OCR text to fix clear vitamin mismatches.
+    best_rows, context_warnings = _apply_contextual_vitamin_dose_corrections(best_rows, parse_input_text)
+    if context_warnings:
+        warnings.extend(context_warnings)
+
+    # Vitamin plausibility check/correction
+    best_rows, plaus_warnings = _plausibility_check_vitamins(best_rows)
+    if plaus_warnings:
+        warnings.extend(plaus_warnings)
 
     if has_structured_table_cues:
         best_rows.extend(_recover_core_micronutrient_rows_from_text(parse_input_text, existing_rows=best_rows))
         best_rows = _collapse_structured_label_rows(best_rows)
+
+    best_rows = _apply_context_aware_unit_correction(best_rows)
 
     # Stage 4: unit domain + energy sanity validation (non-destructive — adds warnings).
     best_rows, sanity_warnings = _validate_nutrition_label_sanity(best_rows)
@@ -8975,15 +10239,27 @@ if (!parentWin.__suppswapTabScrollHookInstalled) {
         height=0,
     )
 
-    if st.session_state.get("target_tab"):
-        target_tab = str(st.session_state.get("target_tab") or "").strip()
-        safe_target = json.dumps(target_tab)
+    def _render_tab_activation_script(target_tab_name: str) -> None:
+        safe_target = json.dumps(str(target_tab_name or "").strip())
         components.html(
-            f"""
+            rf"""
 <script>
 const target = {safe_target};
 const parentDoc = window.parent.document;
 const parentWin = window.parent;
+
+const canonicalize = (value) => {{
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return '';
+    return raw
+        .replace(/^\s*[0-9]+\s*[\)\].:\-]*\s*/, '')
+        .replace(/^[^a-z0-9]+/, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}};
+
+const targetCanonical = canonicalize(target);
+
 const scrollToTop = () => {{
     parentWin.scrollTo({{ top: 0, left: 0, behavior: 'auto' }});
     const main = parentDoc.querySelector('[data-testid="stMain"]');
@@ -8991,26 +10267,48 @@ const scrollToTop = () => {{
         main.scrollTo({{ top: 0, left: 0, behavior: 'auto' }});
     }}
 }};
-setTimeout(() => {{
+
+const matchesTarget = (label) => {{
+    const plain = String(label || '').trim().toLowerCase();
+    const canon = canonicalize(label);
+    if (!canon) return false;
+    if (plain === String(target || '').trim().toLowerCase()) return true;
+    if (canon === targetCanonical) return true;
+    if (canon.startsWith(targetCanonical)) return true;
+    if (canon.includes(targetCanonical)) return true;
+    return false;
+}};
+
+const tryActivateTab = (attempt = 0) => {{
     const tabButtons = parentDoc.querySelectorAll('button[role="tab"]');
+    let clicked = false;
+
     for (const btn of tabButtons) {{
         const label = (btn.innerText || '').trim();
-        const normalizedLabel = label.replace(/^[^A-Za-z0-9]+/, '').trim();
-        const matches =
-            label === target ||
-            normalizedLabel === target ||
-            normalizedLabel.startsWith(target);
-        if (matches) {{
-      btn.click();
-            setTimeout(scrollToTop, 0);
-      break;
+        const matches = matchesTarget(label);
+        if (!matches) {{
+            continue;
+        }}
+        btn.click();
+        clicked = true;
+        setTimeout(scrollToTop, 0);
+        break;
     }}
-  }}
-}}, 120);
+
+    if (!clicked && attempt < 80) {{
+        setTimeout(() => tryActivateTab(attempt + 1), 100);
+    }}
+}};
+
+setTimeout(() => tryActivateTab(0), 60);
 </script>
 """,
             height=0,
         )
+
+    if st.session_state.get("target_tab"):
+        target_tab = str(st.session_state.get("target_tab") or "").strip()
+        _render_tab_activation_script(target_tab)
         st.session_state["target_tab"] = ""
 
     with tab_welcome:
@@ -9624,6 +10922,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     st.session_state["analysis_usda_summary"] = []
                     st.session_state["analysis_usda_details"] = []
                     st.session_state["analysis_usda_status"] = ""
+                    st.session_state["target_tab"] = "📊 Results"
 
                     # Always unlock/reset Analyze inputs after submit so all fields are interactive again.
                     _reset_analyze_inputs_after_submit()
@@ -9640,7 +10939,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
             help="Becomes available after Analyze input completes.",
         )
         if go_to_results:
-            st.session_state["target_tab"] = "Results"
+            st.session_state["target_tab"] = "📊 Results"
             st.rerun()
 
     components = st.session_state.get("analysis_components", [])
@@ -9650,6 +10949,22 @@ The local RAG library is built from curated expert nutrition notes and evidence 
         st.markdown("### Brief Recommendation Summary")
         st.caption("Quick, user-friendly guidance first. Detailed nutrient matching remains below.")
         summary_placeholder = st.container()
+
+        if combined:
+            if st.button(
+                "Re-parse extracted text with latest OCR rules",
+                key="reparse_current_analysis_text",
+                use_container_width=True,
+            ):
+                refreshed_payload = build_structured_nutrients_json(combined)
+                refreshed_components = list(refreshed_payload.get("nutrients", []) or [])
+                st.session_state["analysis_components"] = refreshed_components
+                st.session_state["analysis_structured_debug"] = refreshed_payload
+                st.session_state["analysis_usda_cache_key"] = ""
+                st.session_state["analysis_usda_summary"] = []
+                st.session_state["analysis_usda_details"] = []
+                st.session_state["analysis_usda_status"] = ""
+                st.rerun()
 
         st.divider()
         st.markdown("### More Detailed Analysis")
@@ -9696,14 +11011,21 @@ The local RAG library is built from curated expert nutrition notes and evidence 
             detail_by_component = {normalize_lookup_key(str(d.get("component", ""))): d for d in usda_details}
 
             profiles = load_dietary_profiles()
-            profile_labels = [str(p.get("label", "No restriction") or "No restriction") for p in profiles]
-            profile_by_label = {str(p.get("label", "No restriction") or "No restriction"): p for p in profiles}
-            default_profile_label = "No restriction" if "No restriction" in profile_labels else (profile_labels[0] if profile_labels else "")
+            profile_by_id, _, profile_label_by_id = _dietary_profile_maps(profiles)
+            profile_ids = list(profile_by_id.keys())
+            default_profile_id = _default_dietary_profile_id(profiles)
 
-            selected_profile_label = str(st.session_state.get("global_diet_profile", default_profile_label))
-            if selected_profile_label not in profile_by_label:
-                selected_profile_label = default_profile_label
-            selected_profile = profile_by_label.get(selected_profile_label, profiles[0] if profiles else None)
+            results_profile_state = st.session_state.get(
+                "results_dietary_profile_selector",
+                st.session_state.get("global_diet_profile", default_profile_id),
+            )
+            selected_profile_id, selected_profile = _resolve_dietary_profile_selection(
+                profiles,
+                results_profile_state,
+            )
+            if st.session_state.get("global_diet_profile") != selected_profile_id:
+                st.session_state["global_diet_profile"] = selected_profile_id
+            selected_profile_label = profile_label_by_id.get(selected_profile_id, "No restriction")
 
             selected_country = str(st.session_state.get("price_region", "Germany"))
             if selected_country not in COUNTRY_PRICE_CONFIG:
@@ -9853,7 +11175,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                             index=0,
                             key=(
                                 f"alt_select_cell_{index}_{component_key}_"
-                                f"{normalize_lookup_key(selected_profile_label)}"
+                                f"{normalize_lookup_key(selected_profile_id)}"
                             ),
                         )
                         selected_idx = option_labels.index(selected_label)
@@ -9866,6 +11188,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                             dose_unit,
                             selected_amt,
                             selected_unit,
+                            component_name=component_raw,
                         )
 
                         match_label = "Not available"
@@ -10034,6 +11357,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
             combined_summary = summarize_combined_food_coverage(selected_component_matches)
             if int(combined_summary.get("covered_components", 0) or 0) > int(auto_consolidated.get("covered_components", 0) or 0):
                 manual_rows = combined_summary.get("rows", []) or []
+                existing_sunlight_note = str(auto_consolidated.get("sunlight_note", "") or "")
                 auto_consolidated = {
                     "rows": [
                         {
@@ -10046,6 +11370,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     "total_components": int(combined_summary.get("total_components", 0) or 0),
                     "covered_components": int(combined_summary.get("covered_components", 0) or 0),
                     "uncovered_components": [],
+                    "sunlight_note": existing_sunlight_note,
                 }
 
             summary_rows = auto_consolidated.get("rows", []) or []
@@ -10136,24 +11461,30 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                 st.divider()
                 st.caption("Adjust filters and pricing options below to recalculate results.")
 
-                default_profile_index = profile_labels.index(default_profile_label) if default_profile_label in profile_labels else 0
+                default_profile_index = profile_ids.index(default_profile_id) if default_profile_id in profile_ids else 0
                 selected_profile_index = (
-                    profile_labels.index(selected_profile_label)
-                    if selected_profile_label in profile_labels
+                    profile_ids.index(selected_profile_id)
+                    if selected_profile_id in profile_ids
                     else default_profile_index
                 )
 
                 with st.expander("Dietary restriction", expanded=False):
-                    st.selectbox(
+                    # Always use the latest profile from session state for filtering
+                    selected_profile_id_after = st.selectbox(
                         "Apply restriction to whole-food alternatives",
-                        options=profile_labels,
-                        index=selected_profile_index,
-                        key="global_diet_profile",
+                        options=profile_ids,
+                        index=profile_ids.index(st.session_state.get("global_diet_profile", default_profile_id)) if st.session_state.get("global_diet_profile", default_profile_id) in profile_ids else 0,
+                        format_func=lambda profile_id: profile_label_by_id.get(profile_id, str(profile_id)),
+                        key="results_dietary_profile_selector",
                     )
-                    selected_profile_after = profile_by_label.get(
-                        str(st.session_state.get("global_diet_profile", default_profile_label)),
-                        profiles[0] if profiles else None,
+                    selected_profile_id_after, selected_profile_after = _resolve_dietary_profile_selection(
+                        profiles,
+                        selected_profile_id_after,
                     )
+                    # Always update global profile and rerun if changed
+                    if st.session_state.get("global_diet_profile") != selected_profile_id_after:
+                        st.session_state["global_diet_profile"] = selected_profile_id_after
+                        st.rerun()
                     if selected_profile_after and selected_profile_after.get("description"):
                         st.caption(f"Profile note: {selected_profile_after.get('description')}")
                     st.caption("Filtering uses local keyword/rule screening and is not a medical, allergy, halal, or kosher certification.")
@@ -10227,10 +11558,12 @@ The local RAG library is built from curated expert nutrition notes and evidence 
             st.info("Generate results first so meal anchors can be derived from your selected alternatives.")
         else:
             profiles = load_dietary_profiles()
-            profile_labels = [str(p.get("label", "No restriction") or "No restriction") for p in profiles]
-            profile_by_label = {str(p.get("label", "No restriction") or "No restriction"): p for p in profiles}
-            selected_profile_label = str(st.session_state.get("global_diet_profile", "No restriction"))
-            selected_profile = profile_by_label.get(selected_profile_label, profiles[0] if profiles else None)
+            _, _, profile_label_by_id = _dietary_profile_maps(profiles)
+            selected_profile_id, selected_profile = _resolve_dietary_profile_selection(
+                profiles,
+                st.session_state.get("global_diet_profile", _default_dietary_profile_id(profiles)),
+            )
+            selected_profile_label = profile_label_by_id.get(selected_profile_id, "No restriction")
 
             selected_country = str(st.session_state.get("price_region", "Germany"))
             selected_currency = str(st.session_state.get("price_currency", "EUR"))
