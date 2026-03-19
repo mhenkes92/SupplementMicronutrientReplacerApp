@@ -6263,6 +6263,11 @@ def _repair_ocr_component_name(component: str) -> str:
     if text in component_alias_map:
         return component_alias_map[text]
 
+    # OCR confusion on curved bottle labels: "vitamin k2" can be read as
+    # "vitamin ka" when the numeral is degraded.
+    if re.match(r"^vitamin\s+ka$", text, re.I):
+        return "vitamin k2"
+
     mineral_form_match = OCR_MINERAL_FORM_SUFFIX_PATTERN.match(text)
     if mineral_form_match:
         return str(mineral_form_match.group("base") or "").lower()
@@ -8904,6 +8909,20 @@ def _is_strong_ocr_candidate(text: str) -> bool:
     )
 
 
+def _core_vitamin_coverage_count(text: str) -> int:
+    raw = str(text or "")
+    if not raw:
+        return 0
+
+    checks = {
+        "a": re.search(r"\bvit(?:amin|main)?\s*a\b", raw, re.I),
+        "d": re.search(r"\bvit(?:amin|main)?\s*d(?:\d{1,2})?\b", raw, re.I),
+        "e": re.search(r"\bvit(?:amin|main)?\s*e\b", raw, re.I),
+        "k": re.search(r"\bvit(?:amin|main)?\s*k(?:\d{1,2})?\b", raw, re.I),
+    }
+    return sum(1 for matched in checks.values() if matched)
+
+
 def try_paddleocr_ocr(image_bytes: bytes, raw_result: Any | None = None) -> str:
     try:
         import numpy as np
@@ -8931,41 +8950,65 @@ def extract_image_text_with_local_stack(image_bytes: bytes) -> str:
     global LAST_LOCAL_LLM_ERROR
     global LAST_VISION_PROVIDER
     LAST_VISION_PROVIDER = ""
+    started_at = time.perf_counter()
+    total_budget_sec = 2.4
+
+    def _within_budget(reserve_sec: float = 0.0) -> bool:
+        return (time.perf_counter() - started_at) < max(0.0, total_budget_sec - reserve_sec)
 
     # Stage 1: preprocess image to improve OCR accuracy.
     processed_full = _preprocess_label_image(image_bytes)
-
-    # Process candidates in tiers (full -> table -> focus crops). This avoids
-    # always paying OCR cost for all crops when full/table already has strong signal.
     tier_candidates: list[list[tuple[str, bytes]]] = [[("full", processed_full)]]
-    table_crop = _detect_nutrition_table_region(image_bytes)
-    if table_crop:
-        tier_candidates.append([("table_crop", _preprocess_label_image(table_crop))])
-    focus_candidates: list[tuple[str, bytes]] = []
-    for crop_name, crop_bytes in _generate_focus_region_crops(image_bytes):
-        focus_candidates.append((crop_name, _preprocess_label_image(crop_bytes)))
-    if focus_candidates:
-        tier_candidates.append(focus_candidates)
+
+    # Defer extra crops unless full-image OCR is weak and budget remains.
+    extra_tiers_built = False
+
+    def _build_extra_tiers_if_needed() -> None:
+        nonlocal extra_tiers_built
+        if extra_tiers_built or not _within_budget(1.6):
+            return
+        extra_tiers_built = True
+        table_crop = _detect_nutrition_table_region(image_bytes)
+        if table_crop and _within_budget(1.4):
+            tier_candidates.append([("table_crop", _preprocess_label_image(table_crop))])
+        if _within_budget(1.2):
+            focus_raw = _generate_focus_region_crops(image_bytes)
+            # Only try a single focus crop in fast mode.
+            if focus_raw:
+                crop_name, crop_bytes = focus_raw[0]
+                tier_candidates.append([(crop_name, _preprocess_label_image(crop_bytes))])
 
     best_text = ""
     best_score = -1.0
     best_source = ""
-    for tier in tier_candidates:
+    tier_idx = 0
+    while tier_idx < len(tier_candidates):
+        if not _within_budget(1.4):
+            break
+        tier = tier_candidates[tier_idx]
         for source, candidate_bytes in tier:
-            paddle_raw = None
-            try:
-                import numpy as np
-
-                ocr_engine = _get_paddleocr_engine()
-                if ocr_engine is not None:
-                    image = Image.open(io.BytesIO(candidate_bytes)).convert("RGB")
-                    paddle_raw = ocr_engine.ocr(np.array(image), cls=True) or []
-            except Exception:
-                paddle_raw = None
-
-            table_text = _reconstruct_table_rows_from_paddle(candidate_bytes, raw_result=paddle_raw)
-            paddle_text = try_paddleocr_ocr(candidate_bytes, raw_result=paddle_raw) if not table_text else table_text
+            if not _within_budget(1.2):
+                break
+            # Fast first pass: Tesseract only. Paddle is used selectively when
+            # signal remains weak and budget allows.
             tesseract_text = try_tesseract_ocr(candidate_bytes)
+            paddle_text = ""
+
+            paddle_raw = None
+            if not _is_strong_ocr_candidate(tesseract_text) and _within_budget(1.0):
+                try:
+                    import numpy as np
+
+                    ocr_engine = _get_paddleocr_engine()
+                    if ocr_engine is not None:
+                        image = Image.open(io.BytesIO(candidate_bytes)).convert("RGB")
+                        paddle_raw = ocr_engine.ocr(np.array(image), cls=True) or []
+                except Exception:
+                    paddle_raw = None
+
+                table_text = _reconstruct_table_rows_from_paddle(candidate_bytes, raw_result=paddle_raw)
+                paddle_text = try_paddleocr_ocr(candidate_bytes, raw_result=paddle_raw) if not table_text else table_text
+
             consensus_lines = _vitamin_consensus_lines_from_ocr(paddle_text, tesseract_text)
             merged = "\n".join([x for x in [paddle_text, tesseract_text] if str(x or "").strip()]).strip()
             if consensus_lines:
@@ -8978,9 +9021,24 @@ def extract_image_text_with_local_stack(image_bytes: bytes) -> str:
                 best_text = merged
                 best_source = source
 
-        # Strong result found in this tier: skip deeper/fallback tiers.
+        # Strong result found in this tier: skip deeper/fallback tiers unless
+        # core vitamins look almost complete but one is missing (common on bottle labels).
         if _is_strong_ocr_candidate(best_text):
-            break
+            core_count = _core_vitamin_coverage_count(best_text)
+            if core_count >= 4:
+                break
+            # If 3/4 core vitamins are present, allow one extra tier when budget permits
+            # to recover the missing vitamin row (e.g., K2).
+            if core_count == 3 and _within_budget(1.0):
+                if tier_idx == 0:
+                    _build_extra_tiers_if_needed()
+            else:
+                break
+
+        # Build and attempt deeper tiers only if current result is weak.
+        if tier_idx == 0 and not _is_strong_ocr_candidate(best_text):
+            _build_extra_tiers_if_needed()
+        tier_idx += 1
 
     if not best_text:
         LAST_LOCAL_LLM_ERROR = "Local OCR returned no text"
@@ -8988,9 +9046,9 @@ def extract_image_text_with_local_stack(image_bytes: bytes) -> str:
 
     # Pure deterministic pipeline — no LLM, no download required.
     if best_source == "table_crop":
-        LAST_VISION_PROVIDER = "PaddleOCR + Tesseract (table-crop best)"
+        LAST_VISION_PROVIDER = "Fast OCR (Tesseract + selective Paddle, table-crop best)"
     else:
-        LAST_VISION_PROVIDER = "PaddleOCR + Tesseract"
+        LAST_VISION_PROVIDER = "Fast OCR (Tesseract + selective Paddle)"
     return best_text
 
 
@@ -9021,58 +9079,6 @@ def try_tesseract_ocr(image_bytes: bytes) -> str:
         gray = gray.filter(ImageFilter.SHARPEN)
         return gray.point(lambda px: 255 if px > 120 else 0)
 
-    def rebuild_rows_from_tesseract(data: dict[str, Any]) -> list[str]:
-        texts = data.get("text", []) or []
-        tops = data.get("top", []) or []
-        lefts = data.get("left", []) or []
-        heights = data.get("height", []) or []
-        confs = data.get("conf", []) or []
-
-        row_heights: list[int] = []
-        for h in heights:
-            try:
-                h_int = int(float(h))
-            except Exception:
-                continue
-            if h_int > 0:
-                row_heights.append(h_int)
-        row_bucket = max(12, int(statistics.median(row_heights) * 0.9)) if row_heights else 18
-
-        buckets: dict[int, list[tuple[int, str]]] = {}
-        for i, raw_word in enumerate(texts):
-            word = str(raw_word or "").strip()
-            if not word:
-                continue
-            try:
-                conf = float(confs[i])
-            except Exception:
-                conf = -1.0
-            # Keep low-confidence tokens that look like nutrient names, doses, or units.
-            # Threshold kept low (10) so curved/distorted label areas are not silently dropped.
-            nutrient_kw = re.search(
-                r"\d|mg|mcg|meg|ug|iu|ui|ie|vitamin|mineral|zinc|iron|calcium|selenium|niacin|biotin|"
-                r"copper|chromium|molybdenum|manganese|potassium|phosph(?:or|0r)",
-                word,
-                re.I,
-            )
-            if conf >= 0 and conf < 10 and not nutrient_kw:
-                continue
-            try:
-                top = int(float(tops[i]))
-                left = int(float(lefts[i]))
-            except Exception:
-                continue
-            row_key = int(top / row_bucket)
-            buckets.setdefault(row_key, []).append((left, word))
-
-        rebuilt_rows: list[str] = []
-        for row_key in sorted(buckets.keys()):
-            tokens = sorted(buckets[row_key], key=lambda item: item[0])
-            row_text = " ".join(token for _, token in tokens).strip()
-            if len(row_text) >= 3:
-                rebuilt_rows.append(row_text)
-        return rebuilt_rows
-
     try:
         import pytesseract
 
@@ -9091,37 +9097,19 @@ def try_tesseract_ocr(image_bytes: bytes) -> str:
         except Exception:
             lang_config = "eng"
 
-        # Adaptive OCR attempts: start fast and escalate only when needed.
+        # Fast adaptive OCR attempts with tight per-attempt timeouts.
         attempts: list[tuple[Image.Image, int, int]] = [
-            (preprocess_for_tesseract(image, scale=1.0), 6, 8),
-            (preprocess_high_contrast(image, scale=1.0), 6, 8),
+            (preprocess_for_tesseract(image, scale=1.0), 6, 1),
+            (preprocess_high_contrast(image, scale=1.0), 6, 1),
         ]
-        if is_small:
-            attempts.append((preprocess_for_tesseract(image, scale=1.5), 6, 10))
-            attempts.append((preprocess_high_contrast(image, scale=1.5), 11, 10))
-        else:
-            attempts.append((preprocess_for_tesseract(image, scale=1.25), 11, 10))
 
-        all_reconstructed: list[str] = []
         best_text = ""
         best_score = -1
         for variant, psm, timeout_sec in attempts:
             cfg = f"--oem 3 --psm {psm} -l {lang_config}"
             try:
-                ocr_data = pytesseract.image_to_data(
-                    variant,
-                    config=cfg,
-                    output_type=pytesseract.Output.DICT,
-                    timeout=timeout_sec,
-                )
-                rebuilt_rows = rebuild_rows_from_tesseract(ocr_data)
-                reconstructed_text = "\n".join(rebuilt_rows)
                 raw_text = pytesseract.image_to_string(variant, config=cfg, timeout=timeout_sec)
-                candidate_text = "\n".join(
-                    [x for x in [reconstructed_text, raw_text] if str(x).strip()]
-                ).strip()
-                if candidate_text:
-                    all_reconstructed.append(candidate_text)
+                candidate_text = str(raw_text or "").strip()
                 gate = extraction_gate_report(candidate_text)
                 score = (
                     int(gate.get("score", 0)) * 10
@@ -9135,16 +9123,6 @@ def try_tesseract_ocr(image_bytes: bytes) -> str:
                     break
             except Exception:
                 pass
-
-        # Merge ALL variant outputs so that rows captured by any single config are
-        # not lost.  Duplicate lines are harmless because parse_components_rule_based
-        # deduplicates by (component, dose_value, dose_unit) key.
-        if all_reconstructed:
-            merged_all = "\n".join(all_reconstructed)
-            merged_gate = extraction_gate_report(merged_all)
-            # Use merged text if it has a useful signal; otherwise fall back to best.
-            if merged_gate.get("passed") and len(all_reconstructed) > 1:
-                return merged_all.strip()
 
         return best_text.strip()
     except Exception:
