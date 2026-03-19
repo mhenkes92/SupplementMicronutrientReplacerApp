@@ -3825,6 +3825,28 @@ def _resolve_dietary_profile_selection(
     return selected_profile_id, profile_by_id.get(selected_profile_id)
 
 
+def _resolve_results_dietary_profile_state(
+    profiles: list[dict[str, Any]],
+    session_state: dict[str, Any],
+) -> tuple[str, dict[str, Any] | None]:
+    default_profile_id = _default_dietary_profile_id(profiles)
+    global_value = str(session_state.get("global_diet_profile", default_profile_id) or default_profile_id)
+    selector_value = session_state.get("results_dietary_profile_selector", global_value)
+
+    selected_profile_id, selected_profile = _resolve_dietary_profile_selection(
+        profiles,
+        selector_value,
+    )
+    if not selected_profile_id:
+        selected_profile_id = default_profile_id
+        selected_profile = _resolve_dietary_profile_selection(profiles, default_profile_id)[1]
+
+    # Keep the Results-tab selector and the global meal/profile state aligned.
+    session_state["results_dietary_profile_selector"] = selected_profile_id
+    session_state["global_diet_profile"] = selected_profile_id
+    return selected_profile_id, selected_profile
+
+
 @functools.lru_cache(maxsize=1)
 def load_dietary_restriction_rules() -> dict[str, dict[str, Any]]:
     if not DIETARY_RESTRICTION_RULES_PATH.exists():
@@ -10993,16 +11015,10 @@ The local RAG library is built from curated expert nutrition notes and evidence 
             profile_ids = list(profile_by_id.keys())
             default_profile_id = _default_dietary_profile_id(profiles)
 
-            results_profile_state = st.session_state.get(
-                "results_dietary_profile_selector",
-                st.session_state.get("global_diet_profile", default_profile_id),
-            )
-            selected_profile_id, selected_profile = _resolve_dietary_profile_selection(
+            selected_profile_id, selected_profile = _resolve_results_dietary_profile_state(
                 profiles,
-                results_profile_state,
+                st.session_state,
             )
-            if st.session_state.get("global_diet_profile") != selected_profile_id:
-                st.session_state["global_diet_profile"] = selected_profile_id
             selected_profile_label = profile_label_by_id.get(selected_profile_id, "No restriction")
 
             selected_country = str(st.session_state.get("price_region", "Germany"))
@@ -11439,30 +11455,29 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                 st.divider()
                 st.caption("Adjust filters and pricing options below to recalculate results.")
 
-                default_profile_index = profile_ids.index(default_profile_id) if default_profile_id in profile_ids else 0
-                selected_profile_index = (
-                    profile_ids.index(selected_profile_id)
-                    if selected_profile_id in profile_ids
-                    else default_profile_index
-                )
-
                 with st.expander("Dietary restriction", expanded=False):
-                    # Always use the latest profile from session state for filtering
-                    selected_profile_id_after = st.selectbox(
+                    def _sync_results_dietary_profile() -> None:
+                        selected_id, _ = _resolve_dietary_profile_selection(
+                            profiles,
+                            st.session_state.get("results_dietary_profile_selector", default_profile_id),
+                        )
+                        st.session_state["results_dietary_profile_selector"] = selected_id
+                        st.session_state["global_diet_profile"] = selected_id
+
+                    st.selectbox(
                         "Apply restriction to whole-food alternatives",
                         options=profile_ids,
-                        index=profile_ids.index(st.session_state.get("global_diet_profile", default_profile_id)) if st.session_state.get("global_diet_profile", default_profile_id) in profile_ids else 0,
                         format_func=lambda profile_id: profile_label_by_id.get(profile_id, str(profile_id)),
                         key="results_dietary_profile_selector",
+                        on_change=_sync_results_dietary_profile,
                     )
+                    selected_profile_id_after = str(st.session_state.get("results_dietary_profile_selector", selected_profile_id) or selected_profile_id)
                     selected_profile_id_after, selected_profile_after = _resolve_dietary_profile_selection(
                         profiles,
                         selected_profile_id_after,
                     )
-                    # Always update global profile and rerun if changed
                     if st.session_state.get("global_diet_profile") != selected_profile_id_after:
                         st.session_state["global_diet_profile"] = selected_profile_id_after
-                        st.rerun()
                     if selected_profile_after and selected_profile_after.get("description"):
                         st.caption(f"Profile note: {selected_profile_after.get('description')}")
                     st.caption("Filtering uses local keyword/rule screening and is not a medical, allergy, halal, or kosher certification.")
