@@ -1,0 +1,17 @@
+food_keyword,country,currency,price_per_kg,source_name,source_type,source_url,last_updated
+kale,Germany,EUR,3.60,Destatis/Food CPI baseline + local sampling,official_stat_mapped,https://www.destatis.de,2026-02-01
+spinach,Germany,EUR,4.20,Destatis/Food CPI baseline + local sampling,official_stat_mapped,https://www.destatis.de,2026-02-01
+broccoli,Germany,EUR,3.80,Destatis/Food CPI baseline + local sampling,official_stat_mapped,https://www.destatis.de,2026-02-01
+orange,Germany,EUR,2.60,Destatis/Food CPI baseline + local sampling,official_stat_mapped,https://www.destatis.de,2026-02-01
+kiwifruit,Germany,EUR,4.90,Destatis/Food CPI baseline + local sampling,official_stat_mapped,https://www.destatis.de,2026-02-01
+turkey sausage,Germany,EUR,11.50,Destatis/Food CPI baseline + local sampling,official_stat_mapped,https://www.destatis.de,2026-02-01
+salmon,Germany,EUR,21.00,Destatis/Food CPI baseline + local sampling,official_stat_mapped,https://www.destatis.de,2026-02-01
+sardine,Germany,EUR,8.20,Destatis/Food CPI baseline + local sampling,official_stat_mapped,https://www.destatis.de,2026-02-01
+kale,United States,USD,4.90,USDA ERS + retail sampling,official_stat_mapped,https://www.ers.usda.gov,2026-02-01
+spinach,United States,USD,5.50,USDA ERS + retail sampling,official_stat_mapped,https://www.ers.usda.gov,2026-02-01
+broccoli,United States,USD,4.60,USDA ERS + retail sampling,official_stat_mapped,https://www.ers.usda.gov,2026-02-01
+orange,United States,USD,3.60,USDA ERS + retail sampling,official_stat_mapped,https://www.ers.usda.gov,2026-02-01
+kiwifruit,United States,USD,6.20,USDA ERS + retail sampling,official_stat_mapped,https://www.ers.usda.gov,2026-02-01
+turkey sausage,United States,USD,10.20,USDA ERS + retail sampling,official_stat_mapped,https://www.ers.usda.gov,2026-02-01
+salmon,United States,USD,24.00,USDA ERS + retail sampling,official_stat_mapped,https://www.ers.usda.gov,2026-02-01
+sardine,United States,USD,9.00,USDA ERS + retail sampling,official_stat_mapped,https://www.ers.usda.gov,2026-02-01

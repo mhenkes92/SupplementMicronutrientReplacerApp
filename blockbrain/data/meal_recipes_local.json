@@ -1,0 +1,63 @@
+[
+  {
+    "name": "Kale Sardine Citrus Bowl",
+    "meal_type": "lunch",
+    "ingredients": [
+      {"name": "kale", "grams": 180},
+      {"name": "sardine", "grams": 120},
+      {"name": "orange", "grams": 180},
+      {"name": "olive oil", "grams": 10}
+    ],
+    "steps": "Massage kale with olive oil, add sardines, orange segments, and serve as a bowl."
+  },
+  {
+    "name": "Spinach Salmon Broccoli Plate",
+    "meal_type": "dinner",
+    "ingredients": [
+      {"name": "spinach", "grams": 170},
+      {"name": "salmon", "grams": 180},
+      {"name": "broccoli", "grams": 180}
+    ],
+    "steps": "Pan-sear salmon, steam broccoli, sauté spinach lightly, and plate together."
+  },
+  {
+    "name": "Turkey Sausage Greens Skillet",
+    "meal_type": "dinner",
+    "ingredients": [
+      {"name": "turkey sausage", "grams": 160},
+      {"name": "kale", "grams": 150},
+      {"name": "broccoli", "grams": 140}
+    ],
+    "steps": "Cook turkey sausage, add chopped kale and broccoli, and sauté until tender."
+  },
+  {
+    "name": "Kiwi Spinach Yogurt Smoothie",
+    "meal_type": "breakfast",
+    "ingredients": [
+      {"name": "kiwifruit", "grams": 180},
+      {"name": "spinach", "grams": 120},
+      {"name": "greek yogurt", "grams": 250}
+    ],
+    "steps": "Blend kiwifruit, spinach, and yogurt until smooth; serve chilled."
+  },
+  {
+    "name": "Sardine Broccoli Toast Plate",
+    "meal_type": "lunch",
+    "ingredients": [
+      {"name": "sardine", "grams": 120},
+      {"name": "broccoli", "grams": 200},
+      {"name": "whole grain bread", "grams": 80}
+    ],
+    "steps": "Steam broccoli, top toast with sardines, and serve together as a plate."
+  },
+  {
+    "name": "Orange Kale Protein Salad",
+    "meal_type": "lunch",
+    "ingredients": [
+      {"name": "orange", "grams": 220},
+      {"name": "kale", "grams": 160},
+      {"name": "chickpeas", "grams": 150}
+    ],
+    "steps": "Combine chopped kale, orange segments, and chickpeas; toss and serve."
+  }
+]

@@ -1,0 +1,62 @@
+[
+  {
+    "id": "none",
+    "label": "No restriction",
+    "description": "No ingredient restrictions applied.",
+    "avoid_keywords": []
+  },
+  {
+    "id": "vegetarian",
+    "label": "Vegetarian",
+    "description": "Avoids meat and fish ingredients.",
+    "avoid_keywords": ["beef", "pork", "chicken", "turkey", "fish", "salmon", "sardine", "anchovy", "tuna", "shrimp", "crab", "lobster"]
+  },
+  {
+    "id": "vegan",
+    "label": "Vegan",
+    "description": "Avoids animal-derived ingredients.",
+    "avoid_keywords": ["beef", "pork", "chicken", "turkey", "fish", "salmon", "sardine", "egg", "milk", "yogurt", "cheese", "butter", "honey", "gelatin", "whey", "casein"]
+  },
+  {
+    "id": "pescatarian",
+    "label": "Pescatarian",
+    "description": "Allows fish/seafood, avoids other meats.",
+    "avoid_keywords": ["beef", "pork", "chicken", "turkey", "lamb", "ham", "bacon"]
+  },
+  {
+    "id": "halal_friendly",
+    "label": "Halal-friendly",
+    "description": "Screens out common non-halal ingredients. Not a halal certification.",
+    "avoid_keywords": ["pork", "ham", "bacon", "lard", "alcohol", "wine", "beer", "gelatin"]
+  },
+  {
+    "id": "kosher_style",
+    "label": "Kosher-style",
+    "description": "Screens out common non-kosher ingredients. Not a kosher certification.",
+    "avoid_keywords": ["pork", "ham", "bacon", "shellfish", "shrimp", "crab", "lobster"]
+  },
+  {
+    "id": "gluten_free",
+    "label": "Gluten-free",
+    "description": "Screens out common gluten-containing ingredients.",
+    "avoid_keywords": ["wheat", "barley", "rye", "bread", "pasta", "flour", "seitan"]
+  },
+  {
+    "id": "lactose_free",
+    "label": "Lactose-free",
+    "description": "Screens out common lactose-containing dairy ingredients.",
+    "avoid_keywords": ["milk", "cream", "cheese", "yogurt", "whey", "casein"]
+  },
+  {
+    "id": "nut_free",
+    "label": "Nut-free",
+    "description": "Screens out common tree nuts and peanuts.",
+    "avoid_keywords": ["peanut", "almond", "walnut", "cashew", "hazelnut", "pistachio", "pecan", "macadamia"]
+  },
+  {
+    "id": "low_sodium_aware",
+    "label": "Low-sodium aware",
+    "description": "Screens out common high-sodium processed ingredients.",
+    "avoid_keywords": ["sausage", "bacon", "ham", "processed meat", "instant noodle", "soy sauce"]
+  }
+]

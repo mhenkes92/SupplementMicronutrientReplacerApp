@@ -1,0 +1,1228 @@
+food_key,food_description,food_category,allowed_no_restriction,allowed_vegetarian,allowed_vegan,allowed_pescatarian,allowed_halal_friendly,allowed_kosher_style,allowed_gluten_free,allowed_lactose_free,allowed_nut_free,allowed_low_sodium_aware,blocked_profiles
+abiyuch raw,"Abiyuch, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+acerola (west indian cherry) raw,"Acerola, (west indian cherry), raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+acorn stew (apache),Acorn stew (Apache),American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+agave raw (southwest),"Agave, raw (Southwest)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+alfalfa seeds sprouted raw,"Alfalfa seeds, sprouted, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+amaranth grain uncooked,"Amaranth grain, uncooked",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+amaranth leaves raw,"Amaranth leaves, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+apples raw without skin,"Apples, raw, without skin",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+apricots raw,"Apricots, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+arrowhead raw,"Arrowhead, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+arrowroot raw,"Arrowroot, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+artichokes (globe or french) raw,"Artichokes, (globe or french), raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+arugula baby raw,"Arugula, baby, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+arugula raw,"Arugula, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+ascidians (tunughnak) (alaska native),Ascidians (tunughnak) (Alaska Native),American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+asparagus green raw,"Asparagus, green, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+asparagus raw,"Asparagus, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+avocado hass peeled raw,"Avocado, Hass, peeled, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+avocados raw california,"Avocados, raw, California",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+avocados raw florida,"Avocados, raw, Florida",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+balsam-pear (bitter gourd) leafy tips raw,"Balsam-pear (bitter gourd), leafy tips, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+balsam-pear (bitter gourd) pods raw,"Balsam-pear (bitter gourd), pods, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+bamboo shoots raw,"Bamboo shoots, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+bananas overripe raw,"Bananas, overripe, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+bananas raw,"Bananas, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+barley hulled,"Barley, hulled",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+barley pearled raw,"Barley, pearled, raw",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+beans dry black (0 moisture),"Beans, Dry, Black (0% moisture)",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans dry brown (0 moisture),"Beans, Dry, Brown (0% moisture)",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans dry carioca (0 moisture),"Beans, Dry, Carioca (0% moisture)",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans dry cranberry (0 moisture),"Beans, Dry, Cranberry (0% moisture)",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans dry dark red kidney (0 moisture),"Beans, Dry, Dark Red Kidney (0% moisture)",Legumes and Legume Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beans dry flor de mayo (0 moisture),"Beans, Dry, Flor de Mayo (0% moisture)",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans dry great northern (0 moisture),"Beans, Dry, Great Northern (0% moisture)",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans dry light red kidney (0 moisture),"Beans, Dry, Light Red Kidney (0% moisture)",Legumes and Legume Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beans dry light tan (0 moisture),"Beans, Dry, Light Tan (0% moisture)",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans dry medium red (0 moisture),"Beans, Dry, Medium Red (0% moisture)",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans dry navy (0 moisture),"Beans, Dry, Navy (0% moisture)",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans dry pink (0 moisture),"Beans, Dry, Pink (0% moisture)",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans dry pinto (0 moisture),"Beans, Dry, Pinto (0% moisture)",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans dry red (0 moisture),"Beans, Dry, Red (0% moisture)",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans dry small red (0 moisture),"Beans, Dry, Small Red (0% moisture)",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans dry small white (0 moisture),"Beans, Dry, Small White (0% moisture)",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans dry tan (0 moisture),"Beans, Dry, Tan (0% moisture)",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans adzuki mature seeds raw,"Beans, adzuki, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans black turtle mature seeds raw,"Beans, black turtle, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans black mature seeds raw,"Beans, black, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans cannellini dry,"Beans, cannellini, dry",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans cranberry (roman) mature seeds raw,"Beans, cranberry (roman), mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans fava in pod raw,"Beans, fava, in pod, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+beans french mature seeds raw,"Beans, french, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans great northern mature seeds raw (includes foods for usda s food distribution program),"Beans, great northern, mature seeds, raw (Includes foods for USDA's Food Distribution Program)",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans kidney all types mature seeds raw,"Beans, kidney, all types, mature seeds, raw",Legumes and Legume Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beans kidney california red mature seeds raw,"Beans, kidney, california red, mature seeds, raw",Legumes and Legume Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beans kidney mature seeds sprouted raw,"Beans, kidney, mature seeds, sprouted, raw",Vegetables and Vegetable Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beans kidney red mature seeds raw,"Beans, kidney, red, mature seeds, raw",Legumes and Legume Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beans kidney royal red mature seeds raw,"Beans, kidney, royal red, mature seeds, raw",Legumes and Legume Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beans liquid from stewed kidney beans,"Beans, liquid from stewed kidney beans",Legumes and Legume Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beans navy mature seeds raw,"Beans, navy, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans navy mature seeds sprouted raw,"Beans, navy, mature seeds, sprouted, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+beans pink mature seeds raw,"Beans, pink, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans pinto mature seeds raw (includes foods for usda s food distribution program),"Beans, pinto, mature seeds, raw (Includes foods for USDA's Food Distribution Program)",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans pinto mature seeds sprouted raw,"Beans, pinto, mature seeds, sprouted, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+beans small white mature seeds raw,"Beans, small white, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans snap green microwaved,"Beans, snap, green, microwaved",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+beans snap green raw,"Beans, snap, green, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+beans snap yellow raw,"Beans, snap, yellow, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+beans white mature seeds raw,"Beans, white, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+beans yellow mature seeds raw,"Beans, yellow, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+bear black meat (alaska native),"Bear, black, meat (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+bear polar meat raw (alaska native),"Bear, polar, meat, raw (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+beef australian imported wagyu external fat aust marble score 4 5 raw,"Beef, Australian, imported, Wagyu, external fat, Aust. marble score 4/5, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef australian imported wagyu external fat aust marble score 9 raw,"Beef, Australian, imported, Wagyu, external fat, Aust. marble score 9, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef australian imported wagyu loin tenderloin steak roast boneless separable lean only aust marble score 4 5 raw,"Beef, Australian, imported, Wagyu, loin, tenderloin steak/roast, boneless, separable lean only, Aust. marble score 4/5, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef australian imported wagyu loin tenderloin steak roast boneless separable lean only aust marble score 9 raw,"Beef, Australian, imported, Wagyu, loin, tenderloin steak/roast, boneless, separable lean only, Aust. marble score 9, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef australian imported wagyu loin top loin steak roast boneless separable lean only aust marble score 4 5 raw,"Beef, Australian, imported, Wagyu, loin, top loin steak/roast, boneless, separable lean only, Aust. marble score 4/5, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef australian imported wagyu loin top loin steak roast boneless separable lean only aust marble score 9 raw,"Beef, Australian, imported, Wagyu, loin, top loin steak/roast, boneless, separable lean only, Aust. marble score 9, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef australian imported wagyu rib small end rib steak roast boneless separable lean only aust marble score 4 5 raw,"Beef, Australian, imported, Wagyu, rib, small end rib steak/roast, boneless, separable lean only, Aust. marble score 4/5, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef australian imported wagyu rib small end rib steak roast boneless separable lean only aust marble score 9 raw,"Beef, Australian, imported, Wagyu, rib, small end rib steak/roast, boneless, separable lean only, Aust. marble score 9, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef australian imported wagyu seam fat aust marble score 4 5 raw,"Beef, Australian, imported, Wagyu, seam fat, Aust. marble score 4/5, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef australian imported wagyu seam fat aust marble score 9 raw,"Beef, Australian, imported, Wagyu, seam fat, Aust. marble score 9, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef australian imported grass-fed external fat raw,"Beef, Australian, imported, grass-fed,  external fat, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef australian imported grass-fed loin tenderloin steak roast boneless separable lean only raw,"Beef, Australian, imported, grass-fed, loin, tenderloin steak/roast, boneless, separable lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef australian imported grass-fed loin top loin steak roast boneless separable lean only raw,"Beef, Australian, imported, grass-fed, loin, top loin steak/roast, boneless, separable lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef australian imported grass-fed loin top sirloin cap-off steak roast boneless separable lean only raw,"Beef, Australian, imported, grass-fed, loin, top sirloin cap-off steak/roast, boneless, separable lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef australian imported grass-fed rib ribeye steak roast lip-on boneless separable lean only raw,"Beef, Australian, imported, grass-fed, rib, ribeye steak/roast lip-on, boneless, separable lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef australian imported grass-fed round bottom round steak roast boneless separable lean only raw,"Beef, Australian, imported, grass-fed, round, bottom round steak/roast, boneless, separable lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef australian imported grass-fed round top round cap-off steak roast boneless separable lean only raw,"Beef, Australian, imported, grass-fed, round, top round cap-off steak/roast, boneless, separable lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef australian imported grass-fed seam fat raw,"Beef, Australian, imported, grass-fed, seam fat, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef new zealand imported bolar blade separable lean only raw,"Beef, New Zealand, imported, bolar blade, separable lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef new zealand imported brisket navel end separable lean only raw,"Beef, New Zealand, imported, brisket navel end, separable lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef new zealand imported brisket point end separable lean only raw,"Beef, New Zealand, imported, brisket point end, separable lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef new zealand imported chuck eye roll separable lean only raw,"Beef, New Zealand, imported, chuck eye roll, separable lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef new zealand imported cube roll separable lean only raw,"Beef, New Zealand, imported, cube roll, separable lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef new zealand imported eye round separable lean only raw,"Beef, New Zealand, imported, eye round, separable lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef new zealand imported flank separable lean only raw,"Beef, New Zealand, imported, flank, separable lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef new zealand imported flat separable lean only raw,"Beef, New Zealand, imported, flat, separable lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef new zealand imported hind shin separable lean only raw,"Beef, New Zealand, imported, hind shin, separable lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef new zealand imported inside raw,"Beef, New Zealand, imported, inside, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef new zealand imported intermuscular fat raw,"Beef, New Zealand, imported, intermuscular fat, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef new zealand imported manufacturing beef raw,"Beef, New Zealand, imported, manufacturing beef, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef new zealand imported oyster blade separable lean only raw,"Beef, New Zealand, imported, oyster blade, separable lean only, raw",Beef Products,1,0,0,0,1,0,1,1,1,1,vegetarian|vegan|pescatarian|kosher style
+beef new zealand imported rump centre separable lean only raw,"Beef, New Zealand, imported, rump centre, separable lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef new zealand imported striploin separable lean only raw,"Beef, New Zealand, imported, striploin, separable lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef new zealand imported subcutaneous fat raw,"Beef, New Zealand, imported, subcutaneous fat, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef new zealand imported sweetbread raw,"Beef, New Zealand, imported, sweetbread, raw",Beef Products,1,0,0,0,1,1,0,1,1,1,vegetarian|vegan|pescatarian|gluten free
+beef new zealand imported tenderloin separable lean only raw,"Beef, New Zealand, imported, tenderloin, separable lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef bottom sirloin tri-tip roast separable lean only trimmed to 0 fat all grades raw,"Beef, bottom sirloin, tri-tip roast, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef bottom sirloin tri-tip roast separable lean only trimmed to 0 fat choice raw,"Beef, bottom sirloin, tri-tip roast, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef bottom sirloin tri-tip roast separable lean only trimmed to 0 fat select raw,"Beef, bottom sirloin, tri-tip roast, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef brisket flat half boneless separable lean only trimmed to 0 fat all grades raw,"Beef, brisket, flat half, boneless separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef brisket flat half boneless separable lean only trimmed to 0 fat choice raw,"Beef, brisket, flat half, boneless, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef brisket flat half boneless separable lean only trimmed to 0 fat select raw,"Beef, brisket, flat half, boneless, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef brisket flat half separable lean only trimmed to 1 8 fat all grades raw,"Beef, brisket, flat half, separable lean only, trimmed to 1/8"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef brisket flat half separable lean only trimmed to 1 8 fat choice raw,"Beef, brisket, flat half, separable lean only, trimmed to 1/8"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef brisket flat half separable lean only trimmed to 1 8 fat select raw,"Beef, brisket, flat half, separable lean only, trimmed to 1/8"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef brisket whole separable lean only all grades raw,"Beef, brisket, whole, separable lean only, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck eye country-style ribs boneless separable lean only trimmed to 0 fat all grades raw,"Beef, chuck eye Country-Style ribs, boneless, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck eye country-style ribs boneless separable lean only trimmed to 0 fat choice raw,"Beef, chuck eye Country-Style ribs, boneless, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck eye country-style ribs boneless separable lean only trimmed to 0 fat select raw,"Beef, chuck eye Country-Style ribs, boneless, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck eye roast boneless america s beef roast separable lean only trimmed to 0 fat all grades raw,"Beef, chuck eye roast, boneless, America's Beef Roast, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck eye roast boneless america s beef roast separable lean only trimmed to 0 fat choice raw,"Beef, chuck eye roast, boneless, America's Beef Roast, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck eye roast boneless america s beef roast separable lean only trimmed to 0 fat select raw,"Beef, chuck eye roast, boneless, America's Beef Roast, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck eye steak boneless separable lean only trimmed to 0 fat all grades raw,"Beef, chuck eye steak, boneless, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck eye steak boneless separable lean only trimmed to 0 fat choice raw,"Beef, chuck eye steak, boneless, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck eye steak boneless separable lean only trimmed to 0 fat select raw,"Beef, chuck eye steak, boneless, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck arm pot roast separable lean only trimmed to 1 8 fat all grades raw,"Beef, chuck, arm pot roast, separable lean only, trimmed to 1/8"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck arm pot roast separable lean only trimmed to 1 8 fat choice raw,"Beef, chuck, arm pot roast, separable lean only, trimmed to 1/8"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck arm pot roast separable lean only trimmed to 1 8 fat select raw,"Beef, chuck, arm pot roast, separable lean only, trimmed to 1/8"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck clod roast separable lean only trimmed to 1 4 fat all grades raw,"Beef, chuck, clod roast, separable lean only, trimmed to 1/4"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck mock tender steak boneless separable lean only trimmed to 0 fat all grades raw,"Beef, chuck, mock tender steak, boneless, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck mock tender steak boneless separable lean only trimmed to 0 fat choice raw,"Beef, chuck, mock tender steak, boneless, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck mock tender steak boneless separable lean only trimmed to 0 fat select raw,"Beef, chuck, mock tender steak, boneless, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck roast boneless choice raw,"Beef, chuck, roast, boneless, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck short ribs boneless separable lean only trimmed to 0 fat all grades raw,"Beef, chuck, short ribs, boneless, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck short ribs boneless separable lean only trimmed to 0 fat choice raw,"Beef, chuck, short ribs, boneless, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck short ribs boneless separable lean only trimmed to 0 fat select raw,"Beef, chuck, short ribs, boneless, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck under blade center steak boneless denver cut separable lean only trimmed to 0 fat all grades raw,"Beef, chuck, under blade center steak, boneless, Denver Cut, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck under blade center steak boneless denver cut separable lean only trimmed to 0 fat choice raw,"Beef, chuck, under blade center steak, boneless, Denver Cut, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck under blade center steak boneless denver cut separable lean only trimmed to 0 fat select raw,"Beef, chuck, under blade center steak, boneless, Denver Cut, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck under blade pot roast or steak boneless separable lean only trimmed to 0 fat all grades raw,"Beef, chuck, under blade pot roast or steak, boneless, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck under blade pot roast or steak boneless separable lean only trimmed to 0 fat choice raw,"Beef, chuck, under blade pot roast or steak, boneless, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef chuck under blade pot roast or steak boneless separable lean only trimmed to 0 fat select raw,"Beef, chuck, under blade pot roast or steak, boneless, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef composite of trimmed retail cuts separable lean only trimmed to 0 fat all grades raw,"Beef, composite of trimmed retail cuts, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef composite of trimmed retail cuts separable lean only trimmed to 0 fat choice raw,"Beef, composite of trimmed retail cuts, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef composite of trimmed retail cuts separable lean only trimmed to 0 fat select raw,"Beef, composite of trimmed retail cuts, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef composite of trimmed retail cuts separable lean only trimmed to 1 8 fat all grades raw,"Beef, composite of trimmed retail cuts, separable lean only, trimmed to 1/8"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef composite of trimmed retail cuts separable lean only trimmed to 1 8 fat choice raw,"Beef, composite of trimmed retail cuts, separable lean only, trimmed to 1/8"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef composite of trimmed retail cuts separable lean only trimmed to 1 8 fat select raw,"Beef, composite of trimmed retail cuts, separable lean only, trimmed to 1/8"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef flank steak boneless choice raw,"Beef, flank, steak, boneless, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef flank steak separable lean only trimmed to 0 fat all grades raw,"Beef, flank, steak, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef flank steak separable lean only trimmed to 0 fat choice raw,"Beef, flank, steak, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef flank steak separable lean only trimmed to 0 fat select raw,"Beef, flank, steak, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef grass-fed strip steaks lean only raw,"Beef, grass-fed, strip steaks, lean only, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef loin tenderloin roast boneless separable lean only trimmed to 0 fat all grades raw,"Beef, loin, tenderloin roast, boneless, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef loin tenderloin roast boneless separable lean only trimmed to 0 fat choice raw,"Beef, loin, tenderloin roast, boneless, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef loin tenderloin roast boneless separable lean only trimmed to 0 fat select raw,"Beef, loin, tenderloin roast, boneless, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef loin tenderloin steak boneless separable lean only trimmed to 0 fat all grades raw,"Beef, loin, tenderloin steak, boneless, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef loin tenderloin steak boneless separable lean only trimmed to 0 fat choice raw,"Beef, loin, tenderloin steak, boneless, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef loin tenderloin steak boneless separable lean only trimmed to 0 fat select raw,"Beef, loin, tenderloin steak, boneless, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef loin top loin steak boneless lip off separable lean only trimmed to 0 fat all grades raw,"Beef, loin, top loin steak, boneless, lip off, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef loin top loin steak boneless lip off separable lean only trimmed to 0 fat choice raw,"Beef, loin, top loin steak, boneless, lip off, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef loin top loin steak boneless lip off separable lean only trimmed to 0 fat select raw,"Beef, loin, top loin steak, boneless, lip off, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef loin top loin steak boneless lip-on separable lean only trimmed to 1 8 fat all grades raw,"Beef, loin, top loin steak, boneless, lip-on, separable lean only, trimmed to 1/8"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef loin top loin steak boneless lip-on separable lean only trimmed to 1 8 fat choice raw,"Beef, loin, top loin steak, boneless, lip-on, separable lean only, trimmed to 1/8"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef loin top loin steak boneless lip-on separable lean only trimmed to 1 8 fat select raw,"Beef, loin, top loin steak, boneless, lip-on, separable lean only, trimmed to 1/8"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef loin top sirloin cap steak boneless separable lean only trimmed to 1 8 fat all grades raw,"Beef, loin, top sirloin cap steak, boneless, separable lean only, trimmed to 1/8"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef loin top sirloin cap steak boneless separable lean only trimmed to 1 8 fat choice raw,"Beef, loin, top sirloin cap steak, boneless, separable lean only, trimmed to 1/8"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef loin top sirloin cap steak boneless separable lean only trimmed to 1 8 fat select raw,"Beef, loin, top sirloin cap steak, boneless, separable lean only, trimmed to 1/8"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef loin top sirloin petite roast filet boneless separable lean only trimmed to 0 fat all grades raw,"Beef, loin, top sirloin petite roast/filet, boneless, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef loin top sirloin petite roast filet boneless separable lean only trimmed to 0 fat choice raw,"Beef, loin, top sirloin petite roast/filet, boneless, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef loin top sirloin petite roast filet boneless separable lean only trimmed to 0 fat select raw,"Beef, loin, top sirloin petite roast/filet, boneless, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef plate steak boneless inside skirt separable lean only trimmed to 0 fat all grades raw,"Beef, plate steak, boneless, inside skirt, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef plate steak boneless inside skirt separable lean only trimmed to 0 fat choice raw,"Beef, plate steak, boneless, inside skirt, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef plate steak boneless inside skirt separable lean only trimmed to 0 fat select raw,"Beef, plate steak, boneless, inside skirt, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef plate steak boneless outside skirt separable lean only trimmed to 0 fat all grades raw,"Beef, plate steak, boneless, outside skirt, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef plate steak boneless outside skirt separable lean only trimmed to 0 fat choice raw,"Beef, plate steak, boneless, outside skirt, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef plate steak boneless outside skirt separable lean only trimmed to 0 fat select raw,"Beef, plate steak, boneless, outside skirt, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef retail cuts separable fat raw,"Beef, retail cuts, separable fat, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef rib eye steak boneless lip off separable lean only trimmed to 0 fat all grades raw,"Beef, rib eye steak, boneless, lip off, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef rib eye steak boneless lip off separable lean only trimmed to 0 fat choice raw,"Beef, rib eye steak, boneless, lip off, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef rib eye steak boneless lip off separable lean only trimmed to 0 fat select raw,"Beef, rib eye steak, boneless, lip off, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef rib eye steak roast bone-in lip-on separable lean only trimmed to 1 8 fat all grades raw,"Beef, rib eye steak/roast, bone-in, lip-on, separable lean only, trimmed to 1/8"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef rib eye steak roast bone-in lip-on separable lean only trimmed to 1 8 fat choice raw,"Beef, rib eye steak/roast, bone-in, lip-on, separable lean only, trimmed to 1/8"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef rib eye steak roast bone-in lip-on separable lean only trimmed to 1 8 fat select raw,"Beef, rib eye steak/roast, bone-in, lip-on, separable lean only, trimmed to 1/8"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef rib eye steak roast boneless lip-on separable lean only trimmed to 1 8 fat all grades raw,"Beef, rib eye steak/roast, boneless, lip-on, separable lean only, trimmed to 1/8"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef rib eye steak roast boneless lip-on separable lean only trimmed to 1 8 fat choice raw,"Beef, rib eye steak/roast, boneless, lip-on, separable lean only, trimmed to 1/8"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef rib eye steak roast boneless lip-on separable lean only trimmed to 1 8 fat select raw,"Beef, rib eye steak/roast, boneless, lip-on, separable lean only, trimmed to 1/8"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef rib eye small end (ribs 10-12) separable lean only trimmed to 0 fat select raw,"Beef, rib eye, small end (ribs 10-12), separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef rib back ribs bone-in separable lean only trimmed to 0 fat all grades raw,"Beef, rib, back ribs, bone-in, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef rib back ribs bone-in separable lean only trimmed to 0 fat choice raw,"Beef, rib, back ribs, bone-in, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef rib back ribs bone-in separable lean only trimmed to 0 fat select raw,"Beef, rib, back ribs, bone-in, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef rib eye small end (ribs 10-12) separable lean only trimmed to 0 fat choice raw,"Beef, rib, eye, small end (ribs 10-12), separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef rib shortribs separable lean only choice raw,"Beef, rib, shortribs, separable lean only, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef rib small end (ribs 10-12) separable lean only trimmed to 1 8 fat all grades raw,"Beef, rib, small end (ribs 10-12), separable lean only, trimmed to 1/8"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef rib small end (ribs 10-12) separable lean only trimmed to 1 8 fat choice raw,"Beef, rib, small end (ribs 10-12), separable lean only, trimmed to 1/8"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef rib small end (ribs 10-12) separable lean only trimmed to 1 8 fat select raw,"Beef, rib, small end (ribs 10-12), separable lean only, trimmed to 1/8"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef ribeye petite roast filet boneless separable lean only trimmed to 0 fat all grades raw,"Beef, ribeye  petite roast/filet, boneless, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef ribeye petite roast filet boneless separable lean only trimmed to 0 fat choice raw,"Beef, ribeye  petite roast/filet, boneless, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef ribeye petite roast filet boneless separable lean only trimmed to 0 fat select raw,"Beef, ribeye  petite roast/filet, boneless, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef ribeye cap steak boneless separable lean only trimmed to 0 fat all grades raw,"Beef, ribeye cap steak, boneless, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef ribeye cap steak boneless separable lean only trimmed to 0 fat choice raw,"Beef, ribeye cap steak, boneless, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef ribeye cap steak boneless separable lean only trimmed to 0 fat select raw,"Beef, ribeye cap steak, boneless, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef ribeye steak boneless choice raw,"Beef, ribeye, steak, boneless, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round bottom round roast separable lean only trimmed to 1 8 fat all grades raw,"Beef, round, bottom round, roast, separable lean only, trimmed to 1/8"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round bottom round roast separable lean only trimmed to 1 8 fat choice raw,"Beef, round, bottom round, roast, separable lean only, trimmed to 1/8"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round bottom round roast separable lean only trimmed to 1 8 fat select raw,"Beef, round, bottom round, roast, separable lean only, trimmed to 1/8"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round eye of round roast boneless separable lean only trimmed to 0 fat all grades raw,"Beef, round, eye of round roast, boneless, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round eye of round roast boneless separable lean only trimmed to 0 fat choice raw,"Beef, round, eye of round roast, boneless, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round eye of round roast boneless separable lean only trimmed to 0 fat select raw,"Beef, round, eye of round roast, boneless, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round eye of round steak boneless separable lean only trimmed to 0 fat all grades raw,"Beef, round, eye of round steak, boneless, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round eye of round steak boneless separable lean only trimmed to 0 fat choice raw,"Beef, round, eye of round steak, boneless, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round eye of round steak boneless separable lean only trimmed to 0 fat select raw,"Beef, round, eye of round steak, boneless, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round eye of round roast separable lean only trimmed to 1 8 fat all grades raw,"Beef, round, eye of round, roast, separable lean only, trimmed to 1/8"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round eye of round roast separable lean only trimmed to 1 8 fat choice raw,"Beef, round, eye of round, roast, separable lean only, trimmed to 1/8"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round eye of round roast separable lean only trimmed to 1 8 fat select raw,"Beef, round, eye of round, roast, separable lean only, trimmed to 1/8"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round tip round roast separable lean only trimmed to 0 fat all grades raw,"Beef, round, tip round, roast, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round tip round roast separable lean only trimmed to 0 fat choice raw,"Beef, round, tip round, roast, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round tip round roast separable lean only trimmed to 0 fat select raw,"Beef, round, tip round, roast, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round top round roast boneless separable lean only trimmed to 0 fat all grades raw,"Beef, round, top round roast, boneless, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round top round roast boneless separable lean only trimmed to 0 fat choice raw,"Beef, round, top round roast, boneless, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round top round roast boneless separable lean only trimmed to 0 fat select raw,"Beef, round, top round roast, boneless, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round top round steak boneless separable lean only trimmed to 0 fat all grades raw,"Beef, round, top round steak, boneless, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round top round steak boneless separable lean only trimmed to 0 fat choice raw,"Beef, round, top round steak, boneless, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round top round steak boneless separable lean only trimmed to 0 fat select raw,"Beef, round, top round steak, boneless, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round top round boneless choice raw,"Beef, round, top round, boneless, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round top round steak separable lean only trimmed to 1 8 fat all grades raw,"Beef, round, top round, steak, separable lean only, trimmed to 1/8"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round top round steak separable lean only trimmed to 1 8 fat choice raw,"Beef, round, top round, steak, separable lean only, trimmed to 1/8"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef round top round steak separable lean only trimmed to 1 8 fat select raw,"Beef, round, top round, steak, separable lean only, trimmed to 1/8"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef shank crosscuts separable lean only trimmed to 1 4 fat choice raw,"Beef, shank crosscuts, separable lean only, trimmed to 1/4"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef short loin (ny strip steak) raw,"Beef, short loin (NY strip steak), raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef short loin porterhouse steak separable lean only trimmed to 1 8 fat all grades raw,"Beef, short loin, porterhouse steak, separable lean only, trimmed to 1/8"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef short loin porterhouse steak separable lean only trimmed to 1 8 fat choice raw,"Beef, short loin, porterhouse steak, separable lean only, trimmed to 1/8"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef short loin porterhouse steak separable lean only trimmed to 1 8 fat select raw,"Beef, short loin, porterhouse steak, separable lean only, trimmed to 1/8"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef short loin t-bone steak bone-in separable lean only trimmed to 1 8 fat all grades raw,"Beef, short loin, t-bone steak, bone-in, separable lean only, trimmed to 1/8"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef short loin t-bone steak bone-in separable lean only trimmed to 1 8 fat choice raw,"Beef, short loin, t-bone steak, bone-in, separable lean only, trimmed to 1/8"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef short loin t-bone steak bone-in separable lean only trimmed to 1 8 fat select raw,"Beef, short loin, t-bone steak, bone-in, separable lean only, trimmed to 1/8"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef short loin top loin steak separable lean only trimmed to 1 8 fat all grades raw,"Beef, short loin, top loin steak, separable lean only, trimmed to 1/8"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef short loin top loin steak separable lean only trimmed to 1 8 fat choice raw,"Beef, short loin, top loin, steak, separable lean only, trimmed to 1/8"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef short loin top loin steak separable lean only trimmed to 1 8 fat select raw,"Beef, short loin, top loin, steak, separable lean only, trimmed to 1/8"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef shoulder pot roast or steak boneless separable lean only trimmed to 0 fat all grades raw,"Beef, shoulder pot roast or steak, boneless, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef shoulder pot roast or steak boneless separable lean only trimmed to 0 fat choice raw,"Beef, shoulder pot roast or steak, boneless, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef shoulder pot roast or steak boneless separable lean only trimmed to 0 fat select raw,"Beef, shoulder pot roast or steak, boneless, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef shoulder top blade steak boneless separable lean only trimmed to 0 fat all grades raw,"Beef, shoulder top blade steak, boneless, separable lean only, trimmed to 0"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef shoulder top blade steak boneless separable lean only trimmed to 0 fat choice raw,"Beef, shoulder top blade steak, boneless, separable lean only, trimmed to 0"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef shoulder top blade steak boneless separable lean only trimmed to 0 fat select raw,"Beef, shoulder top blade steak, boneless, separable lean only, trimmed to 0"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef tenderloin steak separable lean only trimmed to 1 8 fat all grades raw,"Beef, tenderloin, steak, separable lean only, trimmed to 1/8"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef tenderloin steak separable lean only trimmed to 1 8 fat choice raw,"Beef, tenderloin, steak, separable lean only, trimmed to 1/8"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef tenderloin steak separable lean only trimmed to 1 8 fat select raw,"Beef, tenderloin, steak, separable lean only, trimmed to 1/8"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef top loin petite roast filet boneless separable lean only trimmed to 1 8 fat all grades raw,"Beef, top loin petite roast/filet, boneless, separable lean only, trimmed to 1/8"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef top loin petite roast filet boneless separable lean only trimmed to 1 8 fat choice raw,"Beef, top loin petite roast/filet, boneless, separable lean only, trimmed to 1/8"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef top loin petite roast filet boneless separable lean only trimmed to 1 8 fat select raw,"Beef, top loin petite roast/filet, boneless, separable lean only, trimmed to 1/8"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef top sirloin steak raw,"Beef, top sirloin steak, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef top sirloin steak separable lean only trimmed to 1 8 fat all grades raw,"Beef, top sirloin, steak, separable lean only, trimmed to 1/8"" fat, all grades, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef top sirloin steak separable lean only trimmed to 1 8 fat choice raw,"Beef, top sirloin, steak, separable lean only, trimmed to 1/8"" fat, choice, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef top sirloin steak separable lean only trimmed to 1 8 fat select raw,"Beef, top sirloin, steak, separable lean only, trimmed to 1/8"" fat, select, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beef tenderloin steak raw,"Beef, tenderloin steak, raw",Beef Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+beet greens raw,"Beet greens, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+beets raw,"Beets, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+blackberries raw,"Blackberries, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+blackberries wild raw (alaska native),"Blackberries, wild, raw (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+blackeye pea dry,"Blackeye pea, dry",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+blueberries raw,"Blueberries, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+blueberries wild raw (alaska native),"Blueberries, wild, raw (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+borage raw,"Borage, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+bread blue corn somiviki (hopi),"Bread, blue corn, somiviki (Hopi)",American Indian/Alaska Native Foods,1,1,1,1,1,1,0,1,1,1,gluten free
+bread kneel down (navajo),"Bread, kneel down (Navajo)",American Indian/Alaska Native Foods,1,1,1,1,1,1,0,1,1,1,gluten free
+breadfruit raw,"Breadfruit, raw",Fruits and Fruit Juices,1,1,1,1,1,1,0,1,1,1,gluten free
+broadbeans (fava beans) mature seeds raw,"Broadbeans (fava beans), mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+broadbeans immature seeds raw,"Broadbeans, immature seeds, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+broccoli raab raw,"Broccoli raab, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+broccoli chinese raw,"Broccoli, chinese, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+broccoli flower clusters raw,"Broccoli, flower clusters, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+broccoli leaves raw,"Broccoli, leaves, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+broccoli raw,"Broccoli, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+broccoli stalks raw,"Broccoli, stalks, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+brussels sprouts raw,"Brussels sprouts, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+buckwheat,Buckwheat,Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+buckwheat whole grain,"Buckwheat, whole grain",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+buffalo free range top round steak raw (shoshone bannock),"Buffalo, free range, top round steak, raw (Shoshone Bannock)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+bulgur dry,"Bulgur, dry",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+bulgur dry raw,"Bulgur, dry, raw",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+burdock root raw,"Burdock root, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+butterbur (fuki) raw,"Butterbur, (fuki), raw",Vegetables and Vegetable Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+cabbage bok choy raw,"Cabbage, bok choy, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+cabbage chinese (pak-choi) raw,"Cabbage, chinese (pak-choi), raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+cabbage chinese (pe-tsai) raw,"Cabbage, chinese (pe-tsai), raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+cabbage green raw,"Cabbage, green, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+cabbage kimchi,"Cabbage, kimchi",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+cabbage napa leaf destemmed raw,"Cabbage, napa, leaf, destemmed, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+cabbage raw,"Cabbage, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+cabbage red raw,"Cabbage, red, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+cabbage savoy raw,"Cabbage, savoy, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+canada goose breast meat only skinless raw,"Canada Goose, breast meat only, skinless, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+candied fruit,Candied fruit,Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+carambola (starfruit) raw,"Carambola, (starfruit), raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+cardoon raw,"Cardoon, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+caribou bone marrow raw (alaska native),"Caribou, bone marrow, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+caribou eye raw (alaska native),"Caribou, eye, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+caribou hind quarter meat raw (alaska native),"Caribou, hind quarter meat, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+caribou liver raw (alaska native),"Caribou, liver, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+caribou tongue raw (alaska native),"Caribou, tongue, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+carissa (natal-plum) raw,"Carissa, (natal-plum), raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+carrots baby raw,"Carrots, baby, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+carrots mature raw,"Carrots, mature, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+carrots raw,"Carrots, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+cassava raw,"Cassava, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+catsup,Catsup,Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+catsup low sodium,"Catsup, low sodium",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+cattail narrow leaf shoots (northern plains indians),"Cattail, Narrow Leaf Shoots (Northern Plains Indians)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+cauliflower green raw,"Cauliflower, green, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+cauliflower raw,"Cauliflower, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+celeriac raw,"Celeriac, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+celery raw,"Celery, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+celtuce raw,"Celtuce, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+chard swiss raw,"Chard, swiss, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+chayote fruit raw,"Chayote, fruit, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+cherimoya raw,"Cherimoya, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+cherries sour red raw,"Cherries, sour, red, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+cherries sweet dark red raw,"Cherries, sweet, dark red, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+cherries sweet raw,"Cherries, sweet, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+chia seeds dry raw,"Chia seeds, dry, raw",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+chicken breast boneless skinless raw,"Chicken, breast, boneless, skinless, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken broiler or fryers breast skinless boneless meat only raw,"Chicken, broiler or fryers, breast, skinless, boneless, meat only, raw",Poultry Products,1,0,0,0,1,1,0,1,1,1,vegetarian|vegan|pescatarian|gluten free
+chicken broiler rotisserie bbq back meat only,"Chicken, broiler, rotisserie, BBQ, back meat only",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken broiler rotisserie bbq breast meat only,"Chicken, broiler, rotisserie, BBQ, breast, meat only",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken broiler rotisserie bbq drumstick meat only,"Chicken, broiler, rotisserie, BBQ, drumstick, meat only",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken broiler rotisserie bbq skin,"Chicken, broiler, rotisserie, BBQ, skin",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken broiler rotisserie bbq thigh meat only,"Chicken, broiler, rotisserie, BBQ, thigh, meat only",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken broiler rotisserie bbq wing meat only,"Chicken, broiler, rotisserie, BBQ, wing, meat only",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken broilers or fryers back meat only raw,"Chicken, broilers or fryers, back, meat only, raw",Poultry Products,1,0,0,0,1,1,0,1,1,1,vegetarian|vegan|pescatarian|gluten free
+chicken broilers or fryers dark meat drumstick meat only raw,"Chicken, broilers or fryers, dark meat, drumstick, meat only, raw",Poultry Products,1,0,0,0,1,1,0,1,1,1,vegetarian|vegan|pescatarian|gluten free
+chicken broilers or fryers dark meat meat only raw,"Chicken, broilers or fryers, dark meat, meat only, raw",Poultry Products,1,0,0,0,1,1,0,1,1,1,vegetarian|vegan|pescatarian|gluten free
+chicken broilers or fryers dark meat thigh meat only raw,"Chicken, broilers or fryers, dark meat, thigh, meat only, raw",Poultry Products,1,0,0,0,1,1,0,1,1,1,vegetarian|vegan|pescatarian|gluten free
+chicken broilers or fryers giblets raw,"Chicken, broilers or fryers, giblets, raw",Poultry Products,1,0,0,0,1,1,0,1,1,1,vegetarian|vegan|pescatarian|gluten free
+chicken broilers or fryers leg meat only raw,"Chicken, broilers or fryers, leg, meat only, raw",Poultry Products,1,0,0,0,1,1,0,1,1,1,vegetarian|vegan|pescatarian|gluten free
+chicken broilers or fryers light meat meat only raw,"Chicken, broilers or fryers, light meat, meat only, raw",Poultry Products,1,0,0,0,1,1,0,1,1,1,vegetarian|vegan|pescatarian|gluten free
+chicken broilers or fryers meat only raw,"Chicken, broilers or fryers, meat only, raw",Poultry Products,1,0,0,0,1,1,0,1,1,1,vegetarian|vegan|pescatarian|gluten free
+chicken broilers or fryers neck meat only raw,"Chicken, broilers or fryers, neck, meat only, raw",Poultry Products,1,0,0,0,1,1,0,1,1,1,vegetarian|vegan|pescatarian|gluten free
+chicken broilers or fryers separable fat raw,"Chicken, broilers or fryers, separable fat, raw",Poultry Products,1,0,0,0,1,1,0,1,1,1,vegetarian|vegan|pescatarian|gluten free
+chicken broilers or fryers skin only raw,"Chicken, broilers or fryers, skin only, raw",Poultry Products,1,0,0,0,1,1,0,1,1,1,vegetarian|vegan|pescatarian|gluten free
+chicken broilers or fryers wing meat only raw,"Chicken, broilers or fryers, wing, meat only, raw",Poultry Products,1,0,0,0,1,1,0,1,1,1,vegetarian|vegan|pescatarian|gluten free
+chicken capons giblets raw,"Chicken, capons, giblets, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken cornish game hens meat only raw,"Chicken, cornish game hens, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken feet boiled,"Chicken, feet, boiled",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken gizzard all classes raw,"Chicken, gizzard, all classes, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken heart all classes raw,"Chicken, heart, all classes, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken liver all classes raw,"Chicken, liver, all classes, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken roasting dark meat meat only raw,"Chicken, roasting, dark meat, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken roasting giblets raw,"Chicken, roasting, giblets, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken roasting light meat meat only raw,"Chicken, roasting, light meat, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken roasting meat only raw,"Chicken, roasting, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken stewing dark meat meat only raw,"Chicken, stewing, dark meat, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken stewing giblets raw,"Chicken, stewing, giblets, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken stewing light meat meat only raw,"Chicken, stewing, light meat, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken stewing meat only raw,"Chicken, stewing, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chicken thigh boneless skinless raw,"Chicken, thigh, boneless, skinless, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chickpeas (garbanzo beans bengal gram) mature seeds raw,"Chickpeas (garbanzo beans, bengal gram), mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+chickpeas (garbanzo beans bengal gram) dry,"Chickpeas, (garbanzo beans, bengal gram), dry",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+chicory greens raw,"Chicory greens, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+chicory roots raw,"Chicory roots, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+chicory witloof raw,"Chicory, witloof, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+chilchen (red berry beverage) (navajo),Chilchen (Red Berry Beverage) (Navajo),American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+chiton leathery gumboots (alaska native),"Chiton, leathery, gumboots (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+chives raw,"Chives, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+chokecherries raw pitted (northern plains indians),"Chokecherries, raw, pitted (Northern Plains Indians)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+chokecherries raw pitted (shoshone bannock),"Chokecherries, raw, pitted (Shoshone Bannock)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+chrysanthemum leaves raw,"Chrysanthemum leaves, raw",Vegetables and Vegetable Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+chrysanthemum garland raw,"Chrysanthemum, garland, raw",Vegetables and Vegetable Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+clementines raw,"Clementines, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+cloudberries raw (alaska native),"Cloudberries, raw (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+cockles raw (alaska native),"Cockles, raw (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+collards raw,"Collards, raw",Vegetables and Vegetable Products,1,1,1,1,0,1,1,1,1,1,halal friendly
+coriander (cilantro) leaves raw,"Coriander (cilantro) leaves, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+corn grain white,"Corn grain, white",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+corn grain yellow,"Corn grain, yellow",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+corn sweet white raw,"Corn, sweet, white, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+corn sweet yellow raw,"Corn, sweet, yellow, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+corn white steamed (navajo),"Corn, white, steamed (Navajo)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+cornmeal blue (navajo),"Cornmeal, blue (Navajo)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+cornmeal degermed unenriched white,"Cornmeal, degermed, unenriched, white",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+cornmeal degermed unenriched yellow,"Cornmeal, degermed, unenriched, yellow",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+cornmeal white (navajo),"Cornmeal, white (Navajo)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+cornmeal whole-grain white,"Cornmeal, whole-grain, white",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+cornmeal whole-grain yellow,"Cornmeal, whole-grain, yellow",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+cornmeal yellow (navajo),"Cornmeal, yellow (Navajo)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+cornsalad raw,"Cornsalad, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+cornstarch,Cornstarch,Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+couscous dry,"Couscous, dry",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+cowpeas (blackeyes) immature seeds raw,"Cowpeas (blackeyes), immature seeds, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+cowpeas catjang mature seeds raw,"Cowpeas, catjang, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+cowpeas common (blackeyes crowder southern) mature seeds raw,"Cowpeas, common (blackeyes, crowder, southern), mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+cowpeas leafy tips raw,"Cowpeas, leafy tips, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+crabapples raw,"Crabapples, raw",Fruits and Fruit Juices,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+cranberries raw,"Cranberries, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+cranberries wild bush raw (alaska native),"Cranberries, wild, bush, raw (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+cranberry low bush or lingenberry raw (alaska native),"Cranberry, low bush or lingenberry, raw (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+cress garden raw,"Cress, garden, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+crustaceans crab alaska king imitation made from surimi,"Crustaceans, crab, alaska king, imitation, made from surimi",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+crustaceans crab alaska king raw,"Crustaceans, crab, alaska king, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+crustaceans crab blue raw,"Crustaceans, crab, blue, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+crustaceans crab dungeness raw,"Crustaceans, crab, dungeness, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+crustaceans crab queen raw,"Crustaceans, crab, queen, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+crustaceans crayfish mixed species farmed raw,"Crustaceans, crayfish, mixed species, farmed, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+crustaceans crayfish mixed species wild raw,"Crustaceans, crayfish, mixed species, wild, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+crustaceans lobster northern raw,"Crustaceans, lobster, northern, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+crustaceans shrimp farm raised raw,"Crustaceans, shrimp, farm raised, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+crustaceans shrimp mixed species imitation made from surimi,"Crustaceans, shrimp, mixed species, imitation, made from surimi",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+crustaceans shrimp mixed species raw (may contain additives to retain moisture),"Crustaceans, shrimp, mixed species, raw (may contain additives to retain moisture)",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+crustaceans shrimp raw,"Crustaceans, shrimp, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+crustaceans spiny lobster mixed species raw,"Crustaceans, spiny lobster, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+cucumber peeled raw,"Cucumber, peeled, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+currants european black raw,"Currants, european black, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+custard-apple (bullock s-heart) raw,"Custard-apple, (bullock's-heart), raw",Fruits and Fruit Juices,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+dandelion greens raw,"Dandelion greens, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+dates deglet noor,"Dates, deglet noor",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+dates medjool,"Dates, medjool",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+deer (venison) sitka raw (alaska native),"Deer (venison), sitka, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+dessert topping powdered,"Dessert topping, powdered",Dairy and Egg Products,1,1,1,1,1,1,1,1,1,1,
+dessert topping pressurized,"Dessert topping, pressurized",Dairy and Egg Products,1,1,1,1,1,1,1,1,1,1,
+dock raw,"Dock, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+drumstick leaves raw,"Drumstick leaves, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+drumstick pods raw,"Drumstick pods, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+duck domesticated liver raw,"Duck, domesticated, liver, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+duck domesticated meat only raw,"Duck, domesticated, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+duck scoter white-winged meat (alaska native),"Duck, scoter, white-winged, meat (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+duck wild breast meat only raw,"Duck, wild, breast, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+egg duck whole fresh raw,"Egg, duck, whole, fresh, raw",Dairy and Egg Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+egg goose whole fresh raw,"Egg, goose, whole, fresh, raw",Dairy and Egg Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+egg quail whole fresh raw,"Egg, quail, whole, fresh, raw",Dairy and Egg Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+egg turkey whole fresh raw,"Egg, turkey, whole, fresh, raw",Dairy and Egg Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+egg white raw fresh,"Egg, white, raw, fresh",Dairy and Egg Products,1,1,0,1,1,1,1,1,1,1,vegan
+egg whole raw fresh,"Egg, whole, raw, fresh",Dairy and Egg Products,1,1,0,1,1,1,1,1,1,1,vegan
+egg yolk raw fresh,"Egg, yolk, raw, fresh",Dairy and Egg Products,1,1,0,1,1,1,1,1,1,1,vegan
+eggnog,Eggnog,Dairy and Egg Products,1,1,0,1,1,1,1,1,1,1,vegan
+eggplant raw,"Eggplant, raw",Vegetables and Vegetable Products,1,1,0,1,1,1,1,1,1,1,vegan
+eggs grade a large egg white,"Eggs, Grade A, Large, egg white",Dairy and Egg Products,1,1,0,1,1,1,1,1,1,1,vegan
+eggs grade a large egg whole,"Eggs, Grade A, Large, egg whole",Dairy and Egg Products,1,1,0,1,1,1,1,1,1,1,vegan
+eggs grade a large egg yolk,"Eggs, Grade A, Large, egg yolk",Dairy and Egg Products,1,1,0,1,1,1,1,1,1,1,vegan
+einkorn grain dry raw,"Einkorn, grain, dry, raw",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+elderberries raw,"Elderberries, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+elk free range roast eye of round raw (shoshone bannock),"Elk, free range, roast, eye of round, raw (Shoshone Bannock)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+emu fan fillet raw,"Emu, fan fillet, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+emu flat fillet raw,"Emu, flat fillet, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+emu full rump raw,"Emu, full rump, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+emu inside drum raw,"Emu, inside drum, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+emu outside drum raw,"Emu, outside drum, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+emu oyster raw,"Emu, oyster, raw",Poultry Products,1,0,0,0,1,0,1,1,1,1,vegetarian|vegan|pescatarian|kosher style
+endive raw,"Endive, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+epazote raw,"Epazote, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+eppaw raw,"Eppaw, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+farro pearled dry raw,"Farro, pearled, dry, raw",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+feijoa raw,"Feijoa, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+fennel bulb raw,"Fennel, bulb, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+fiddlehead ferns raw,"Fiddlehead ferns, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+figs raw,"Figs, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+fireweed leaves raw,"Fireweed, leaves, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+fireweed young leaves raw (alaska native),"Fireweed, young leaves, raw (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+fish salmon chum raw (alaska native),"Fish, Salmon, Chum, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish anchovy european raw,"Fish, anchovy, european, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish bass fresh water mixed species raw,"Fish, bass, fresh water, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish bass striped raw,"Fish, bass, striped, raw",Finfish and Shellfish Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+fish blackfish whole (alaska native),"Fish, blackfish, whole (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish bluefish raw,"Fish, bluefish, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish burbot raw,"Fish, burbot, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish butterfish raw,"Fish, butterfish, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,0,1,1,vegetarian|vegan|lactose free
+fish carp raw,"Fish, carp, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish catfish channel farmed raw,"Fish, catfish, channel, farmed, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish catfish channel wild raw,"Fish, catfish, channel, wild, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish catfish farm raised raw,"Fish, catfish, farm raised, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish cisco raw,"Fish, cisco, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish cod atlantic raw,"Fish, cod, Atlantic, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish cod atlantic wild caught raw,"Fish, cod, Atlantic, wild caught, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish croaker atlantic raw,"Fish, croaker, Atlantic, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish cusk raw,"Fish, cusk, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish devilfish meat (alaska native),"Fish, devilfish, meat (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish drum freshwater raw,"Fish, drum, freshwater, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish eel mixed species raw,"Fish, eel, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish grouper mixed species raw,"Fish, grouper, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish haddock raw,"Fish, haddock, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish halibut greenland raw,"Fish, halibut, Greenland, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish herring eggs on giant kelp pacific (alaska native),"Fish, herring eggs on giant kelp, Pacific (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish herring eggs pacific dry (alaska native),"Fish, herring eggs, Pacific, dry (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish herring eggs pacific plain (alaska native),"Fish, herring eggs, Pacific, plain (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish herring atlantic raw,"Fish, herring, Atlantic, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish herring pacific raw,"Fish, herring, Pacific, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish ling raw,"Fish, ling, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish lingcod liver (alaska native),"Fish, lingcod, liver (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+fish lingcod meat raw (alaska native),"Fish, lingcod, meat, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish lingcod raw,"Fish, lingcod, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish mackerel atlantic raw,"Fish, mackerel, Atlantic, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish mackerel king raw,"Fish, mackerel, king, raw",Finfish and Shellfish Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+fish mackerel spanish raw,"Fish, mackerel, spanish, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish mahimahi raw,"Fish, mahimahi, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish milkfish raw,"Fish, milkfish, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,0,1,1,vegetarian|vegan|lactose free
+fish monkfish raw,"Fish, monkfish, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish mullet striped raw,"Fish, mullet, striped, raw",Finfish and Shellfish Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+fish ocean perch atlantic raw,"Fish, ocean perch, Atlantic, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish perch mixed species raw,"Fish, perch, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish pike northern liver (alaska native),"Fish, pike, northern, liver (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+fish pike northern raw,"Fish, pike, northern, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish pike walleye raw,"Fish, pike, walleye, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish pollock alaska raw,"Fish, pollock, Alaska, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish pollock alaska raw (may contain additives to retain moisture),"Fish, pollock, Alaska, raw (may contain additives to retain moisture)",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish pollock atlantic raw,"Fish, pollock, Atlantic, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish pollock raw,"Fish, pollock, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish pompano florida raw,"Fish, pompano, florida, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish pout ocean raw,"Fish, pout, ocean, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish rockfish pacific mixed species raw,"Fish, rockfish, Pacific, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish roe mixed species raw,"Fish, roe, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish roughy orange raw,"Fish, roughy, orange, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish sablefish raw,"Fish, sablefish, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish salmon atlantic farm raised raw,"Fish, salmon, Atlantic, farm raised, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish salmon atlantic farmed raw,"Fish, salmon, Atlantic, farmed, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish salmon atlantic wild raw,"Fish, salmon, Atlantic, wild, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish salmon chinook raw,"Fish, salmon, chinook, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish salmon chum raw,"Fish, salmon, chum, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish salmon coho (silver) raw (alaska native),"Fish, salmon, coho (silver), raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish salmon coho farmed raw,"Fish, salmon, coho, farmed, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish salmon coho wild raw,"Fish, salmon, coho, wild, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish salmon king (chinook) raw (alaska native),"Fish, salmon, king (chinook), raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish salmon king chinook liver (alaska native),"Fish, salmon, king, chinook, liver (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+fish salmon pink raw,"Fish, salmon, pink, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish salmon sockeye (red) raw (alaska native),"Fish, salmon, sockeye (red), raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish salmon sockeye raw,"Fish, salmon, sockeye, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish salmon sockeye wild caught raw,"Fish, salmon, sockeye, wild caught, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish scup raw,"Fish, scup, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish sea bass mixed species raw,"Fish, sea bass, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish seatrout mixed species raw,"Fish, seatrout, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish shad american raw,"Fish, shad, american, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish shark mixed species raw,"Fish, shark, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish sheefish raw (alaska native),"Fish, sheefish, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish sheepshead raw,"Fish, sheepshead, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish smelt rainbow raw,"Fish, smelt, rainbow, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish snapper mixed species raw,"Fish, snapper, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish spot raw,"Fish, spot, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish sturgeon mixed species raw,"Fish, sturgeon, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish sucker white raw,"Fish, sucker, white, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish sunfish pumpkin seed raw,"Fish, sunfish, pumpkin seed, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish surimi,"Fish, surimi",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish swordfish raw,"Fish, swordfish, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish tilapia farm raised raw,"Fish, tilapia, farm raised, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish tilapia raw,"Fish, tilapia, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish tilefish raw,"Fish, tilefish, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish trout brook raw new york state,"Fish, trout, brook, raw, New York State",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish trout mixed species raw,"Fish, trout, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish trout rainbow farmed raw,"Fish, trout, rainbow, farmed, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish trout rainbow wild raw,"Fish, trout, rainbow, wild, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish tuna salad,"Fish, tuna salad",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish tuna fresh bluefin raw,"Fish, tuna, fresh, bluefin, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish tuna fresh skipjack raw,"Fish, tuna, fresh, skipjack, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish tuna fresh yellowfin raw,"Fish, tuna, fresh, yellowfin, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish turbot european raw,"Fish, turbot, european, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish whitefish broad liver (alaska native),"Fish, whitefish, broad, liver (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+fish whitefish eggs (alaska native),"Fish, whitefish, eggs (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish whitefish mixed species raw,"Fish, whitefish, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish whitefish mixed species raw (alaska native),"Fish, whitefish, mixed species, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish whiting mixed species raw,"Fish, whiting, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish wolffish atlantic raw,"Fish, wolffish, Atlantic, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fish yellowtail mixed species raw,"Fish, yellowtail, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+fonio grain dry raw,"Fonio, grain, dry, raw",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+frog legs raw,"Frog legs, raw",Finfish and Shellfish Products,1,1,1,1,1,1,1,1,1,1,
+game meat antelope raw,"Game meat, antelope, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat bear raw,"Game meat, bear, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat beaver raw,"Game meat, beaver, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat beefalo composite of cuts raw,"Game meat, beefalo, composite of cuts, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat bison chuck shoulder clod separable lean only raw,"Game meat, bison, chuck, shoulder clod, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat bison ribeye separable lean only trimmed to 0 fat raw,"Game meat, bison, ribeye, separable lean only, trimmed to 0"" fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat bison separable lean only raw,"Game meat, bison, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat bison shoulder clod separable lean only trimmed to 0 fat raw,"Game meat, bison, shoulder clod, separable lean only, trimmed to 0"" fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat bison top round separable lean only 1 steak raw,"Game meat, bison, top round, separable lean only, 1"" steak, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat bison top sirloin separable lean only trimmed to 0 fat raw,"Game meat, bison, top sirloin, separable lean only, trimmed to 0"" fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat boar wild raw,"Game meat, boar, wild, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat buffalo water raw,"Game meat, buffalo, water, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat caribou raw,"Game meat, caribou, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat deer raw,"Game meat, deer, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat elk raw,"Game meat, elk, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat goat raw,"Game meat, goat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat horse raw,"Game meat, horse, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat moose raw,"Game meat, moose, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat muskrat raw,"Game meat, muskrat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat rabbit domesticated composite of cuts raw,"Game meat, rabbit, domesticated, composite of cuts, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat rabbit wild raw,"Game meat, rabbit, wild, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+game meat squirrel raw,"Game meat, squirrel, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+garlic raw,"Garlic, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+ginger root raw,"Ginger root, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+goose domesticated meat only raw,"Goose, domesticated, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+goose liver raw,"Goose, liver, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+gooseberries raw,"Gooseberries, raw",Fruits and Fruit Juices,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+gourd dishcloth (towelgourd) raw,"Gourd, dishcloth (towelgourd), raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+gourd white-flowered (calabash) raw,"Gourd, white-flowered (calabash), raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+grape leaves raw,"Grape leaves, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+grapefruit raw white california,"Grapefruit, raw, white, California",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+grapefruit raw white florida,"Grapefruit, raw, white, Florida",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+grapefruit raw white all areas,"Grapefruit, raw, white, all areas",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+grapes american type (slip skin) raw,"Grapes, american type (slip skin), raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+grapes green seedless raw,"Grapes, green, seedless, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+grapes muscadine raw,"Grapes, muscadine, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+grapes red or green (european type such as thompson seedless) raw,"Grapes, red or green (European type, such as Thompson seedless), raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+grapes red seedless raw,"Grapes, red, seedless, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+groundcherries (cape-gooseberries or poha) raw,"Groundcherries, (cape-gooseberries or poha), raw",Fruits and Fruit Juices,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+guavas common raw,"Guavas, common, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+guavas strawberry raw,"Guavas, strawberry, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+guinea hen meat only raw,"Guinea hen, meat only, raw",Poultry Products,1,1,1,1,1,1,1,1,1,1,
+hormel always tender boneless pork loin fresh pork,"HORMEL ALWAYS TENDER, Boneless Pork Loin, Fresh Pork",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+hormel always tender center cut chops fresh pork,"HORMEL ALWAYS TENDER, Center Cut Chops, Fresh Pork",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+hormel always tender pork loin filets lemon garlic-flavored,"HORMEL ALWAYS TENDER, Pork Loin Filets, Lemon Garlic-Flavored",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+hormel always tender pork tenderloin peppercorn-flavored,"HORMEL ALWAYS TENDER, Pork Tenderloin, Peppercorn-Flavored",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+hormel always tender pork tenderloin teriyaki-flavored,"HORMEL ALWAYS TENDER, Pork Tenderloin, Teriyaki-Flavored",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+house foods premium firm tofu,HOUSE FOODS Premium Firm Tofu,Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+house foods premium soft tofu,HOUSE FOODS Premium Soft Tofu,Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+hazelnuts beaked (northern plains indians),"Hazelnuts, beaked (Northern Plains Indians)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,0,1,nut free
+hearts of palm raw,"Hearts of palm, raw",Vegetables and Vegetable Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+horned melon (kiwano),Horned melon (Kiwano),Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+huckleberries raw (alaska native),"Huckleberries, raw (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+hyacinth beans mature seeds raw,"Hyacinth beans, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+hyacinth-beans immature seeds raw,"Hyacinth-beans, immature seeds, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+jackfruit raw,"Jackfruit, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+java-plum (jambolan) raw,"Java-plum, (jambolan), raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+jerusalem-artichokes raw,"Jerusalem-artichokes, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+jew s ear (pepeao) raw,"Jew's ear, (pepeao), raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+jujube raw,"Jujube, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+jute potherb raw,"Jute, potherb, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+kale raw,"Kale, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+kefir lowfat plain lifeway,"Kefir, lowfat, plain, LIFEWAY",Dairy and Egg Products,1,1,1,1,1,1,1,1,1,1,
+kefir lowfat strawberry lifeway,"Kefir, lowfat, strawberry, LIFEWAY",Dairy and Egg Products,1,1,1,1,1,1,1,1,1,1,
+khorasan grain dry raw,"Khorasan, grain, dry, raw",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+kiwifruit (kiwi) green peeled raw,"Kiwifruit (kiwi), green, peeled, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+kiwifruit zespri sungold raw,"Kiwifruit, ZESPRI SunGold, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+kiwifruit green raw,"Kiwifruit, green, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+kohlrabi raw,"Kohlrabi, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+kumquats raw,"Kumquats, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+lamb australian imported fresh composite of trimmed retail cuts separable lean only trimmed to 1 8 fat raw,"Lamb, Australian, imported, fresh, composite of trimmed retail cuts, separable lean only, trimmed to 1/8"" fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb australian imported fresh external fat raw,"Lamb, Australian, imported, fresh, external fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb australian imported fresh foreshank separable lean only trimmed to 1 8 fat raw,"Lamb, Australian, imported, fresh, foreshank, separable lean only, trimmed to 1/8"" fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb australian imported fresh leg bottom boneless separable lean only trimmed to 1 8 fat raw,"Lamb, Australian, imported, fresh, leg, bottom, boneless, separable lean only, trimmed to 1/8"" fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb australian imported fresh leg center slice bone-in separable lean only trimmed to 1 8 fat raw,"Lamb, Australian, imported, fresh, leg, center slice, bone-in, separable lean only, trimmed to 1/8"" fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb australian imported fresh leg hindshank heel on bone-in separable lean only trimmed to 1 8 fat raw,"Lamb, Australian, imported, fresh, leg, hindshank, heel on, bone-in, separable lean only, trimmed to 1/8"" fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb australian imported fresh leg shank half separable lean only trimmed to 1 8 fat raw,"Lamb, Australian, imported, fresh, leg, shank half, separable lean only, trimmed to 1/8"" fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb australian imported fresh leg sirloin chops boneless separable lean only trimmed to 1 8 fat raw,"Lamb, Australian, imported, fresh, leg, sirloin chops, boneless, separable lean only, trimmed to 1/8"" fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb australian imported fresh leg sirloin half boneless separable lean only trimmed to 1 8 fat raw,"Lamb, Australian, imported, fresh, leg, sirloin half, boneless, separable lean only, trimmed to 1/8"" fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb australian imported fresh leg trotter off bone-in separable lean only trimmed to 1 8 fat raw,"Lamb, Australian, imported, fresh, leg, trotter off, bone-in, separable lean only, trimmed to 1/8"" fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb australian imported fresh loin separable lean only trimmed to 1 8 fat raw,"Lamb, Australian, imported, fresh, loin, separable lean only, trimmed to 1/8"" fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb australian imported fresh rib chop rack roast frenched bone-in separable lean only trimmed to 1 8 fat raw,"Lamb, Australian, imported, fresh, rib chop/rack roast, frenched, bone-in, separable lean only, trimmed to 1/8"" fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb australian imported fresh seam fat raw,"Lamb, Australian, imported, fresh, seam fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb australian imported fresh separable fat raw,"Lamb, Australian, imported, fresh, separable fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb australian imported fresh shoulder arm separable lean only trimmed to 1 8 fat raw,"Lamb, Australian, imported, fresh, shoulder, arm, separable lean only, trimmed to 1/8"" fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb australian imported fresh shoulder blade separable lean only trimmed to 1 8 fat raw,"Lamb, Australian, imported, fresh, shoulder, blade, separable lean only, trimmed to 1/8"" fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb australian imported fresh tenderloin boneless separable lean only trimmed to 1 8 fat raw,"Lamb, Australian, imported, fresh, tenderloin, boneless, separable lean only, trimmed to 1/8"" fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported intermuscular fat raw,"Lamb, New Zealand, imported, Intermuscular fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported brains raw,"Lamb, New Zealand, imported, brains, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported breast separable lean only raw,"Lamb, New Zealand, imported, breast, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported chump boneless separable lean only raw,"Lamb, New Zealand, imported, chump, boneless, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported flap boneless separable lean only raw,"Lamb, New Zealand, imported, flap, boneless, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported fore-shank separable lean only raw,"Lamb, New Zealand, imported, fore-shank, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported heart raw,"Lamb, New Zealand, imported, heart, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported hind-shank separable lean only raw,"Lamb, New Zealand, imported, hind-shank, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported kidney raw,"Lamb, New Zealand, imported, kidney, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported leg chop steak bone-in separable lean only raw,"Lamb, New Zealand, imported, leg chop/steak, bone-in, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported liver raw,"Lamb, New Zealand, imported, liver, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported loin chop separable lean only raw,"Lamb, New Zealand, imported, loin chop, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported loin saddle separable lean only raw,"Lamb, New Zealand, imported, loin saddle, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported loin boneless separable lean only raw,"Lamb, New Zealand, imported, loin, boneless, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported neck chops separable lean only raw,"Lamb, New Zealand, imported, neck chops, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported netted shoulder rolled boneless separable lean only raw,"Lamb, New Zealand, imported, netted shoulder, rolled, boneless, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported rack - fully frenched separable lean only raw,"Lamb, New Zealand, imported, rack - fully frenched, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported rack - partly frenched separable lean only raw,"Lamb, New Zealand, imported, rack - partly frenched, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported square-cut shoulder chops separable lean only raw,"Lamb, New Zealand, imported, square-cut shoulder chops, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported square-cut shoulder separable lean only raw,"Lamb, New Zealand, imported, square-cut shoulder, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported subcutaneous fat raw,"Lamb, New Zealand, imported, subcutaneous fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported sweetbread raw,"Lamb, New Zealand, imported, sweetbread, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,0,1,1,1,vegetarian|vegan|pescatarian|gluten free
+lamb new zealand imported tenderloin separable lean only raw,"Lamb, New Zealand, imported, tenderloin, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported testes raw,"Lamb, New Zealand, imported, testes, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported tongue - swiss cut raw,"Lamb, New Zealand, imported, tongue - swiss cut, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb new zealand imported tunnel-boned leg chump off shank off separable lean only raw,"Lamb, New Zealand, imported, tunnel-boned leg, chump off, shank off, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb composite of trimmed retail cuts separable fat trimmed to 1 4 fat choice raw,"Lamb, composite of trimmed retail cuts, separable fat, trimmed to 1/4"" fat, choice, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb composite of trimmed retail cuts separable lean only trimmed to 1 4 fat choice raw,"Lamb, composite of trimmed retail cuts, separable lean only, trimmed to 1/4"" fat, choice, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb foreshank separable lean only trimmed to 1 4 fat choice raw,"Lamb, foreshank, separable lean only, trimmed to 1/4"" fat, choice, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb leg shank half separable lean only trimmed to 1 4 fat choice raw,"Lamb, leg, shank half, separable lean only, trimmed to 1/4"" fat, choice, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb leg sirloin half separable lean only trimmed to 1 4 fat choice raw,"Lamb, leg, sirloin half, separable lean only, trimmed to 1/4"" fat, choice, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb loin separable lean only trimmed to 1 4 fat choice raw,"Lamb, loin, separable lean only, trimmed to 1/4"" fat, choice, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb rib separable lean only trimmed to 1 4 fat choice raw,"Lamb, rib, separable lean only, trimmed to 1/4"" fat, choice, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb shoulder arm separable lean only trimmed to 1 4 fat choice raw,"Lamb, shoulder, arm, separable lean only, trimmed to 1/4"" fat, choice, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lamb shoulder blade separable lean only trimmed to 1 4 fat choice raw,"Lamb, shoulder, blade, separable lean only, trimmed to 1/4"" fat, choice, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lambsquarters raw,"Lambsquarters, raw",Vegetables and Vegetable Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lambsquarters raw (northern plains indians),"Lambsquarters, raw (Northern Plains Indians)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lambsquarters steamed (northern plains indians),"Lambsquarters, steamed (Northern Plains Indians)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+lemon grass (citronella) raw,"Lemon grass (citronella), raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+lemon peel raw,"Lemon peel, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+lemons raw without peel,"Lemons, raw, without peel",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+lentils dry,"Lentils, dry",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+lentils pink or red raw,"Lentils, pink or red, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+lentils raw,"Lentils, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+lentils sprouted raw,"Lentils, sprouted, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+lettuce cos or romaine raw,"Lettuce, cos or romaine, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+lettuce green leaf raw,"Lettuce, green leaf, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+lettuce iceberg (includes crisphead types) raw,"Lettuce, iceberg (includes crisphead types), raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+lettuce iceberg raw,"Lettuce, iceberg, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+lettuce leaf green raw,"Lettuce, leaf, green, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+lettuce leaf red raw,"Lettuce, leaf, red, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+lettuce red leaf raw,"Lettuce, red leaf, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+lettuce romaine green raw,"Lettuce, romaine, green, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+lima beans immature seeds raw,"Lima beans, immature seeds, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+lima beans large mature seeds raw,"Lima beans, large, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+lima beans thin seeded (baby) mature seeds raw,"Lima beans, thin seeded (baby), mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+limes raw,"Limes, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+litchis raw,"Litchis, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+longans raw,"Longans, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+loquats raw,"Loquats, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+lotus root raw,"Lotus root, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+lupins mature seeds raw,"Lupins, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+mori-nu tofu silken extra firm,"MORI-NU, Tofu, silken, extra firm",Legumes and Legume Products,1,1,1,1,1,1,1,1,0,1,nut free
+mori-nu tofu silken firm,"MORI-NU, Tofu, silken, firm",Legumes and Legume Products,1,1,1,1,1,1,1,1,0,1,nut free
+mori-nu tofu silken lite extra firm,"MORI-NU, Tofu, silken, lite extra firm",Legumes and Legume Products,1,1,1,1,1,1,1,1,0,1,nut free
+mori-nu tofu silken lite firm,"MORI-NU, Tofu, silken, lite firm",Legumes and Legume Products,1,1,1,1,1,1,1,1,0,1,nut free
+mori-nu tofu silken soft,"MORI-NU, Tofu, silken, soft",Legumes and Legume Products,1,1,1,1,1,1,1,1,0,1,nut free
+mammy-apple (mamey) raw,"Mammy-apple, (mamey), raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+mandarin seedless peeled raw,"Mandarin, seedless, peeled, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+mango ataulfo peeled raw,"Mango, Ataulfo, peeled, raw",Fruits and Fruit Juices,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+mango tommy atkins peeled raw,"Mango, Tommy Atkins, peeled, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+mangos raw,"Mangos, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+mashu roots raw (alaska native),"Mashu roots, raw (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+melon banana (navajo),"Melon, banana (Navajo)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+melons cantaloupe raw,"Melons, cantaloupe, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+melons casaba raw,"Melons, casaba, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+melons honeydew raw,"Melons, honeydew, raw",Fruits and Fruit Juices,1,1,0,1,1,1,1,1,1,1,vegan
+milk shakes thick chocolate,"Milk shakes, thick chocolate",Dairy and Egg Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+milk shakes thick vanilla,"Milk shakes, thick vanilla",Dairy and Egg Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+milk buttermilk fluid cultured lowfat,"Milk, buttermilk, fluid, cultured, lowfat",Dairy and Egg Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+milk buttermilk fluid whole,"Milk, buttermilk, fluid, whole",Dairy and Egg Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+milk chocolate beverage hot cocoa homemade,"Milk, chocolate beverage, hot cocoa, homemade",Dairy and Egg Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+milk chocolate lowfat reduced sugar,"Milk, chocolate, lowfat, reduced sugar",Dairy and Egg Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+milk human mature fluid,"Milk, human, mature, fluid",Dairy and Egg Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+milk imitation non-soy,"Milk, imitation, non-soy",Dairy and Egg Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+milk indian buffalo fluid,"Milk, indian buffalo, fluid",Dairy and Egg Products,1,0,0,0,1,1,1,0,1,1,vegetarian|vegan|pescatarian|lactose free
+milk low sodium fluid,"Milk, low sodium, fluid",Dairy and Egg Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+milk producer fluid 3 7 milkfat,"Milk, producer, fluid, 3.7% milkfat",Dairy and Egg Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+milk sheep fluid,"Milk, sheep, fluid",Dairy and Egg Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+millet raw,"Millet, raw",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+millet whole grain,"Millet, whole grain",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+mollusks abalone mixed species raw,"Mollusks, abalone, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+mollusks clam mixed species raw,"Mollusks, clam, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+mollusks conch baked or broiled,"Mollusks, conch, baked or broiled",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+mollusks cuttlefish mixed species raw,"Mollusks, cuttlefish, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+mollusks mussel blue raw,"Mollusks, mussel, blue, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+mollusks octopus common raw,"Mollusks, octopus, common, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+mollusks oyster pacific raw,"Mollusks, oyster, Pacific, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+mollusks oyster eastern farmed raw,"Mollusks, oyster, eastern, farmed, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+mollusks oyster eastern wild raw,"Mollusks, oyster, eastern, wild, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+mollusks scallop mixed species imitation made from surimi,"Mollusks, scallop, mixed species, imitation, made from surimi",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+mollusks scallop mixed species raw,"Mollusks, scallop, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+mollusks snail raw,"Mollusks, snail, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+mollusks squid mixed species raw,"Mollusks, squid, mixed species, raw",Finfish and Shellfish Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+mollusks whelk unspecified raw,"Mollusks, whelk, unspecified, raw",Finfish and Shellfish Products,1,0,0,0,1,0,1,1,1,1,vegetarian|vegan|pescatarian|kosher style
+moose liver braised (alaska native),"Moose, liver, braised (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+moose meat raw (alaska native),"Moose, meat, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+mothbeans mature seeds raw,"Mothbeans, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+mountain yam hawaii raw,"Mountain yam, hawaii, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mouse nuts roots (alaska native),"Mouse nuts, roots (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,0,1,nut free
+mouse nuts seedlings (alaska native),"Mouse nuts, seedlings (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,0,1,nut free
+mulberries raw,"Mulberries, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+mung beans mature seeds raw,"Mung beans, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+mung beans mature seeds sprouted raw,"Mung beans, mature seeds, sprouted, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mungo beans mature seeds raw,"Mungo beans, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+mushroom beech,"Mushroom, beech",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushroom crimini,"Mushroom, crimini",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushroom enoki,"Mushroom, enoki",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushroom king oyster,"Mushroom, king oyster",Vegetables and Vegetable Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+mushroom lion s mane,"Mushroom, lion's mane",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushroom maitake,"Mushroom, maitake",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushroom oyster,"Mushroom, oyster",Vegetables and Vegetable Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+mushroom pioppini,"Mushroom, pioppini",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushroom portabella,"Mushroom, portabella",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushroom white exposed to ultraviolet light raw,"Mushroom, white, exposed to ultraviolet light, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushrooms chanterelle raw,"Mushrooms, Chanterelle, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushrooms brown italian or crimini exposed to ultraviolet light raw,"Mushrooms, brown, italian, or crimini, exposed to ultraviolet light, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushrooms brown italian or crimini raw,"Mushrooms, brown, italian, or crimini, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushrooms enoki raw,"Mushrooms, enoki, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushrooms maitake raw,"Mushrooms, maitake, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushrooms morel raw,"Mushrooms, morel, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushrooms oyster raw,"Mushrooms, oyster, raw",Vegetables and Vegetable Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+mushrooms portabella exposed to ultraviolet light grilled,"Mushrooms, portabella, exposed to ultraviolet light, grilled",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushrooms portabella exposed to ultraviolet light raw,"Mushrooms, portabella, exposed to ultraviolet light, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushrooms portabella grilled,"Mushrooms, portabella, grilled",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushrooms portabella raw,"Mushrooms, portabella, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushrooms shiitake,"Mushrooms, shiitake",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushrooms shiitake raw,"Mushrooms, shiitake, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushrooms white button,"Mushrooms, white button",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushrooms white microwaved,"Mushrooms, white, microwaved",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mushrooms white raw,"Mushrooms, white, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mustard greens raw,"Mustard greens, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+mustard spinach (tendergreen) raw,"Mustard spinach, (tendergreen), raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+natto,Natto,Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+nectarines raw,"Nectarines, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+new zealand spinach raw,"New Zealand spinach, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+nopales raw,"Nopales, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+nuts acorns raw,"Nuts, acorns, raw",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts almonds,"Nuts, almonds",Nut and Seed Products,1,0,0,1,1,1,1,1,0,1,vegetarian|vegan|nut free
+nuts almonds blanched,"Nuts, almonds, blanched",Nut and Seed Products,1,0,0,1,1,1,1,1,0,1,vegetarian|vegan|nut free
+nuts almonds whole raw,"Nuts, almonds, whole, raw",Nut and Seed Products,1,0,0,1,1,1,1,1,0,1,vegetarian|vegan|nut free
+nuts brazilnuts raw,"Nuts, brazilnuts, raw",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts cashew nuts raw,"Nuts, cashew nuts, raw",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts chestnuts chinese raw,"Nuts, chestnuts, chinese, raw",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts chestnuts european raw peeled,"Nuts, chestnuts, european, raw, peeled",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts chestnuts european raw unpeeled,"Nuts, chestnuts, european, raw, unpeeled",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts chestnuts japanese raw,"Nuts, chestnuts, japanese, raw",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts coconut meat raw,"Nuts, coconut meat, raw",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts coconut water (liquid from coconuts),"Nuts, coconut water (liquid from coconuts)",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts formulated wheat-based all flavors except macadamia without salt,"Nuts, formulated, wheat-based, all flavors except macadamia, without salt",Nut and Seed Products,1,1,1,1,1,1,0,1,0,1,gluten free|nut free
+nuts ginkgo nuts raw,"Nuts, ginkgo nuts, raw",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts hazelnuts or filberts,"Nuts, hazelnuts or filberts",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts hazelnuts or filberts blanched,"Nuts, hazelnuts or filberts, blanched",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts hazelnuts or filberts raw,"Nuts, hazelnuts or filberts, raw",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts macadamia nuts raw,"Nuts, macadamia nuts, raw",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts pecans,"Nuts, pecans",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts pecans halves raw,"Nuts, pecans, halves, raw",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts pine nuts raw,"Nuts, pine nuts, raw",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts pistachio nuts raw,"Nuts, pistachio nuts, raw",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts walnuts english halves raw,"Nuts, walnuts, English, halves, raw",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts walnuts english,"Nuts, walnuts, english",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+nuts walnuts glazed,"Nuts, walnuts, glazed",Nut and Seed Products,1,1,1,1,1,1,1,1,0,1,nut free
+oats (includes foods for usda s food distribution program),Oats (Includes foods for USDA's Food Distribution Program),Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+oats whole grain rolled old fashioned,"Oats, whole grain, rolled, old fashioned",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+oats whole grain steel cut,"Oats, whole grain, steel cut",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+octopus (alaska native),Octopus (Alaska Native),American Indian/Alaska Native Foods,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+oheloberries raw,"Oheloberries, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+okara,Okara,Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+okra raw,"Okra, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+onions raw,"Onions, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+onions red raw,"Onions, red, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+onions sweet raw,"Onions, sweet, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+onions welsh raw,"Onions, welsh, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+onions white raw,"Onions, white, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+onions yellow raw,"Onions, yellow, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+onions yellow sauteed,"Onions, yellow, sauteed",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+onions young green tops only,"Onions, young green, tops only",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+oopah (tunicate) whole animal (alaska native),"Oopah (tunicate), whole animal (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+orange peel raw,"Orange peel, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+oranges raw california valencias,"Oranges, raw, California, valencias",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+oranges raw florida,"Oranges, raw, Florida",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+oranges raw navels,"Oranges, raw, navels",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+oranges raw navels (includes foods for usda s food distribution program),"Oranges, raw, navels (Includes foods for USDA's Food Distribution Program)",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+ostrich fan raw,"Ostrich, fan, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+ostrich inside leg raw,"Ostrich, inside leg, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+ostrich inside strip raw,"Ostrich, inside strip, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+ostrich outside leg raw,"Ostrich, outside leg, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+ostrich outside strip raw,"Ostrich, outside strip, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+ostrich oyster raw,"Ostrich, oyster, raw",Poultry Products,1,0,0,0,1,0,1,1,1,1,vegetarian|vegan|pescatarian|kosher style
+ostrich round raw,"Ostrich, round, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+ostrich tenderloin raw,"Ostrich, tenderloin, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+ostrich tip trimmed raw,"Ostrich, tip trimmed, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+ostrich top loin raw,"Ostrich, top loin, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+owl horned flesh raw (alaska native),"Owl, horned, flesh, raw (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+papayas raw,"Papayas, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+parsley fresh,"Parsley, fresh",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+parsnips raw,"Parsnips, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+passion-fruit (granadilla) purple raw,"Passion-fruit, (granadilla), purple, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+pasta dry unenriched,"Pasta, dry, unenriched",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+pasta fresh-refrigerated plain as purchased,"Pasta, fresh-refrigerated, plain, as purchased",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+pasta fresh-refrigerated spinach as purchased,"Pasta, fresh-refrigerated, spinach, as purchased",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+pasta gluten-free corn dry,"Pasta, gluten-free, corn, dry",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+pasta whole grain 51 whole wheat remaining unenriched semolina dry,"Pasta, whole grain, 51% whole wheat, remaining unenriched semolina, dry",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+pasta whole-wheat dry (includes foods for usda s food distribution program),"Pasta, whole-wheat, dry (Includes foods for USDA's Food Distribution Program)",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+pawpaw peeled seeded raw,"Pawpaw, peeled, seeded, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+peaches yellow raw,"Peaches, yellow, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+peanuts all types raw,"Peanuts, all types, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,0,1,nut free
+peanuts raw,"Peanuts, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,0,1,nut free
+peanuts spanish raw,"Peanuts, spanish, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,0,1,nut free
+peanuts valencia raw,"Peanuts, valencia, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,0,1,nut free
+peanuts virginia raw,"Peanuts, virginia, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,0,1,nut free
+pears asian raw,"Pears, asian, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+pears raw,"Pears, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+pears raw bartlett,"Pears, raw, bartlett",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+pears raw bartlett (includes foods for usda s food distribution program),"Pears, raw, bartlett (Includes foods for USDA's Food Distribution Program)",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+pears raw bosc (includes foods for usda s food distribution program),"Pears, raw, bosc (Includes foods for USDA's Food Distribution Program)",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+pears raw green anjou (includes foods for usda s food distribution program),"Pears, raw, green anjou (Includes foods for USDA's Food Distribution Program)",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+pears raw red anjou,"Pears, raw, red anjou",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+peas edible-podded boiled drained without salt,"Peas, edible-podded, boiled, drained, without salt",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peas edible-podded raw,"Peas, edible-podded, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peas green raw,"Peas, green, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peas green split mature seeds raw,"Peas, green, split, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+peas mature seeds sprouted raw,"Peas, mature seeds, sprouted, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+pepper banana raw,"Pepper, banana, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peppers banana or hungarian wax seeded raw,"Peppers, banana or Hungarian wax, seeded, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peppers bell green raw,"Peppers, bell, green, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peppers bell orange raw,"Peppers, bell, orange, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peppers bell red raw,"Peppers, bell, red, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peppers bell yellow raw,"Peppers, bell, yellow, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peppers hot chili green raw,"Peppers, hot chili, green, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peppers hot chili red raw,"Peppers, hot chili, red, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peppers hungarian raw,"Peppers, hungarian, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peppers jalapeno raw,"Peppers, jalapeno, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peppers jalapeno seeded raw,"Peppers, jalapeno, seeded, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peppers poblano seeded raw,"Peppers, poblano, seeded, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peppers serrano raw,"Peppers, serrano, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peppers serrano seeded raw,"Peppers, serrano, seeded, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peppers sweet green raw,"Peppers, sweet, green, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peppers sweet green sauteed,"Peppers, sweet, green, sauteed",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peppers sweet red raw,"Peppers, sweet, red, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peppers sweet red sauteed,"Peppers, sweet, red, sauteed",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+peppers sweet yellow raw,"Peppers, sweet, yellow, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+persimmons japanese raw,"Persimmons, japanese, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+persimmons native raw,"Persimmons, native, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+pheasant breast meat only raw,"Pheasant, breast, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+pheasant leg meat only raw,"Pheasant, leg, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+pheasant raw meat only,"Pheasant, raw, meat only",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+pigeon peas (red gram) mature seeds raw,"Pigeon peas (red gram), mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+pigeonpeas immature seeds raw,"Pigeonpeas, immature seeds, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+piki bread made from blue cornmeal (hopi),"Piki bread, made from blue cornmeal (Hopi)",American Indian/Alaska Native Foods,1,1,1,1,1,1,0,1,1,1,gluten free
+pineapple raw,"Pineapple, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+pineapple raw all varieties,"Pineapple, raw, all varieties",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+pineapple raw extra sweet variety,"Pineapple, raw, extra sweet variety",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+pineapple raw traditional varieties,"Pineapple, raw, traditional varieties",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+pitanga (surinam-cherry) raw,"Pitanga, (surinam-cherry), raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+plantains green boiled,"Plantains, green, boiled",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+plantains green raw,"Plantains, green, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+plantains overripe raw,"Plantains, overripe, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+plantains ripe raw,"Plantains, ripe, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+plantains underripe raw,"Plantains, underripe, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+plantains yellow baked,"Plantains, yellow, baked",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+plantains yellow raw,"Plantains, yellow, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+plums raw,"Plums, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+plums wild (northern plains indians),"Plums, wild (Northern Plains Indians)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+poi,Poi,Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+pokeberry shoots (poke) raw,"Pokeberry shoots, (poke), raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+pomegranates raw,"Pomegranates, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+pork loin fresh backribs bone-in raw lean only,"Pork loin, fresh, backribs, bone-in, raw, lean only",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork chop center cut raw,"Pork, chop, center cut, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh backfat raw,"Pork, fresh, backfat, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh belly raw,"Pork, fresh, belly, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh composite of trimmed retail cuts (leg loin shoulder) separable lean only raw,"Pork, fresh, composite of trimmed retail cuts (leg, loin, shoulder), separable lean only, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh enhanced loin tenderloin separable lean only raw,"Pork, fresh, enhanced, loin, tenderloin, separable lean only, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh loin blade (chops or roasts) bone-in separable lean only raw,"Pork, fresh, loin, blade (chops or roasts), bone-in, separable lean only, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh loin blade (chops or roasts) boneless separable lean only raw,"Pork, fresh, loin, blade (chops or roasts), boneless, separable lean only, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh loin center loin (chops) bone-in separable lean only raw,"Pork, fresh, loin, center loin (chops), bone-in, separable lean only, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh loin center loin (chops) boneless separable lean only raw,"Pork, fresh, loin, center loin (chops), boneless, separable lean only, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh loin center rib (chops or roasts) bone-in separable lean only raw,"Pork, fresh, loin, center rib (chops or roasts), bone-in, separable lean only, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh loin center rib (chops or roasts) boneless separable lean only raw,"Pork, fresh, loin, center rib (chops or roasts), boneless, separable lean only, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh loin country-style ribs separable lean only raw,"Pork, fresh, loin, country-style ribs, separable lean only, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh loin sirloin (chops or roasts) bone-in separable lean only raw,"Pork, fresh, loin, sirloin (chops or roasts), bone-in, separable lean only, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh loin sirloin (chops or roasts) boneless separable lean only raw,"Pork, fresh, loin, sirloin (chops or roasts), boneless, separable lean only, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh loin tenderloin separable lean only raw,"Pork, fresh, loin, tenderloin, separable lean only, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh loin top loin (chops) boneless separable lean only raw,"Pork, fresh, loin, top loin (chops), boneless, separable lean only, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh loin top loin (roasts) boneless separable lean only raw,"Pork, fresh, loin, top loin (roasts), boneless, separable lean only, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh loin whole separable lean only raw,"Pork, fresh, loin, whole, separable lean only, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh separable fat raw,"Pork, fresh, separable fat, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh shoulder (boston butt) blade (steaks) separable lean only raw,"Pork, fresh, shoulder, (Boston butt), blade (steaks), separable lean only, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh shoulder arm picnic separable lean only raw,"Pork, fresh, shoulder, arm picnic, separable lean only, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork fresh shoulder whole separable lean only raw,"Pork, fresh, shoulder, whole, separable lean only, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork loin boneless raw,"Pork, loin, boneless, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+pork loin tenderloin boneless raw,"Pork, loin, tenderloin, boneless, raw",Pork Products,1,0,0,0,0,0,1,1,1,1,vegetarian|vegan|pescatarian|halal friendly|kosher style
+potato pancakes,Potato pancakes,Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+potatoes baked flesh without salt,"Potatoes, baked, flesh, without salt",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+potatoes baked skin without salt,"Potatoes, baked, skin, without salt",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+potatoes gold without skin raw,"Potatoes, gold, without skin, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+potatoes hash brown refrigerated unprepared,"Potatoes, hash brown, refrigerated, unprepared",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+potatoes raw skin,"Potatoes, raw, skin",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+potatoes red without skin raw,"Potatoes, red, without skin, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+potatoes russet without skin raw,"Potatoes, russet, without skin, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+poultry mechanically deboned from mature hens raw,"Poultry, mechanically deboned, from mature hens, raw",Poultry Products,1,1,1,1,1,1,1,1,1,1,
+prairie turnips boiled (northern plains indians),"Prairie Turnips, boiled (Northern Plains Indians)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+prairie turnips raw (northern plains indians),"Prairie Turnips, raw (Northern Plains Indians)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+prickly pears broiled (northern plains indians),"Prickly pears, broiled (Northern Plains Indians)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+prickly pears raw,"Prickly pears, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+prickly pears raw (northern plains indians),"Prickly pears, raw (Northern Plains Indians)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+prune puree,Prune puree,Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+pummelo raw,"Pummelo, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+pumpkin flowers raw,"Pumpkin flowers, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+pumpkin leaves raw,"Pumpkin leaves, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+pumpkin raw,"Pumpkin, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+purslane raw,"Purslane, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+quail breast meat only raw,"Quail, breast, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+quail meat only raw,"Quail, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+quinces raw,"Quinces, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+quinoa uncooked,"Quinoa, uncooked",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+radicchio raw,"Radicchio, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+radish seeds sprouted raw,"Radish seeds, sprouted, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+radishes oriental raw,"Radishes, oriental, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+radishes raw,"Radishes, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+radishes red raw,"Radishes, red, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+radishes white icicle raw,"Radishes, white icicle, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+raisins dark seedless (includes foods for usda s food distribution program),"Raisins, dark, seedless (Includes foods for USDA's Food Distribution Program)",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+raisins golden seedless,"Raisins, golden, seedless",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+raisins seeded,"Raisins, seeded",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+raspberries puree seedless,"Raspberries, puree, seedless",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+raspberries raw,"Raspberries, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+raspberries wild (northern plains indians),"Raspberries, wild (Northern Plains Indians)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+reddi wip fat free whipped topping,Reddi Wip Fat Free Whipped Topping,Dairy and Egg Products,1,1,1,1,1,1,1,1,1,1,
+rhubarb raw,"Rhubarb, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+rhubarb wild leaves (alaska native),"Rhubarb, wild, leaves (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+rice black unenriched raw,"Rice, black, unenriched, raw",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+rice brown long grain unenriched raw,"Rice, brown, long grain, unenriched, raw",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+rice brown long-grain raw (includes foods for usda s food distribution program),"Rice, brown, long-grain, raw (Includes foods for USDA's Food Distribution Program)",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+rice brown medium-grain raw (includes foods for usda s food distribution program),"Rice, brown, medium-grain, raw (Includes foods for USDA's Food Distribution Program)",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+rice brown parboiled dry uncle ben s,"Rice, brown, parboiled, dry, UNCLE BEN'S",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+rice red unenriched dry raw,"Rice, red, unenriched, dry, raw",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+rice white glutinous unenriched uncooked,"Rice, white, glutinous, unenriched, uncooked",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+rice white long grain unenriched raw,"Rice, white, long grain, unenriched, raw",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+rice white long-grain parboiled unenriched dry,"Rice, white, long-grain, parboiled, unenriched, dry",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+rice white long-grain regular raw unenriched,"Rice, white, long-grain, regular, raw, unenriched",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+rice white medium-grain raw unenriched,"Rice, white, medium-grain, raw, unenriched",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+rice white short-grain raw unenriched,"Rice, white, short-grain, raw, unenriched",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+rose hips wild (northern plains indians),"Rose Hips, wild (Northern Plains Indians)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+rose-apples raw,"Rose-apples, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+roselle raw,"Roselle, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+rowal raw,"Rowal, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+ruffed grouse breast meat skinless raw,"Ruffed Grouse, breast meat, skinless, raw",Poultry Products,1,1,1,1,1,1,1,1,1,1,
+rutabaga peeled raw,"Rutabaga, peeled, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+rutabagas raw,"Rutabagas, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+rye grain,Rye grain,Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+silk chai soymilk,"SILK Chai, soymilk",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+silk chocolate soymilk,"SILK Chocolate, soymilk",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+silk coffee soymilk,"SILK Coffee, soymilk",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+silk light chocolate soymilk,"SILK Light Chocolate, soymilk",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+silk light plain soymilk,"SILK Light Plain, soymilk",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+silk light vanilla soymilk,"SILK Light Vanilla, soymilk",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+silk mocha soymilk,"SILK Mocha, soymilk",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+silk nog soymilk,"SILK Nog, soymilk",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+silk plain soymilk,"SILK Plain, soymilk",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+silk plus fiber soymilk,"SILK Plus Fiber, soymilk",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+silk plus omega-3 dha soymilk,"SILK Plus Omega-3 DHA, soymilk",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+silk plus for bone health soymilk,"SILK Plus for Bone Health, soymilk",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+silk unsweetened soymilk,"SILK Unsweetened, soymilk",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+silk vanilla soymilk,"SILK Vanilla, soymilk",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+silk very vanilla soymilk,"SILK Very Vanilla, soymilk",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+salmonberries raw (alaska native),"Salmonberries, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+salsify (vegetable oyster) raw,"Salsify, (vegetable oyster), raw",Vegetables and Vegetable Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+sapodilla raw,"Sapodilla, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+sapote mamey raw,"Sapote, mamey, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+sea cucumber yane (alaska native),"Sea cucumber, yane (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+sea lion steller fat (alaska native),"Sea lion, Steller, fat (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+sea lion steller heart (alaska native),"Sea lion, Steller, heart (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+sea lion steller kidney (alaska native),"Sea lion, Steller, kidney (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+sea lion steller liver (alaska native),"Sea lion, Steller, liver (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+sea lion steller meat (alaska native),"Sea lion, Steller, meat (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+seal bearded (oogruk) meat low quadrant raw (alaska native),"Seal, bearded (Oogruk), meat, low quadrant, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+seal bearded (oogruk) meat raw (alaska native),"Seal, bearded (Oogruk), meat, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+seal ringed liver (alaska native),"Seal, ringed, liver (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+seal ringed meat (alaska native),"Seal, ringed, meat (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+seaweed canadian cultivated emi-tsunomata dry,"Seaweed, Canadian Cultivated EMI-TSUNOMATA, dry",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+seaweed canadian cultivated emi-tsunomata rehydrated,"Seaweed, Canadian Cultivated EMI-TSUNOMATA, rehydrated",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+seaweed agar raw,"Seaweed, agar, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+seaweed irishmoss raw,"Seaweed, irishmoss, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+seaweed kelp raw,"Seaweed, kelp, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+seaweed laver raw,"Seaweed, laver, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+seaweed spirulina raw,"Seaweed, spirulina, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+seaweed wakame raw,"Seaweed, wakame, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+seeds breadfruit seeds boiled,"Seeds, breadfruit seeds, boiled",Nut and Seed Products,1,1,1,1,1,1,0,1,1,1,gluten free
+seeds breadfruit seeds raw,"Seeds, breadfruit seeds, raw",Nut and Seed Products,1,1,1,1,1,1,0,1,1,1,gluten free
+seeds breadnut tree seeds raw,"Seeds, breadnut tree seeds, raw",Nut and Seed Products,1,1,1,1,1,1,0,1,0,1,gluten free|nut free
+seeds flaxseed,"Seeds, flaxseed",Nut and Seed Products,1,1,1,1,1,1,1,1,1,1,
+seeds hemp seed hulled,"Seeds, hemp seed, hulled",Nut and Seed Products,1,1,1,1,1,1,1,1,1,1,
+seeds lotus seeds raw,"Seeds, lotus seeds, raw",Nut and Seed Products,1,1,1,1,1,1,1,1,1,1,
+seeds pumpkin seeds (pepitas) raw,"Seeds, pumpkin seeds (pepitas), raw",Nut and Seed Products,1,1,1,1,1,1,1,1,1,1,
+seeds sesame seed kernels toasted without salt added (decorticated),"Seeds, sesame seed kernels, toasted, without salt added (decorticated)",Nut and Seed Products,1,1,1,1,1,1,1,1,1,1,
+seeds sunflower seed kernels toasted without salt,"Seeds, sunflower seed kernels, toasted, without salt",Nut and Seed Products,1,1,1,1,1,1,1,1,1,1,
+seeds sunflower seed kernel raw,"Seeds, sunflower seed, kernel, raw",Nut and Seed Products,1,1,1,1,1,1,1,1,1,1,
+semolina unenriched,"Semolina, unenriched",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+sesbania flower raw,"Sesbania flower, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+shallots bulb peeled root removed raw,"Shallots, bulb, peeled, root removed, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+shallots raw,"Shallots, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+sorghum grain,Sorghum grain,Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+sorghum grain white pearled unenriched dry raw,"Sorghum grain, white, pearled, unenriched, dry, raw",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+sorghum whole grain white dry raw,"Sorghum, whole grain, white, dry, raw",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+soup fish homemade (alaska native),"Soup, fish, homemade (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,1,1,1,1,1,1,1,vegetarian|vegan
+sourdock young leaves (alaska native),"Sourdock, young leaves (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+soursop raw,"Soursop, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+soy milk sweetened plain refrigerated,"Soy milk, sweetened, plain, refrigerated",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+soy milk unsweetened plain shelf stable,"Soy milk, unsweetened, plain, shelf stable",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+soybeans green raw,"Soybeans, green, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+soybeans mature seeds raw,"Soybeans, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+soybeans mature seeds sprouted raw,"Soybeans, mature seeds, sprouted, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+soymilk (all flavors) enhanced,"Soymilk (All flavors), enhanced",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+soymilk chocolate unfortified,"Soymilk, chocolate, unfortified",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+spaghetti spinach dry,"Spaghetti, spinach, dry",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+spelt uncooked,"Spelt, uncooked",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+spinach souffle,Spinach souffle,Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+spinach baby,"Spinach, baby",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+spinach mature,"Spinach, mature",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+spinach raw,"Spinach, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+squab (pigeon) light meat without skin raw,"Squab, (pigeon), light meat without skin, raw",Poultry Products,1,1,1,1,1,1,1,1,1,1,
+squab (pigeon) meat only raw,"Squab, (pigeon), meat only, raw",Poultry Products,1,1,1,1,1,1,1,1,1,1,
+squash indian raw (navajo),"Squash, Indian, raw (Navajo)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+squash pie pumpkin peeled seeded raw,"Squash, pie pumpkin, peeled, seeded, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+squash spaghetti peeled seeded raw,"Squash, spaghetti, peeled, seeded, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+squash summer all varieties raw,"Squash, summer, all varieties, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+squash summer green zucchini includes skin raw,"Squash, summer, green, zucchini, includes skin, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+squash summer scallop raw,"Squash, summer, scallop, raw",Vegetables and Vegetable Products,1,0,0,1,1,0,1,1,1,1,vegetarian|vegan|kosher style
+squash summer yellow includes skin raw,"Squash, summer, yellow, includes skin, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,0,1,1,1,gluten free
+squash summer zucchini includes skin raw,"Squash, summer, zucchini, includes skin, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+squash winter acorn raw,"Squash, winter, acorn, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+squash winter all varieties raw,"Squash, winter, all varieties, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+squash winter butternut raw,"Squash, winter, butternut, raw",Vegetables and Vegetable Products,1,1,0,1,1,1,1,0,0,1,vegan|lactose free|nut free
+squash winter hubbard baked without salt,"Squash, winter, hubbard, baked, without salt",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+squash winter hubbard raw,"Squash, winter, hubbard, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+squash winter spaghetti raw,"Squash, winter, spaghetti, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+squash zucchini baby raw,"Squash, zucchini, baby, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+stew moose (alaska native),"Stew, moose (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+stew mutton corn squash (navajo),"Stew, mutton, corn, squash (Navajo)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+stew steamed corn (navajo),"Stew, steamed corn (Navajo)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+stew soup caribou (alaska native),"Stew/soup, caribou (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+stinging nettles blanched (northern plains indians),"Stinging Nettles, blanched (Northern Plains Indians)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+strawberries raw,"Strawberries, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+sugar-apples (sweetsop) raw,"Sugar-apples, (sweetsop), raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+sweet potato leaves raw,"Sweet potato leaves, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+sweet potato raw unprepared (includes foods for usda s food distribution program),"Sweet potato, raw, unprepared (Includes foods for USDA's Food Distribution Program)",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+sweet potatoes orange flesh without skin raw,"Sweet potatoes, orange flesh, without skin, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+tamales (navajo),Tamales (Navajo),American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+tamarinds raw,"Tamarinds, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+tangerines (mandarin oranges) raw,"Tangerines, (mandarin oranges), raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+tapioca pearl dry,"Tapioca, pearl, dry",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+taro leaves raw,"Taro leaves, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+taro shoots raw,"Taro shoots, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+taro raw,"Taro, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+taro tahitian raw,"Taro, tahitian, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+tea herbal brewed hohoysi (hopi),"Tea, herbal, brewed, Hohoysi (Hopi)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+teff uncooked,"Teff, uncooked",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+tempeh,Tempeh,Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+tennis bread plain (apache),"Tennis Bread, plain (Apache)",American Indian/Alaska Native Foods,1,1,1,1,1,1,0,1,1,1,gluten free
+tomatillos dehusked raw,"Tomatillos, dehusked, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+tomatillos raw,"Tomatillos, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+tomato roma,"Tomato, roma",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+tomatoes grape raw,"Tomatoes, grape, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+tomatoes green raw,"Tomatoes, green, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+tomatoes orange raw,"Tomatoes, orange, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+tomatoes red ripe raw year round average,"Tomatoes, red, ripe, raw, year round average",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+tomatoes yellow raw,"Tomatoes, yellow, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+tortilla blue corn sakwavikaviki (hopi),"Tortilla, blue corn, Sakwavikaviki (Hopi)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+triticale,Triticale,Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+turkey all classes heart raw,"Turkey, all classes, heart, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turkey all classes liver raw,"Turkey, all classes, liver, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turkey drumstick from whole bird meat only raw,"Turkey, drumstick, from whole bird, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turkey gizzard all classes raw,"Turkey, gizzard, all classes, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turkey mechanically deboned from turkey frames raw,"Turkey, mechanically deboned, from turkey frames, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turkey retail parts breast meat only raw,"Turkey, retail parts, breast, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turkey retail parts drumstick meat only raw,"Turkey, retail parts, drumstick, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turkey retail parts thigh meat only raw,"Turkey, retail parts, thigh, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turkey retail parts wing meat only raw,"Turkey, retail parts, wing, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turkey skin from retail parts from dark meat raw,"Turkey, skin, from retail parts, from dark meat, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turkey thigh from whole bird meat only raw,"Turkey, thigh, from whole bird, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turkey whole back meat only raw,"Turkey, whole, back, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turkey whole breast meat only raw,"Turkey, whole, breast, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turkey whole dark meat meat only raw,"Turkey, whole, dark meat, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turkey whole giblets raw,"Turkey, whole, giblets, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turkey whole light meat raw,"Turkey, whole, light meat, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turkey whole meat only raw,"Turkey, whole, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turkey whole neck meat only raw,"Turkey, whole, neck, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turkey whole wing meat only raw,"Turkey, whole, wing, meat only, raw",Poultry Products,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+turnip greens raw,"Turnip greens, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+turnips raw,"Turnips, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+turtle green raw,"Turtle, green, raw",Finfish and Shellfish Products,1,1,1,1,1,1,1,1,1,1,
+veal australian rib rib roast separable lean only raw,"Veal, Australian, rib, rib roast, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+veal australian separable fat raw,"Veal, Australian, separable fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+veal australian shank fore bone-in separable lean only raw,"Veal, Australian, shank, fore, bone-in, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+veal australian shank hind bone-in separable lean only raw,"Veal, Australian, shank, hind, bone-in, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+veal composite of trimmed retail cuts separable fat raw,"Veal, composite of trimmed retail cuts, separable fat, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+veal composite of trimmed retail cuts separable lean only raw,"Veal, composite of trimmed retail cuts, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+veal external fat only raw,"Veal, external fat only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+veal leg (top round) separable lean only raw,"Veal, leg (top round), separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+veal leg top round cap off cutlet boneless raw,"Veal, leg, top round, cap off, cutlet, boneless, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+veal loin separable lean only raw,"Veal, loin, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+veal rib separable lean only raw,"Veal, rib, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+veal seam fat only raw,"Veal, seam fat only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+veal shank separable lean only raw,"Veal, shank, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+veal shoulder arm separable lean only raw,"Veal, shoulder, arm, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+veal shoulder blade chop separable lean only raw,"Veal, shoulder, blade chop, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+veal sirloin separable lean only raw,"Veal, sirloin, separable lean only, raw","Lamb, Veal, and Game Products",1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+vegetarian meatloaf or patties,Vegetarian meatloaf or patties,Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+veggie burgers or soyburgers unprepared,"Veggie burgers or soyburgers, unprepared",Legumes and Legume Products,1,1,0,1,1,1,1,1,1,1,vegan
+vermicelli made from soy,"Vermicelli, made from soy",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+vinespinach (basella) raw,"Vinespinach, (basella), raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+vital wheat gluten,Vital wheat gluten,Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+vitasoy usa azumaya extra firm tofu,"Vitasoy USA Azumaya, Extra Firm Tofu",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+vitasoy usa azumaya firm tofu,"Vitasoy USA Azumaya, Firm Tofu",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+vitasoy usa azumaya silken tofu,"Vitasoy USA Azumaya, Silken Tofu",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+vitasoy usa nasoya lite silken tofu,"Vitasoy USA Nasoya, Lite Silken Tofu",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+vitasoy usa organic nasoya sprouted tofu plus super firm,"Vitasoy USA Organic Nasoya Sprouted, Tofu Plus Super Firm",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+vitasoy usa organic nasoya soft tofu,"Vitasoy USA Organic Nasoya, Soft Tofu",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+vitasoy usa organic nasoya tofu plus extra firm,"Vitasoy USA Organic Nasoya, Tofu Plus Extra Firm",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+vitasoy usa organic nasoya tofu plus firm,"Vitasoy USA Organic Nasoya, Tofu Plus Firm",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+vitasoy usa nasoya lite firm tofu,"Vitasoy USA, Nasoya Lite Firm Tofu",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+vitasoy usa organic nasoya extra firm tofu,"Vitasoy USA, Organic Nasoya Extra Firm Tofu",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+vitasoy usa organic nasoya firm tofu,"Vitasoy USA, Organic Nasoya Firm Tofu",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+vitasoy usa organic nasoya silken tofu,"Vitasoy USA, Organic Nasoya Silken Tofu",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+vitasoy usa organic nasoya super firm cubed tofu,"Vitasoy USA, Organic Nasoya Super Firm Cubed Tofu",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+vitasoy usa vitasoy light vanilla soymilk,"Vitasoy USA, Vitasoy Light Vanilla Soymilk",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+vitasoy usa vitasoy organic classic original soymilk,"Vitasoy USA, Vitasoy Organic Classic Original Soymilk",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+vitasoy usa vitasoy organic creamy original soymilk,"Vitasoy USA, Vitasoy Organic Creamy Original Soymilk",Legumes and Legume Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+walrus liver raw (alaska native),"Walrus, liver, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+walrus meat raw (alaska native),"Walrus, meat, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+wasabi root raw,"Wasabi, root, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+water convolvulus raw,"Water convolvulus,raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+waterchestnuts chinese (matai) raw,"Waterchestnuts, chinese, (matai), raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,0,1,nut free
+watercress raw,"Watercress, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+watermelon raw,"Watermelon, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+watermelon seedless flesh only raw,"Watermelon, seedless, flesh only, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+watermelon seedless rind only raw,"Watermelon, seedless, rind only, raw",Fruits and Fruit Juices,1,1,1,1,1,1,1,1,1,1,
+waxgourd (chinese preserving melon) raw,"Waxgourd, (chinese preserving melon), raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+whale beluga eyes (alaska native),"Whale, beluga, eyes (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+whale beluga flipper raw (alaska native),"Whale, beluga, flipper, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+whale beluga liver raw (alaska native),"Whale, beluga, liver, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+whale beluga meat raw (alaska native),"Whale, beluga, meat, raw (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+whale bowhead subcutaneous fat (blubber) (alaska native),"Whale, bowhead, subcutaneous fat (blubber) (Alaska Native)",American Indian/Alaska Native Foods,1,0,0,0,1,1,1,1,1,1,vegetarian|vegan|pescatarian
+wheat flours bread unenriched,"Wheat flours, bread, unenriched",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+wheat germ crude,"Wheat germ, crude",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+wheat kamut khorasan uncooked,"Wheat, KAMUT khorasan, uncooked",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+wheat durum,"Wheat, durum",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+wheat hard red spring,"Wheat, hard red spring",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+wheat hard red winter,"Wheat, hard red winter",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+wheat hard white,"Wheat, hard white",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+wheat soft red winter,"Wheat, soft red winter",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+wheat soft white,"Wheat, soft white",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+wheat sprouted,"Wheat, sprouted",Cereal Grains and Pasta,1,1,1,1,1,1,0,1,1,1,gluten free
+whey acid fluid,"Whey, acid, fluid",Dairy and Egg Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+whey sweet fluid,"Whey, sweet, fluid",Dairy and Egg Products,1,1,0,1,1,1,1,0,1,1,vegan|lactose free
+wild rice dry raw,"Wild rice, dry, raw",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+wild rice raw,"Wild rice, raw",Cereal Grains and Pasta,1,1,1,1,1,1,1,1,1,1,
+willow young leaves chopped (alaska native),"Willow, young leaves, chopped (Alaska Native)",American Indian/Alaska Native Foods,1,1,1,1,1,1,1,1,1,1,
+winged bean leaves raw,"Winged bean leaves, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+winged bean tuber raw,"Winged bean tuber, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+winged beans immature seeds raw,"Winged beans, immature seeds, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+winged beans mature seeds raw,"Winged beans, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+yam raw,"Yam, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+yambean (jicama) raw,"Yambean (jicama), raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+yardlong bean raw,"Yardlong bean, raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,
+yardlong beans mature seeds raw,"Yardlong beans, mature seeds, raw",Legumes and Legume Products,1,1,1,1,1,1,1,1,1,1,
+yautia (tannier) raw,"Yautia (tannier), raw",Vegetables and Vegetable Products,1,1,1,1,1,1,1,1,1,1,

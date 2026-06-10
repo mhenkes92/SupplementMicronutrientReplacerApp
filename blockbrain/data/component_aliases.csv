@@ -1,0 +1,71 @@
+alias,canonical_nutrient
+vit c,"Vitamin C, total ascorbic acid"
+ascorbic acid,"Vitamin C, total ascorbic acid"
+vitamin c,"Vitamin C, total ascorbic acid"
+vitamin d,"Vitamin D (D2 + D3)"
+vit d,"Vitamin D (D2 + D3)"
+vitamin e,"Vitamin E (alpha-tocopherol)"
+vit e,"Vitamin E (alpha-tocopherol)"
+vitamin a,"Vitamin A, RAE"
+vit a,"Vitamin A, RAE"
+vitamin k,"Vitamin K (phylloquinone)"
+vit k,"Vitamin K (phylloquinone)"
+vitamin b1,Thiamin
+thiamine,Thiamin
+thiamin,Thiamin
+vitamin b2,Riboflavin
+riboflavin,Riboflavin
+vitamin b3,Niacin
+niacin,Niacin
+vitamin b5,Pantothenic acid
+pantothenic acid,Pantothenic acid
+vitamin b6,"Vitamin B-6"
+vit b6,"Vitamin B-6"
+b6,"Vitamin B-6"
+pyridoxine,"Vitamin B-6"
+pyridoxine hcl,"Vitamin B-6"
+pyridoxine hydrochloride,"Vitamin B-6"
+vitamin b7,Biotin
+vitamin b9,"Folate, total"
+folate,"Folate, total"
+folic acid,"Folate, total"
+vitamin b12,"Vitamin B-12"
+cobalamin,"Vitamin B-12"
+choline,"Choline, total"
+inositol,Inositol
+silica,"Silicon, Si"
+calcium,"Calcium, Ca"
+iron,"Iron, Fe"
+magnesium,"Magnesium, Mg"
+zinc,"Zinc, Zn"
+selenium,"Selenium, Se"
+copper,"Copper, Cu"
+manganese,"Manganese, Mn"
+iodine,"Iodine, I"
+chromium,"Chromium, Cr"
+molybdenum,"Molybdenum, Mo"
+vanadium,"Vanadium, V"
+potassium,"Potassium, K"
+sodium,"Sodium, Na"
+phosphorus,"Phosphorus, P"
+boron,Boron
+fluoride,"Fluoride, F"
+fluorine,"Fluoride, F"
+cesium,"Cesium, Cs"
+omega 3,"PUFA 22:6 n-3 (DHA)"
+omega-3,"PUFA 22:6 n-3 (DHA)"
+fish oil,"PUFA 22:6 n-3 (DHA)"
+dha,"PUFA 22:6 n-3 (DHA)"
+epa,"PUFA 20:5 n-3 (EPA)"
+lutein,Lutein
+zeaxanthin,Zeaxanthin
+beta carotene,"Carotene, beta"
+beta-carotene,"Carotene, beta"
+polyphenols,"Polyphenols, total"
+flavonoids,"Flavonoids, total"
+fiber,"Fiber, total dietary"
+dietary fiber,"Fiber, total dietary"
+protein,Protein
+carbohydrate,"Carbohydrate, by difference"
+fat,"Total lipid (fat)"
+caffeine,Caffeine

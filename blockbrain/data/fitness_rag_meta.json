@@ -1,0 +1,9 @@
+{
+  "reference_dir": "C:\\Users\\mhenk\\Documents\\SupplementMicronutrientReplacerApp\\fitness_reference",
+  "generated_at_utc": "2026-02-21T10:46:11.146260+00:00",
+  "total_pdf_files": 33,
+  "processed_pdf_files": 33,
+  "failed_or_empty_pdf_files": 0,
+  "total_chunks": 4676,
+  "index_file": "C:\\Users\\mhenk\\Documents\\SupplementMicronutrientReplacerApp\\mobile_version\\data\\fitness_rag_chunks.jsonl"
+}

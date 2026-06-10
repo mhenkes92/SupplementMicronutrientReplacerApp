@@ -1,0 +1,15 @@
+﻿# Blockbrain local/runtime artifacts
+app.log
+__pycache__/
+*.pyc
+_tmp_*.py
+
+# Local model/runtime caches
+local_llm/
+runtime/
+
+# Secrets
+.streamlit/secrets.toml
+
+blockbrain api.txt
+_tmp_probe_results.txt

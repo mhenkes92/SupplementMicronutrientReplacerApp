@@ -1,0 +1,4 @@
+nutrient_id,nutrient_name,unit_name,food_description,food_category,amount_per_100g
+1178,Vitamin B-12,UG,"Beef, variety meats and by-products, liver, cooked, pan-fried",Lamb, veal, and game products,70.7
+1178,Vitamin B-12,UG,"Lamb, variety meats and by-products, liver, cooked, braised",Lamb, veal, and game products,87.0
+1178,Vitamin B-12,UG,"Chicken, liver, all classes, cooked, simmered",Poultry products,16.6
