@@ -27,14 +27,31 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from PIL import Image, ImageFilter, ImageOps
 
-from dietary_food_classifier import normalize_profile_column_id
-
 try:
     from pydantic import BaseModel, ValidationError
 except Exception:
     BaseModel = None
     ValidationError = Exception
 
+
+
+# -- Shared HTTP session -------------------------------------------------
+_HTTP_SESSION = requests.Session()
+_HTTP_SESSION.headers.update({
+    "User-Agent": "Mozilla/5.0 (compatible; SuppSwap/1.0; +https://example.local)",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+})
+
+
+def _http_get(url: str, **kwargs) -> requests.Response:
+    kwargs.setdefault("timeout", HTTP_TIMEOUT)
+    return _HTTP_SESSION.get(url, **kwargs)
+
+
+def _http_post(url: str, **kwargs) -> requests.Response:
+    kwargs.setdefault("timeout", HTTP_TIMEOUT)
+    return _HTTP_SESSION.post(url, **kwargs)
+# -------------------------------------------------------------------------
 
 APP_DIR = Path(__file__).resolve().parent
 
@@ -137,15 +154,6 @@ def _load_blockbrain_route_mode_default() -> str:
 BLOCKBRAIN_API_KEY = ""
 BLOCKBRAIN_BOT_ID = ""
 
-OPENROUTER_API_KEY = ""
-OPENROUTER_MODEL_TEXT = ""
-OPENROUTER_MODEL_VISION = ""
-OPENAI_API_KEY = ""
-OPENAI_MODEL_TEXT = ""
-OPENAI_MODEL_VISION = ""
-GITHUB_MODELS_TOKEN = ""
-GITHUB_MODELS_MODEL_TEXT = ""
-GITHUB_MODELS_MODEL_VISION = ""
 LOCAL_LLM_RUNTIME = os.getenv("LOCAL_LLM_RUNTIME", "none").strip().lower()
 
 LLAMA_CPP_AUTO_BOOTSTRAP = os.getenv("LLAMA_CPP_AUTO_BOOTSTRAP", "1").strip() != "0"
@@ -177,13 +185,9 @@ LLAMA_CPP_BOOTSTRAP_STATE: dict[str, Any] = {
 }
 LLAMA_CPP_INSTANCE: Any | None = None
 
-OPENROUTER_URL = ""
-OPENAI_URL = ""
-GITHUB_MODELS_URL = ""
 BLOCKBRAIN_API_GATEWAY = ""
 BLOCKBRAIN_CHAT_ENDPOINT = ""
 HTTP_TIMEOUT = 120
-OPENROUTER_DEFAULT_MAX_TOKENS = 500
 LOCAL_URL_KEYWORD_WINDOW_CHARS = 260
 
 # Magic number constants for fuzzy matching and thresholds
@@ -206,9 +210,6 @@ LOCAL_URL_SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[\.;])\s+")
 # Session state keys for error tracking and provider info
 # Using module-level fallbacks for contexts where Streamlit isn't available
 _FALLBACK_STATE = {
-    "last_openrouter_error": "",
-    "last_openai_error": "",
-    "last_github_models_error": "",
     "last_blockbrain_error": "",
     "last_local_llm_error": "",
     "last_vision_provider": "",
@@ -236,9 +237,6 @@ def _set_state(key: str, value: str) -> None:
         _FALLBACK_STATE[key] = value
 
 # Legacy global variable accessors (for backward compatibility during migration)
-LAST_OPENROUTER_ERROR = ""
-LAST_OPENAI_ERROR = ""
-LAST_GITHUB_MODELS_ERROR = ""
 LAST_BLOCKBRAIN_ERROR = ""
 LAST_BLOCKBRAIN_MODEL = ""
 LAST_LOCAL_LLM_ERROR = ""
@@ -261,6 +259,25 @@ def _local_text_llm_enabled() -> bool:
         return False
 
 ALLOWED_DOSE_UNITS: set[str] = {"", "mg", "mcg", "g", "iu", "kcal"}
+
+# -- Centralized unit normalization --------------------------------------
+_UNIT_ALIASES: dict[str, str] = {
+    "mg": "mg", "milligram": "mg", "milligrams": "mg",
+    "mcg": "mcg", "ug": "mcg", "µg": "mcg", "μg": "mcg",
+    "microgram": "mcg", "micrograms": "mcg", "meg": "mcg", "fg": "mcg",
+    "g": "g", "gram": "g", "grams": "g",
+    "iu": "iu", "ui": "iu", "ie": "iu",
+    "i.u": "iu", "i.u.": "iu", "u.i": "iu", "u.i.": "iu",
+    "kcal": "kcal",
+}
+_TO_MG: dict[str, float] = {"mg": 1.0, "mcg": 0.001, "g": 1000.0}
+
+
+def _canon_unit(unit: str) -> str:
+    """Single source of truth for unit canonicalization."""
+    return _UNIT_ALIASES.get(str(unit or "").strip().lower(), str(unit or "").strip().lower())
+# -------------------------------------------------------------------------
+
 MAX_REASONABLE_DOSE_BY_UNIT: dict[str, float] = {
     "g": 250.0,
     "mg": 100000.0,
@@ -296,69 +313,17 @@ RAG_STOPWORDS: set[str] = {
 }
 
 USDA_RANK_DB_PATH = APP_DIR / "data" / "usda_rankings.db"
-COMPONENT_ALIASES_PATH = APP_DIR / "data" / "component_aliases.csv"
-COMPONENT_PROXY_RULES_PATH = APP_DIR / "data" / "component_proxy_rules.csv"
-COMPONENT_SIMILARITY_MAP_PATH = APP_DIR / "data" / "component_similarity_map.csv"
-NUTRIENT_RANK_FALLBACKS_PATH = APP_DIR / "data" / "nutrient_rank_fallbacks.csv"
 TOP_FOODS_PER_COMPONENT = 5
 OVERVIEW_ALT_LIMIT = 100
 RAG_TOP_K = 8
-USDA_MAPPING_CACHE_SCHEMA_VERSION = "2"
+FOOD_MATCH_CACHE_SCHEMA_VERSION = "2"
 RAG_INDEX_PATH = APP_DIR / "data" / "fitness_rag_chunks.jsonl"
 RAG_INDEX_META_PATH = APP_DIR / "data" / "fitness_rag_meta.json"
-PRICE_DB_PATH = APP_DIR / "data" / "whole_food_prices.csv"
-MEAL_RECIPES_DB_PATH = APP_DIR / "data" / "meal_recipes_local.json"
-MEAL_RECIPES_FITNESS_PACK_PATH = APP_DIR / "data" / "meal_recipes_fitness_pack.json"
 DIETARY_PROFILES_PATH = APP_DIR / "data" / "dietary_profiles.json"
 DIETARY_RESTRICTION_RULES_PATH = APP_DIR / "data" / "dietary_restriction_rules.json"
 UNMAPPED_COMPONENT_LOG_PATH = APP_DIR / "data" / "unmapped_components_log.csv"
 FEEDBACK_REPORTS_PATH = APP_DIR / "data" / "feedback_reports.jsonl"
 OFFICIAL_NUTRIENT_SOURCES_PATH = APP_DIR / "data" / "official_nutrient_sources.csv"
-EAN_MICRONUTRIENT_DB_PATH = APP_DIR / "data" / "ean_micronutrient_db.csv"
-
-OFFICIAL_REFERENCE_CANONICAL_UNIT: dict[str, str] = {
-    "Vitamin A": "ug",
-    "Vitamin D": "ug",
-    "Vitamin K": "ug",
-    "Folate": "ug",
-    "Vitamin B12": "ug",
-    "Biotin": "ug",
-    "Selenium": "ug",
-    "Iodine": "ug",
-    "Molybdenum": "ug",
-    "Chromium": "ug",
-    "Vitamin C": "mg",
-    "Vitamin E": "mg",
-    "Vitamin B6": "mg",
-    "Niacin": "mg",
-    "Thiamin": "mg",
-    "Riboflavin": "mg",
-    "Pantothenic acid": "mg",
-    "Choline": "mg",
-    "Calcium": "mg",
-    "Iron": "mg",
-    "Magnesium": "mg",
-    "Zinc": "mg",
-    "Copper": "mg",
-    "Manganese": "mg",
-    "Potassium": "mg",
-    "Sodium": "mg",
-    "Fluoride": "mg",
-}
-
-OFFICIAL_REFERENCE_DRI_G_AS_UG_NUTRIENTS: set[str] = {
-    "Vitamin A",
-    "Vitamin D",
-    "Vitamin K",
-    "Folate",
-    "Vitamin B12",
-    "Biotin",
-    "Selenium",
-    "Iodine",
-    "Molybdenum",
-    "Chromium",
-    "Copper",
-}
 
 COUNTRY_PRICE_CONFIG: dict[str, dict[str, str]] = {
     "Germany": {"currency": "EUR", "default_market": "Rewe"},
@@ -380,12 +345,6 @@ CURRENCY_SYMBOL: dict[str, str] = {
 SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY", "").strip()
 DATAFORSEO_LOGIN = os.getenv("DATAFORSEO_LOGIN", "").strip()
 DATAFORSEO_PASSWORD = os.getenv("DATAFORSEO_PASSWORD", "").strip()
-ENABLE_LLM_COMPONENT_MAPPING = os.getenv("ENABLE_LLM_COMPONENT_MAPPING", "false").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
 
 SOURCE_RELIABILITY_SCORE: dict[str, float] = {
     "local_db": 0.95,
@@ -476,153 +435,6 @@ def _file_mtime_or_minus_one(path: Path) -> float:
         return -1.0
 
 
-def load_component_aliases() -> dict[str, str]:
-    return _load_component_aliases_cached(_file_mtime_or_minus_one(COMPONENT_ALIASES_PATH))
-
-
-@functools.lru_cache(maxsize=4)
-def _load_component_aliases_cached(_mtime: float) -> dict[str, str]:
-    aliases: dict[str, str] = {}
-    if not COMPONENT_ALIASES_PATH.exists():
-        return aliases
-
-    try:
-        with COMPONENT_ALIASES_PATH.open("r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                alias = normalize_lookup_key(str(row.get("alias", "")))
-                canonical = str(row.get("canonical_nutrient", "")).strip()
-                if alias and canonical:
-                    aliases[alias] = canonical
-    except Exception as e:
-        logger.error(f"Error loading component aliases from {COMPONENT_ALIASES_PATH}: {e}")
-        return {}
-
-    return aliases
-
-
-def load_component_proxy_rules() -> list[dict[str, str]]:
-    return _load_component_proxy_rules_cached(_file_mtime_or_minus_one(COMPONENT_PROXY_RULES_PATH))
-
-
-@functools.lru_cache(maxsize=4)
-def _load_component_proxy_rules_cached(_mtime: float) -> list[dict[str, str]]:
-    rules: list[dict[str, str]] = []
-    if not COMPONENT_PROXY_RULES_PATH.exists():
-        return rules
-
-    try:
-        with COMPONENT_PROXY_RULES_PATH.open("r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                component = normalize_lookup_key(str(row.get("component", "")))
-                proxy_nutrient = str(row.get("proxy_nutrient", "")).strip()
-                confidence = str(row.get("confidence", "medium")).strip().lower() or "medium"
-                rationale = str(row.get("rationale", "")).strip()
-                if component and proxy_nutrient:
-                    rules.append(
-                        {
-                            "component": component,
-                            "proxy_nutrient": proxy_nutrient,
-                            "confidence": confidence,
-                            "rationale": rationale,
-                        }
-                    )
-    except Exception as e:
-        logger.error(f"Error loading component proxy rules from {COMPONENT_PROXY_RULES_PATH}: {e}")
-        return []
-
-    return rules
-
-
-def load_component_similarity_map() -> list[dict[str, str]]:
-    return _load_component_similarity_map_cached(_file_mtime_or_minus_one(COMPONENT_SIMILARITY_MAP_PATH))
-
-
-@functools.lru_cache(maxsize=4)
-def _load_component_similarity_map_cached(_mtime: float) -> list[dict[str, str]]:
-    rules: list[dict[str, str]] = []
-    if not COMPONENT_SIMILARITY_MAP_PATH.exists():
-        return rules
-
-    try:
-        with COMPONENT_SIMILARITY_MAP_PATH.open("r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                component = normalize_lookup_key(str(row.get("component", "")))
-                target_nutrient = str(row.get("target_nutrient", "")).strip()
-                confidence = str(row.get("confidence", "medium") or "medium").strip().lower()
-                relationship = str(row.get("relationship", "related") or "related").strip().lower()
-                rationale = str(row.get("rationale", "") or "").strip()
-                priority_raw = str(row.get("priority", "2") or "2").strip()
-                try:
-                    priority = str(max(1, int(priority_raw)))
-                except (ValueError, TypeError) as e:
-                    logger.debug(f"Invalid priority value '{priority_raw}': {e}")
-                    priority = "2"
-
-                if component and target_nutrient:
-                    rules.append(
-                        {
-                            "component": component,
-                            "target_nutrient": target_nutrient,
-                            "confidence": confidence,
-                            "relationship": relationship,
-                            "priority": priority,
-                            "rationale": rationale,
-                        }
-                    )
-    except Exception as e:
-        logger.error(f"Error loading component similarity map from {COMPONENT_SIMILARITY_MAP_PATH}: {e}")
-        return []
-
-    return rules
-
-
-def load_nutrient_rank_fallbacks() -> list[dict[str, Any]]:
-    return _load_nutrient_rank_fallbacks_cached(_file_mtime_or_minus_one(NUTRIENT_RANK_FALLBACKS_PATH))
-
-
-@functools.lru_cache(maxsize=4)
-def _load_nutrient_rank_fallbacks_cached(_mtime: float) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    if not NUTRIENT_RANK_FALLBACKS_PATH.exists():
-        return rows
-
-    try:
-        with NUTRIENT_RANK_FALLBACKS_PATH.open("r", encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                nutrient_id_raw = str(row.get("nutrient_id", "") or "").strip()
-                food_description = str(row.get("food_description", "") or "").strip()
-                if not nutrient_id_raw or not food_description:
-                    continue
-                try:
-                    nutrient_id = int(nutrient_id_raw)
-                except Exception:
-                    continue
-
-                amount = _parse_float(row.get("amount_per_100g"))
-                if amount is None or amount <= 0:
-                    continue
-
-                rows.append(
-                    {
-                        "nutrient_id": nutrient_id,
-                        "nutrient_name": str(row.get("nutrient_name", "") or "").strip(),
-                        "unit_name": str(row.get("unit_name", "") or "").strip(),
-                        "food_description": food_description,
-                        "food_category": str(row.get("food_category", "") or "").strip(),
-                        "amount_per_100g": float(amount),
-                    }
-                )
-    except Exception as e:
-        logger.error(f"Error loading nutrient rank fallbacks from {NUTRIENT_RANK_FALLBACKS_PATH}: {e}")
-        return []
-
-    return rows
-
-
 def _parse_float(value: Any) -> float | None:
     if value is None:
         return None
@@ -636,78 +448,10 @@ def _parse_float(value: Any) -> float | None:
         return None
 
 
-def load_ean_micronutrient_rows() -> dict[str, list[dict[str, Any]]]:
-    return _load_ean_micronutrient_rows_cached(_file_mtime_or_minus_one(EAN_MICRONUTRIENT_DB_PATH))
-
-
-@functools.lru_cache(maxsize=4)
-def _load_ean_micronutrient_rows_cached(_mtime: float) -> dict[str, list[dict[str, Any]]]:
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    if not EAN_MICRONUTRIENT_DB_PATH.exists():
-        return grouped
-
-    try:
-        with EAN_MICRONUTRIENT_DB_PATH.open("r", encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                barcode = _normalize_barcode_digits(str(row.get("ean", "") or ""))
-                component = str(row.get("component", "") or "").strip()
-                dose_value = _parse_float(row.get("dose_value"))
-                dose_unit = str(row.get("dose_unit", "") or "").strip()
-                product_name = str(row.get("product_name", "") or "").strip()
-                serving_size = str(row.get("serving_size", "") or "").strip()
-                provider = str(row.get("provider", "") or "").strip() or "LocalEANMicronutrientDB"
-                notes = str(row.get("notes", "") or "").strip()
-
-                if not barcode or not component or dose_value is None or dose_value <= 0:
-                    continue
-
-                grouped.setdefault(barcode, []).append(
-                    {
-                        "component": component,
-                        "dose_value": float(dose_value),
-                        "dose_unit": dose_unit,
-                        "product_name": product_name,
-                        "serving_size": serving_size,
-                        "provider": provider,
-                        "notes": notes,
-                    }
-                )
-    except Exception as e:
-        logger.error(f"Error loading EAN micronutrient DB from {EAN_MICRONUTRIENT_DB_PATH}: {e}")
-        return {}
-
-    return grouped
 
 
 def _normalize_reference_unit_token(unit: str) -> str:
-    text = normalize_lookup_key(unit)
-    if text in {"ug", "mcg", "µg", "μg"}:
-        return "ug"
-    if text in {"mg"}:
-        return "mg"
-    if text in {"g", "gram", "grams"}:
-        return "g"
-    return text or "mg"
-
-
-def _convert_reference_value_unit(value: float | None, from_unit: str, to_unit: str) -> float | None:
-    if value is None:
-        return None
-    if from_unit == to_unit:
-        return float(value)
-
-    to_mg_factor = {
-        "ug": 0.001,
-        "mg": 1.0,
-        "g": 1000.0,
-    }
-    from_factor = to_mg_factor.get(from_unit)
-    to_factor = to_mg_factor.get(to_unit)
-    if from_factor is None or to_factor is None:
-        return float(value)
-    mg_value = float(value) * float(from_factor)
-    return mg_value / float(to_factor)
+    return _canon_unit(unit)
 
 
 def _normalize_reference_row_units(
@@ -717,17 +461,9 @@ def _normalize_reference_row_units(
     recommended_value: float | None,
     upper_limit_value: float | None,
 ) -> tuple[str, float | None, float | None]:
-    canonical_unit = OFFICIAL_REFERENCE_CANONICAL_UNIT.get(nutrient)
+    del nutrient, source_agency
     from_unit = _normalize_reference_unit_token(unit)
-
-    # Safety patch for known DRI parser artifact where microgram symbols were read as plain "g".
-    if normalize_lookup_key(source_agency) == "dri" and from_unit == "g" and nutrient in OFFICIAL_REFERENCE_DRI_G_AS_UG_NUTRIENTS:
-        from_unit = "ug"
-
-    target_unit = canonical_unit or from_unit
-    rec = _convert_reference_value_unit(recommended_value, from_unit, target_unit)
-    ul = _convert_reference_value_unit(upper_limit_value, from_unit, target_unit)
-    return target_unit, rec, ul
+    return from_unit, recommended_value, upper_limit_value
 
 
 def load_official_nutrient_sources() -> list[dict[str, Any]]:
@@ -942,592 +678,14 @@ def try_open_usda_db() -> sqlite3.Connection | None:
         return None
 
 
-@functools.lru_cache(maxsize=4)
-def _load_usda_food_dietary_flags_cached(db_mtime_ns: int) -> dict[str, dict[str, Any]]:
-    conn = try_open_usda_db()
-    if conn is None:
-        return {}
-
-    try:
-        cursor = conn.execute("SELECT * FROM food_dietary_flags")
-        columns = [str(col[0] or "") for col in (cursor.description or [])]
-        if not columns:
-            return {}
-
-        flags: dict[str, dict[str, Any]] = {}
-        for row in cursor.fetchall():
-            record = {columns[index]: row[index] for index in range(len(columns))}
-            food_key = normalize_lookup_key(str(record.get("food_key", "") or record.get("food_description", "") or ""))
-            if food_key:
-                flags[food_key] = record
-        return flags
-    except sqlite3.OperationalError:
-        return {}
-    except Exception as e:
-        logger.warning(f"Unable to load persisted USDA dietary flags: {e}")
-        return {}
-    finally:
-        conn.close()
-
-
-def load_usda_food_dietary_flags() -> dict[str, dict[str, Any]]:
-    if not USDA_RANK_DB_PATH.exists():
-        return {}
-    try:
-        db_mtime_ns = int(USDA_RANK_DB_PATH.stat().st_mtime_ns)
-    except OSError:
-        return {}
-    return _load_usda_food_dietary_flags_cached(db_mtime_ns)
-
-
 def _persisted_usda_food_allowed(food_description: str, profile: dict[str, Any] | None) -> bool | None:
-    if not profile:
-        return True
-
-    profile_id = normalize_lookup_key(str(profile.get("id", "") or ""))
-    if not profile_id or profile_id == "none":
-        return True
-
-    flags = load_usda_food_dietary_flags()
-    if not flags:
-        return None
-
-    record = flags.get(normalize_lookup_key(food_description))
-    if not record:
-        return None
-
-    allowed_col = f"allowed_{normalize_profile_column_id(profile_id)}"
-    value = record.get(allowed_col)
-    if value is None:
-        return None
-
-    try:
-        return bool(int(value))
-    except (TypeError, ValueError):
-        return bool(value)
-
-
-def _lookup_nutrient_row(
-    conn: sqlite3.Connection,
-    nutrient_name: str,
-    nutrient_rows: list[tuple[Any, ...]] | None = None,
-) -> dict[str, Any] | None:
-    target_raw = (nutrient_name or "").strip().lower()
-    target_norm = normalize_lookup_key(nutrient_name)
-    if not target_raw:
-        return None
-
-    rows = nutrient_rows
-    if rows is None:
-        rows = conn.execute(
-            """
-            SELECT id, nutrient_name, unit_name
-            FROM nutrients
-            """
-        ).fetchall()
-
-    candidates: list[tuple[int, int, int, tuple[Any, ...]]] = []
-    for row in rows:
-        row_name = str(row[1] or "")
-        row_raw = row_name.strip().lower()
-        row_norm = normalize_lookup_key(row_name)
-
-        score = 999
-        if row_raw == target_raw:
-            score = 0
-        elif row_norm == target_norm:
-            score = 1
-        elif target_raw and (row_raw.startswith(f"{target_raw},") or row_raw.startswith(f"{target_raw} (") or row_raw.startswith(f"{target_raw} ")):
-            score = 2
-        elif target_norm and (row_norm.startswith(f"{target_norm},") or row_norm.startswith(f"{target_norm} (") or row_norm.startswith(f"{target_norm} ")):
-            score = 3
-        elif target_norm and re.search(rf"(?<![a-z0-9]){re.escape(target_norm)}(?![a-z0-9])", row_norm):
-            score = 4
-
-        if score == 999:
-            continue
-
-        added_penalty = 10 if "added" in row_raw and "added" not in target_raw else 0
-        candidates.append((score, added_penalty, len(row_name), row))
-
-    if candidates:
-        candidates.sort(key=lambda x: (x[0], x[1], x[2]))
-        best = candidates[0][3]
-        return {"nutrient_id": int(best[0]), "nutrient_name": str(best[1]), "unit_name": str(best[2] or "")}
-
+    del food_description, profile
+    # AI-only runtime: skip persisted DB dietary-flag layer.
     return None
-
-
-def _confidence_rank(label: str) -> int:
-    key = (label or "").strip().lower()
-    if key == "high":
-        return 3
-    if key == "medium":
-        return 2
-    return 1
-
-
-def _degrade_confidence(label: str) -> str:
-    key = (label or "").strip().lower()
-    if key == "high":
-        return "medium"
-    if key == "medium":
-        return "low"
-    return "low"
-
-
-def _component_rule_matches(normalized_component: str, target: str) -> bool:
-    if not normalized_component or not target:
-        return False
-    if normalized_component == target:
-        return True
-    pattern = rf"(?<![a-z0-9]){re.escape(target)}(?![a-z0-9])"
-    return re.search(pattern, normalized_component) is not None
-
-
-def _build_dynamic_micronutrient_aliases(nutrient_rows: list[tuple[Any, ...]]) -> dict[str, str]:
-    aliases: dict[str, str] = {}
-    micronutrient_markers = {
-        "vitamin",
-        "thiamin",
-        "riboflavin",
-        "niacin",
-        "pantothenic",
-        "biotin",
-        "folate",
-        "folic",
-        "choline",
-        "calcium",
-        "iron",
-        "magnesium",
-        "zinc",
-        "selenium",
-        "copper",
-        "manganese",
-        "iodine",
-        "chromium",
-        "molybdenum",
-        "potassium",
-        "sodium",
-        "phosphorus",
-        "boron",
-        "fluoride",
-        "fluorine",
-        "cesium",
-    }
-
-    vitamin_letter_map = {
-        "vitamin a": ["vit a"],
-        "vitamin c": ["vit c"],
-        "vitamin d": ["vit d", "vitamin d2", "vitamin d3", "d2", "d3"],
-        "vitamin e": ["vit e"],
-        "vitamin k": ["vit k", "vitamin k1", "vitamin k2", "k1", "k2"],
-    }
-
-    for row in nutrient_rows:
-        canonical_name = str(row[1] or "").strip()
-        if not canonical_name:
-            continue
-
-        norm_name = normalize_lookup_key(canonical_name)
-        if not norm_name:
-            continue
-
-        if not any(marker in norm_name for marker in micronutrient_markers):
-            continue
-
-        aliases[norm_name] = canonical_name
-
-        # Support both complete USDA names and shorter label-style names.
-        base = norm_name.split("(")[0].strip()
-        if base and base != norm_name:
-            aliases[base] = canonical_name
-
-        if "," in norm_name:
-            prefix = norm_name.split(",", 1)[0].strip()
-            if prefix:
-                aliases[prefix] = canonical_name
-
-        compact_b = re.match(r"^vitamin b[\-\s]?([0-9]+)$", base)
-        if compact_b:
-            num = compact_b.group(1)
-            aliases[f"vitamin b{num}"] = canonical_name
-            aliases[f"vit b{num}"] = canonical_name
-            aliases[f"b{num}"] = canonical_name
-
-        for full_key, variants in vitamin_letter_map.items():
-            if base.startswith(full_key):
-                aliases[full_key] = canonical_name
-                for variant in variants:
-                    aliases[variant] = canonical_name
-
-    return aliases
-
-
-def resolve_component_to_nutrients(
-    conn: sqlite3.Connection,
-    component: str,
-    aliases: dict[str, str],
-    proxy_rules: list[dict[str, str]],
-    similarity_rules: list[dict[str, str]],
-    nutrient_rows: list[tuple[Any, ...]] | None = None,
-    nutrient_names: list[str] | None = None,
-) -> list[dict[str, Any]]:
-    normalized_component = normalize_lookup_key(component)
-    if not normalized_component:
-        return []
-
-    resolved: list[dict[str, Any]] = []
-    seen_nutrient_ids: set[int] = set()
-
-    def add_candidate(
-        nutrient_name: str,
-        confidence: str,
-        match_method: str,
-        proxy_rationale: str = "",
-        priority: int = 2,
-    ) -> None:
-        nutrient = _lookup_nutrient_row(conn, nutrient_name, nutrient_rows=nutrient_rows)
-        if not nutrient:
-            return
-        nutrient_id = int(nutrient["nutrient_id"])
-        if nutrient_id in seen_nutrient_ids:
-            return
-        seen_nutrient_ids.add(nutrient_id)
-        nutrient.update(
-            {
-                "confidence": confidence,
-                "match_method": match_method,
-                "proxy_rationale": proxy_rationale,
-                "mapping_priority": max(1, int(priority)),
-            }
-        )
-        resolved.append(nutrient)
-
-    alias_hit = aliases.get(normalized_component)
-    if alias_hit:
-        add_candidate(alias_hit, "high", "alias", priority=1)
-    else:
-        compact_component = re.sub(r"[\s\-]", "", normalized_component)
-        if len(compact_component) >= 3:
-            compact_hit = aliases.get(compact_component)
-            if compact_hit:
-                add_candidate(compact_hit, "high", "alias_compact", priority=1)
-
-        alias_keys = list(aliases.keys())
-        close_alias = difflib.get_close_matches(normalized_component, alias_keys, n=1, cutoff=FUZZY_MATCH_CUTOFF_MEDIUM)
-        if close_alias:
-            fuzzy_alias_hit = aliases.get(close_alias[0])
-            if fuzzy_alias_hit:
-                add_candidate(fuzzy_alias_hit, "medium", "alias_component_fuzzy", priority=4)
-
-    for rule in similarity_rules:
-        target = str(rule.get("component", "") or "")
-        if not target:
-            continue
-        if _component_rule_matches(normalized_component, target):
-            add_candidate(
-                str(rule.get("target_nutrient", "") or ""),
-                str(rule.get("confidence", "medium") or "medium"),
-                f"similarity_{str(rule.get('relationship', 'related') or 'related')}",
-                str(rule.get("rationale", "") or ""),
-                int(str(rule.get("priority", "2") or "2")),
-            )
-
-    if not resolved:
-        similarity_keys = sorted({str(rule.get("component", "") or "") for rule in similarity_rules if str(rule.get("component", "") or "")})
-        close_similarity = difflib.get_close_matches(normalized_component, similarity_keys, n=1, cutoff=FUZZY_MATCH_CUTOFF_HIGH)
-        if close_similarity:
-            matched_component_key = close_similarity[0]
-            for rule in similarity_rules:
-                if str(rule.get("component", "") or "") != matched_component_key:
-                    continue
-                add_candidate(
-                    str(rule.get("target_nutrient", "") or ""),
-                    _degrade_confidence(str(rule.get("confidence", "medium") or "medium")),
-                    f"similarity_component_fuzzy_{str(rule.get('relationship', 'related') or 'related')}",
-                    str(rule.get("rationale", "") or ""),
-                    int(str(rule.get("priority", "2") or "2")) + 1,
-                )
-
-    direct = _lookup_nutrient_row(conn, normalized_component, nutrient_rows=nutrient_rows)
-    if direct:
-        add_candidate(str(direct.get("nutrient_name", "") or ""), "high", "direct", priority=1)
-
-    for rule in proxy_rules:
-        target = rule.get("component", "")
-        if not target:
-            continue
-        if _component_rule_matches(normalized_component, str(target or "")):
-            add_candidate(
-                str(rule.get("proxy_nutrient", "") or ""),
-                str(rule.get("confidence", "medium") or "medium"),
-                "curated_proxy",
-                str(rule.get("rationale", "") or ""),
-                priority=2,
-            )
-
-    if not resolved:
-        proxy_keys = sorted({str(rule.get("component", "") or "") for rule in proxy_rules if str(rule.get("component", "") or "")})
-        close_proxy = difflib.get_close_matches(normalized_component, proxy_keys, n=1, cutoff=FUZZY_MATCH_CUTOFF_HIGH)
-        if close_proxy:
-            matched_proxy_key = close_proxy[0]
-            for rule in proxy_rules:
-                if str(rule.get("component", "") or "") != matched_proxy_key:
-                    continue
-                add_candidate(
-                    str(rule.get("proxy_nutrient", "") or ""),
-                    _degrade_confidence(str(rule.get("confidence", "medium") or "medium")),
-                    "curated_proxy_component_fuzzy",
-                    str(rule.get("rationale", "") or ""),
-                    priority=3,
-                )
-
-    candidate_names = nutrient_names
-    if candidate_names is None:
-        names = conn.execute("SELECT nutrient_name FROM nutrients").fetchall()
-        candidate_names = [str(row[0]) for row in names]
-
-    if not resolved:
-        close = difflib.get_close_matches(component, candidate_names, n=1, cutoff=FUZZY_MATCH_CUTOFF_MEDIUM)
-        if close:
-            add_candidate(close[0], "medium", "fuzzy", priority=4)
-
-    if not resolved and ENABLE_LLM_COMPONENT_MAPPING and _local_text_llm_enabled():
-        llm_prompt = (
-            "Map this supplement component to one USDA nutrient name if clearly mappable. "
-            "Return only the nutrient name or NONE."
-        )
-        llm_out = call_openrouter_text("You map supplement terms to nutrient names.", f"{llm_prompt}\n\nComponent: {component}")
-        llm_candidate = clean_json_block(llm_out).strip().strip('"').strip()
-        if llm_candidate and llm_candidate.upper() != "NONE":
-            add_candidate(llm_candidate, "low", "llm", priority=4)
-
-    resolved.sort(
-        key=lambda item: (
-            int(item.get("mapping_priority", 9)),
-            -_confidence_rank(str(item.get("confidence", "low") or "low")),
-            str(item.get("nutrient_name", "") or ""),
-        )
-    )
-    return resolved
-
-
-def resolve_component_to_nutrient(
-    conn: sqlite3.Connection,
-    component: str,
-    aliases: dict[str, str],
-    proxy_rules: list[dict[str, str]],
-    nutrient_rows: list[tuple[Any, ...]] | None = None,
-    nutrient_names: list[str] | None = None,
-) -> dict[str, Any]:
-    nutrients = resolve_component_to_nutrients(
-        conn,
-        component,
-        aliases,
-        proxy_rules,
-        similarity_rules=load_component_similarity_map(),
-        nutrient_rows=nutrient_rows,
-        nutrient_names=nutrient_names,
-    )
-    if nutrients:
-        return nutrients[0]
-    return {}
-
-
-def get_top_ranked_foods(conn: sqlite3.Connection, nutrient_id: int, top_n: int = TOP_FOODS_PER_COMPONENT) -> list[dict[str, Any]]:
-    def _is_single_ingredient_whole_food_candidate(food_description: str, food_category: str) -> bool:
-        desc = normalize_lookup_key(food_description)
-        category = normalize_lookup_key(food_category)
-        if not desc:
-            return False
-
-        # Keep organ meats explicitly if present in the source dataset.
-        organ_tokens = {
-            "liver",
-            "heart",
-            "intestine",
-            "intestines",
-            "tripe",
-            "kidney",
-            "gizzard",
-            "tongue",
-        }
-        if any(tok in desc for tok in organ_tokens):
-            return True
-
-        blocked_categories = {
-            "restaurant foods",
-            "fast foods",
-            "sausages and luncheon meats",
-            "baked products",
-            "sweets",
-            "beverages",
-            "breakfast cereals",
-            "snacks",
-            "baby foods",
-            "soups sauces and gravies",
-            "meals entrees and side dishes",
-            "spices and herbs",
-            "fats and oils",
-        }
-        if category in blocked_categories:
-            return False
-
-        blocked_desc_tokens = {
-            "restaurant",
-            "restaruant",
-            "fast food",
-            "formulated bar",
-            "protein bar",
-            "granola bar",
-            "cereal bar",
-            "ready to eat",
-            "ready to drink",
-            "energy drink",
-            "nutritional shake",
-            "cured",
-            "bacon",
-            "canadian bacon",
-            "margarine",
-            "spread",
-            "butter",
-            "paste",
-            "pasteurized",
-            "processed",
-            "product",
-            "creamer",
-            "cheese",
-            "yogurt",
-            "cream",
-            "nonfat",
-            "low fat",
-            "reduced fat",
-            "ground",
-            "oil",
-            "substitute",
-            "meatless",
-            "luncheon slices",
-            "meat extender",
-            "cream substitute",
-            "cheese food",
-            "cheese spread",
-            "fish oil",
-            "miso",
-            "dulce de leche",
-            "noodles",
-            "papad",
-            "water added",
-            "milk dry",
-            "milk, dry",
-            "pickle",
-            "pickles",
-            "relish",
-            "ham",
-            "kippered",
-            "flour",
-            "bran",
-            "sandwich",
-            "pizza",
-            "burger",
-            "burrito",
-            "taco",
-            "pupusas",
-            "tamale",
-            "ketchup",
-            "mayonnaise",
-            "dressing",
-            "sauce",
-            "snacks",
-            "cereals ready to eat",
-            "beverages",
-            "spices",
-        }
-        if any(tok in desc for tok in blocked_desc_tokens):
-            return False
-
-        return True
-
-    fetch_limit = max(int(top_n) * 15, int(top_n) + 50)
-    rows = conn.execute(
-        """
-        SELECT rank_desc, food_description, food_category, amount_per_100g, unit_name
-        FROM nutrient_rankings
-        WHERE nutrient_id = ?
-          AND amount_per_100g IS NOT NULL
-          AND amount_per_100g > 0
-                ORDER BY amount_per_100g DESC, rank_desc ASC
-        LIMIT ?
-        """,
-        (nutrient_id, fetch_limit),
-    ).fetchall()
-    result: list[dict[str, Any]] = []
-    seen_foods: set[str] = set()
-    for row in rows:
-        food_description = str(row[1] or "")
-        food_category = str(row[2] or "")
-        if not _is_single_ingredient_whole_food_candidate(food_description, food_category):
-            continue
-
-        desc_key = normalize_lookup_key(food_description)
-        if not desc_key or desc_key in seen_foods:
-            continue
-        seen_foods.add(desc_key)
-
-        result.append(
-            {
-                "rank": int(row[0]),
-                "food_description": food_description,
-                "food_category": food_category,
-                "amount_per_100g": float(row[3] or 0.0),
-                "unit": str(row[4] or ""),
-            }
-        )
-        if len(result) >= int(top_n):
-            break
-
-    if len(result) < int(top_n):
-        fallback_rows = [
-            row for row in load_nutrient_rank_fallbacks()
-            if int(row.get("nutrient_id", -1)) == int(nutrient_id)
-        ]
-        if fallback_rows:
-            start_rank = (max([int(item.get("rank", 0) or 0) for item in result]) + 1) if result else 1
-            for row in fallback_rows:
-                food_description = str(row.get("food_description", "") or "")
-                food_category = str(row.get("food_category", "") or "")
-                if not _is_single_ingredient_whole_food_candidate(food_description, food_category):
-                    continue
-
-                desc_key = normalize_lookup_key(food_description)
-                if not desc_key or desc_key in seen_foods:
-                    continue
-                seen_foods.add(desc_key)
-
-                result.append(
-                    {
-                        "rank": start_rank,
-                        "food_description": food_description,
-                        "food_category": food_category,
-                        "amount_per_100g": float(row.get("amount_per_100g", 0.0) or 0.0),
-                        "unit": str(row.get("unit_name", "") or ""),
-                    }
-                )
-                start_rank += 1
-                if len(result) >= int(top_n):
-                    break
-    return result
 
 
 def unit_to_mg(unit: str) -> float | None:
-    u = (unit or "").strip().lower()
-    if u in {"mg", "milligram", "milligrams"}:
-        return 1.0
-    if u in {"mcg", "ug", "μg", "µg", "microgram", "micrograms"}:
-        return 0.001
-    if u in {"g", "gram", "grams"}:
-        return 1000.0
-    return None
+    return _TO_MG.get(_canon_unit(unit))
 
 
 def _iu_unit_to_mg_for_component(component_name: str | None) -> float | None:
@@ -2308,35 +1466,6 @@ def format_top_recommendation_sentence(
     return sentence
 
 
-@functools.lru_cache(maxsize=1)
-def load_whole_food_prices() -> list[dict[str, str]]:
-    if not PRICE_DB_PATH.exists():
-        return []
-    rows: list[dict[str, str]] = []
-    try:
-        with PRICE_DB_PATH.open("r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                keyword = normalize_lookup_key(str(row.get("food_keyword", "")))
-                if not keyword:
-                    continue
-                rows.append(
-                    {
-                        "food_keyword": keyword,
-                        "country": str(row.get("country", "Global") or "Global").strip(),
-                        "currency": str(row.get("currency", "USD") or "USD").strip().upper(),
-                        "price_per_kg": str(row.get("price_per_kg", "") or "").strip(),
-                        "source_name": str(row.get("source_name", "") or "").strip(),
-                        "source_type": str(row.get("source_type", "") or "").strip(),
-                        "source_url": str(row.get("source_url", "") or "").strip(),
-                        "last_updated": str(row.get("last_updated", "") or "").strip(),
-                        "ean": str(row.get("ean", "") or "").strip(),
-                    }
-                )
-    except Exception as e:
-        logger.error(f"Error loading whole food prices from {PRICE_DB_PATH}: {e}")
-        return []
-    return rows
 
 
 def _confidence_label(score: float) -> str:
@@ -2433,62 +1562,6 @@ def detect_barcode_from_image(image_bytes: bytes) -> tuple[str, str]:
     return "", "none"
 
 
-def _lookup_local_ean_micronutrient_profile(barcode: str) -> tuple[str, str, str, str]:
-    normalized_barcode = _normalize_barcode_digits(barcode)
-    if not normalized_barcode:
-        return "", "", "", ""
-
-    grouped = load_ean_micronutrient_rows()
-    rows = grouped.get(normalized_barcode, [])
-    if not rows:
-        return "", "", "", ""
-
-    lines: list[str] = []
-    seen_components: set[str] = set()
-    product_name = ""
-    serving_size = ""
-    provider_name = "LocalEANMicronutrientDB"
-    for row in rows:
-        component = str(row.get("component", "") or "").strip()
-        if not component:
-            continue
-        value = _parse_float(row.get("dose_value"))
-        if value is None or value <= 0:
-            continue
-        unit = _normalize_component_unit_token(str(row.get("dose_unit", "") or ""))
-        if unit not in ALLOWED_DOSE_UNITS or not unit:
-            continue
-        normalized_component = normalize_lookup_key(component)
-        if normalized_component in seen_components:
-            continue
-        seen_components.add(normalized_component)
-        lines.append(f"{component} {format_float(float(value))} {unit}".strip())
-
-        if not product_name:
-            product_name = str(row.get("product_name", "") or "").strip()
-        if not serving_size:
-            serving_size = str(row.get("serving_size", "") or "").strip()
-        provider_candidate = str(row.get("provider", "") or "").strip()
-        if provider_candidate:
-            provider_name = provider_candidate
-
-    if not lines:
-        return "", "", "", ""
-
-    out_parts: list[str] = []
-    if product_name:
-        out_parts.append(f"Product: {product_name}")
-    if serving_size:
-        out_parts.append(f"Serving Size: {serving_size}")
-    out_parts.append("Nutrition Information")
-    out_parts.extend(lines)
-
-    return (
-        "\n".join([x for x in out_parts if x]).strip(),
-        provider_name,
-        "Barcode resolved from dedicated local EAN micronutrient database.",
-        str(EAN_MICRONUTRIENT_DB_PATH),
-    )
 
 
 def _lookup_secondary_barcode_identity(barcode: str) -> tuple[str, str, str, str]:
@@ -2502,7 +1575,7 @@ def _lookup_secondary_barcode_identity(barcode: str) -> tuple[str, str, str, str
 
     upcitemdb_url = f"https://api.upcitemdb.com/prod/trial/lookup?upc={normalized_barcode}"
     try:
-        resp = requests.get(
+        resp = _http_get(
             upcitemdb_url,
             timeout=HTTP_TIMEOUT,
             headers={
@@ -2592,7 +1665,7 @@ def _search_trusted_ean_urls(barcode: str, product_name: str = "") -> list[str]:
     for query in queries:
         search_url = "https://duckduckgo.com/html/?q=" + quote_plus(query)
         try:
-            response = requests.get(
+            response = _http_get(
                 search_url,
                 timeout=HTTP_TIMEOUT,
                 headers={
@@ -2779,15 +1852,11 @@ def extract_supplement_text_from_barcode(barcode: str) -> tuple[str, str, str, s
     if not normalized_barcode:
         return "", "", "Invalid barcode format. Expected 8-14 digits.", ""
 
-    local_profile = _lookup_local_ean_micronutrient_profile(normalized_barcode)
-    if local_profile[0]:
-        return local_profile
-
     api_url = f"https://world.openfoodfacts.org/api/v2/product/{normalized_barcode}.json"
     product_url = f"https://world.openfoodfacts.org/product/{normalized_barcode}"
 
     try:
-        response = requests.get(
+        response = _http_get(
             api_url,
             timeout=HTTP_TIMEOUT,
             headers={
@@ -3003,7 +2072,7 @@ def _extract_openfoodfacts_rows_from_product_page(product_url: str) -> list[str]
         return []
 
     try:
-        response = requests.get(
+        response = _http_get(
             product_url,
             timeout=HTTP_TIMEOUT,
             headers={
@@ -3149,57 +2218,6 @@ def _build_offer(
     }
 
 
-def lookup_local_price_offers(food_name: str, country: str, currency: str) -> list[dict[str, Any]]:
-    food_key = normalize_lookup_key(food_name)
-    if not food_key:
-        return []
-
-    matched_rows: list[dict[str, str]] = []
-    for row in load_whole_food_prices():
-        keyword = row.get("food_keyword", "")
-        if not keyword:
-            continue
-        if keyword not in food_key and food_key not in keyword:
-            continue
-        matched_rows.append(row)
-
-    if not matched_rows:
-        return []
-
-    # First preference: target country + Global rows.
-    preferred_rows = [
-        r for r in matched_rows if str(r.get("country", "Global") or "Global") in {country, "Global"}
-    ]
-    selected_rows = preferred_rows if preferred_rows else matched_rows
-
-    offers: list[dict[str, Any]] = []
-    for row in selected_rows:
-        price = _parse_amount(str(row.get("price_per_kg", "")))
-        if price is None or price <= 0:
-            continue
-
-        row_country = str(row.get("country", "Global") or "Global")
-        row_currency = str(row.get("currency", currency) or currency).upper()
-        source_name = str(row.get("source_name", "Local DB") or "Local DB")
-        if not preferred_rows and row_country not in {country, "Global"}:
-            source_name = f"{source_name} (cross-country fallback)"
-
-        offers.append(
-            _build_offer(
-                food_name=food_name,
-                title=str(row.get("food_keyword", "") or "").strip() or food_name,
-                country=row_country,
-                currency=row_currency,
-                price_per_kg=price,
-                source_name=source_name,
-                source_type=str(row.get("source_type", "local_db") or "local_db"),
-                source_url=str(row.get("source_url", "") or ""),
-                ean=str(row.get("ean", "") or ""),
-                last_updated=str(row.get("last_updated", "") or ""),
-            )
-        )
-
-    return offers
 
 
 def fetch_market_price_offers(food_name: str, country: str, currency: str, market: str) -> list[dict[str, Any]]:
@@ -3216,7 +2234,7 @@ def fetch_market_price_offers(food_name: str, country: str, currency: str, marke
         return []
 
     try:
-        response = requests.get(
+        response = _http_get(
             url,
             timeout=12,
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
@@ -3259,7 +2277,7 @@ def fetch_serpapi_shopping_offers(food_name: str, country: str, currency: str) -
         "api_key": SERPAPI_API_KEY,
     }
     try:
-        response = requests.get("https://serpapi.com/search.json", params=params, timeout=18)
+        response = _http_get("https://serpapi.com/search.json", params=params, timeout=18)
     except Exception:
         return []
     if response.status_code != 200:
@@ -3336,7 +2354,7 @@ def fetch_dataforseo_shopping_offers(food_name: str, country: str, currency: str
         }
     ]
     try:
-        response = requests.post(
+        response = _http_post(
             "https://api.dataforseo.com/v3/serp/google/shopping/live/advanced",
             auth=(DATAFORSEO_LOGIN, DATAFORSEO_PASSWORD),
             json=payload,
@@ -3415,7 +2433,7 @@ def estimate_price_with_llm(food_name: str, country: str, currency: str) -> dict
         f"Food: {food_name}\nCountry: {country}\nCurrency: {currency}\n"
         "Use realistic mainstream supermarket pricing."
     )
-    llm_out = call_openrouter_text(system_prompt, user_prompt)
+    llm_out = call_text_llm(system_prompt, user_prompt)
     candidate = clean_json_block(llm_out)
     if not candidate:
         return None
@@ -3473,62 +2491,6 @@ def _looks_animal_food(text: str) -> bool:
     return any(tok in key for tok in animal_tokens)
 
 
-def estimate_local_baseline_offer(food_name: str, country: str, currency: str) -> dict[str, Any] | None:
-    rows = load_whole_food_prices()
-    if not rows:
-        return None
-
-    same_geo = [
-        r for r in rows if str(r.get("country", "Global") or "Global") in {country, "Global"}
-    ]
-    if not same_geo:
-        same_geo = rows
-
-    same_currency = [
-        r for r in same_geo if str(r.get("currency", "") or "").upper() == currency.upper()
-    ]
-    selected_rows = same_currency if same_currency else same_geo
-
-    target_is_animal = _looks_animal_food(food_name)
-    priced: list[tuple[float, str]] = []
-    for row in selected_rows:
-        price = _parse_amount(str(row.get("price_per_kg", "") or ""))
-        if price is None or price <= 0:
-            continue
-        kw = str(row.get("food_keyword", "") or "")
-        is_animal = _looks_animal_food(kw)
-        if is_animal == target_is_animal:
-            priced.append((float(price), kw))
-
-    if not priced:
-        for row in selected_rows:
-            price = _parse_amount(str(row.get("price_per_kg", "") or ""))
-            if price is None or price <= 0:
-                continue
-            kw = str(row.get("food_keyword", "") or "")
-            priced.append((float(price), kw))
-
-    if not priced:
-        return None
-
-    prices = [p for p, _ in priced]
-    baseline_price = float(statistics.median(prices))
-    reference_keyword = priced[0][1] if priced else "reference basket"
-    return _build_offer(
-        food_name=food_name,
-        title=food_name,
-        country=country,
-        currency=currency,
-        price_per_kg=baseline_price,
-        source_name="Local DB baseline proxy",
-        source_type="local_proxy_baseline",
-        source_url="",
-        note=(
-            "No direct food keyword match in local price DB. "
-            f"Used median local baseline from comparable basket items (e.g., {reference_keyword})."
-        ),
-        last_updated=datetime.now(timezone.utc).date().isoformat(),
-    )
 
 
 def _freshness_score(last_updated: str) -> float:
@@ -3657,10 +2619,9 @@ def get_food_price_estimate(
     use_dataforseo: bool = True,
 ) -> dict[str, Any] | None:
     candidates: list[dict[str, Any]] = []
-    local_candidates = lookup_local_price_offers(food_name, country, currency)
-    candidates.extend(local_candidates)
 
-    should_query_live = enable_live and not _has_strong_local_offer(local_candidates, country, currency)
+    del enable_live
+    should_query_live = True
 
     if should_query_live:
         candidates.extend(fetch_market_price_offers(food_name, country, currency, market))
@@ -3696,75 +2657,11 @@ def get_food_price_estimate(
         ean_hint=ean_hint,
     )
     if not ranked:
-        baseline_offer = estimate_local_baseline_offer(food_name, country, currency)
-        if baseline_offer:
-            ranked = _rank_price_offers(
-                [baseline_offer],
-                food_name=food_name,
-                country=country,
-                currency=currency,
-                grams_needed=grams_needed,
-                ean_hint=ean_hint,
-            )
-        if not ranked:
-            return None
+        return None
 
     best = ranked[0]
     best["audit_top_candidates"] = ranked[:3]
     return best
-
-
-@functools.lru_cache(maxsize=1)
-def load_local_meal_recipes() -> list[dict[str, Any]]:
-    all_raw_items: list[dict[str, Any]] = []
-    for path in [MEAL_RECIPES_DB_PATH, MEAL_RECIPES_FITNESS_PACK_PATH]:
-        if not path.exists():
-            continue
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if isinstance(raw, list):
-            all_raw_items.extend([x for x in raw if isinstance(x, dict)])
-
-    if not all_raw_items:
-        return []
-
-    recipes: list[dict[str, Any]] = []
-    seen_names: set[str] = set()
-    for item in all_raw_items:
-        name = str(item.get("name", "") or "").strip()
-        if not name:
-            continue
-        dedupe_key = normalize_lookup_key(name)
-        if dedupe_key in seen_names:
-            continue
-        seen_names.add(dedupe_key)
-        ingredients = item.get("ingredients", [])
-        if not isinstance(ingredients, list):
-            continue
-        normalized_ingredients: list[dict[str, Any]] = []
-        for ing in ingredients:
-            if not isinstance(ing, dict):
-                continue
-            ing_name = str(ing.get("name", "") or "").strip()
-            try:
-                ing_grams = float(ing.get("grams", 0) or 0)
-            except Exception:
-                ing_grams = 0.0
-            if ing_name and ing_grams > 0:
-                normalized_ingredients.append({"name": ing_name, "grams": ing_grams})
-        if not normalized_ingredients:
-            continue
-        recipes.append(
-            {
-                "name": name,
-                "meal_type": str(item.get("meal_type", "meal") or "meal"),
-                "ingredients": normalized_ingredients,
-                "steps": str(item.get("steps", "") or "").strip(),
-            }
-        )
-    return recipes
 
 
 def _ingredient_grams_for_food(recipe: dict[str, Any], food_name: str) -> float:
@@ -4332,39 +3229,6 @@ def _estimate_recipe_cost(recipe: dict[str, Any], country: str, currency: str) -
     return total_cost
 
 
-def find_local_meal_suggestions(requirements: list[dict[str, Any]], max_results: int = 3) -> list[dict[str, Any]]:
-    recipes = load_local_meal_recipes()
-    if not recipes:
-        return []
-
-    scored: list[dict[str, Any]] = []
-    for recipe in recipes:
-        coverage = _evaluate_recipe_coverage(recipe, requirements)
-        if float(coverage.get("coverage_ratio", 0.0) or 0.0) <= 0:
-            continue
-        scored.append(
-            {
-                **recipe,
-                **coverage,
-                "source_type": "local_recipe_db",
-                "source": "Local Recipe DB",
-            }
-        )
-
-    if not scored:
-        return []
-
-    scored.sort(
-        key=lambda r: (
-            1 if r.get("full_coverage") else 0,
-            float(r.get("coverage_ratio", 0.0)),
-            int(r.get("covered_count", 0)),
-        ),
-        reverse=True,
-    )
-    return scored[:max_results]
-
-
 def generate_llm_meal_suggestions(requirements: list[dict[str, Any]], max_results: int = 3) -> list[dict[str, Any]]:
     if not requirements:
         return []
@@ -4400,7 +3264,7 @@ def generate_llm_meal_suggestions(requirements: list[dict[str, Any]], max_result
         + "\n".join(target_lines)
     )
 
-    raw = call_openrouter_text(system_prompt, user_prompt)
+    raw = call_text_llm(system_prompt, user_prompt)
     candidate = clean_json_block(raw)
     if not candidate:
         return []
@@ -4455,62 +3319,6 @@ def generate_llm_meal_suggestions(requirements: list[dict[str, Any]], max_result
     return meals[:max_results]
 
 
-def generate_template_meal_suggestions(requirements: list[dict[str, Any]], max_results: int = 3) -> list[dict[str, Any]]:
-    if not requirements:
-        return []
-
-    per_food_required: dict[str, float] = {}
-    canonical_name: dict[str, str] = {}
-    for req in requirements:
-        food_name = str(req.get("food_name", "") or "").strip()
-        grams_needed = req.get("grams_needed")
-        if not food_name or grams_needed is None:
-            continue
-        try:
-            grams = float(grams_needed)
-        except Exception:
-            continue
-        if grams <= 0:
-            continue
-        key = normalize_lookup_key(food_name)
-        per_food_required[key] = float(per_food_required.get(key, 0.0)) + grams
-        canonical_name[key] = food_name
-
-    if not per_food_required:
-        return []
-
-    keys = sorted(per_food_required.keys(), key=lambda k: per_food_required[k], reverse=True)
-    groups: list[list[str]] = []
-    groups.append(keys[: min(4, len(keys))])
-    groups.append(keys[: min(3, len(keys))])
-    if len(keys) > 1:
-        groups.append(keys[1 : min(5, len(keys))])
-
-    meals: list[dict[str, Any]] = []
-    for i, group in enumerate(groups[:max_results], start=1):
-        ingredients: list[dict[str, Any]] = []
-        for k in group:
-            grams = round(per_food_required.get(k, 0.0) * 1.05, 1)
-            if grams <= 0:
-                continue
-            ingredients.append({"name": canonical_name.get(k, k), "grams": grams})
-        if not ingredients:
-            continue
-
-        meal = {
-            "name": f"SuppSwap quick meal {i}",
-            "meal_type": "meal",
-            "ingredients": ingredients,
-            "steps": "Prepare and combine all listed ingredients into one meal; adjust seasoning and cooking style as preferred.",
-            "source_type": "template_generated_recipe",
-            "source": "SuppSwap template fallback",
-        }
-        meal.update(_evaluate_recipe_coverage(meal, requirements))
-        meals.append(meal)
-
-    return meals[:max_results]
-
-
 def _recipe_contains_all_anchor_foods(recipe: dict[str, Any], requirements: list[dict[str, Any]]) -> bool:
     if not requirements:
         return False
@@ -4524,58 +3332,65 @@ def _recipe_contains_all_anchor_foods(recipe: dict[str, Any], requirements: list
     return True
 
 
+# -- Shared meal-scaling primitives --------------------------------------
+def _scale_ingredients(
+    ingredients: list[dict[str, Any]], multiplier: float
+) -> list[dict[str, Any]]:
+    """Scale ingredient grams by multiplier, skipping zero/missing rows."""
+    out: list[dict[str, Any]] = []
+    for ing in ingredients:
+        name = str(ing.get("name", "") or "").strip()
+        try:
+            grams = float(ing.get("grams", 0) or 0)
+        except Exception:
+            grams = 0.0
+        if name and grams > 0:
+            out.append({"name": name, "grams": round(grams * multiplier, 1)})
+    return out
+
+
+def _required_multiplier(
+    recipe: dict[str, Any],
+    requirements: list[dict[str, Any]],
+    headroom: float = 1.02,
+) -> float | None:
+    """Minimum uniform scale so every requirement is met. None if any food absent."""
+    m = 1.0
+    for req in requirements:
+        food_name = str(req.get("food_name", "") or "").strip()
+        try:
+            needed = float(req.get("grams_needed") or 0)
+        except Exception:
+            continue
+        if not food_name or needed <= 0:
+            continue
+        present = _ingredient_grams_for_food(recipe, food_name)
+        if present <= 0:
+            return None
+        m = max(m, needed / present)
+    return m * headroom
+# -------------------------------------------------------------------------
+
 def scale_recipe_to_requirements(
     recipe: dict[str, Any],
     requirements: list[dict[str, Any]],
     strategy_label: str,
 ) -> dict[str, Any] | None:
-    if not requirements:
+    if not requirements or not _recipe_contains_all_anchor_foods(recipe, requirements):
         return None
-    if not _recipe_contains_all_anchor_foods(recipe, requirements):
+    multiplier = _required_multiplier(recipe, requirements)
+    if multiplier is None:
         return None
-
-    multiplier = 1.0
-    for req in requirements:
-        food_name = str(req.get("food_name", "") or "").strip()
-        grams_needed = req.get("grams_needed")
-        if not food_name or grams_needed is None:
-            continue
-        try:
-            needed = float(grams_needed)
-        except Exception:
-            continue
-        if needed <= 0:
-            continue
-        present = _ingredient_grams_for_food(recipe, food_name)
-        if present <= 0:
-            return None
-        ratio = needed / present
-        if ratio > multiplier:
-            multiplier = ratio
-
-    # Slight overage to ensure match/exceed behavior after rounding.
-    multiplier *= 1.02
-
-    scaled_ingredients: list[dict[str, Any]] = []
-    for ing in recipe.get("ingredients", []) or []:
-        ing_name = str(ing.get("name", "") or "").strip()
-        try:
-            ing_grams = float(ing.get("grams", 0) or 0)
-        except Exception:
-            ing_grams = 0.0
-        if not ing_name or ing_grams <= 0:
-            continue
-        scaled_ingredients.append({"name": ing_name, "grams": round(ing_grams * multiplier, 1)})
-
+    scaled_ingredients = _scale_ingredients(recipe.get("ingredients", []) or [], multiplier)
     if not scaled_ingredients:
         return None
-
     scaled = {
         "name": f"{str(recipe.get('name', 'Local recipe') or 'Local recipe')} (scaled)",
         "meal_type": str(recipe.get("meal_type", "meal") or "meal"),
         "ingredients": scaled_ingredients,
         "steps": (
-            f"Use this recipe at approximately {format_float(multiplier, 2)}x portions to match selected nutrient targets. "
+            f"Use this recipe at approximately {format_float(multiplier, 2)}x portions "
+            "to match selected nutrient targets. "
             + str(recipe.get("steps", "") or "")
         ).strip(),
         "source_type": "local_recipe_db_scaled",
@@ -5938,7 +4753,7 @@ def answer_rag_question(query: str, chunks: list[dict[str, str]]) -> tuple[str, 
         "Do not say values are missing if numeric values are present in the excerpts."
     )
 
-    answer = call_openrouter_text(system_prompt, user_prompt)
+    answer = call_text_llm(system_prompt, user_prompt)
     if answer:
         return (
             answer,
@@ -6012,192 +4827,167 @@ def build_web_fallback_package(question: str, fallback_query: str) -> dict[str, 
     }
 
 
-def build_usda_matches(components: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
-    conn = try_open_usda_db()
-    if conn is None:
-        logger.warning("USDA ranking database not available")
-        return [], [], "USDA ranking DB missing"
+def build_ai_food_matches(components: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
+    """Single batched LLM call for ALL components (replaces N serial round-trips)."""
+    if not _local_text_llm_enabled():
+        logger.warning("Blockbrain text model unavailable for whole-food matching")
+        return [], [], "llm_unavailable"
+    if not components:
+        return [], [], "ok"
 
+    seen_keys: set[str] = set()
+    prompt_lines: list[str] = []
+    ordered: list[dict[str, Any]] = []
+    for item in components:
+        key = normalize_lookup_key(str(item.get("component", "")))
+        if not key or key in seen_keys:
+            continue
+        seen_keys.add(key)
+        dose_txt = ""
+        dv = item.get("dose_value")
+        du = str(item.get("dose_unit") or "")
+        if dv is not None:
+            try:
+                dose_txt = f"{format_float(float(dv), 4)} {du}".strip()
+            except Exception:
+                dose_txt = str(dv)
+        prompt_lines.append(
+            f"- component: {key} | dose: {dose_txt or 'unknown'}"
+        )
+        ordered.append(item)
+
+    system_prompt = (
+        "You are a nutrition data assistant using USDA FoodData Central. "
+        "Return strict JSON only - no markdown, no prose."
+    )
+    schema = (
+        '{"components": [{"component": "str", "resolved_nutrient": "str", '
+        '"confidence": "high|medium|low", "related_nutrients": ["str"], '
+        '"foods": [{"food_description": "str", "food_category": "str", '
+        '"amount_per_100g": number, "unit": "mg|mcg|g|IU", "source_db": "str"}]}]}'
+    )
+    nl = chr(10)
+    user_prompt = (
+        "For EACH supplement component, return whole-food replacements." + nl
+        + f"Schema: {schema}" + nl
+        + f"Rules: up to {TOP_FOODS_PER_COMPONENT} whole foods per component, "
+        + "highest density first, amount_per_100g must be > 0." + nl + nl
+        + "Components:" + nl + nl.join(prompt_lines)
+    )
+
+    raw = call_text_llm(system_prompt, user_prompt)
+    candidate = clean_json_block(raw)
+    parsed_components: list[dict[str, Any]] = []
     try:
-        aliases = load_component_aliases()
-        proxy_rules = load_component_proxy_rules()
-        similarity_rules = load_component_similarity_map()
-        nutrient_rows = conn.execute(
-            """
-            SELECT id, nutrient_name, unit_name
-            FROM nutrients
-            """
-        ).fetchall()
-        nutrient_names = [str(row[1] or "") for row in nutrient_rows]
-        dynamic_aliases = _build_dynamic_micronutrient_aliases(nutrient_rows)
-        merged_aliases = dict(dynamic_aliases)
-        merged_aliases.update(aliases)
-        for alias_key, canonical in list(merged_aliases.items()):
-            compact_alias = re.sub(r"[\s\-]", "", alias_key)
-            if len(compact_alias) >= 3 and compact_alias not in merged_aliases:
-                merged_aliases[compact_alias] = canonical
+        data = json.loads(candidate)
+        if isinstance(data, dict):
+            parsed_components = data.get("components", []) or []
+    except Exception:
+        logger.warning("build_ai_food_matches: failed to parse batch JSON response")
 
-        foods_cache: dict[int, list[dict[str, Any]]] = {}
+    parsed_by_key: dict[str, dict[str, Any]] = {}
+    for entry in parsed_components:
+        if not isinstance(entry, dict):
+            continue
+        k = normalize_lookup_key(str(entry.get("component", "") or ""))
+        if k:
+            parsed_by_key[k] = entry
 
-        def get_cached_foods(nutrient_id: int) -> list[dict[str, Any]]:
-            if nutrient_id not in foods_cache:
-                foods_cache[nutrient_id] = get_top_ranked_foods(conn, nutrient_id, OVERVIEW_ALT_LIMIT)
-            return foods_cache[nutrient_id]
+    summaries: list[dict[str, Any]] = []
+    details: list[dict[str, Any]] = []
 
-        summaries: list[dict[str, Any]] = []
-        details: list[dict[str, Any]] = []
-        seen: set[str] = set()
+    for item in ordered:
+        component_key = normalize_lookup_key(str(item.get("component", "") or ""))
+        dose_value = item.get("dose_value")
+        dose_unit = str(item.get("dose_unit") or "")
+        parsed = parsed_by_key.get(component_key, {})
 
-        for item in components:
-            component = normalize_lookup_key(str(item.get("component", "")))
-            if not component or component in seen:
+        foods_in = parsed.get("foods", []) if isinstance(parsed.get("foods"), list) else []
+        deduped_foods: list[dict[str, Any]] = []
+        seen_foods: set[str] = set()
+
+        for idx, row in enumerate(foods_in, start=1):
+            if not isinstance(row, dict):
                 continue
-            seen.add(component)
-
-            nutrient_candidates = resolve_component_to_nutrients(
-                conn,
-                component,
-                merged_aliases,
-                proxy_rules,
-                similarity_rules,
-                nutrient_rows=nutrient_rows,
-                nutrient_names=nutrient_names,
-            )
-            if not nutrient_candidates:
-                log_unmapped_component(
-                    component,
-                    dose_value=item.get("dose_value"),
-                    dose_unit=str(item.get("dose_unit") or ""),
-                )
-                summaries.append(
-                    {
-                        "component": component,
-                        "supplement_dose_value": item.get("dose_value"),
-                        "supplement_dose_unit": item.get("dose_unit") or "",
-                        "resolved_nutrient": "Not mapped",
-                        "confidence": "low",
-                        "top_food": "",
-                        "top_amount_per_100g": "",
-                    }
-                )
+            food_desc = str(row.get("food_description", "") or "").strip()
+            if not food_desc:
                 continue
+            fkey = normalize_lookup_key(food_desc)
+            if not fkey or fkey in seen_foods:
+                continue
+            try:
+                amount = float(row.get("amount_per_100g", 0.0) or 0.0)
+            except Exception:
+                amount = 0.0
+            if amount <= 0:
+                continue
+            seen_foods.add(fkey)
+            raw_unit = str(row.get("unit", "") or "")
+            deduped_foods.append({
+                "rank": idx,
+                "food_description": food_desc,
+                "food_category": str(row.get("food_category", "Whole food") or "Whole food"),
+                "amount_per_100g": amount,
+                "unit": _normalize_component_unit_token(raw_unit),
+                "source_db": str(row.get("source_db", "USDA FoodData Central") or "USDA FoodData Central"),
+            })
 
-            merged_foods: list[dict[str, Any]] = []
-            nutrient_food_previews: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
-            for nutrient in nutrient_candidates:
-                nutrient_id = int(nutrient["nutrient_id"])
-                source_foods = get_cached_foods(nutrient_id)[:OVERVIEW_ALT_LIMIT]
-                nutrient_food_previews.append((nutrient, source_foods))
-                for food in source_foods:
-                    merged_foods.append(
-                        {
-                            **food,
-                            "source_nutrient": str(nutrient.get("nutrient_name", "") or ""),
-                            "source_match_method": str(nutrient.get("match_method", "") or ""),
-                            "source_confidence": str(nutrient.get("confidence", "") or ""),
-                        }
-                    )
+        deduped_foods.sort(key=lambda f: (
+            -float(f.get("amount_per_100g", 0.0) or 0.0),
+            _whole_food_preparation_penalty(str(f.get("food_description", "") or "")),
+        ))
+        deduped_foods = deduped_foods[:OVERVIEW_ALT_LIMIT]
+        top_foods = deduped_foods[:TOP_FOODS_PER_COMPONENT]
 
-            deduped_foods: list[dict[str, Any]] = []
-            seen_foods: set[str] = set()
-            for food in merged_foods:
-                food_key = normalize_lookup_key(str(food.get("food_description", "") or ""))
-                if not food_key or food_key in seen_foods:
-                    continue
-                seen_foods.add(food_key)
-                deduped_foods.append(food)
+        related = ", ".join([
+            str(x or "") for x in (parsed.get("related_nutrients", []) or [])
+            if str(x or "").strip()
+        ])
+        confidence = str(parsed.get("confidence", "medium") or "medium")
+        resolved = str(parsed.get("resolved_nutrient", "") or "")
 
-            deduped_foods.sort(
-                key=lambda f: (
-                    -float(f.get("amount_per_100g", 0.0) or 0.0),
-                    _whole_food_preparation_penalty(str(f.get("food_description", "") or "")),
-                    int(f.get("rank", 10**9) or 10**9),
-                )
-            )
+        if not top_foods:
+            log_unmapped_component(component_key, dose_value=dose_value, dose_unit=dose_unit)
+            summaries.append({
+                "component": component_key,
+                "supplement_dose_value": dose_value,
+                "supplement_dose_unit": dose_unit,
+                "resolved_nutrient": resolved or "Not mapped",
+                "confidence": confidence,
+                "top_food": "",
+                "top_amount_per_100g": "",
+                "related_nutrients": related,
+            })
+            continue
 
-            top_foods = deduped_foods[:TOP_FOODS_PER_COMPONENT]
-            primary_nutrient = nutrient_candidates[0]
-            primary_foods = nutrient_food_previews[0][1] if nutrient_food_previews else []
+        top_amt = float(top_foods[0].get("amount_per_100g", 0.0) or 0.0)
+        top_unit = str(top_foods[0].get("unit", "") or "")
+        top_amt_txt, top_unit_txt = format_amount_unit_for_display(top_amt, top_unit)
 
-            if not primary_foods:
-                for candidate_nutrient, candidate_foods in nutrient_food_previews:
-                    if not candidate_foods:
-                        continue
-                    primary_nutrient = candidate_nutrient
-                    top_foods = candidate_foods[:TOP_FOODS_PER_COMPONENT]
-                    deduped_foods = candidate_foods[:OVERVIEW_ALT_LIMIT]
-                    break
-
-            # Vitamin K2 (MK-4) data can be sparse in USDA for many common foods.
-            # If no positive-food rows remain after filtering, fall back to K1 (phylloquinone)
-            # as a transparent whole-food proxy to avoid misleading 0-value dropdown options.
-            component_text = str(component or "")
-            resolved_nutrient_name = str(primary_nutrient.get("nutrient_name", "") or "")
-            should_apply_k2_proxy = (
-                ("k2" in component_text or "menaquinone" in resolved_nutrient_name.lower())
-                and not top_foods
-            )
-            if should_apply_k2_proxy:
-                k1_proxy = _lookup_nutrient_row(conn, "Vitamin K (phylloquinone)", nutrient_rows=nutrient_rows)
-                if k1_proxy:
-                    proxy_foods_preview = get_cached_foods(int(k1_proxy["nutrient_id"]))[:TOP_FOODS_PER_COMPONENT]
-                    if proxy_foods_preview:
-                        primary_nutrient = {
-                            **k1_proxy,
-                            "confidence": "medium",
-                            "match_method": "k2_to_k1_proxy_fallback",
-                            "proxy_rationale": (
-                                "K2 (MK-4) whole-food coverage is sparse in USDA for many items; "
-                                "showing vitamin K1 (phylloquinone) rich foods as practical proxy."
-                            ),
-                        }
-                        top_foods = proxy_foods_preview
-                        deduped_foods = get_cached_foods(int(k1_proxy["nutrient_id"]))[:OVERVIEW_ALT_LIMIT]
-
-            top_food_name = top_foods[0]["food_description"] if top_foods else ""
-            top_food_amt = top_foods[0]["amount_per_100g"] if top_foods else ""
-            top_food_unit = top_foods[0]["unit"] if top_foods else ""
-            top_food_amt_txt = ""
-            top_food_unit_txt = ""
-            if top_food_name:
-                try:
-                    top_food_amt_txt, top_food_unit_txt = format_amount_unit_for_display(float(top_food_amt), str(top_food_unit))
-                except Exception:
-                    top_food_amt_txt, top_food_unit_txt = "", str(top_food_unit).upper()
-
-            related_nutrients = ", ".join(
-                [str(n.get("nutrient_name", "") or "") for n in nutrient_candidates[:4] if str(n.get("nutrient_name", "") or "")]
-            )
-
-            summaries.append(
-                {
-                    "component": component,
-                    "supplement_dose_value": item.get("dose_value"),
-                    "supplement_dose_unit": item.get("dose_unit") or "",
-                    "resolved_nutrient": str(primary_nutrient.get("nutrient_name", "") or ""),
-                    "confidence": str(primary_nutrient.get("confidence", "medium") or "medium"),
-                    "top_food": top_food_name,
-                    "top_amount_per_100g": f"{top_food_amt_txt} {top_food_unit_txt}/100g".strip() if top_food_name else "",
-                    "related_nutrients": related_nutrients,
-                }
-            )
-            details.append(
-                {
-                    "component": component,
-                    "supplement_dose_value": item.get("dose_value"),
-                    "supplement_dose_unit": item.get("dose_unit") or "",
-                    "resolved_nutrient": str(primary_nutrient.get("nutrient_name", "") or ""),
-                    "confidence": str(primary_nutrient.get("confidence", "medium") or "medium"),
-                    "match_method": str(primary_nutrient.get("match_method", "") or ""),
-                    "proxy_rationale": str(primary_nutrient.get("proxy_rationale", "") or ""),
-                    "related_nutrients": related_nutrients,
-                    "foods": deduped_foods[:OVERVIEW_ALT_LIMIT],
-                }
-            )
-    finally:
-        conn.close()
+        summaries.append({
+            "component": component_key,
+            "supplement_dose_value": dose_value,
+            "supplement_dose_unit": dose_unit,
+            "resolved_nutrient": resolved,
+            "confidence": confidence,
+            "top_food": str(top_foods[0].get("food_description", "") or ""),
+            "top_amount_per_100g": f"{top_amt_txt} {top_unit_txt}/100g".strip() if top_foods else "",
+            "related_nutrients": related,
+        })
+        details.append({
+            "component": component_key,
+            "supplement_dose_value": dose_value,
+            "supplement_dose_unit": dose_unit,
+            "resolved_nutrient": resolved,
+            "confidence": confidence,
+            "match_method": "llm_official_db_batched",
+            "proxy_rationale": "Resolved via single batched LLM call with USDA references.",
+            "related_nutrients": related,
+            "foods": deduped_foods,
+        })
 
     return summaries, details, "ok"
+
 
 
 def normalize_component_name(raw_name: str) -> str:
@@ -7583,8 +6373,6 @@ def expand_umbrella_components(rows: list[dict[str, Any]]) -> list[dict[str, Any
     return expanded
 
 
-def check_openrouter_key_status() -> tuple[bool, str]:
-    return False, "OpenRouter is disabled in offline-only mode"
 
 
 def resolve_tesseract_cmd() -> str:
@@ -7606,48 +6394,18 @@ def resolve_tesseract_cmd() -> str:
     return ""
 
 
-def openrouter_headers() -> dict[str, str]:
-    return {}
 
 
-def openai_headers() -> dict[str, str]:
-    return {}
 
 
-def github_models_headers() -> dict[str, str]:
-    return {}
 
 
-def _extract_affordable_tokens(error_text: str, fallback: int = OPENROUTER_DEFAULT_MAX_TOKENS) -> int:
-    m = re.search(r"can only afford (\d+)", error_text or "")
-    if not m:
-        return fallback
-    try:
-        afford = int(m.group(1))
-        return max(64, afford - 50)
-    except Exception:
-        return fallback
 
 
-def _openrouter_chat(payload: dict[str, Any]) -> str:
-    global LAST_OPENROUTER_ERROR
-    del payload
-    LAST_OPENROUTER_ERROR = "OpenRouter is disabled in offline-only mode"
-    return ""
 
 
-def _openai_chat(payload: dict[str, Any]) -> str:
-    global LAST_OPENAI_ERROR
-    del payload
-    LAST_OPENAI_ERROR = "OpenAI is disabled in offline-only mode"
-    return ""
 
 
-def _github_models_chat(payload: dict[str, Any]) -> str:
-    global LAST_GITHUB_MODELS_ERROR
-    del payload
-    LAST_GITHUB_MODELS_ERROR = "GitHub Models is disabled in offline-only mode"
-    return ""
 
 
 @functools.lru_cache(maxsize=1)
@@ -7657,7 +6415,7 @@ def _get_blockbrain_models_catalog() -> list[dict[str, Any]]:
     if not api_key or not base_url:
         return []
     try:
-        response = requests.get(
+        response = _http_get(
             f"{base_url}/v1/api/models",
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=20,
@@ -7744,7 +6502,7 @@ def _blockbrain_chat(payload: dict[str, Any]) -> str:
     stream_url = f"{base_url}/v1/api/agents/{agent_id}/stream"
     stream_payload = dict(payload or {})
     try:
-        resp = requests.post(
+        resp = _http_post(
             stream_url,
             headers=headers,
             json=stream_payload,
@@ -7880,7 +6638,7 @@ def _ensure_llama_cpp_runtime() -> bool:
             return True
 
         zip_path = LLAMA_CPP_RUNTIME_DIR / "llama_cpp_runtime.zip"
-        with requests.get(LLAMA_CPP_WINDOWS_CPU_ZIP_URL, stream=True, timeout=300) as response:
+        with _http_get(LLAMA_CPP_WINDOWS_CPU_ZIP_URL, stream=True, timeout=300) as response:
             response.raise_for_status()
             with open(zip_path, "wb") as handle:
                 for chunk in response.iter_content(chunk_size=1024 * 1024):
@@ -8128,7 +6886,7 @@ def call_local_text_llm(system_prompt: str, user_prompt: str) -> str:
     return _local_llm_chat(system_prompt, user_prompt)
 
 
-def call_openrouter_text(system_prompt: str, user_prompt: str, model: str | None = None) -> str:
+def call_text_llm(system_prompt: str, user_prompt: str, model: str | None = None) -> str:
     """Route all text LLM calls through Blockbrain (agent or selected model)."""
     global LAST_TEXT_PROVIDER
     LAST_TEXT_PROVIDER = ""
@@ -8143,13 +6901,11 @@ def call_openrouter_text(system_prompt: str, user_prompt: str, model: str | None
             LAST_TEXT_PROVIDER = f"Blockbrain ({bb_agent})"
         return bb_reply
 
-    # Fallback to local LLM if Blockbrain fails
-    local_reply = call_local_text_llm(system_prompt, user_prompt)
-    if local_reply:
-        LAST_TEXT_PROVIDER = "Local Phi-3-mini GGUF (fallback)"
-        return local_reply
-
     return ""
+
+
+# Backward-compat alias
+call_openrouter_text = call_text_llm
 
 
 def _build_vision_extraction_prompt() -> tuple[str, str]:
@@ -9113,82 +7869,9 @@ def _apply_context_aware_unit_correction(rows: list[dict[str, Any]]) -> list[dic
 def _validate_nutrition_label_sanity(
     rows: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """
-    Production validation layer — two checks:
-
-    1. Unit domain check: macros must be g, vitamins/minerals mg or mcg/iu.
-       Flag rows with unexpected units; demote those rows' confidence.
-
-    2. Energy cross-check: if protein_g, carbs_g, fat_g, and energy_kcal are
-       all present, verify 4×P + 4×C + 9×F ≈ kcal (±25%).
-       Flag discrepancy as a warning (possible OCR digit error).
-
-    Returns (validated_rows, warnings_list).  Rows are never removed — only
-    flagged so the caller can surface warnings to the user.
-    """
     rows, outlier_warnings = _detect_dosage_outliers(rows)
     warnings: list[str] = list(outlier_warnings)
-    validated: list[dict[str, Any]] = []
-
-    # Build lookup dict for cross-check.
-    values: dict[str, tuple[float, str]] = {}
-
-    for row in rows:
-        component = str(row.get("component", "") or "").lower().strip()
-        dose_value = row.get("dose_value")
-        dose_unit = str(row.get("dose_unit", "") or "").lower().strip()
-        row_out = dict(row)
-
-        if dose_value is not None and dose_unit:
-            # --- Unit domain check ---
-            if component in _MACRO_NUTRIENTS:
-                if dose_unit not in {"g", "mg"}:
-                    warnings.append(
-                        f"unit_domain: '{component}' has unit '{dose_unit}', expected 'g'"
-                    )
-            elif component in _MICROGRAM_PREFERRED_NUTRIENTS:
-                if dose_unit not in {"mcg", "ug", "µg", "μg", "mg", "iu"}:
-                    warnings.append(
-                        f"unit_domain: '{component}' has unit '{dose_unit}', expected 'mcg' or 'mg'"
-                    )
-
-            # Store for energy check
-            values[component] = (float(dose_value), dose_unit)
-
-        validated.append(row_out)
-
-    # --- Energy cross-check ---
-    def _get_grams(name: str) -> float | None:
-        val, unit = values.get(name, (None, ""))
-        if val is None:
-            return None
-        if unit == "g":
-            return val
-        if unit == "mg":
-            return val / 1000.0
-        return None
-
-    protein_g = _get_grams("protein")
-    # Accept both spellings
-    carb_g = _get_grams("carbohydrate") or _get_grams("carbohydrates") or _get_grams("total carbohydrate")
-    fat_g = _get_grams("fat") or _get_grams("total fat")
-    energy_val, energy_unit = values.get("energy", (None, ""))
-    if energy_val is None:
-        energy_val, energy_unit = values.get("calories", (None, ""))
-
-    if None not in (protein_g, carb_g, fat_g, energy_val):
-        energy_unit_l = str(energy_unit or "").lower()
-        if energy_unit_l in {"kcal", "cal", "calories", ""}:
-            calculated_kcal = 4.0 * protein_g + 4.0 * carb_g + 9.0 * fat_g
-            ratio = energy_val / calculated_kcal if calculated_kcal > 0 else 0.0
-            if not (0.75 <= ratio <= 1.35):
-                warnings.append(
-                    f"energy_sanity: declared {energy_val:.0f} kcal vs "
-                    f"calculated {calculated_kcal:.0f} kcal "
-                    f"(4×P + 4×C + 9×F) — possible OCR digit error"
-                )
-
-    return validated, warnings
+    return rows, warnings
 
 
 def _is_strong_ocr_candidate(text: str) -> bool:
@@ -9200,76 +7883,9 @@ def _is_strong_ocr_candidate(text: str) -> bool:
     )
 
 
-def _core_vitamin_coverage_count(text: str) -> int:
-    raw = str(text or "")
-    if not raw:
-        return 0
-
-    checks = {
-        "a": re.search(r"\bvit(?:amin|main)?\s*a\b", raw, re.I),
-        "d": re.search(r"\bvit(?:amin|main)?\s*d(?:\d{1,2})?\b", raw, re.I),
-        "e": re.search(r"\bvit(?:amin|main)?\s*e\b", raw, re.I),
-        "k": re.search(r"\bvit(?:amin|main)?\s*k(?:\d{1,2})?\b", raw, re.I),
-    }
-    return sum(1 for matched in checks.values() if matched)
-
-
-def try_paddleocr_ocr(image_bytes: bytes, raw_result: Any | None = None) -> str:
-    try:
-        import numpy as np
-        ocr = _get_paddleocr_engine()
-        if ocr is None:
-            return ""
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        img_np = np.array(image)
-        result = raw_result if raw_result is not None else (ocr.ocr(img_np, cls=True) or [])
-        lines: list[str] = []
-        for block in result:
-            for row in block or []:
-                try:
-                    text = str(((row or [None, [""]])[1] or [""])[0] or "").strip()
-                except Exception:
-                    text = ""
-                if text:
-                    lines.append(text)
-        return "\n".join(lines).strip()
-    except Exception:
-        return ""
-
-
-def extract_image_text_with_local_stack(image_bytes: bytes, model: str | None = None) -> str:
-    """Extract nutrition label text from an image.
-
-    LLM-only mode: use Blockbrain vision only.
-    No local Tesseract/Paddle OCR fallback is used.
-    """
-    global LAST_LOCAL_LLM_ERROR
-    global LAST_VISION_PROVIDER
-    LAST_VISION_PROVIDER = ""
-    LAST_LOCAL_LLM_ERROR = ""
-
-    # LLM-only image extraction via Blockbrain vision.
-    bb_text = call_blockbrain_vision(image_bytes, model=model)
-    if bb_text and bb_text.strip() and not _is_blockbrain_image_missing_response(bb_text):
-        _, _, bb_agent = _load_blockbrain_secrets()
-        runtime_model = str(LAST_BLOCKBRAIN_MODEL or model or "").strip()
-        if runtime_model:
-            LAST_VISION_PROVIDER = f"Blockbrain vision ({bb_agent}, model={runtime_model})"
-        else:
-            LAST_VISION_PROVIDER = f"Blockbrain vision ({bb_agent})"
-        return bb_text.strip()
-    if _is_blockbrain_image_missing_response(bb_text):
-        LAST_LOCAL_LLM_ERROR = "Blockbrain vision did not receive an image payload"
-    elif not bb_text or not bb_text.strip():
-        LAST_LOCAL_LLM_ERROR = "Blockbrain vision returned no text"
-    return ""
-
-
-
-def try_tesseract_ocr(image_bytes: bytes) -> str:
+def extract_image_text_with_tesseract(image_bytes: bytes) -> str:
     def preprocess_for_tesseract(image: Image.Image, scale: float = 1.0) -> Image.Image:
         gray = image.convert("L")
-        # Upscale for better OCR when needed.
         width, height = gray.size
         if scale > 1.0:
             gray = gray.resize((int(width * scale), int(height * scale)), Image.Resampling.LANCZOS)
@@ -9277,11 +7893,9 @@ def try_tesseract_ocr(image_bytes: bytes) -> str:
             gray = gray.resize((width * 2, height * 2), Image.Resampling.LANCZOS)
         gray = ImageOps.autocontrast(gray)
         gray = gray.filter(ImageFilter.MedianFilter(size=3))
-        # Basic binarization for high-contrast nutrition tables.
         return gray.point(lambda px: 255 if px > 150 else 0)
 
     def preprocess_high_contrast(image: Image.Image, scale: float = 1.0) -> Image.Image:
-        """Higher-contrast variant for dark/low-light bottle label photos."""
         gray = image.convert("L")
         width, height = gray.size
         if scale > 1.0:
@@ -9300,17 +7914,13 @@ def try_tesseract_ocr(image_bytes: bytes) -> str:
             pytesseract.pytesseract.tesseract_cmd = resolved_cmd
 
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        w, h = image.size
-        is_small = min(w, h) < 1000
 
-        # Determine available language(s).  Prefer deu+eng for European supplement labels.
         try:
             available_langs = set(pytesseract.get_languages(config=""))
             lang_config = "deu+eng" if "deu" in available_langs else "eng"
         except Exception:
             lang_config = "eng"
 
-        # Fast adaptive OCR attempts with tight per-attempt timeouts.
         attempts: list[tuple[Image.Image, int, int]] = [
             (preprocess_for_tesseract(image, scale=1.0), 6, 1),
             (preprocess_high_contrast(image, scale=1.0), 6, 1),
@@ -9340,6 +7950,34 @@ def try_tesseract_ocr(image_bytes: bytes) -> str:
         return best_text.strip()
     except Exception:
         return ""
+
+
+def extract_image_text_with_local_stack(image_bytes: bytes, model: str | None = None) -> str:
+    """Extract nutrition label text from an image via Blockbrain vision only."""
+    global LAST_LOCAL_LLM_ERROR
+    global LAST_VISION_PROVIDER
+    LAST_VISION_PROVIDER = ""
+    LAST_LOCAL_LLM_ERROR = ""
+
+    bb_text = call_blockbrain_vision(image_bytes, model=model)
+    if bb_text and bb_text.strip() and not _is_blockbrain_image_missing_response(bb_text):
+        _, _, bb_agent = _load_blockbrain_secrets()
+        runtime_model = str(LAST_BLOCKBRAIN_MODEL or model or "").strip()
+        if runtime_model:
+            LAST_VISION_PROVIDER = f"Blockbrain vision ({bb_agent}, model={runtime_model})"
+        else:
+            LAST_VISION_PROVIDER = f"Blockbrain vision ({bb_agent})"
+        return bb_text.strip()
+
+    if _is_blockbrain_image_missing_response(bb_text):
+        LAST_LOCAL_LLM_ERROR = "Blockbrain vision did not receive an image payload"
+    elif not bb_text or not bb_text.strip():
+        LAST_LOCAL_LLM_ERROR = "Blockbrain vision returned no text"
+    return ""
+
+
+def try_tesseract_ocr(image_bytes: bytes) -> str:
+    return extract_image_text_with_tesseract(image_bytes)
 
 
 def _count_nutrient_hints(text: str) -> int:
@@ -9429,12 +8067,7 @@ def build_gate_result(
 
 
 def _normalize_component_unit_token(unit: str) -> str:
-    u = str(unit or "").strip().lower()
-    if u in {"ug", "µg", "μg", "fg", "meg"}:
-        return "mcg"
-    if u in {"ui", "u.i", "u.i.", "i.u", "i.u.", "ie", "i.e", "i.e."}:
-        return "iu"
-    return u
+    return _canon_unit(unit)
 
 
 def _validate_component_row_with_pydantic(item: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
@@ -9650,7 +8283,7 @@ def extract_serving_info_from_text(text: str) -> dict[str, Any]:
 
 def fetch_clean_page_text(url: str) -> str:
     try:
-        response = requests.get(
+        response = _http_get(
             url,
             timeout=HTTP_TIMEOUT,
             headers={
@@ -9744,7 +8377,7 @@ def extract_supplement_text_from_url(url: str) -> str:
         "Return plain text only with ingredients/components, serving size, and doses."
     )
     user_prompt = f"Extract supplement facts from this page content:\n\n{prompt_source}"
-    llm_text = call_openrouter_text(system_prompt, user_prompt)
+    llm_text = call_text_llm(system_prompt, user_prompt)
 
     if llm_text:
         if passes_extraction_gate(llm_text):
@@ -9889,7 +8522,7 @@ def extract_nutrition_doses_from_product_image(product_url: str) -> list[dict[st
                     score += w
             return score
 
-        resp = requests.get(product_url, timeout=10)
+        resp = _http_get(product_url, timeout=10)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.content, "html.parser")
 
@@ -9921,7 +8554,7 @@ def extract_nutrition_doses_from_product_image(product_url: str) -> list[dict[st
             tried_urls.add(image_url)
 
             try:
-                resp_img = requests.get(image_url, timeout=10)
+                resp_img = _http_get(image_url, timeout=10)
                 resp_img.raise_for_status()
                 image_bytes = resp_img.content
             except Exception:
@@ -9986,7 +8619,7 @@ Input:
 {input_text}
 """
 
-    llm_out = call_openrouter_text(system_prompt, user_prompt)
+    llm_out = call_text_llm(system_prompt, user_prompt)
     candidate = clean_json_block(llm_out)
     llm_with_dose: list[dict[str, Any]] = []
     llm_name_only: list[dict[str, Any]] = []
@@ -10393,40 +9026,34 @@ body,
 
     st.title("🥗 SuppSwap")
 
-    if "analysis_ready" not in st.session_state:
-        st.session_state["analysis_ready"] = False
-    if "analysis_components" not in st.session_state:
-        st.session_state["analysis_components"] = []
-    if "analysis_combined_text" not in st.session_state:
-        st.session_state["analysis_combined_text"] = ""
-    if "analysis_structured_debug" not in st.session_state:
-        st.session_state["analysis_structured_debug"] = {}
-    if "analysis_usda_cache_key" not in st.session_state:
-        st.session_state["analysis_usda_cache_key"] = ""
-    if "analysis_usda_summary" not in st.session_state:
-        st.session_state["analysis_usda_summary"] = []
-    if "analysis_usda_details" not in st.session_state:
-        st.session_state["analysis_usda_details"] = []
-    if "analysis_usda_status" not in st.session_state:
-        st.session_state["analysis_usda_status"] = ""
-    if "price_cache" not in st.session_state:
-        st.session_state["price_cache"] = {}
-    if "meal_component_candidates" not in st.session_state:
-        st.session_state["meal_component_candidates"] = []
-    if "meal_suggestion_cache" not in st.session_state:
-        st.session_state["meal_suggestion_cache"] = {}
-    if "macro_target_kcal" not in st.session_state:
-        st.session_state["macro_target_kcal"] = 500
-    if "macro_pct_protein" not in st.session_state:
-        st.session_state["macro_pct_protein"] = 30
-    if "macro_pct_carbs" not in st.session_state:
-        st.session_state["macro_pct_carbs"] = 50
-    if "macro_pct_fat" not in st.session_state:
-        st.session_state["macro_pct_fat"] = 20
-    if "price_optimized_max_meal_cost" not in st.session_state:
-        st.session_state["price_optimized_max_meal_cost"] = 12.0
-    if "target_tab" not in st.session_state:
-        st.session_state["target_tab"] = ""
+    # -- Session state defaults ------------------------------------------
+    _SESSION_DEFAULTS: dict = {
+        "analysis_ready": False,
+        "analysis_components": [],
+        "analysis_combined_text": "",
+        "analysis_structured_debug": {},
+        "analysis_food_match_cache_key": "",
+        "analysis_food_match_summary": [],
+        "analysis_food_match_details": [],
+        "analysis_food_match_status": "",
+        "price_cache": {},
+        "meal_component_candidates": [],
+        "meal_suggestion_cache": {},
+        "macro_target_kcal": 500,
+        "macro_pct_protein": 30,
+        "macro_pct_carbs": 50,
+        "macro_pct_fat": 20,
+        "price_optimized_max_meal_cost": 12.0,
+        "target_tab": "",
+        "barcode_parse_cache": {},
+        "url_parse_cache": {},
+        "summary_review_signature": "",
+        "summary_review_confirmed": False,
+        "global_diet_profile": "",
+    }
+    for _k, _v in _SESSION_DEFAULTS.items():
+        st.session_state.setdefault(_k, _v)
+    # ---------------------------------------------------------------------
 
     tab_welcome, tab_analyze, tab_results, tab_meals, tab_research, tab_reference, tab_feedback = st.tabs(
         ["🏠 Welcome", "🔎 Analyze", "📊 Results", "🍽 Meals", "📚 Research", "📘 Nutrient Guide", "💬 Feedback"]
@@ -10973,47 +9600,17 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                                 f"Image gate check passed (score={ocr_gate['score']}, doses={ocr_gate['dose_hits']})"
                             )
                         else:
-                            # Salvage path: keep deterministic behavior by accepting OCR when
-                            # structured nutrient rows can still be parsed robustly.
-                            salvage_payload = build_structured_nutrients_json(ocr_text)
-                            salvage_rows = list(salvage_payload.get("nutrients", []) or [])
-                            salvage_dosed_rows = sum(
-                                1
-                                for row in salvage_rows
-                                if row.get("component")
-                                and row.get("dose_value") is not None
-                                and str(row.get("dose_unit", "") or "").strip().lower() in ALLOWED_DOSE_UNITS
+                            image_gate_failed = True
+                            st.warning(
+                                "Image extraction looked low-quality by deterministic gates; it was not used."
                             )
-                            salvage_table_cues = _has_structured_table_cues(ocr_text)
-                            if salvage_table_cues and salvage_dosed_rows >= 6:
-                                extracted_chunks.append(("image", ocr_text))
-                                source_details["image"] = {
-                                    "provider": str(LAST_VISION_PROVIDER or image_provider_label or "Image OCR").strip(),
-                                    "reason": (
-                                        "Image OCR recovered via deterministic structured-parse fallback "
-                                        f"(table cues + {salvage_dosed_rows} dosed rows)."
-                                    ),
-                                    "url": "",
-                                }
-                                status.write(
-                                    "Image gate failed but deterministic salvage succeeded "
-                                    f"(dosed_rows={salvage_dosed_rows})"
-                                )
-                                st.info(
-                                    "Image OCR was partially noisy, but usable nutrient rows were recovered deterministically."
-                                )
-                            else:
-                                image_gate_failed = True
-                                st.warning(
-                                    "Image extraction looked low-quality by deterministic gates; it was not used."
-                                )
                     else:
                         _bb_err = LAST_BLOCKBRAIN_ERROR
                         st.warning("Could not extract text from image" + (f" — {_bb_err}" if _bb_err else ""))
 
                     if image_provider_label:
                         if image_fallback_used:
-                            st.caption(f"Image OCR route: {image_provider_label} (fallback used)")
+                            st.caption(f"Image OCR route: {image_provider_label} (retry)")
                         else:
                             st.caption(f"Image OCR route: {image_provider_label} (primary)")
 
@@ -11176,20 +9773,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     and image_ocr_text_fallback.strip()
                     and image_gate_failed
                 ):
-                    # If image OCR exists but gates are too strict, keep a low-confidence fallback
-                    # so users who only provide a photo do not hit a false "No input detected" block.
-                    extracted_chunks.append(("image_low_confidence", image_ocr_text_fallback))
-                    source_details["image_low_confidence"] = {
-                        "provider": str(LAST_VISION_PROVIDER or image_provider_label or "Image OCR").strip(),
-                        "reason": "Low-confidence OCR fallback used because no other input source was available.",
-                        "url": "",
-                    }
-                    combined = image_ocr_text_fallback
-                    status.write("Image fallback enabled: continuing with low-confidence OCR text")
-                    st.warning(
-                        "Image text looked noisy, but it was still used as a fallback. "
-                        "Results may need manual cleanup."
-                    )
+                    status.write("Image text did not pass quality gates and will not be used.")
 
                 if image_locked_payload is not None:
                     status.write("URL/manual inputs skipped because image-only lock is active.")
@@ -11273,26 +9857,8 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                         else:
                             structured_payload = build_structured_nutrients_json(combined)
                     components = list(structured_payload.get("nutrients", []) or [])
-                    if not components and combined.strip():
-                        relaxed_with_dose = parse_components_rule_based(combined)
-                        relaxed_name_only = parse_components_name_only(combined)
-                        relaxed_rows = merge_component_rows(relaxed_with_dose, relaxed_name_only)
-                        relaxed_rows = expand_umbrella_components(relaxed_rows)
-                        relaxed_validated, _relaxed_meta = validate_parsed_components(relaxed_rows)
-                        if relaxed_validated:
-                            components = relaxed_validated
-                            structured_payload = {
-                                **structured_payload,
-                                "nutrients": components,
-                                "source": f"{structured_payload.get('source', 'local_deterministic')}+relaxed_fallback",
-                            }
-                            status.write(
-                                f"Fallback parse recovered {len(components)} component(s) from low-quality text"
-                            )
                     if LAST_TEXT_PROVIDER:
                         status.write(f"Testing info: component parsing used {LAST_TEXT_PROVIDER}")
-                    else:
-                        status.write("Testing info: component parsing used local fallback logic")
                     status.write(
                         "Extraction summary: "
                         f"{len(components)} components, source={structured_payload.get('source', 'n/a')}, "
@@ -11309,10 +9875,10 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     st.session_state["analysis_components"] = components
                     st.session_state["analysis_combined_text"] = combined
                     st.session_state["analysis_structured_debug"] = structured_payload
-                    st.session_state["analysis_usda_cache_key"] = ""
-                    st.session_state["analysis_usda_summary"] = []
-                    st.session_state["analysis_usda_details"] = []
-                    st.session_state["analysis_usda_status"] = ""
+                    st.session_state["analysis_food_match_cache_key"] = ""
+                    st.session_state["analysis_food_match_summary"] = []
+                    st.session_state["analysis_food_match_details"] = []
+                    st.session_state["analysis_food_match_status"] = ""
                     st.session_state["target_tab"] = "📊 Results"
 
                     # Always unlock/reset Analyze inputs after submit so all fields are interactive again.
@@ -11383,10 +9949,10 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                 refreshed_components = list(refreshed_payload.get("nutrients", []) or [])
                 st.session_state["analysis_components"] = refreshed_components
                 st.session_state["analysis_structured_debug"] = refreshed_payload
-                st.session_state["analysis_usda_cache_key"] = ""
-                st.session_state["analysis_usda_summary"] = []
-                st.session_state["analysis_usda_details"] = []
-                st.session_state["analysis_usda_status"] = ""
+                st.session_state["analysis_food_match_cache_key"] = ""
+                st.session_state["analysis_food_match_summary"] = []
+                st.session_state["analysis_food_match_details"] = []
+                st.session_state["analysis_food_match_status"] = ""
                 st.rerun()
 
         st.divider()
@@ -11403,7 +9969,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
         else:
             components_cache_key = json.dumps(
                 {
-                    "schema_version": USDA_MAPPING_CACHE_SCHEMA_VERSION,
+                    "schema_version": FOOD_MATCH_CACHE_SCHEMA_VERSION,
                     "components": [
                         {
                             "component": normalize_lookup_key(str(c.get("component", ""))),
@@ -11416,22 +9982,22 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                 sort_keys=True,
             )
 
-            if st.session_state.get("analysis_usda_cache_key", "") != components_cache_key:
+            if st.session_state.get("analysis_food_match_cache_key", "") != components_cache_key:
                 map_progress = st.progress(0, text="Mapping supplement components to whole-food nutrients...")
                 map_progress.progress(35, text="Resolving nutrient mappings...")
-                usda_summary, usda_details, usda_status = build_usda_matches(components)
+                food_match_summary, food_match_details, food_match_status = build_ai_food_matches(components)
                 map_progress.progress(100, text="Mapping ready")
                 map_progress.empty()
-                st.session_state["analysis_usda_cache_key"] = components_cache_key
-                st.session_state["analysis_usda_summary"] = usda_summary
-                st.session_state["analysis_usda_details"] = usda_details
-                st.session_state["analysis_usda_status"] = usda_status
+                st.session_state["analysis_food_match_cache_key"] = components_cache_key
+                st.session_state["analysis_food_match_summary"] = food_match_summary
+                st.session_state["analysis_food_match_details"] = food_match_details
+                st.session_state["analysis_food_match_status"] = food_match_status
             else:
-                usda_summary = st.session_state.get("analysis_usda_summary", [])
-                usda_details = st.session_state.get("analysis_usda_details", [])
-                usda_status = st.session_state.get("analysis_usda_status", "")
+                food_match_summary = st.session_state.get("analysis_food_match_summary", [])
+                food_match_details = st.session_state.get("analysis_food_match_details", [])
+                food_match_status = st.session_state.get("analysis_food_match_status", "")
 
-            detail_by_component = {normalize_lookup_key(str(d.get("component", ""))): d for d in usda_details}
+            detail_by_component = {normalize_lookup_key(str(d.get("component", ""))): d for d in food_match_details}
 
             profiles = load_dietary_profiles()
             profile_by_id, _, profile_label_by_id = _dietary_profile_maps(profiles)
@@ -11458,11 +10024,8 @@ The local RAG library is built from curated expert nutrition notes and evidence 
             use_serpapi = bool(st.session_state.get("use_serpapi_pricing", bool(SERPAPI_API_KEY)))
             use_dataforseo = bool(st.session_state.get("use_dataforseo_pricing", bool(DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD)))
 
-            if usda_status != "ok":
-                st.info(
-                    "Precomputed USDA DB not found yet. Build once with: "
-                    "`python build_usda_rankings_db.py`"
-                )
+            if food_match_status != "ok":
+                st.info("AI whole-food mapping is currently unavailable. Check Blockbrain/API configuration and try again.")
 
             mapped_components = 0
             for item in components:
@@ -11492,7 +10055,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
             total_rows = max(1, len(components))
 
             no_whole_food_count = 0
-            if usda_status == "ok":
+            if food_match_status == "ok":
                 for item in components:
                     component_key_probe = normalize_lookup_key(str(item.get("component", "")))
                     detail_probe = detail_by_component.get(component_key_probe)
@@ -11527,16 +10090,16 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                 )
                 status_symbol = "✅" if foods else ("⚠️" if foods_raw else "❌")
 
-                if usda_status == "ok" and (not detail or not foods_raw):
+                if food_match_status == "ok" and (not detail or not foods_raw):
                     unmapped_components.append(
                         {
                             "component": component_display,
                             "dose": dose_label,
-                            "reason": "No whole-food alternative found in USDA ranking data",
+                            "reason": "No whole-food alternative found from AI retrieval",
                         }
                     )
 
-                is_no_whole_food = usda_status == "ok" and (not detail or not foods_raw)
+                is_no_whole_food = food_match_status == "ok" and (not detail or not foods_raw)
                 target_section = unmapped_section if (is_no_whole_food and unmapped_section is not None) else mapped_section
                 with target_section:
                     with st.expander(f"{status_symbol} {component_display} • {dose_label}", expanded=False):
@@ -11547,12 +10110,12 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                         if detail and detail.get("proxy_rationale"):
                             st.caption(f"Proxy note: {detail['proxy_rationale']}")
 
-                        if usda_status != "ok":
-                            st.warning("USDA DB unavailable")
+                        if food_match_status != "ok":
+                            st.warning("AI mapping unavailable")
                             continue
 
                         if not detail:
-                            st.info("No whole-food alternative found in USDA ranking data")
+                            st.info("No whole-food alternative found from AI retrieval")
                             continue
 
                         if not foods:
@@ -12002,13 +10565,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                 "Dietary profiles use practical ingredient-keyword screening and are not medical advice, halal/kosher certification, or allergy safety guarantees."
             )
 
-            allow_llm_recipe_fallback = st.toggle(
-                "Allow AI fallback if local recipe DB cannot fully cover targets",
-                value=False,
-                key="allow_llm_recipe_fallback",
-            )
-            if not allow_llm_recipe_fallback:
-                st.caption("Local-only mode active: meal suggestions will use the local recipe database only.")
+            st.caption("AI-only mode active: meal suggestions are generated by the selected LLM.")
 
             st.caption("The meal tab uses three strategy dropdowns: selected whole-food optimized, price optimized, and macronutrient optimized.")
 
@@ -12041,7 +10598,6 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                         }
                         for r in meal_component_candidates
                     ],
-                    "allow_llm": bool(allow_llm_recipe_fallback),
                     "profile": normalize_lookup_key(str(selected_profile.get("id", "none") if selected_profile else "none")),
                     "must_exclude": normalize_lookup_key(must_exclude_ingredient),
                     "country": normalize_lookup_key(selected_country),
@@ -12081,7 +10637,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                         }
                         meal_status.update(label="No qualifying meal anchors found", state="error")
                     else:
-                        meal_status.write("Searching local recipe database")
+                        meal_status.write("Generating AI meal candidates")
 
                         selected_requirements = resolve_selected_meal_requirements(meal_component_candidates)
                         low_grams_requirements = resolve_low_grams_meal_requirements(meal_component_candidates)
@@ -12132,17 +10688,17 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                             if not reqs:
                                 continue
 
-                            local_meals_raw = find_local_meal_suggestions(reqs, max_results=500)
-                            local_meals = apply_meal_filters(local_meals_raw, selected_profile, must_exclude_ingredient)
+                            ai_meals_raw = generate_llm_meal_suggestions(reqs, max_results=500)
+                            ai_meals = apply_meal_filters(ai_meals_raw, selected_profile, must_exclude_ingredient)
                             if strategy.get("require_selected_food") and selected_food_names:
-                                local_meals = [m for m in local_meals if _recipe_contains_any_food(m, selected_food_names)]
+                                ai_meals = [m for m in ai_meals if _recipe_contains_any_food(m, selected_food_names)]
 
                             strategy_options: list[dict[str, Any]] = []
                             objective = str(strategy.get("objective", "") or "")
 
                             if objective == "selected":
                                 ranked_pairs: list[tuple[dict[str, Any], dict[str, float]]] = []
-                                for meal in local_meals:
+                                for meal in ai_meals:
                                     ranked_pairs.append((meal, _selected_recipe_overlap_metrics(meal, reqs)))
                                 ranked_pairs.sort(
                                     key=lambda pair: (
@@ -12166,22 +10722,14 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                                     if len(strategy_options) >= max_options_per_strategy:
                                         break
                                 if not strategy_options:
-                                    fallback_selected = build_strategy_template_meal(
-                                        reqs,
-                                        strategy_label,
-                                        f"{strategy_label} target meal",
+                                    strategy_fail_reasons[strategy_label] = (
+                                        "No AI meal could satisfy the selected whole-food constraints under current filters."
                                     )
-                                    if fallback_selected and fallback_selected.get("full_coverage"):
-                                        strategy_options.append(fallback_selected)
-                                    else:
-                                        strategy_fail_reasons[strategy_label] = (
-                                            "No recipe could satisfy the selected whole-food constraints under current filters."
-                                        )
                             elif objective == "macro":
                                 macro_params = strategy.get("macro_params", {}) or {}
                                 if macro_params.get("valid", False):
                                     macro_options, macro_reason = build_macro_optimized_meals(
-                                        local_meals,
+                                        ai_meals,
                                         reqs,
                                         strategy_label,
                                         float(macro_params.get("target_kcal", 500.0) or 500.0),
@@ -12199,7 +10747,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                                     )
                             elif objective == "price":
                                 scaled_candidates: list[dict[str, Any]] = []
-                                for candidate in local_meals:
+                                for candidate in ai_meals:
                                     scaled = scale_recipe_to_requirements(candidate, reqs, strategy_label)
                                     if scaled and scaled.get("full_coverage"):
                                         scaled_candidates.append(scaled)
@@ -12237,28 +10785,8 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                                         break
 
                                 if not strategy_options:
-                                    template_candidate = build_strategy_template_meal(
-                                        reqs,
-                                        strategy_label,
-                                        f"{strategy_label} target meal",
-                                    )
-                                    if template_candidate and template_candidate.get("full_coverage"):
-                                        est_template = _estimate_recipe_cost(template_candidate, selected_country, selected_currency)
-                                        if est_template is not None:
-                                            est_template_cost = float(est_template)
-                                            if max_cost <= 0 or est_template_cost <= max_cost:
-                                                strategy_options.append(
-                                                    {
-                                                        **template_candidate,
-                                                        "estimated_recipe_cost": float(est_template_cost),
-                                                        "price_cap": float(max_cost),
-                                                        "price_currency": currency,
-                                                    }
-                                                )
-
-                                if not strategy_options:
                                     strategy_fail_reasons[strategy_label] = (
-                                        "No adequate price-optimized meal can be generated within your budget cap "
+                                        "No adequate AI price-optimized meal can be generated within your budget cap "
                                         f"({symbol}{format_float(max_cost, 2)}). Increase the cap or relax constraints."
                                     )
 
@@ -12275,25 +10803,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                             for meal in strategy_meal_options.get(lbl, [])[:max_options_per_strategy]:
                                 final_meals.append({**meal, "strategy_label": lbl})
 
-                        full_local = [m for m in final_meals if m.get("full_coverage")]
-                        source_mode = "local"
-
-                        if not full_local and allow_llm_recipe_fallback:
-                            meal_status.write("No full local coverage found, generating AI fallback ideas")
-                            llm_meals_raw = generate_llm_meal_suggestions(meal_requirements, max_results=8)
-                            llm_meals = apply_meal_filters(llm_meals_raw, selected_profile, must_exclude_ingredient)
-                            llm_full = [m for m in llm_meals if m.get("full_coverage")]
-                            if llm_full:
-                                final_meals = llm_full[:3]
-                                source_mode = "llm"
-                            else:
-                                meal_status.write("AI fallback empty, creating template meal fallback")
-                                template_meals_raw = generate_template_meal_suggestions(meal_requirements, max_results=6)
-                                template_meals = apply_meal_filters(template_meals_raw, selected_profile, must_exclude_ingredient)
-                                template_full = [m for m in template_meals if m.get("full_coverage")]
-                                if template_full:
-                                    final_meals = template_full[:3]
-                                    source_mode = "template"
+                        source_mode = "llm"
 
                         st.session_state["meal_suggestion_cache"][meal_cache_key] = {
                             "meals": final_meals,
@@ -12311,24 +10821,19 @@ The local RAG library is built from curated expert nutrition notes and evidence 
             strategy_fail_reasons = cached_meal_pack.get("strategy_fail_reasons", {}) or {}
 
             if meals:
-                if source_mode == "local":
-                    st.success("Meal ideas sourced from local recipe database.")
-                elif source_mode == "template":
-                    st.info("Showing SuppSwap template fallback because local and AI results were empty after filters.")
-                elif source_mode == "llm":
-                    st.info("Showing AI-generated meal fallback because local DB had no full-coverage match.")
+                st.success("Meal ideas sourced from AI generation.")
 
             strategy_panels = [
                 {
                     "strategy": "Selected whole-food meal",
                     "title": "1. Ingredient / whole-food selected optimized",
-                    "help_text": "Searches the local recipe database for meals where your selected whole foods appear with the strongest concentration, then scales the serving size so supplement-equivalent micronutrient targets are matched or exceeded.",
+                    "help_text": "Generates AI meals where your selected whole foods appear with strong concentration, then scales serving size so supplement-equivalent micronutrient targets are matched or exceeded.",
                     "show_macro_controls": False,
                 },
                 {
                     "strategy": "Price-optimized meal",
                     "title": "2. Price optimized",
-                    "help_text": "Chooses the qualifying local recipe path that best satisfies the supplement-equivalent micronutrient targets at the lowest estimated recipe cost.",
+                    "help_text": "Chooses the qualifying AI-generated meal path that best satisfies supplement-equivalent micronutrient targets at the lowest estimated recipe cost.",
                     "show_macro_controls": False,
                 },
                 {
@@ -12557,7 +11062,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                             st.markdown(f"- {url}")
 
                     if st.button("Generate optional LLM research plan", key="rag_websearch_fallback_btn", use_container_width=True):
-                        web_fallback = call_openrouter_text(
+                        web_fallback = call_text_llm(
                             "You are a nutrition research assistant.",
                             (
                                 "Create a concise web-search plan for this nutrition question. "
@@ -12805,7 +11310,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                 if include_context:
                     report_payload["raw_input_excerpt"] = str(st.session_state.get("analysis_combined_text", ""))[:3000]
                     report_payload["parsed_components"] = st.session_state.get("analysis_components", [])
-                    report_payload["usda_status"] = st.session_state.get("analysis_usda_status", "")
+                    report_payload["food_match_status"] = st.session_state.get("analysis_food_match_status", "")
 
                 if save_feedback_report(report_payload):
                     st.success("Feedback submitted. Thank you - this will directly support content quality improvements.")
