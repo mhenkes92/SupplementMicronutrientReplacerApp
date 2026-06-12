@@ -96,6 +96,44 @@ def _load_blockbrain_secrets() -> tuple[str, str, str]:
             agent_id,
         )
 
+
+def _load_blockbrain_model_defaults() -> tuple[str, str]:
+    """Load optional default Blockbrain model preferences (text, vision)."""
+    try:
+        import streamlit as st  # noqa: F401
+        text_model = (
+            st.secrets.get("BLOCKBRAIN_MODEL_TEXT", "")
+            or os.getenv("BLOCKBRAIN_MODEL_TEXT", "")
+        )
+        vision_model = (
+            st.secrets.get("BLOCKBRAIN_MODEL_VISION", "")
+            or os.getenv("BLOCKBRAIN_MODEL_VISION", "")
+        )
+        return str(text_model).strip(), str(vision_model).strip()
+    except Exception:
+        return (
+            str(os.getenv("BLOCKBRAIN_MODEL_TEXT", "") or "").strip(),
+            str(os.getenv("BLOCKBRAIN_MODEL_VISION", "") or "").strip(),
+        )
+
+
+def _load_blockbrain_route_mode_default() -> str:
+    """Load default routing mode: agent_default or model_pinned."""
+    default_mode = "agent_default"
+    try:
+        import streamlit as st  # noqa: F401
+        configured = (
+            st.secrets.get("BLOCKBRAIN_ROUTE_MODE", "")
+            or os.getenv("BLOCKBRAIN_ROUTE_MODE", "")
+            or default_mode
+        )
+    except Exception:
+        configured = os.getenv("BLOCKBRAIN_ROUTE_MODE", "") or default_mode
+    normalized = str(configured or "").strip().lower()
+    if normalized not in {"agent_default", "model_pinned"}:
+        normalized = default_mode
+    return normalized
+
 BLOCKBRAIN_API_KEY = ""
 BLOCKBRAIN_BOT_ID = ""
 
@@ -202,6 +240,7 @@ LAST_OPENROUTER_ERROR = ""
 LAST_OPENAI_ERROR = ""
 LAST_GITHUB_MODELS_ERROR = ""
 LAST_BLOCKBRAIN_ERROR = ""
+LAST_BLOCKBRAIN_MODEL = ""
 LAST_LOCAL_LLM_ERROR = ""
 LAST_VISION_PROVIDER = ""
 LAST_TEXT_PROVIDER = ""
@@ -7611,20 +7650,84 @@ def _github_models_chat(payload: dict[str, Any]) -> str:
     return ""
 
 
-def blockbrain_headers() -> dict[str, str]:
-    api_key, _, _ = _load_blockbrain_secrets()
-    if not api_key:
-        return {}
-    return {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+@functools.lru_cache(maxsize=1)
+def _get_blockbrain_models_catalog() -> list[dict[str, Any]]:
+    """Fetch model catalog once per app process for model pickers."""
+    api_key, base_url, _ = _load_blockbrain_secrets()
+    if not api_key or not base_url:
+        return []
+    try:
+        response = requests.get(
+            f"{base_url}/v1/api/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=20,
+        )
+        if response.status_code != 200:
+            return []
+        payload = response.json() if response.content else {}
+        items = payload.get("items", []) if isinstance(payload, dict) else []
+        return [x for x in items if isinstance(x, dict)]
+    except Exception:
+        return []
+
+
+def _list_blockbrain_chat_model_ids(*, vision_required: bool = False) -> list[str]:
+    items = _get_blockbrain_models_catalog()
+    out: list[str] = []
+    for item in items:
+        model_id = str(item.get("id", "") or "").strip()
+        mode = str(item.get("mode", "") or "").strip().lower()
+        supports_vision = bool(item.get("supportsVision", False))
+        if not model_id:
+            continue
+        if mode not in {"chat", "responses"}:
+            continue
+        if vision_required and not supports_vision:
+            continue
+        out.append(model_id)
+    # Keep stable ordering while removing duplicates.
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for model_id in out:
+        key = model_id.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(model_id)
+    return deduped
+
+
+def _get_selected_blockbrain_models() -> tuple[str, str]:
+    """Return selected text/vision model IDs from session state or defaults."""
+    default_text_model, default_vision_model = _load_blockbrain_model_defaults()
+    try:
+        import streamlit as st
+        text_model = str(st.session_state.get("analyze_blockbrain_text_model", default_text_model) or "").strip()
+        vision_model = str(st.session_state.get("analyze_blockbrain_vision_model", default_vision_model) or "").strip()
+        return text_model, vision_model
+    except Exception:
+        return default_text_model, default_vision_model
+
+
+def _get_selected_blockbrain_route_mode() -> str:
+    """Return active routing mode from session state or configured default."""
+    default_mode = _load_blockbrain_route_mode_default()
+    try:
+        import streamlit as st
+        mode = str(st.session_state.get("analyze_blockbrain_route_mode", default_mode) or "").strip().lower()
+        if mode not in {"agent_default", "model_pinned"}:
+            return default_mode
+        return mode
+    except Exception:
+        return default_mode
 
 
 def _blockbrain_chat(payload: dict[str, Any]) -> str:
     """Send a request to the Blockbrain Agentic API (SSE stream) and return the full text."""
     global LAST_BLOCKBRAIN_ERROR
+    global LAST_BLOCKBRAIN_MODEL
     LAST_BLOCKBRAIN_ERROR = ""
+    LAST_BLOCKBRAIN_MODEL = ""
     api_key, base_url, agent_id = _load_blockbrain_secrets()
     if not api_key:
         LAST_BLOCKBRAIN_ERROR = "Blockbrain API key not configured"
@@ -7667,6 +7770,20 @@ def _blockbrain_chat(payload: dict[str, Any]) -> str:
             except Exception:
                 continue
             event_type = str(event.get("type", "") or "")
+            if event_type == "step-start":
+                try:
+                    runtime_model = str(
+                        event.get("data", {})
+                        .get("payload", {})
+                        .get("request", {})
+                        .get("body", {})
+                        .get("model", "")
+                        or ""
+                    ).strip()
+                except Exception:
+                    runtime_model = ""
+                if runtime_model:
+                    LAST_BLOCKBRAIN_MODEL = runtime_model
             if event_type == "text-delta":
                 chunk = event.get("data", {}).get("payload", {}).get("text", "")
                 if chunk:
@@ -7950,17 +8067,25 @@ def _local_llm_chat(system_prompt: str, user_prompt: str) -> str:
 
 def call_blockbrain_text(system_prompt: str, user_prompt: str, model: str | None = None) -> str:
     """Send a text-only request to Blockbrain."""
+    selected_text_model, _ = _get_selected_blockbrain_models()
+    route_mode = _get_selected_blockbrain_route_mode()
+    requested_model = str(model or selected_text_model or "").strip()
     payload = {
         "messages": [
             {"role": "system", "content": system_prompt.strip()},
             {"role": "user", "content": user_prompt.strip()},
         ],
     }
+    if requested_model and route_mode == "model_pinned":
+        payload["model"] = requested_model
     return _blockbrain_chat(payload)
 
 
-def call_blockbrain_vision(image_bytes: bytes) -> str:
+def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
     """Send an image to Blockbrain vision agent; returns extracted label text."""
+    _, selected_vision_model = _get_selected_blockbrain_models()
+    route_mode = _get_selected_blockbrain_route_mode()
+    requested_model = str(model or selected_vision_model or "").strip()
     b64 = base64.b64encode(image_bytes).decode("utf-8")
     vision_prompt = (
         "You are a strict OCR extractor for supplement and nutrition labels. "
@@ -7979,6 +8104,8 @@ def call_blockbrain_vision(image_bytes: bytes) -> str:
             }
         ],
     }
+    if requested_model and route_mode == "model_pinned":
+        payload["model"] = requested_model
     return _blockbrain_chat(payload)
 
 
@@ -8002,14 +8129,18 @@ def call_local_text_llm(system_prompt: str, user_prompt: str) -> str:
 
 
 def call_openrouter_text(system_prompt: str, user_prompt: str, model: str | None = None) -> str:
-    """Route all text LLM calls through Blockbrain."""
+    """Route all text LLM calls through Blockbrain (agent or selected model)."""
     global LAST_TEXT_PROVIDER
     LAST_TEXT_PROVIDER = ""
 
     bb_reply = call_blockbrain_text(system_prompt, user_prompt, model=model)
     if bb_reply:
         _, _, bb_agent = _load_blockbrain_secrets()
-        LAST_TEXT_PROVIDER = f"Blockbrain ({bb_agent})"
+        runtime_model = str(LAST_BLOCKBRAIN_MODEL or "").strip()
+        if runtime_model:
+            LAST_TEXT_PROVIDER = f"Blockbrain ({bb_agent}, model={runtime_model})"
+        else:
+            LAST_TEXT_PROVIDER = f"Blockbrain ({bb_agent})"
         return bb_reply
 
     # Fallback to local LLM if Blockbrain fails
@@ -9106,7 +9237,7 @@ def try_paddleocr_ocr(image_bytes: bytes, raw_result: Any | None = None) -> str:
         return ""
 
 
-def extract_image_text_with_local_stack(image_bytes: bytes) -> str:
+def extract_image_text_with_local_stack(image_bytes: bytes, model: str | None = None) -> str:
     """Extract nutrition label text from an image.
 
     LLM-only mode: use Blockbrain vision only.
@@ -9118,10 +9249,14 @@ def extract_image_text_with_local_stack(image_bytes: bytes) -> str:
     LAST_LOCAL_LLM_ERROR = ""
 
     # LLM-only image extraction via Blockbrain vision.
-    bb_text = call_blockbrain_vision(image_bytes)
+    bb_text = call_blockbrain_vision(image_bytes, model=model)
     if bb_text and bb_text.strip() and not _is_blockbrain_image_missing_response(bb_text):
-        _, _, bb_model = _load_blockbrain_secrets()
-        LAST_VISION_PROVIDER = f"Blockbrain vision ({bb_model})"
+        _, _, bb_agent = _load_blockbrain_secrets()
+        runtime_model = str(LAST_BLOCKBRAIN_MODEL or model or "").strip()
+        if runtime_model:
+            LAST_VISION_PROVIDER = f"Blockbrain vision ({bb_agent}, model={runtime_model})"
+        else:
+            LAST_VISION_PROVIDER = f"Blockbrain vision ({bb_agent})"
         return bb_text.strip()
     if _is_blockbrain_image_missing_response(bb_text):
         LAST_LOCAL_LLM_ERROR = "Blockbrain vision did not receive an image payload"
@@ -9613,7 +9748,7 @@ def extract_supplement_text_from_url(url: str) -> str:
 
     if llm_text:
         if passes_extraction_gate(llm_text):
-            LAST_TEXT_PROVIDER = "Local text model"
+            LAST_TEXT_PROVIDER = str(LAST_TEXT_PROVIDER or "Blockbrain text route")
             LAST_URL_PARSE_REASON = "LLM output passed deterministic quality gates."
             return llm_text
 
@@ -10150,6 +10285,39 @@ div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
     font-weight: 700;
 }
 
+/* BaseWeb select fallback: hide raw icon ligature text (e.g., "arrow_down") and draw a chevron. */
+div[data-baseweb="select"] [role="button"] > div:last-child {
+    position: relative;
+    min-width: 1rem;
+}
+
+div[data-baseweb="select"] [role="button"] > div:last-child span[class*="material"],
+div[data-baseweb="select"] [role="button"] > div:last-child span[class*="icon"] {
+    display: inline-block !important;
+    width: 1rem !important;
+    height: 1rem !important;
+    min-width: 1rem !important;
+    overflow: hidden !important;
+    text-indent: -9999px !important;
+    white-space: nowrap !important;
+    font-size: 0 !important;
+    line-height: 0 !important;
+    color: transparent !important;
+}
+
+div[data-baseweb="select"] [role="button"] > div:last-child::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 48%;
+    width: 0.42rem;
+    height: 0.42rem;
+    border-right: 2px solid rgba(55, 65, 81, 0.9);
+    border-bottom: 2px solid rgba(55, 65, 81, 0.9);
+    transform: translate(-50%, -50%) rotate(45deg);
+    pointer-events: none;
+}
+
 /* Bottom tab bar navigation on all screen sizes */
 div[data-testid="stTabs"] div[role="tablist"] {
     position: fixed;
@@ -10419,6 +10587,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
 
         camera_mode_key = "analyze_camera_mode"
         label_capture_key = "analyze_label_capture_bytes"
+        uploaded_label_bytes_key = "analyze_uploaded_label_bytes"
         barcode_capture_key = "analyze_barcode_capture_bytes"
         label_confirmed_key = "analyze_label_capture_confirmed"
         barcode_scanned_value_key = "analyze_barcode_scanned_value"
@@ -10434,6 +10603,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
             st.session_state[active_input_source_key] = ""
             st.session_state[camera_mode_key] = ""
             st.session_state[label_capture_key] = None
+            st.session_state[uploaded_label_bytes_key] = None
             st.session_state[label_confirmed_key] = False
             st.session_state[barcode_capture_key] = None
             st.session_state[barcode_scanned_value_key] = ""
@@ -10477,6 +10647,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                 st.session_state[active_input_source_key] = ""
                 st.session_state[camera_mode_key] = ""
                 st.session_state[label_capture_key] = None
+                st.session_state[uploaded_label_bytes_key] = None
                 st.session_state[label_confirmed_key] = False
                 st.session_state[barcode_capture_key] = None
                 st.session_state[barcode_scanned_value_key] = ""
@@ -10593,6 +10764,14 @@ The local RAG library is built from curated expert nutrition notes and evidence 
             key="supp_upload",
             disabled=not allow_label_source,
         )
+        uploaded_label_bytes = st.session_state.get(uploaded_label_bytes_key)
+        if uploaded_image is not None:
+            uploaded_label_bytes = uploaded_image.getvalue()
+            st.session_state[uploaded_label_bytes_key] = uploaded_label_bytes
+        elif active_input_source not in {"", "label"}:
+            uploaded_label_bytes = None
+            st.session_state[uploaded_label_bytes_key] = None
+
         barcode_input = st.text_input(
             "Or scan/type barcode (EAN/UPC)",
             key="supp_barcode",
@@ -10615,7 +10794,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
 
         # First non-empty source locks the tab into single-source mode until unlocked.
         if not active_input_source:
-            if label_capture_bytes or uploaded_image is not None:
+            if label_capture_bytes or uploaded_label_bytes:
                 st.session_state[active_input_source_key] = "label"
                 st.rerun()
             if scanned_barcode_value or barcode_upload is not None or _normalize_barcode_digits(barcode_input):
@@ -10631,7 +10810,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
         active_input_source = str(st.session_state.get(active_input_source_key, "") or "")
         effective_label_capture_bytes = label_capture_bytes if active_input_source in {"", "label"} else None
         effective_label_confirmed = bool(label_confirmed and active_input_source in {"", "label"})
-        effective_uploaded_image = uploaded_image if active_input_source in {"", "label"} else None
+        effective_uploaded_image_bytes = uploaded_label_bytes if active_input_source in {"", "label"} else None
         effective_scanned_barcode_value = scanned_barcode_value if active_input_source in {"", "barcode"} else ""
         effective_barcode_input = barcode_input if active_input_source in {"", "barcode"} else ""
         effective_barcode_upload = barcode_upload if active_input_source in {"", "barcode"} else None
@@ -10640,6 +10819,72 @@ The local RAG library is built from curated expert nutrition notes and evidence 
 
         if effective_label_capture_bytes and not effective_label_confirmed:
             st.caption("Confirm or retake the nutrition label photo before it is used for analysis.")
+
+        _, _, configured_blockbrain_agent = _load_blockbrain_secrets()
+        st.caption(f"Configured LLM route for Analyze: Blockbrain agent ({configured_blockbrain_agent})")
+
+        text_model_options = _list_blockbrain_chat_model_ids(vision_required=False)
+        vision_model_options = _list_blockbrain_chat_model_ids(vision_required=True)
+        default_text_model, default_vision_model = _load_blockbrain_model_defaults()
+        default_route_mode = _load_blockbrain_route_mode_default()
+
+        with st.expander("Advanced Blockbrain model selection", expanded=False):
+            route_labels = {
+                "agent_default": "Agent default routing",
+                "model_pinned": "Model-pinned routing",
+            }
+            route_options = ["agent_default", "model_pinned"]
+            st.selectbox(
+                "Routing mode",
+                options=route_options,
+                index=max(0, route_options.index(default_route_mode if default_route_mode in route_options else "agent_default")),
+                key="analyze_blockbrain_route_mode",
+                format_func=lambda x: route_labels.get(str(x), str(x)),
+                help=(
+                    "Agent default uses the agent's configured backend model. "
+                    "Model-pinned sends your selected model id in each request payload."
+                ),
+            )
+            select_cols = st.columns(2)
+            if text_model_options:
+                text_default = default_text_model if default_text_model in text_model_options else text_model_options[0]
+                select_cols[0].selectbox(
+                    "Text model",
+                    options=text_model_options,
+                    index=max(0, text_model_options.index(text_default)),
+                    key="analyze_blockbrain_text_model",
+                )
+            else:
+                select_cols[0].caption("Model catalog unavailable; text model follows agent defaults.")
+                if default_text_model:
+                    st.session_state["analyze_blockbrain_text_model"] = default_text_model
+
+            if vision_model_options:
+                vision_default = default_vision_model if default_vision_model in vision_model_options else vision_model_options[0]
+                select_cols[1].selectbox(
+                    "Vision model",
+                    options=vision_model_options,
+                    index=max(0, vision_model_options.index(vision_default)),
+                    key="analyze_blockbrain_vision_model",
+                )
+            else:
+                select_cols[1].caption("No vision-capable models found in catalog; using agent defaults.")
+                if default_vision_model:
+                    st.session_state["analyze_blockbrain_vision_model"] = default_vision_model
+
+            if st.button("Refresh model catalog", key="refresh_blockbrain_model_catalog"):
+                _get_blockbrain_models_catalog.cache_clear()
+                st.rerun()
+
+        selected_text_model, selected_vision_model = _get_selected_blockbrain_models()
+        selected_route_mode = _get_selected_blockbrain_route_mode()
+        if selected_text_model or selected_vision_model:
+            st.caption(
+                "Active model preferences: "
+                f"route={selected_route_mode}, "
+                f"text={selected_text_model or 'agent-default'}, "
+                f"vision={selected_vision_model or 'agent-default'}"
+            )
 
         analyze = st.button("Analyze input", type="primary", use_container_width=True, key="analyze_input_btn")
 
@@ -10661,21 +10906,25 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     image_bytes = camera_image.getvalue()
                 elif effective_label_capture_bytes and effective_label_confirmed:
                     image_bytes = effective_label_capture_bytes
-                elif effective_uploaded_image is not None:
-                    image_bytes = effective_uploaded_image.read()
+                elif effective_uploaded_image_bytes:
+                    image_bytes = effective_uploaded_image_bytes
 
                 if image_bytes:
-                    status.write("Step 2/4: Extracting label text via Blockbrain vision (Gemini)")
-                    ocr_text = extract_image_text_with_local_stack(image_bytes)
+                    status.write(f"Step 2/4: Extracting label text via Blockbrain vision agent ({configured_blockbrain_agent})")
+                    ocr_text = extract_image_text_with_local_stack(image_bytes, model=selected_vision_model or None)
                     if ocr_text and LAST_VISION_PROVIDER:
                         image_provider_label = LAST_VISION_PROVIDER
                     if not ocr_text:
                         status.write("Vision extraction returned no text, retrying with Blockbrain vision…")
-                        retry_text = call_blockbrain_vision(image_bytes)
+                        retry_text = call_blockbrain_vision(image_bytes, model=selected_vision_model or None)
                         if retry_text and not _is_blockbrain_image_missing_response(retry_text):
                             ocr_text = retry_text
-                            _, _, bb_model = _load_blockbrain_secrets()
-                            LAST_VISION_PROVIDER = f"Blockbrain vision retry ({bb_model})"
+                            _, _, bb_agent = _load_blockbrain_secrets()
+                            runtime_model = str(LAST_BLOCKBRAIN_MODEL or selected_vision_model or "").strip()
+                            if runtime_model:
+                                LAST_VISION_PROVIDER = f"Blockbrain vision retry ({bb_agent}, model={runtime_model})"
+                            else:
+                                LAST_VISION_PROVIDER = f"Blockbrain vision retry ({bb_agent})"
                             image_provider_label = LAST_VISION_PROVIDER
                             image_fallback_used = True
                         else:
@@ -11051,6 +11300,11 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     )
                     status.update(label="Done", state="complete")
 
+                    structured_payload["blockbrain_routing_mode"] = selected_route_mode
+                    structured_payload["blockbrain_preferred_text_model"] = selected_text_model
+                    structured_payload["blockbrain_preferred_vision_model"] = selected_vision_model
+                    structured_payload["blockbrain_runtime_model"] = str(LAST_BLOCKBRAIN_MODEL or "").strip()
+
                     st.session_state["analysis_ready"] = True
                     st.session_state["analysis_components"] = components
                     st.session_state["analysis_combined_text"] = combined
@@ -11091,6 +11345,10 @@ The local RAG library is built from curated expert nutrition notes and evidence 
         analysis_provider = str(analysis_debug.get("selected_input_provider", "") or "").strip()
         analysis_reason = str(analysis_debug.get("selected_input_reason", "") or "").strip()
         analysis_url = str(analysis_debug.get("selected_input_url", "") or "").strip()
+        analysis_route_mode = str(analysis_debug.get("blockbrain_routing_mode", "") or "").strip()
+        analysis_runtime_model = str(analysis_debug.get("blockbrain_runtime_model", "") or "").strip()
+        analysis_text_model_pref = str(analysis_debug.get("blockbrain_preferred_text_model", "") or "").strip()
+        analysis_vision_model_pref = str(analysis_debug.get("blockbrain_preferred_vision_model", "") or "").strip()
 
         if analysis_source:
             source_caption = f"Analysis source: {analysis_source}"
@@ -11101,6 +11359,19 @@ The local RAG library is built from curated expert nutrition notes and evidence 
             st.caption(source_caption)
             if analysis_url:
                 st.caption(f"Analysis source URL: {analysis_url}")
+            if analysis_route_mode or analysis_runtime_model:
+                routing_bits: list[str] = []
+                if analysis_route_mode:
+                    routing_bits.append(f"route={analysis_route_mode}")
+                if analysis_runtime_model:
+                    routing_bits.append(f"resolved_model={analysis_runtime_model}")
+                st.caption("Blockbrain runtime: " + ", ".join(routing_bits))
+            if analysis_text_model_pref or analysis_vision_model_pref:
+                st.caption(
+                    "Blockbrain preferences: "
+                    f"text={analysis_text_model_pref or 'agent-default'}, "
+                    f"vision={analysis_vision_model_pref or 'agent-default'}"
+                )
 
         if combined:
             if st.button(
