@@ -9495,28 +9495,58 @@ section[data-testid="stFileUploaderDropzone"] button::after
     }
     for _k, _v in _SESSION_DEFAULTS.items():
         st.session_state.setdefault(_k, _v)
-    # Patch: robust portal-aware dropdown scroll, above the bottom tab bar.
+    # -- Mobile expander dropdown scroll fix ----------------------------
     st.markdown(
-        """
-<style>
-/* robust-portal-dropdown-scroll */
-ul[role="listbox"],
-div[data-baseweb="popover"] ul,
-div[data-baseweb="menu"] ul {
-    max-height: 40vh !important;
-    overflow-y: auto !important;
-    -webkit-overflow-scrolling: touch !important;
-    overscroll-behavior: contain !important;
-}
-div[data-baseweb="popover"] {
-    z-index: 100000 !important;
-}
-</style>
-""",
+        """<style>
+        /* Force BaseWeb portal/popover above everything including tab bar */
+        [data-baseweb='popover'],
+        [data-baseweb='tooltip'],
+        div[role='listbox'],
+        ul[role='listbox'] {
+            z-index: 999999 !important;
+            position: fixed !important;
+            overflow-y: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            overscroll-behavior: contain !important;
+            max-height: 45vh !important;
+        }
+        /* Prevent the expander itself from clipping the dropdown */
+        details, details > summary ~ div {
+            overflow: visible !important;
+        }
+        /* Each option row — large enough touch target */
+        [role='option'] {
+            min-height: 44px !important;
+            padding: 10px 16px !important;
+            display: flex !important;
+            align-items: center !important;
+            touch-action: pan-y !important;
+        }
+        /* The select input trigger */
+        [data-baseweb='select'] > div:first-child {
+            min-height: 44px !important;
+            touch-action: manipulation !important;
+        }
+        /* Scrollable list container */
+        [data-baseweb='menu'] {
+            overflow-y: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            overscroll-behavior: contain !important;
+            max-height: 45vh !important;
+        }
+        /* Stop parent containers stealing touch events */
+        .stExpander {
+            touch-action: pan-y !important;
+            overflow: visible !important;
+        }
+        section[data-testid='stSidebar'],
+        .main .block-container {
+            overflow-x: hidden !important;
+        }
+        </style>""",
         unsafe_allow_html=True,
     )
-
-  
+    # -----------------------------------------------------------------------
     # Patch: make selectbox/multiselect dropdown menus scrollable and above the tab bar.  
     st.markdown(  
         """  
