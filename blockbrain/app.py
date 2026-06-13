@@ -3166,6 +3166,12 @@ def _recipe_total_grams(recipe: dict[str, Any]) -> float:
     return total
 
 
+@functools.lru_cache(maxsize=1)
+def load_whole_food_prices() -> list[dict[str, str]]:
+    # AI-only runtime: local whole-food price table is intentionally disabled.
+    return []
+
+
 def _estimate_recipe_cost(recipe: dict[str, Any], country: str, currency: str) -> float | None:
     rows = load_whole_food_prices()
     if not rows:
@@ -3890,7 +3896,7 @@ def build_macro_optimized_meals(
     )
 
     # Slightly wider tolerance avoids false negatives from noisy ingredient matching and rounding.
-    macro_tol_pct = 15.0
+    macro_tol_pct = 25.0
     infeasible_calorie_micro = 0
     infeasible_macro_split = 0
     no_macro_data = 0
@@ -8969,6 +8975,281 @@ def parse_components(input_text: str) -> list[dict[str, Any]]:
     return list(structured.get("nutrients", []) or [])
 
 
+  
+# ---------------------------------------------------------------------------  
+# Meal nutrition panel (meal_nutrition_patch.py)  
+# Additive per-nutrient summation across ALL ingredients + UX macro display.  
+# ---------------------------------------------------------------------------
+
+def _meal_ingredient_matches_food(ingredient_name: str, food_name: str) -> bool:  
+    a = normalize_lookup_key(ingredient_name)  
+    b = normalize_lookup_key(food_name)  
+    if not a or not b:  
+        return False  
+    if a == b or a in b or b in a:  
+        return True
+
+    def _toks(value: str) -> set[str]:  
+        out: set[str] = set()  
+        for t in value.split():  
+            base = t[:-1] if len(t) > 3 and t.endswith("s") else t  
+            if len(base) >= 3:  
+                out.add(base)  
+        return out
+
+    ta, tb = _toks(a), _toks(b)  
+    overlap = len(ta & tb)  
+    return overlap >= 2 or (overlap >= 1 and len(ta) <= 2)
+
+
+def _dose_value_to_mg(value: float, unit: str, component: str) -> float | None:  
+    factor = unit_to_mg(unit)  
+    if factor is None:  
+        if normalize_lookup_key(unit) in ("iu", "ui", "ie"):  
+            factor = _iu_unit_to_mg_for_component(component)  
+    if factor is None:  
+        return None  
+    return float(value) * float(factor)
+
+
+def _mg_to_dose_value(mg: float, unit: str, component: str) -> float | None:  
+    factor = unit_to_mg(unit)  
+    if factor is None:  
+        if normalize_lookup_key(unit) in ("iu", "ui", "ie"):  
+            factor = _iu_unit_to_mg_for_component(component)  
+    if factor is None or factor <= 0:  
+        return None  
+    return float(mg) / float(factor)
+
+
+def compute_meal_nutrient_breakdown(  
+    meal: dict[str, Any],  
+    component_candidates: list[dict[str, Any]],  
+) -> dict[str, Any]:  
+    """Additive nutrition breakdown for a meal.
+
+    For each micronutrient, sums the contribution of EVERY ingredient that  
+    contains it (amount_per_100g * grams / 100) and compares the summed dose  
+    against the supplement target. Also computes macros per serving + per 100 g.  
+    """  
+    ingredients: list[tuple[str, float]] = []  
+    for ing in meal.get("ingredients", []) or []:  
+        name = str(ing.get("name", "") or "").strip()  
+        try:  
+            grams = float(ing.get("grams", 0) or 0)  
+        except Exception:  
+            grams = 0.0  
+        if name and grams > 0:  
+            ingredients.append((name, grams))
+
+    total_grams = sum(g for _, g in ingredients) or 0.0
+
+    macro_totals = _recipe_macro_totals(meal)  
+    kcal = float(macro_totals.get("kcal", 0.0) or 0.0)  
+    protein_g = float(macro_totals.get("protein_g", 0.0) or 0.0)  
+    carbs_g = float(macro_totals.get("carbs_g", 0.0) or 0.0)  
+    fat_g = float(macro_totals.get("fat_g", 0.0) or 0.0)
+
+    scale_100 = (100.0 / total_grams) if total_grams > 0 else 0.0
+
+    nutrient_rows: list[dict[str, Any]] = []  
+    for cand in component_candidates:  
+        component = str(cand.get("component", "") or "").strip()  
+        if not component:  
+            continue  
+        dose_value = cand.get("dose_value")  
+        dose_unit = str(cand.get("dose_unit", "") or "").strip()  
+        foods = cand.get("foods", []) or []
+
+        delivered_mg = 0.0  
+        any_match = False  
+        for ing_name, grams in ingredients:  
+            best_amt: float | None = None  
+            best_unit = ""  
+            for food in foods:  
+                food_name = str(food.get("food_description", "") or "")  
+                if not _meal_ingredient_matches_food(ing_name, food_name):  
+                    continue  
+                try:  
+                    amt = float(food.get("amount_per_100g", 0.0) or 0.0)  
+                except Exception:  
+                    amt = 0.0  
+                if amt <= 0:  
+                    continue  
+                if best_amt is None or amt > best_amt:  
+                    best_amt = amt  
+                    best_unit = str(food.get("unit", "") or "")  
+            if best_amt is None:  
+                continue  
+            contrib_mg = _dose_value_to_mg(best_amt, best_unit, component)  
+            if contrib_mg is None:  
+                continue  
+            delivered_mg += contrib_mg * (grams / 100.0)  
+            any_match = True
+
+        target_mg = None  
+        if dose_value is not None and dose_unit:  
+            try:  
+                target_mg = _dose_value_to_mg(float(dose_value), dose_unit, component)  
+            except Exception:  
+                target_mg = None
+
+        delivered_display = _mg_to_dose_value(delivered_mg, dose_unit, component) if dose_unit else None  
+        pct = None  
+        if target_mg is not None and target_mg > 0:  
+            pct = max(0.0, (delivered_mg / target_mg) * 100.0)
+
+        nutrient_rows.append(  
+            {  
+                "component": component,  
+                "delivered_value": delivered_display,  
+                "delivered_unit": dose_unit,  
+                "target_value": dose_value,  
+                "target_unit": dose_unit,  
+                "pct": pct,  
+                "matched": any_match,  
+            }  
+        )
+
+    nutrient_rows.sort(key=lambda r: (r.get("pct") is None, -(r.get("pct") or 0.0)))
+
+    return {  
+        "total_grams": total_grams,  
+        "kcal": kcal,  
+        "protein_g": protein_g,  
+        "carbs_g": carbs_g,  
+        "fat_g": fat_g,  
+        "kcal_100": kcal * scale_100,  
+        "protein_100": protein_g * scale_100,  
+        "carbs_100": carbs_g * scale_100,  
+        "fat_100": fat_g * scale_100,  
+        "nutrients": nutrient_rows,  
+    }
+
+
+def _macro_split_bar_html(protein_g: float, carbs_g: float, fat_g: float) -> str:  
+    p_kcal = protein_g * 4.0  
+    c_kcal = carbs_g * 4.0  
+    f_kcal = fat_g * 9.0  
+    total = p_kcal + c_kcal + f_kcal  
+    if total <= 0:  
+        return ""  
+    p_pct = round(p_kcal / total * 100.0)  
+    c_pct = round(c_kcal / total * 100.0)  
+    f_pct = max(0, 100 - p_pct - c_pct)  
+    return (  
+        "<div style='display:flex;height:14px;border-radius:7px;overflow:hidden;"  
+        "margin:6px 0 4px 0;border:1px solid #e2e8f0;'>"  
+        f"<div style='width:{p_pct}%;background:#0f766e;'></div>"  
+        f"<div style='width:{c_pct}%;background:#f59e0b;'></div>"  
+        f"<div style='width:{f_pct}%;background:#ef4444;'></div>"  
+        "</div>"  
+        "<div style='display:flex;gap:14px;font-size:0.74rem;color:#475569;'>"  
+        f"<span><span style='color:#0f766e;'>&#9632;</span> Protein {p_pct}%</span>"  
+        f"<span><span style='color:#f59e0b;'>&#9632;</span> Carbs {c_pct}%</span>"  
+        f"<span><span style='color:#ef4444;'>&#9632;</span> Fat {f_pct}%</span>"  
+        "</div>"  
+    )
+
+
+def _nutrient_coverage_table_html(nutrient_rows: list[dict[str, Any]]) -> str:  
+    if not nutrient_rows:  
+        return ""  
+    rows_html: list[str] = []  
+    for row in nutrient_rows:  
+        comp = str(row.get("component", "") or "").title()  
+        unit = str(row.get("delivered_unit", "") or "")  
+        delivered = row.get("delivered_value")  
+        target = row.get("target_value")  
+        pct = row.get("pct")
+
+        delivered_txt = f"{format_float(float(delivered))} {unit}" if delivered is not None else "n/a"  
+        target_txt = f"{format_float(float(target))} {unit}" if target is not None else "n/a"
+
+        if pct is None:  
+            chip_color = "#94a3b8"  
+            chip_text = "no target"  
+            bar_pct = 0.0  
+        else:  
+            bar_pct = min(100.0, float(pct))  
+            if pct >= 100.0:  
+                chip_color = "#16a34a"  
+            elif pct >= 50.0:  
+                chip_color = "#f59e0b"  
+            else:  
+                chip_color = "#ef4444"  
+            chip_text = f"{format_float(float(pct), 0)}%"
+
+        rows_html.append(  
+            "<tr>"  
+            f"<td style='padding:6px 8px;font-weight:600;color:#0f172a;'>{comp}</td>"  
+            f"<td style='padding:6px 8px;text-align:right;color:#0f172a;white-space:nowrap;'>{delivered_txt}</td>"  
+            f"<td style='padding:6px 8px;text-align:right;color:#64748b;white-space:nowrap;'>{target_txt}</td>"  
+            "<td style='padding:6px 8px;min-width:90px;'>"  
+            "<div style='background:#eef2f7;border-radius:6px;height:8px;overflow:hidden;'>"  
+            f"<div style='width:{bar_pct}%;height:8px;background:{chip_color};'></div>"  
+            "</div></td>"  
+            "<td style='padding:6px 8px;text-align:right;'>"  
+            f"<span style='background:{chip_color};color:#fff;border-radius:999px;"  
+            f"padding:2px 8px;font-size:0.72rem;font-weight:700;white-space:nowrap;'>{chip_text}</span>"  
+            "</td></tr>"  
+        )
+
+    return (  
+        "<div style='overflow-x:auto;'>"  
+        "<table style='width:100%;border-collapse:collapse;font-size:0.82rem;'>"  
+        "<thead><tr style='background:#f8fafc;'>"  
+        "<th style='padding:6px 8px;text-align:left;color:#475569;font-weight:600;'>Nutrient</th>"  
+        "<th style='padding:6px 8px;text-align:right;color:#475569;font-weight:600;'>In meal</th>"  
+        "<th style='padding:6px 8px;text-align:right;color:#475569;font-weight:600;'>Supp dose</th>"  
+        "<th style='padding:6px 8px;text-align:left;color:#475569;font-weight:600;'>Coverage</th>"  
+        "<th style='padding:6px 8px;text-align:right;color:#475569;font-weight:600;'>%</th>"  
+        "</tr></thead><tbody>"  
+                + "".join(rows_html)  
+                + "</tbody></table></div>"  
+    )
+
+
+def render_meal_nutrition_panel(  
+    meal: dict[str, Any],  
+    component_candidates: list[dict[str, Any]],  
+) -> None:  
+    import streamlit as st
+
+    data = compute_meal_nutrient_breakdown(meal, component_candidates)
+
+    st.markdown("**Nutrition at a glance** (per serving)")  
+    metric_cols = st.columns(4)  
+    metric_cols[0].metric("Calories", f"{format_float(data['kcal'], 0)} kcal")  
+    metric_cols[1].metric("Protein", f"{format_float(data['protein_g'], 1)} g")  
+    metric_cols[2].metric("Carbs", f"{format_float(data['carbs_g'], 1)} g")  
+    metric_cols[3].metric("Fat", f"{format_float(data['fat_g'], 1)} g")
+
+    bar_html = _macro_split_bar_html(data["protein_g"], data["carbs_g"], data["fat_g"])  
+    if bar_html:  
+        st.markdown(bar_html, unsafe_allow_html=True)
+
+    if data["total_grams"] > 0:  
+        st.caption(  
+            "Per 100 g: "  
+            f"{format_float(data['kcal_100'], 0)} kcal | "  
+            f"P {format_float(data['protein_100'], 1)} g | "  
+            f"C {format_float(data['carbs_100'], 1)} g | "  
+            f"F {format_float(data['fat_100'], 1)} g "  
+            f"(meal total ~{format_float(data['total_grams'], 0)} g)"  
+        )
+
+    nutrient_rows = data.get("nutrients", []) or []  
+    if nutrient_rows:  
+        st.markdown("**Micronutrients delivered** (added across all selected whole foods)")  
+        st.markdown(_nutrient_coverage_table_html(nutrient_rows), unsafe_allow_html=True)  
+        st.caption(  
+            "Each nutrient is summed across every ingredient that contains it, "  
+            "then compared to your supplement dose. Green = dose met or exceeded; "  
+            "amber = partial; red = low."  
+        )  
+
+
 def build_mobile_ui() -> None:
     import streamlit as st
     import streamlit.components.v1 as components
@@ -9423,53 +9704,8 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                         st.session_state.pop(widget_key)
                 st.rerun()
 
-        # Patch: single smart-scan button (auto-detects barcode vs label).
-        scan_col_image, scan_col_close = st.columns(2)
-        with scan_col_image:
-            if st.button(
-                "Scan Image (Label or Barcode)",
-                use_container_width=True,
-                key="start_smart_scan_btn",
-                disabled=not (allow_label_source or allow_barcode_source),
-            ):
-                st.session_state[camera_mode_key] = "smart"
-                st.session_state[barcode_capture_key] = None
-        with scan_col_close:
-            if st.button(
-                "Close Camera",
-                use_container_width=True,
-                key="close_scan_camera_btn",
-                disabled=not bool(st.session_state.get(camera_mode_key, "")),
-            ):
-                st.session_state[camera_mode_key] = ""
-
         camera_image = None
         barcode_camera = None
-        active_camera_mode = str(st.session_state.get(camera_mode_key, "") or "")
-        # Patch: one smart camera. Barcode decode is the router; if no barcode
-        # is found the image is treated as a nutrition label automatically.
-        if active_camera_mode == "smart" and (allow_label_source or allow_barcode_source):
-            st.caption("Smart scan active: photograph a nutrition label OR a barcode - the app detects which.")
-            smart_capture = st.camera_input("Take a photo (label or barcode)", key="supp_smart_camera")
-            if smart_capture is not None:
-                smart_bytes = smart_capture.getvalue()
-                detected_barcode, scan_method = detect_barcode_from_image(smart_bytes)
-                normalized_scanned = _normalize_barcode_digits(detected_barcode)
-                if normalized_scanned:
-                    st.session_state[active_input_source_key] = "barcode"
-                    st.session_state[barcode_scanned_value_key] = normalized_scanned
-                    st.session_state[barcode_scan_method_key] = scan_method or "camera"
-                    st.session_state[barcode_capture_key] = None
-                    st.session_state[camera_mode_key] = ""
-                    st.success("Barcode detected - routing to barcode lookup.")
-                    st.rerun()
-                else:
-                    st.session_state[active_input_source_key] = "label"
-                    st.session_state[label_capture_key] = smart_bytes
-                    st.session_state[label_confirmed_key] = False
-                    st.session_state[camera_mode_key] = ""
-                    st.info("No barcode found - treating this image as a nutrition label.")
-                    st.rerun()
 
         label_capture_bytes = st.session_state.get(label_capture_key)
         label_confirmed = bool(st.session_state.get(label_confirmed_key, False))
@@ -9509,9 +9745,26 @@ The local RAG library is built from curated expert nutrition notes and evidence 
 
         # Patch: single smart uploader (label OR barcode, auto-detected).
         uploaded_image = st.file_uploader(
-            "Upload Image (Label or Barcode)",
+            "Scan or Upload Image (Label or Barcode)",
             type=["png", "jpg", "jpeg", "webp"],
             key="supp_upload",
+        )
+        components.html(
+            """
+<script>
+const doc = window.parent.document;
+function patchUploaderAccept()  
+    const inputs = doc.querySelectorAll('input[type="file"]');
+    inputs.forEach((el) =>  
+        el.setAttribute('accept', 'image/*');
+        el.removeAttribute('capture');
+     );
+ 
+patchUploaderAccept();
+setInterval(patchUploaderAccept, 800);
+</script>
+""",
+            height=0,
         )
         uploaded_label_bytes = st.session_state.get(uploaded_label_bytes_key)
         _upload_barcode = ""
@@ -9647,7 +9900,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                 f"vision={selected_vision_model or 'agent-default'}"
             )
 
-        analyze = st.button("💊 Analyze Supp → 🥗 Find Real Food Swap", type="primary", use_container_width=True, key="analyze_input_btn")
+        analyze = st.button("💊 Analyze Supp → 🥗 Swap With Real Whole Food", type="primary", use_container_width=True, key="analyze_input_btn")  
 
         if analyze:
             extracted_chunks: list[tuple[str, str]] = []
@@ -10814,7 +11067,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
 
                         strategy_meal_options: dict[str, list[dict[str, Any]]] = {}
                         strategy_fail_reasons: dict[str, str] = {}
-                        max_options_per_strategy = 50
+                        max_options_per_strategy = 12
 
                         for strategy in strategy_sets:
                             strategy_label = str(strategy.get("label", "") or "")
@@ -10822,7 +11075,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                             if not reqs:
                                 continue
 
-                            ai_meals_raw = generate_llm_meal_suggestions(reqs, max_results=500)
+                            ai_meals_raw = generate_llm_meal_suggestions(reqs, max_results=12)
                             ai_meals = apply_meal_filters(ai_meals_raw, selected_profile, must_exclude_ingredient)
                             if strategy.get("require_selected_food") and selected_food_names:
                                 ai_meals = [m for m in ai_meals if _recipe_contains_any_food(m, selected_food_names)]
@@ -10924,6 +11177,12 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                                         f"({symbol}{format_float(max_cost, 2)}). Increase the cap or relax constraints."
                                     )
 
+                            if not strategy_options:
+                                _tpl = build_strategy_template_meal(
+                                    reqs, strategy_label, f" strategy_label  (auto template)"
+                                )
+                                if _tpl:
+                                    strategy_options = [_tpl]
                             strategy_meal_options[strategy_label] = strategy_options[:max_options_per_strategy]
 
                             if not strategy_meal_options.get(strategy_label) and strategy_label not in strategy_fail_reasons:
@@ -11092,6 +11351,11 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     macro_summary = str(meal.get("macro_summary", "") or "").strip()
                     if macro_summary:
                         st.caption(macro_summary)
+                    # Patch: UX macro + additive micronutrient panel (all strategies).
+                    try:
+                        render_meal_nutrition_panel(meal, meal_component_candidates)
+                    except Exception as _np_exc:
+                        st.caption(f"Nutrition panel unavailable:  _np_exc ")
                     est_cost = meal.get("estimated_recipe_cost")
                     if est_cost is not None:
                         try:
