@@ -2620,8 +2620,7 @@ def get_food_price_estimate(
 ) -> dict[str, Any] | None:
     candidates: list[dict[str, Any]] = []
 
-    del enable_live
-    should_query_live = True
+    should_query_live = bool(enable_live)
 
     if should_query_live:
         candidates.extend(fetch_market_price_offers(food_name, country, currency, market))
@@ -8858,7 +8857,15 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
     merged_meta: dict[str, Any] = {"issues": []}
     merged_score = 0.0
 
-    if _local_text_llm_enabled():
+    _deterministic_strong = bool(
+        has_structured_table_cues
+        and sum(
+            1
+            for r in local_validated
+            if r.get('dose_value') is not None and r.get('dose_unit')
+        ) >= 5
+    )
+    if _local_text_llm_enabled() and not _deterministic_strong:
         llm_with_dose, llm_name_only = _parse_rows_with_local_llm(parse_input_text)
         llm_rows = merge_component_rows(llm_with_dose, llm_name_only)
         llm_expanded = expand_umbrella_components(llm_rows)
@@ -9259,6 +9266,25 @@ def build_mobile_ui() -> None:
 
     st.set_page_config(page_title="SuppSwap", page_icon="🥗", layout="centered")
 
+    # -- Override file uploader button label via CSS ---------------------
+    st.markdown(
+        '''<style>
+        /* Hide the default Browse files text */
+        [data-testid="stFileUploaderDropzoneInstructions"] > div > span {
+            display: none;
+        }
+        /* Replace Browse files button text */
+        [data-testid="stFileUploaderDropzone"] button[data-testid="stBaseButton-secondary"]::before {
+            content: "\1F4F7\FE0F\200D\1F4E4\200D\1F5C2  Capture Supplement Info";
+        }
+        [data-testid="stFileUploaderDropzone"] button[data-testid="stBaseButton-secondary"] span {
+            display: none;
+        }
+        </style>''',
+        unsafe_allow_html=True,
+    )
+    # ---------------------------------------------------------------------
+
     st.markdown(
         """
 <style>
@@ -9466,6 +9492,27 @@ section[data-testid="stFileUploaderDropzone"] button::after
     }
     for _k, _v in _SESSION_DEFAULTS.items():
         st.session_state.setdefault(_k, _v)
+    # Patch: robust portal-aware dropdown scroll, above the bottom tab bar.
+    st.markdown(
+        """
+<style>
+/* robust-portal-dropdown-scroll */
+ul[role="listbox"],
+div[data-baseweb="popover"] ul,
+div[data-baseweb="menu"] ul {
+    max-height: 40vh !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    overscroll-behavior: contain !important;
+}
+div[data-baseweb="popover"] {
+    z-index: 100000 !important;
+}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
   
     # Patch: make selectbox/multiselect dropdown menus scrollable and above the tab bar.  
     st.markdown(  
