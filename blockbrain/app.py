@@ -9772,7 +9772,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
 
         # Patch: single smart uploader (label OR barcode, auto-detected).
         uploaded_image = st.file_uploader(
-            "Scan or Upload Image (Label or Barcode)",
+            "📷📤🗂 Capture Supplement Info — camera, upload or select file",
             type=["png", "jpg", "jpeg", "webp"],
             key="supp_upload",
         )
@@ -9927,7 +9927,7 @@ setInterval(patchUploaderAccept, 800);
                 f"vision={selected_vision_model or 'agent-default'}"
             )
 
-        analyze = st.button("💊 Analyze Supp → 🥗 Swap With Real Whole Food", type="primary", use_container_width=True, key="analyze_input_btn")  
+        analyze = st.button("💊 Analyze Supp → 🥗 Swap With Whole Food", type="primary", use_container_width=True, key="analyze_input_btn")  
 
         if analyze:
             extracted_chunks: list[tuple[str, str]] = []
