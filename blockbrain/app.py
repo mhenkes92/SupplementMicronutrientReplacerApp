@@ -3253,7 +3253,11 @@ def generate_llm_meal_suggestions(requirements: list[dict[str, Any]], max_result
 
     system_prompt = (
         "You are a nutrition-focused meal planner. "
-        "Return strict JSON only. Keep meals practical and ingredient-focused."
+        "Return strict JSON only. Keep meals practical and ingredient-focused. "
+        "Use ONLY common single-ingredient whole foods available in a normal "
+        "supermarket (vegetables, fruit, eggs, common meat/fish, dairy, grains, "
+        "legumes, common nuts/seeds). Never use exotic or game ingredients such as "
+        "polar bear liver, whale, seal, or insects."
     )
     user_prompt = (
         "Return a strict JSON array with up to "
@@ -3308,6 +3312,15 @@ def generate_llm_meal_suggestions(requirements: list[dict[str, Any]], max_result
         meal.update(_evaluate_recipe_coverage(meal, requirements))
         meals.append(meal)
 
+    # Patch: drop meals that contain any exotic / non-supermarket ingredient.
+    common_meals: list[dict[str, Any]] = []
+    for _m in meals:
+        if all(
+            classify_food_commonness(str(_ing.get("name", "") or ""))["tier"] >= 0
+            for _ing in (_m.get("ingredients", []) or [])
+        ):
+            common_meals.append(_m)
+    meals = common_meals if common_meals else meals
     meals.sort(
         key=lambda r: (
             1 if r.get("full_coverage") else 0,
@@ -4827,6 +4840,97 @@ def build_web_fallback_package(question: str, fallback_query: str) -> dict[str, 
     }
 
 
+  
+# ---------------------------------------------------------------------------  
+# Exotic / non-retail food guardrail (agentic patcher.py)  
+#  
+# Discovery and "is this common" ranking are handled by the agent system  
+# prompts (it prefers common supermarket single-ingredient foods and orders  
+# by concentration). This block is ONLY a deterministic last-line safety net  
+# that guarantees exotic / game / non-retail / heavily processed items never  
+# reach the dropdowns, even if the model ignores its prompt.  
+#  
+# Tier  1 = allowed (passes guardrail)  
+# Tier -1 = blocked (exotic / non-retail / processed)  
+# ---------------------------------------------------------------------------
+
+# Hard blocklist: exotic, game, or non-retail items we never suggest,  
+# even when nutrient density is extreme (e.g. polar bear liver, whale, seal).  
+EXOTIC_FOOD_BLOCK_KEYWORDS: set[str] = {  
+    "bear", "polar bear", "seal", "whale", "walrus", "moose", "elk",  
+    "venison", "deer", "caribou", "reindeer", "bison", "buffalo", "boar",  
+    "emu", "ostrich", "pheasant", "quail", "kangaroo", "alligator",  
+    "crocodile", "snake", "insect", "cricket", "locust", "horse", "camel",  
+    "goose liver", "foie gras", "blubber", "muktuk", "game meat", "antelope",  
+    "rabbit", "hare", "pigeon", "squab", "frog", "turtle", "octopus",  
+    "sea lion", "wild boar", "elk liver", "moose liver",  
+}
+
+# Processed / multi-ingredient hints => not a single-ingredient whole food.  
+PROCESSED_FOOD_HINT_KEYWORDS: set[str] = {  
+    "fortified", "supplement", "powder", "bar", "drink mix", "formula",  
+    "infant", "baby food", "candy", "snack", "fast food", "restaurant",  
+    "sauce", "gravy", "fried", "breaded", "luncheon", "sausage", "nugget",  
+}
+
+
+def classify_food_commonness(food_description: str) -> dict[str, Any]:  
+    """Return guardrail tier for a food.
+
+    tier  1 = allowed (not on the blocklist)  
+    tier -1 = blocked (exotic / non-retail / heavily processed / empty)  
+    """  
+    key = normalize_lookup_key(food_description)  
+    if not key:  
+        return {"tier": -1, "reason": "empty"}
+
+    for tok in EXOTIC_FOOD_BLOCK_KEYWORDS:  
+        if tok in key:  
+            return {"tier": -1, "reason": f"exotic: {tok}"}
+
+    for tok in PROCESSED_FOOD_HINT_KEYWORDS:  
+        if tok in key:  
+            return {"tier": -1, "reason": f"processed: {tok}"}
+
+    return {"tier": 1, "reason": "allowed"}
+
+
+def is_common_supermarket_food(food_description: str) -> bool:  
+    return classify_food_commonness(food_description)["tier"] >= 1
+
+
+def filter_and_rank_common_foods(  
+    foods: list[dict[str, Any]],  
+    limit: int,  
+) -> list[dict[str, Any]]:  
+    """Drop blocklisted foods, then rank the survivors by concentration.
+
+    The agent already orders results by commonness via its system prompt;  
+    this only removes exotic/processed items and re-sorts by amount_per_100g  
+    (desc) with a small preparation penalty as a tie-breaker.  
+    """  
+    enriched: list[tuple[float, int, dict[str, Any]]] = []  
+    for food in foods:  
+        if classify_food_commonness(str(food.get("food_description", "") or ""))["tier"] < 0:  
+            continue  # drop exotic / processed entirely  
+        try:  
+            amount = float(food.get("amount_per_100g", 0.0) or 0.0)  
+        except Exception:  
+            amount = 0.0  
+        if amount <= 0:  
+            continue  
+        prep_penalty = _whole_food_preparation_penalty(  
+            str(food.get("food_description", "") or "")  
+        )  
+        enriched.append((amount, prep_penalty, food))
+
+    if not enriched:  
+        return []
+
+    enriched.sort(key=lambda e: (-e[0], e[1]))  
+    return [e[2] for e in enriched[:limit]]  
+
+
 def build_ai_food_matches(components: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
     """Single batched LLM call for ALL components (replaces N serial round-trips)."""
     if not _local_text_llm_enabled():
@@ -4870,8 +4974,12 @@ def build_ai_food_matches(components: list[dict[str, Any]]) -> tuple[list[dict[s
     user_prompt = (
         "For EACH supplement component, return whole-food replacements." + nl
         + f"Schema: {schema}" + nl
-        + f"Rules: up to {TOP_FOODS_PER_COMPONENT} whole foods per component, "
-        + "highest density first, amount_per_100g must be > 0." + nl + nl
+        + f"Rules: up to {TOP_FOODS_PER_COMPONENT} COMMON single-ingredient whole foods "
+        + "that an average person can buy in a normal supermarket (e.g. spinach, eggs, "
+        + "salmon, beef liver, almonds). Do NOT suggest exotic, game, or non-retail "
+        + "items (e.g. polar bear liver, whale, seal, insects) even if their nutrient "
+        + "density is very high. Prefer the most common food first; among common foods, "
+        + "list highest concentration per 100g first. amount_per_100g must be > 0." + nl + nl
         + "Components:" + nl + nl.join(prompt_lines)
     )
 
@@ -4932,11 +5040,8 @@ def build_ai_food_matches(components: list[dict[str, Any]]) -> tuple[list[dict[s
                 "source_db": str(row.get("source_db", "USDA FoodData Central") or "USDA FoodData Central"),
             })
 
-        deduped_foods.sort(key=lambda f: (
-            -float(f.get("amount_per_100g", 0.0) or 0.0),
-            _whole_food_preparation_penalty(str(f.get("food_description", "") or "")),
-        ))
-        deduped_foods = deduped_foods[:OVERVIEW_ALT_LIMIT]
+        # Patch: drop exotic/non-retail foods, then rank by concentration.
+        deduped_foods = filter_and_rank_common_foods(deduped_foods, OVERVIEW_ALT_LIMIT)
         top_foods = deduped_foods[:TOP_FOODS_PER_COMPONENT]
 
         related = ", ".join([
@@ -9053,11 +9158,36 @@ body,
     }
     for _k, _v in _SESSION_DEFAULTS.items():
         st.session_state.setdefault(_k, _v)
+  
+    # Patch: make selectbox/multiselect dropdown menus scrollable and above the tab bar.  
+    st.markdown(  
+        """  
+<style>  
+div[data-baseweb="popover"]    
+    z-index: 10050 !important;  
+    overflow: visible !important;  
+   
+div[data-baseweb="popover"] ul[role="listbox"],  
+div[data-baseweb="popover"] ul[data-baseweb="menu"],  
+ul[data-baseweb="menu"]    
+    max-height: 45vh !important;  
+    overflow-y: auto !important;  
+    -webkit-overflow-scrolling: touch !important;  
+    overscroll-behavior: contain !important;  
+   
+</style>  
+""",  
+        unsafe_allow_html=True,  
+    )  
+
     # ---------------------------------------------------------------------
 
-    tab_welcome, tab_analyze, tab_results, tab_meals, tab_research, tab_reference, tab_feedback = st.tabs(
-        ["🏠 Welcome", "🔎 Analyze", "📊 Results", "🍽 Meals", "📚 Research", "📘 Nutrient Guide", "💬 Feedback"]
+    tab_analyze, tab_results, tab_meals, tab_research, tab_reference, tab_about = st.tabs(
+        ["🔎 Analyze", "📊 Results", "🍽 Meals", "📚 Research", "📘 Nutrient Guide", "ℹ️ About & Feedback"]
     )
+    # Patch: Welcome content now lives at the end inside the About & Feedback tab.
+    tab_welcome = tab_about
+    tab_feedback = tab_about
 
     components.html(
         """
@@ -9293,25 +9423,16 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                         st.session_state.pop(widget_key)
                 st.rerun()
 
-        scan_col_label, scan_col_barcode, scan_col_close = st.columns(3)
-        with scan_col_label:
+        # Patch: single smart-scan button (auto-detects barcode vs label).
+        scan_col_image, scan_col_close = st.columns(2)
+        with scan_col_image:
             if st.button(
-                "Scan Nutrition Label",
+                "Scan Image (Label or Barcode)",
                 use_container_width=True,
-                key="start_label_scan_btn",
-                disabled=not allow_label_source,
+                key="start_smart_scan_btn",
+                disabled=not (allow_label_source or allow_barcode_source),
             ):
-                st.session_state[active_input_source_key] = "label"
-                st.session_state[camera_mode_key] = "label"
-        with scan_col_barcode:
-            if st.button(
-                "Scan Bar Code",
-                use_container_width=True,
-                key="start_barcode_scan_btn",
-                disabled=not allow_barcode_source,
-            ):
-                st.session_state[active_input_source_key] = "barcode"
-                st.session_state[camera_mode_key] = "barcode"
+                st.session_state[camera_mode_key] = "smart"
                 st.session_state[barcode_capture_key] = None
         with scan_col_close:
             if st.button(
@@ -9325,20 +9446,14 @@ The local RAG library is built from curated expert nutrition notes and evidence 
         camera_image = None
         barcode_camera = None
         active_camera_mode = str(st.session_state.get(camera_mode_key, "") or "")
-        if active_camera_mode == "label" and allow_label_source:
-            st.caption("Nutrition label camera is active.")
-            camera_image = st.camera_input("Take a photo of supplement label", key="supp_camera")
-            if camera_image is not None:
-                st.session_state[label_capture_key] = camera_image.getvalue()
-                st.session_state[label_confirmed_key] = False
-                st.session_state[camera_mode_key] = ""
-                st.rerun()
-        elif active_camera_mode == "barcode" and allow_barcode_source:
-            st.caption("Barcode camera is active.")
-            barcode_camera = st.camera_input("Scan barcode with camera", key="supp_barcode_camera")
-            if barcode_camera is not None:
-                barcode_bytes = barcode_camera.getvalue()
-                detected_barcode, scan_method = detect_barcode_from_image(barcode_bytes)
+        # Patch: one smart camera. Barcode decode is the router; if no barcode
+        # is found the image is treated as a nutrition label automatically.
+        if active_camera_mode == "smart" and (allow_label_source or allow_barcode_source):
+            st.caption("Smart scan active: photograph a nutrition label OR a barcode - the app detects which.")
+            smart_capture = st.camera_input("Take a photo (label or barcode)", key="supp_smart_camera")
+            if smart_capture is not None:
+                smart_bytes = smart_capture.getvalue()
+                detected_barcode, scan_method = detect_barcode_from_image(smart_bytes)
                 normalized_scanned = _normalize_barcode_digits(detected_barcode)
                 if normalized_scanned:
                     st.session_state[active_input_source_key] = "barcode"
@@ -9346,8 +9461,15 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     st.session_state[barcode_scan_method_key] = scan_method or "camera"
                     st.session_state[barcode_capture_key] = None
                     st.session_state[camera_mode_key] = ""
+                    st.success("Barcode detected - routing to barcode lookup.")
                     st.rerun()
-                st.warning("No barcode detected. Retake scan by centering the code and trying again.")
+                else:
+                    st.session_state[active_input_source_key] = "label"
+                    st.session_state[label_capture_key] = smart_bytes
+                    st.session_state[label_confirmed_key] = False
+                    st.session_state[camera_mode_key] = ""
+                    st.info("No barcode found - treating this image as a nutrition label.")
+                    st.rerun()
 
         label_capture_bytes = st.session_state.get(label_capture_key)
         label_confirmed = bool(st.session_state.get(label_confirmed_key, False))
@@ -9513,7 +9635,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                 f"vision={selected_vision_model or 'agent-default'}"
             )
 
-        analyze = st.button("Analyze input", type="primary", use_container_width=True, key="analyze_input_btn")
+        analyze = st.button("💊 Analyze Supp → 🥗 Find Real Food Swap", type="primary", use_container_width=True, key="analyze_input_btn")
 
         if analyze:
             extracted_chunks: list[tuple[str, str]] = []

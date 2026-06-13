@@ -25,6 +25,24 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
+## Keeping the Blockbrain proxy alive
+
+The Continue integration uses `blockbrain_proxy.py` on `http://localhost:4891`.
+
+For an always-on setup on your Windows machine, use the watchdog script:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start_blockbrain_proxy.ps1
+```
+
+To start it automatically when you log in, register the scheduled task once:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\register_blockbrain_proxy_startup.ps1
+```
+
+This keeps the proxy restarted if it exits and brings it back at login.
+
 ## Required configuration
 
 Use blockbrain/.streamlit/secrets.toml (recommended) or environment variables.
