@@ -9266,24 +9266,27 @@ def build_mobile_ui() -> None:
 
     st.set_page_config(page_title="SuppSwap", page_icon="🥗", layout="centered")
 
-    # -- Override file uploader button label via CSS ---------------------
+    # -- File uploader button CSS override --------------------------------
     st.markdown(
-        '''<style>
-        /* Hide the default Browse files text */
-        [data-testid="stFileUploaderDropzoneInstructions"] > div > span {
-            display: none;
+        """<style>
+        /* Hide drag-and-drop instruction text above the button */
+        [data-testid='stFileUploaderDropzoneInstructions'] {
+            display: none !important;
         }
-        /* Replace Browse files button text */
-        [data-testid="stFileUploaderDropzone"] button[data-testid="stBaseButton-secondary"]::before {
-            content: "\1F4F7\FE0F\200D\1F4E4\200D\1F5C2  Capture Supplement Info";
+        /* Hide original Browse files span text */
+        [data-testid='stFileUploaderDropzone'] button span {
+            display: none !important;
         }
-        [data-testid="stFileUploaderDropzone"] button[data-testid="stBaseButton-secondary"] span {
-            display: none;
+        /* Inject custom label using actual UTF-8 emoji */
+        [data-testid='stFileUploaderDropzone'] button::before {
+            content: '📷📤🗂 Capture Supplement Info';
+            font-size: 0.95rem;
+            font-weight: 500;
         }
-        </style>''',
+        </style>""",
         unsafe_allow_html=True,
     )
-    # ---------------------------------------------------------------------
+    # -----------------------------------------------------------------------
 
     st.markdown(
         """
@@ -9819,7 +9822,7 @@ The local RAG library is built from curated expert nutrition notes and evidence 
 
         # Patch: single smart uploader (label OR barcode, auto-detected).
         uploaded_image = st.file_uploader(
-            "📷📤🗂 Capture Supplement Info — camera, upload or select file",
+            "",
             type=["png", "jpg", "jpeg", "webp"],
             key="supp_upload",
         )
