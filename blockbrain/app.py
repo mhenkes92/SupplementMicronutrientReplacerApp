@@ -9411,6 +9411,33 @@ body,
     )
 
     st.title("🥗 SuppSwap")
+    # Patch: rebrand uploader button to "Capture" + camera icon.
+    st.markdown(
+        """
+<style>
+/* Replace the "Browse files" button text with a camera + Capture label */
+section[data-testid="stFileUploaderDropzone"] button  
+    font-size: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 0.4rem !important;
+ 
+section[data-testid="stFileUploaderDropzone"] button::after  
+    content: "\01F4F7 \01F4C1 \02B06  Capture Supplement Info";
+    font-size: 0.9rem !important;
+    font-weight: 700 !important;
+ 
+/* Show a camera symbol alongside the existing upload symbol */
+[data-testid="stFileUploaderDropzoneInstructions"]::before  
+    content: "\01F4F7 / ";
+    font-size: 1.3rem;
+    margin-right: 0.35rem;
+    vertical-align: middle;
+ 
+</style>
+""",
+        unsafe_allow_html=True,
+    )
 
     # -- Session state defaults ------------------------------------------
     _SESSION_DEFAULTS: dict = {
@@ -9835,14 +9862,14 @@ setInterval(patchUploaderAccept, 800);
             st.caption("Confirm or retake the nutrition label photo before it is used for analysis.")
 
         _, _, configured_blockbrain_agent = _load_blockbrain_secrets()
-        st.caption(f"Configured LLM route for Analyze: Blockbrain agent ({configured_blockbrain_agent})")
+        pass  # LLM route caption hidden for simpler UX
 
         text_model_options = _list_blockbrain_chat_model_ids(vision_required=False)
         vision_model_options = _list_blockbrain_chat_model_ids(vision_required=True)
         default_text_model, default_vision_model = _load_blockbrain_model_defaults()
         default_route_mode = _load_blockbrain_route_mode_default()
 
-        with st.expander("Advanced Blockbrain model selection", expanded=False):
+        if False:  # Advanced model selection hidden for simpler UX
             route_labels = {
                 "agent_default": "Agent default routing",
                 "model_pinned": "Model-pinned routing",
