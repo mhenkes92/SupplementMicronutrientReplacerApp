@@ -9507,39 +9507,51 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     st.session_state[camera_mode_key] = "barcode"
                     st.rerun()
 
+        # Patch: single smart uploader (label OR barcode, auto-detected).
         uploaded_image = st.file_uploader(
-            "Upload label image from device",
+            "Upload Image (Label or Barcode)",
             type=["png", "jpg", "jpeg", "webp"],
             key="supp_upload",
-            disabled=not allow_label_source,
         )
         uploaded_label_bytes = st.session_state.get(uploaded_label_bytes_key)
+        _upload_barcode = ""
         if uploaded_image is not None:
-            uploaded_label_bytes = uploaded_image.getvalue()
-            st.session_state[uploaded_label_bytes_key] = uploaded_label_bytes
+            _upload_bytes = uploaded_image.getvalue()
+            _det_barcode, _det_method = detect_barcode_from_image(_upload_bytes)
+            _upload_barcode = _normalize_barcode_digits(_det_barcode)
+            if _upload_barcode:
+                st.session_state[barcode_scan_method_key] = _det_method or "upload"
+                uploaded_label_bytes = None
+                st.session_state[uploaded_label_bytes_key] = None
+                st.success("Barcode detected in upload - routing to barcode lookup.")
+            else:
+                uploaded_label_bytes = _upload_bytes
+                st.session_state[uploaded_label_bytes_key] = uploaded_label_bytes
+                st.info("No barcode found in upload - treating image as a nutrition label.")
         elif active_input_source not in {"", "label"}:
             uploaded_label_bytes = None
             st.session_state[uploaded_label_bytes_key] = None
 
-        barcode_input = st.text_input(
-            "Or scan/type barcode (EAN/UPC)",
-            key="supp_barcode",
-            disabled=not allow_barcode_source,
+        # Patch: single smart text field (barcode digits / product URL / manual text).
+        supp_single_input = st.text_area(
+            "Or type details: barcode (EAN/UPC), product link, or supplement text",
+            placeholder="Examples:\n4006381333931\nhttps://example.com/product\nVitamin C 500 mg",
+            height=120,
+            key="supp_single_input",
         )
-        barcode_upload = st.file_uploader(
-            "Upload barcode image",
-            type=["png", "jpg", "jpeg", "webp"],
-            key="supp_barcode_upload",
-            disabled=not allow_barcode_source,
-        )
-        product_url = st.text_input("Or paste a product link", key="supp_url", disabled=not allow_url_source)
-        manual_text = st.text_area(
-            "Or type/paste supplement details (product or component + dose)",
-            placeholder="Example: Vitamin C 500 mg\nFish oil 1000 mg\nAshwagandha 300 mg",
-            height=150,
-            key="supp_manual_text",
-            disabled=not allow_manual_source,
-        )
+        barcode_upload = None
+        _single_raw = str(supp_single_input or "").strip()
+        _single_digits = _normalize_barcode_digits(_single_raw)
+        barcode_input = _single_digits or _upload_barcode
+        if _single_digits:
+            product_url = ""
+            manual_text = ""
+        elif _single_raw.startswith(("http://", "https://")):
+            product_url = _single_raw
+            manual_text = ""
+        else:
+            product_url = ""
+            manual_text = _single_raw
 
         # First non-empty source locks the tab into single-source mode until unlocked.
         if not active_input_source:
