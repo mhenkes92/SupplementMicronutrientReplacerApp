@@ -16,7 +16,7 @@ import sys
 import subprocess
 import time
 import unicodedata
-import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -75,10 +75,10 @@ load_dotenv(APP_DIR / ".env")
 def _load_blockbrain_secrets() -> tuple[str, str, str]:
     """Load Blockbrain credentials from st.secrets or env at runtime.
     Returns (api_key, base_url, agent_id).
-    agent_id is the Blockbrain agent to invoke (e.g. 'researchAgent').
+    agent_id is retained for backward compatibility with older configs.
     """
     _default_base = "https://agentic.theblockbrain.ai"
-    _default_agent = "researchAgent"
+    _default_route_id = "researchAgent"
 
     def _strip_path(base: str) -> str:
         """Return only the scheme+host, stripping any /v1/... path."""
@@ -98,92 +98,76 @@ def _load_blockbrain_secrets() -> tuple[str, str, str]:
             or os.getenv("BLOCKBRAIN_API_URL", "")
             or _default_base
         )
-        agent_id = (
+        route_id = (
             st.secrets.get("BLOCKBRAIN_AGENT_ID", "")
             or os.getenv("BLOCKBRAIN_AGENT_ID", "")
-            or _default_agent
+            or _default_route_id
         )
-        return str(api_key).strip(), _strip_path(str(base_url)), str(agent_id).strip()
+        return str(api_key).strip(), _strip_path(str(base_url)), str(route_id).strip()
     except Exception:
         base_url = os.getenv("BLOCKBRAIN_BASE_URL") or os.getenv("BLOCKBRAIN_API_URL") or _default_base
-        agent_id = os.getenv("BLOCKBRAIN_AGENT_ID", _default_agent)
+        route_id = os.getenv("BLOCKBRAIN_AGENT_ID", _default_route_id)
         return (
             os.getenv("BLOCKBRAIN_API_KEY", ""),
             _strip_path(base_url),
-            agent_id,
+            route_id,
         )
 
 
+# Fastest verified vision model for nutrition-label OCR (agentic vision route).
+# Benchmark on a real supplement label (downscaled to ~300 KB), per-call latency:
+#   anthropic-claude-haiku-4.5     ~12.7s   <-- fastest, full valid OCR
+#   gpt-4.1-nano                   ~15.6s
+#   gpt-4o-mini                    ~16.4s
+#   gpt-4.1-mini                   ~20.2s
+#   google-gemini-2.5-flash-lite   ~36.9s
+#   azure-gpt-4o-mini              ~39.3s
+# Override via BLOCKBRAIN_MODEL_VISION (env or secrets) when needed.
+BLOCKBRAIN_PINNED_VISION_MODEL = "anthropic-claude-haiku-4.5"
+
+# Fastest verified text model for the "Resolving nutrient mappings" step
+# (build_ai_food_matches -> strict JSON generation). Benchmarked on the real
+# mapping prompt (10 components, up to 5 foods each):
+#   gpt-4.1-nano / gpt-4o-mini / gemini-2.5-flash-lite   ~1-2s, valid JSON
+#   platform default (bedrock claude sonnet, thinking)   >120s cold  <-- "takes forever"
+# A fast non-thinking model is pinned so mapping is near-instant instead of
+# running on the slow default reasoning backend. anthropic-claude-haiku-4.5 is
+# NOT used for text (it was ~40s on this JSON task).
+# Override via BLOCKBRAIN_MODEL_TEXT (env or secrets) when needed.
+BLOCKBRAIN_PINNED_TEXT_MODEL = "gpt-4.1-nano"
+
+
 def _load_blockbrain_model_defaults() -> tuple[str, str]:
-    """Load optional default Blockbrain model preferences (text, vision)."""
+    """Load default Blockbrain model preferences (text, vision).
+
+    Both default to the fastest benchmarked models unless overridden, so the
+    nutrient-mapping and label-OCR steps stay fast instead of using the slow
+    default reasoning backend.
+    """
     try:
         import streamlit as st  # noqa: F401
         text_model = (
             st.secrets.get("BLOCKBRAIN_MODEL_TEXT", "")
             or os.getenv("BLOCKBRAIN_MODEL_TEXT", "")
+            or BLOCKBRAIN_PINNED_TEXT_MODEL
         )
         vision_model = (
             st.secrets.get("BLOCKBRAIN_MODEL_VISION", "")
             or os.getenv("BLOCKBRAIN_MODEL_VISION", "")
+            or BLOCKBRAIN_PINNED_VISION_MODEL
         )
         return str(text_model).strip(), str(vision_model).strip()
     except Exception:
         return (
-            str(os.getenv("BLOCKBRAIN_MODEL_TEXT", "") or "").strip(),
-            str(os.getenv("BLOCKBRAIN_MODEL_VISION", "") or "").strip(),
+            str(os.getenv("BLOCKBRAIN_MODEL_TEXT", "") or BLOCKBRAIN_PINNED_TEXT_MODEL).strip(),
+            str(os.getenv("BLOCKBRAIN_MODEL_VISION", "") or BLOCKBRAIN_PINNED_VISION_MODEL).strip(),
         )
 
-
-def _load_blockbrain_route_mode_default() -> str:
-    """Load default routing mode: agent_default or model_pinned."""
-    default_mode = "agent_default"
-    try:
-        import streamlit as st  # noqa: F401
-        configured = (
-            st.secrets.get("BLOCKBRAIN_ROUTE_MODE", "")
-            or os.getenv("BLOCKBRAIN_ROUTE_MODE", "")
-            or default_mode
-        )
-    except Exception:
-        configured = os.getenv("BLOCKBRAIN_ROUTE_MODE", "") or default_mode
-    normalized = str(configured or "").strip().lower()
-    if normalized not in {"agent_default", "model_pinned"}:
-        normalized = default_mode
-    return normalized
 
 BLOCKBRAIN_API_KEY = ""
 BLOCKBRAIN_BOT_ID = ""
 
-LOCAL_LLM_RUNTIME = os.getenv("LOCAL_LLM_RUNTIME", "none").strip().lower()
-
-LLAMA_CPP_AUTO_BOOTSTRAP = os.getenv("LLAMA_CPP_AUTO_BOOTSTRAP", "1").strip() != "0"
-LLAMA_CPP_MODEL_REPO = os.getenv("LLAMA_CPP_MODEL_REPO", "microsoft/Phi-3-mini-4k-instruct-gguf").strip()
-LLAMA_CPP_MODEL_FILE = os.getenv("LLAMA_CPP_MODEL_FILE", "Phi-3-mini-4k-instruct-q4.gguf").strip()
-LLAMA_CPP_STORAGE_DIR = APP_DIR / "local_llm"
-LLAMA_CPP_MODEL_DIR = LLAMA_CPP_STORAGE_DIR / "models"
-LLAMA_CPP_MODEL_PATH = LLAMA_CPP_MODEL_DIR / LLAMA_CPP_MODEL_FILE
-LLAMA_CPP_RUNTIME_DIR = LLAMA_CPP_STORAGE_DIR / "runtime" / "llama_cpp"
-LLAMA_CPP_WINDOWS_CPU_ZIP_URL = os.getenv(
-    "LLAMA_CPP_WINDOWS_CPU_ZIP_URL",
-    "https://github.com/ggml-org/llama.cpp/releases/download/b8304/llama-b8304-bin-win-cpu-x64.zip",
-).strip()
-LLAMA_CPP_CLI_PATH = LLAMA_CPP_RUNTIME_DIR / "llama-cli.exe"
-LLAMA_CPP_MODEL_MIN_BYTES = int(os.getenv("LLAMA_CPP_MODEL_MIN_BYTES", "100000000").strip() or "100000000")
-LLAMA_CPP_RUNTIME_MARKER = LLAMA_CPP_RUNTIME_DIR / "runtime_ready.json"
-LLAMA_CPP_MODEL_MARKER = LLAMA_CPP_MODEL_DIR / "model_ready.json"
-LLAMA_CPP_N_CTX = int(os.getenv("LLAMA_CPP_N_CTX", "4096").strip() or "4096")
-LLAMA_CPP_N_THREADS = int(os.getenv("LLAMA_CPP_N_THREADS", str(max(2, (os.cpu_count() or 4) - 1))).strip() or "4")
-LLAMA_CPP_N_GPU_LAYERS = int(os.getenv("LLAMA_CPP_N_GPU_LAYERS", "0").strip() or "0")
-LLAMA_CPP_MAX_TOKENS = int(os.getenv("LLAMA_CPP_MAX_TOKENS", "700").strip() or "700")
 TESSERACT_CMD = os.getenv("TESSERACT_CMD", "")
-
-LLAMA_CPP_BOOTSTRAP_STATE: dict[str, Any] = {
-    "runtime_checked": False,
-    "runtime_ready": False,
-    "runtime_error": "",
-    "model_ready": False,
-}
-LLAMA_CPP_INSTANCE: Any | None = None
 
 BLOCKBRAIN_API_GATEWAY = ""
 BLOCKBRAIN_CHAT_ENDPOINT = ""
@@ -211,7 +195,7 @@ LOCAL_URL_SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[\.;])\s+")
 # Using module-level fallbacks for contexts where Streamlit isn't available
 _FALLBACK_STATE = {
     "last_blockbrain_error": "",
-    "last_local_llm_error": "",
+    "last_text_llm_error": "",
     "last_vision_provider": "",
     "last_text_provider": "",
     "last_url_parse_reason": "",
@@ -239,19 +223,15 @@ def _set_state(key: str, value: str) -> None:
 # Legacy global variable accessors (for backward compatibility during migration)
 LAST_BLOCKBRAIN_ERROR = ""
 LAST_BLOCKBRAIN_MODEL = ""
-LAST_LOCAL_LLM_ERROR = ""
+LAST_TEXT_LLM_ERROR = ""
 LAST_VISION_PROVIDER = ""
 LAST_TEXT_PROVIDER = ""
 LAST_URL_PARSE_REASON = ""
 LAST_RAG_ERROR = ""
-PADDLE_OCR_ENGINE: Any | None = None
-PADDLE_OCR_UNAVAILABLE = False
 
 
-def _local_text_llm_enabled() -> bool:
-    if LOCAL_LLM_RUNTIME == "llama_cpp":
-        return True
-    # Also activate the LLM parsing path when Blockbrain is configured.
+def _text_llm_available() -> bool:
+    # Activate text generation paths when Blockbrain is configured.
     try:
         api_key, _, _ = _load_blockbrain_secrets()
         return bool(api_key)
@@ -313,8 +293,8 @@ RAG_STOPWORDS: set[str] = {
 }
 
 USDA_RANK_DB_PATH = APP_DIR / "data" / "usda_rankings.db"
-TOP_FOODS_PER_COMPONENT = 5
-OVERVIEW_ALT_LIMIT = 100
+TOP_FOODS_PER_COMPONENT = 50
+OVERVIEW_ALT_LIMIT = 50
 RAG_TOP_K = 8
 FOOD_MATCH_CACHE_SCHEMA_VERSION = "2"
 RAG_INDEX_PATH = APP_DIR / "data" / "fitness_rag_chunks.jsonl"
@@ -2420,7 +2400,7 @@ def fetch_dataforseo_shopping_offers(food_name: str, country: str, currency: str
 
 
 def estimate_price_with_llm(food_name: str, country: str, currency: str) -> dict[str, Any] | None:
-    if not _local_text_llm_enabled():
+    if not _text_llm_available():
         return None
 
     system_prompt = (
@@ -2594,17 +2574,6 @@ def _rank_price_offers(
 
     valid.sort(key=lambda o: (float(o.get("final_score", 0.0)), -float(o.get("price_per_kg", 1e9))), reverse=True)
     return valid
-
-
-def _has_strong_local_offer(offers: list[dict[str, Any]], country: str, currency: str) -> bool:
-    for offer in offers:
-        offer_country = str(offer.get("country", "") or "")
-        offer_currency = str(offer.get("currency", "") or "").upper()
-        source_type = str(offer.get("source_type", "") or "")
-        reliability = SOURCE_RELIABILITY_SCORE.get(source_type, 0.5)
-        if offer_country in {country, "Global"} and offer_currency == currency.upper() and reliability >= 0.88:
-            return True
-    return False
 
 
 def get_food_price_estimate(
@@ -3028,7 +2997,124 @@ def _expanded_profile_avoid_keywords(profile: dict[str, Any] | None) -> list[str
     return sorted(avoid_keywords)
 
 
-def apply_food_filters(foods: list[dict[str, Any]], profile: dict[str, Any] | None) -> list[dict[str, Any]]:
+DIETARY_LLM_CONFIDENCE_BLOCK_THRESHOLD = 0.85
+DIETARY_LLM_MAX_FOOD_CHECKS = 10
+DIETARY_LLM_MAX_MEAL_CHECKS = 12
+
+
+def _dietary_profile_is_restrictive(profile: dict[str, Any] | None) -> bool:
+    if not profile:
+        return False
+    profile_id = normalize_lookup_key(str(profile.get("id", "") or ""))
+    if not profile_id or profile_id in {"none", "no restriction", "no_restriction"}:
+        return False
+    return True
+
+
+def _trim_for_llm(text: str, max_chars: int = 480) -> str:
+    raw = str(text or "").strip()
+    if len(raw) <= max_chars:
+        return raw
+    return raw[:max_chars].rstrip() + "..."
+
+
+def _normalize_dietary_llm_decision(decision: Any) -> str:
+    token = normalize_lookup_key(str(decision or ""))
+    if token in {"allow", "allowed", "compliant", "ok", "pass"}:
+        return "allow"
+    if token in {"block", "blocked", "noncompliant", "non-compliant", "fail", "avoid"}:
+        return "block"
+    return "uncertain"
+
+
+@functools.lru_cache(maxsize=4096)
+def _dietary_llm_adjudicate_cached(
+    profile_signature: str,
+    avoid_keywords_csv: str,
+    item_blob: str,
+    item_kind: str,
+) -> tuple[str, float, str]:
+    if not _text_llm_available():
+        return "uncertain", 0.0, "Text LLM unavailable"
+
+    safe_kind = normalize_lookup_key(item_kind) or "food"
+    system_prompt = (
+        "You are a strict dietary compliance checker. "
+        "Return JSON only with keys decision, confidence, reason. "
+        "decision must be one of: allow, block, uncertain. "
+        "Use only the provided dietary profile and ingredient text."
+    )
+    user_prompt = (
+        "Assess whether this item complies with the dietary profile.\n"
+        f"Profile: {profile_signature}\n"
+        f"Avoid keywords: {avoid_keywords_csv}\n"
+        f"Item type: {safe_kind}\n"
+        f"Ingredient/item text: {item_blob}\n\n"
+        "Return strict JSON object only, format:\n"
+        '{"decision":"allow|block|uncertain","confidence":0.0,"reason":"short reason"}'
+    )
+
+    raw = call_text_llm(system_prompt, user_prompt, model=BLOCKBRAIN_PINNED_TEXT_MODEL)
+    candidate = clean_json_block(raw) or str(raw or "").strip()
+    if not candidate:
+        return "uncertain", 0.0, "Empty adjudication response"
+
+    try:
+        parsed = json.loads(candidate)
+    except Exception:
+        return "uncertain", 0.0, "Invalid adjudication JSON"
+
+    if not isinstance(parsed, dict):
+        return "uncertain", 0.0, "Unexpected adjudication payload"
+
+    decision = _normalize_dietary_llm_decision(parsed.get("decision", ""))
+    try:
+        confidence = float(parsed.get("confidence", 0.0) or 0.0)
+    except Exception:
+        confidence = 0.0
+    confidence = max(0.0, min(1.0, confidence))
+    reason = str(parsed.get("reason", "") or "").strip()
+    return decision, confidence, reason
+
+
+def _should_block_by_dietary_llm(
+    profile: dict[str, Any] | None,
+    avoid_keywords: list[str],
+    item_blob: str,
+    item_kind: str,
+) -> bool:
+    if not profile or not avoid_keywords:
+        return False
+    if not _dietary_profile_is_restrictive(profile):
+        return False
+
+    profile_signature = " | ".join(
+        [
+            str(profile.get("id", "") or "").strip(),
+            str(profile.get("label", "") or "").strip(),
+            str(profile.get("description", "") or "").strip(),
+        ]
+    ).strip()
+    avoid_csv = ", ".join(avoid_keywords[:80])
+    safe_blob = _trim_for_llm(normalize_lookup_key(item_blob), max_chars=480)
+    if not safe_blob:
+        return False
+
+    decision, confidence, _ = _dietary_llm_adjudicate_cached(
+        profile_signature,
+        avoid_csv,
+        safe_blob,
+        item_kind,
+    )
+    return decision == "block" and confidence >= DIETARY_LLM_CONFIDENCE_BLOCK_THRESHOLD
+
+
+def apply_food_filters(
+    foods: list[dict[str, Any]],
+    profile: dict[str, Any] | None,
+    use_llm_adjudication: bool = False,
+    llm_max_checks: int = DIETARY_LLM_MAX_FOOD_CHECKS,
+) -> list[dict[str, Any]]:
     if not foods:
         return []
     if not profile:
@@ -3040,6 +3126,7 @@ def apply_food_filters(foods: list[dict[str, Any]], profile: dict[str, Any] | No
         return foods
 
     filtered: list[dict[str, Any]] = []
+    llm_checks = 0
     for food in foods:
         blob = normalize_lookup_key(str(food.get("food_description", "") or ""))
         blob_compact = blob.replace(" ", "")
@@ -3058,8 +3145,16 @@ def apply_food_filters(foods: list[dict[str, Any]], profile: dict[str, Any] | No
             if _keyword_matches_food_blob(kw, blob, blob_compact):
                 blocked = True
                 break
-        if not blocked:
-            filtered.append(food)
+        if blocked:
+            continue
+
+        if use_llm_adjudication and llm_checks < max(0, int(llm_max_checks)):
+            if _should_block_by_dietary_llm(profile, avoid_keywords, blob, "food"):
+                llm_checks += 1
+                continue
+            llm_checks += 1
+
+        filtered.append(food)
     return filtered
 
 
@@ -3074,6 +3169,8 @@ def apply_meal_filters(
     meals: list[dict[str, Any]],
     profile: dict[str, Any] | None,
     must_exclude_ingredient: str,
+    use_llm_adjudication: bool = False,
+    llm_max_checks: int = DIETARY_LLM_MAX_MEAL_CHECKS,
 ) -> list[dict[str, Any]]:
     if not meals:
         return []
@@ -3082,6 +3179,7 @@ def apply_meal_filters(
     must_exclude_token = normalize_lookup_key(must_exclude_ingredient)
 
     filtered: list[dict[str, Any]] = []
+    llm_checks = 0
     for meal in meals:
         ingredient_blob = _recipe_ingredient_text(meal)
         if not ingredient_blob:
@@ -3097,6 +3195,12 @@ def apply_meal_filters(
 
         if must_exclude_token and must_exclude_token in ingredient_blob:
             continue
+
+        if use_llm_adjudication and llm_checks < max(0, int(llm_max_checks)):
+            if _should_block_by_dietary_llm(profile, avoid_keywords, ingredient_blob, "meal"):
+                llm_checks += 1
+                continue
+            llm_checks += 1
 
         filtered.append(meal)
 
@@ -3237,7 +3341,7 @@ def _estimate_recipe_cost(recipe: dict[str, Any], country: str, currency: str) -
 def generate_llm_meal_suggestions(requirements: list[dict[str, Any]], max_results: int = 3) -> list[dict[str, Any]]:
     if not requirements:
         return []
-    if not _local_text_llm_enabled():
+    if not _text_llm_available():
         return []
 
     target_lines: list[str] = []
@@ -4403,50 +4507,6 @@ def resolve_cheapest_meal_requirements(
     return requirements, price_cache
 
 
-def render_overview_table(rows: list[dict[str, Any]]) -> str:
-    if not rows:
-        return ""
-
-    style = """
-<style>
-.overview-wrap { overflow-x: auto; margin-top: 0.25rem; }
-.overview-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
-.overview-table th, .overview-table td { border: 1px solid #d9d9d9; padding: 8px; vertical-align: top; text-align: left; }
-.overview-table th { background: #f4f4f4; font-weight: 600; }
-.alt-scroll { max-height: 180px; overflow-y: auto; white-space: pre-wrap; line-height: 1.3; }
-</style>
-"""
-
-    headers = [
-        "What your supplement product contains",
-        "How much is in there per 100g",
-        "Whole food alternatives",
-        "How much to eat of this whole food to match the dose in the supplement",
-    ]
-
-    html_rows: list[str] = []
-    for row in rows:
-        html_rows.append(
-            "<tr>"
-            f"<td>{row['component_label']}</td>"
-            f"<td>{row['amount_per_100g_label']}</td>"
-            f"<td><div class='alt-scroll'>{row['alternatives_html']}</div></td>"
-            f"<td>{row['match_amount_label']}</td>"
-            "</tr>"
-        )
-
-    html = (
-        style
-        + "<div class='overview-wrap'><table class='overview-table'>"
-        + "<thead><tr>"
-        + "".join([f"<th>{h}</th>" for h in headers])
-        + "</tr></thead><tbody>"
-        + "".join(html_rows)
-        + "</tbody></table></div>"
-    )
-    return html
-
-
 def resolve_fitness_reference_dir() -> Path | None:
     for candidate in FITNESS_REFERENCE_DIR_CANDIDATES:
         if candidate.exists() and candidate.is_dir():
@@ -4900,10 +4960,6 @@ def classify_food_commonness(food_description: str) -> dict[str, Any]:
     return {"tier": 1, "reason": "allowed"}
 
 
-def is_common_supermarket_food(food_description: str) -> bool:  
-    return classify_food_commonness(food_description)["tier"] >= 1
-
-
 def filter_and_rank_common_foods(  
     foods: list[dict[str, Any]],  
     limit: int,  
@@ -4938,7 +4994,7 @@ def filter_and_rank_common_foods(
 
 def build_ai_food_matches(components: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
     """Single batched LLM call for ALL components (replaces N serial round-trips)."""
-    if not _local_text_llm_enabled():
+    if not _text_llm_available():
         logger.warning("Blockbrain text model unavailable for whole-food matching")
         return [], [], "llm_unavailable"
     if not components:
@@ -5558,49 +5614,6 @@ def _extract_vitamin_dose_candidates_from_text(input_text: str) -> dict[str, tup
             anchors[normalize_lookup_key(component)] = (float(value), str(unit))
 
     return anchors
-
-
-def _vitamin_consensus_lines_from_ocr(paddle_text: str, tesseract_text: str) -> list[str]:
-    """Cross-validate vitamin doses from both OCR engines and return canonical lines."""
-    paddle_map = _extract_vitamin_dose_candidates_from_text(paddle_text)
-    tesseract_map = _extract_vitamin_dose_candidates_from_text(tesseract_text)
-    lines: list[str] = []
-    keys = sorted(set(paddle_map.keys()) | set(tesseract_map.keys()))
-    for key in keys:
-        p = paddle_map.get(key)
-        t = tesseract_map.get(key)
-        chosen_val: float | None = None
-        chosen_unit = ""
-
-        if p and t and p[1] == t[1]:
-            p_val, p_unit = p
-            t_val, _ = t
-            larger = max(p_val, t_val)
-            smaller = max(1e-9, min(p_val, t_val))
-            ratio = larger / smaller
-            if ratio <= 1.35:
-                chosen_val = round((p_val + t_val) / 2.0, 4)
-                chosen_unit = p_unit
-            else:
-                # Decimal-shift disagreement: prefer the smaller value when values differ by ~10x.
-                if 8.5 <= ratio <= 11.5:
-                    chosen_val = round(min(p_val, t_val), 4)
-                    chosen_unit = p_unit
-                else:
-                    chosen_val = round(p_val if p_val <= t_val else t_val, 4)
-                    chosen_unit = p_unit
-        elif p:
-            chosen_val, chosen_unit = p
-        elif t:
-            chosen_val, chosen_unit = t
-
-        if chosen_val is None or not chosen_unit:
-            continue
-        pretty = key.title() if key else ""
-        if not pretty:
-            continue
-        lines.append(f"{pretty}\t{format_float(float(chosen_val))} {chosen_unit}")
-    return lines
 
 
 def _apply_contextual_vitamin_dose_corrections(
@@ -6577,21 +6590,14 @@ def _get_selected_blockbrain_models() -> tuple[str, str]:
         return default_text_model, default_vision_model
 
 
-def _get_selected_blockbrain_route_mode() -> str:
-    """Return active routing mode from session state or configured default."""
-    default_mode = _load_blockbrain_route_mode_default()
-    try:
-        import streamlit as st
-        mode = str(st.session_state.get("analyze_blockbrain_route_mode", default_mode) or "").strip().lower()
-        if mode not in {"agent_default", "model_pinned"}:
-            return default_mode
-        return mode
-    except Exception:
-        return default_mode
-
-
 def _blockbrain_chat(payload: dict[str, Any]) -> str:
-    """Send a request to the Blockbrain Agentic API (SSE stream) and return the full text."""
+    """Send a request to Blockbrain and return the assistant text.
+
+    Primary transport is the Blockbrain agent stream endpoint
+    (/v1/api/agents/{agent}/stream), which is the only endpoint this host
+    exposes. If BLOCKBRAIN_CHAT_ENDPOINT is set (e.g. an OpenAI-compatible
+    /v1/chat/completions on a different host), that is tried first.
+    """
     global LAST_BLOCKBRAIN_ERROR
     global LAST_BLOCKBRAIN_MODEL
     LAST_BLOCKBRAIN_ERROR = ""
@@ -6607,22 +6613,98 @@ def _blockbrain_chat(payload: dict[str, Any]) -> str:
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    # The Agentic API uses /v1/api/agents/{agentId}/stream.
-    # Forward the full payload so multimodal fields (e.g. image) are preserved.
+
+    def _coerce_content_to_text(content: Any) -> str:
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, dict):
+            for key in ("text", "content", "value"):
+                value = content.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            return ""
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    if item.strip():
+                        parts.append(item.strip())
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                item_type = str(item.get("type", "") or "").strip().lower()
+                if item_type == "text" and isinstance(item.get("text"), str):
+                    text_part = item.get("text", "").strip()
+                    if text_part:
+                        parts.append(text_part)
+                    continue
+                nested_text = item.get("text")
+                if isinstance(nested_text, dict):
+                    value = nested_text.get("value")
+                    if isinstance(value, str) and value.strip():
+                        parts.append(value.strip())
+            return "\n".join(parts).strip()
+        return ""
+
+    def _try_openai_chat(endpoint_path: str) -> tuple[bool, str]:
+        """Try an OpenAI-compatible chat completions endpoint. Returns (handled, text)."""
+        url = f"{base_url}{endpoint_path}"
+        request_payload = dict(payload or {})
+        request_payload["stream"] = False
+        try:
+            resp = _http_post(url, headers=headers, json=request_payload, timeout=HTTP_TIMEOUT)
+        except Exception as exc:
+            LAST_BLOCKBRAIN_ERROR = f"Blockbrain request error: {exc}"
+            return False, ""
+        if resp.status_code == 404:
+            return False, ""  # endpoint not available; fall back to agent stream
+        if resp.status_code != 200:
+            LAST_BLOCKBRAIN_ERROR = f"Blockbrain HTTP {resp.status_code}: {resp.text[:200]}"
+            return True, ""
+        payload_json = resp.json() if resp.content else {}
+        if isinstance(payload_json, dict):
+            runtime_model = str(payload_json.get("model", "") or payload_json.get("resolved_model", "") or "").strip()
+            if runtime_model:
+                LAST_BLOCKBRAIN_MODEL = runtime_model
+            choices = payload_json.get("choices", [])
+            if isinstance(choices, list) and choices:
+                message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+                content = message.get("content", "") if isinstance(message, dict) else ""
+                text = _coerce_content_to_text(content)
+                if text:
+                    return True, text
+            top_level = payload_json.get("output", payload_json.get("content", ""))
+            text = _coerce_content_to_text(top_level)
+            if text:
+                return True, text
+            for key in ("reply", "message", "response", "text"):
+                text = _coerce_content_to_text(payload_json.get(key, ""))
+                if text:
+                    return True, text
+        LAST_BLOCKBRAIN_ERROR = "Blockbrain response did not include assistant text"
+        return True, ""
+
+    # Optional OpenAI-compatible endpoint override (tried first when configured).
+    custom_endpoint = os.getenv("BLOCKBRAIN_CHAT_ENDPOINT", "").strip()
+    if custom_endpoint:
+        endpoint_path = custom_endpoint if custom_endpoint.startswith("/") else f"/{custom_endpoint}"
+        handled, text = _try_openai_chat(endpoint_path)
+        if handled:
+            return text
+
+    # Primary transport: Blockbrain agent stream endpoint (SSE).
     stream_url = f"{base_url}/v1/api/agents/{agent_id}/stream"
-    stream_payload = dict(payload or {})
     try:
         resp = _http_post(
             stream_url,
             headers=headers,
-            json=stream_payload,
+            json=dict(payload or {}),
             timeout=HTTP_TIMEOUT,
             stream=True,
         )
         if resp.status_code != 200:
             LAST_BLOCKBRAIN_ERROR = f"Blockbrain HTTP {resp.status_code}: {resp.text[:200]}"
             return ""
-        # Collect all text-delta events from the SSE stream
         text_parts: list[str] = []
         for raw_line in resp.iter_lines():
             if not raw_line:
@@ -6656,7 +6738,7 @@ def _blockbrain_chat(payload: dict[str, Any]) -> str:
                 chunk = event.get("data", {}).get("payload", {}).get("text", "")
                 if chunk:
                     text_parts.append(chunk)
-            elif event_type in {"finish", "text-end"}:
+            elif event_type == "finish":
                 break
         return "".join(text_parts).strip()
     except Exception as exc:
@@ -6664,279 +6746,10 @@ def _blockbrain_chat(payload: dict[str, Any]) -> str:
         return ""
 
 
-def _run_local_command(command: list[str], timeout: int = 120) -> tuple[bool, str]:
-    try:
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        output = (completed.stdout or "") + (completed.stderr or "")
-        return completed.returncode == 0, output.strip()
-    except Exception as exc:
-        return False, str(exc)
-
-
-def _is_valid_local_file(path: Path, min_bytes: int = 1) -> bool:
-    try:
-        return path.exists() and path.is_file() and path.stat().st_size >= max(1, int(min_bytes))
-    except Exception:
-        return False
-
-
-def _write_local_marker(path: Path, payload: dict[str, Any]) -> None:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
-    except Exception:
-        pass
-
-
-def _ensure_llama_cpp_runtime() -> bool:
-    global LAST_LOCAL_LLM_ERROR
-    if LLAMA_CPP_BOOTSTRAP_STATE.get("runtime_ready"):
-        return True
-
-    try:
-        import llama_cpp  # noqa: F401
-        LLAMA_CPP_BOOTSTRAP_STATE["runtime_checked"] = True
-        LLAMA_CPP_BOOTSTRAP_STATE["runtime_ready"] = True
-        LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = ""
-        return True
-    except Exception as exc:
-        LAST_LOCAL_LLM_ERROR = f"llama.cpp Python bindings unavailable: {exc}"
-
-    if _is_valid_local_file(LLAMA_CPP_CLI_PATH, min_bytes=1024 * 100):
-        LLAMA_CPP_BOOTSTRAP_STATE["runtime_checked"] = True
-        LLAMA_CPP_BOOTSTRAP_STATE["runtime_ready"] = True
-        LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = ""
-        _write_local_marker(
-            LLAMA_CPP_RUNTIME_MARKER,
-            {
-                "runtime": "llama_cpp_cli",
-                "path": str(LLAMA_CPP_CLI_PATH),
-                "checked_at_utc": datetime.now(timezone.utc).isoformat(),
-            },
-        )
-        return True
-
-    if not LLAMA_CPP_AUTO_BOOTSTRAP or os.name != "nt":
-        LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = LAST_LOCAL_LLM_ERROR
-        return False
-
-    try:
-        LLAMA_CPP_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-        # Re-scan extracted runtime folder first to avoid unnecessary re-downloads.
-        cli_candidates = list(LLAMA_CPP_RUNTIME_DIR.rglob("llama-cli.exe"))
-        if cli_candidates and _is_valid_local_file(cli_candidates[0], min_bytes=1024 * 100):
-            cli_path = cli_candidates[0]
-            if cli_path != LLAMA_CPP_CLI_PATH:
-                shutil.copy2(cli_path, LLAMA_CPP_CLI_PATH)
-            LLAMA_CPP_BOOTSTRAP_STATE["runtime_checked"] = True
-            LLAMA_CPP_BOOTSTRAP_STATE["runtime_ready"] = True
-            LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = ""
-            _write_local_marker(
-                LLAMA_CPP_RUNTIME_MARKER,
-                {
-                    "runtime": "llama_cpp_cli",
-                    "path": str(LLAMA_CPP_CLI_PATH),
-                    "checked_at_utc": datetime.now(timezone.utc).isoformat(),
-                },
-            )
-            return True
-
-        zip_path = LLAMA_CPP_RUNTIME_DIR / "llama_cpp_runtime.zip"
-        with _http_get(LLAMA_CPP_WINDOWS_CPU_ZIP_URL, stream=True, timeout=300) as response:
-            response.raise_for_status()
-            with open(zip_path, "wb") as handle:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        handle.write(chunk)
-        with zipfile.ZipFile(zip_path, "r") as archive:
-            archive.extractall(LLAMA_CPP_RUNTIME_DIR)
-        try:
-            zip_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-        cli_candidates = list(LLAMA_CPP_RUNTIME_DIR.rglob("llama-cli.exe"))
-        if cli_candidates:
-            cli_path = cli_candidates[0]
-            if cli_path != LLAMA_CPP_CLI_PATH:
-                shutil.copy2(cli_path, LLAMA_CPP_CLI_PATH)
-        if _is_valid_local_file(LLAMA_CPP_CLI_PATH, min_bytes=1024 * 100):
-            LLAMA_CPP_BOOTSTRAP_STATE["runtime_checked"] = True
-            LLAMA_CPP_BOOTSTRAP_STATE["runtime_ready"] = True
-            LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = ""
-            _write_local_marker(
-                LLAMA_CPP_RUNTIME_MARKER,
-                {
-                    "runtime": "llama_cpp_cli",
-                    "path": str(LLAMA_CPP_CLI_PATH),
-                    "checked_at_utc": datetime.now(timezone.utc).isoformat(),
-                },
-            )
-            return True
-    except Exception as exc:
-        LAST_LOCAL_LLM_ERROR = f"Failed to bootstrap llama.cpp runtime: {exc}"
-
-    LLAMA_CPP_BOOTSTRAP_STATE["runtime_error"] = LAST_LOCAL_LLM_ERROR
-    return False
-
-
-def _ensure_phi_model_available() -> bool:
-    global LAST_LOCAL_LLM_ERROR
-    if _is_valid_local_file(LLAMA_CPP_MODEL_PATH, min_bytes=LLAMA_CPP_MODEL_MIN_BYTES):
-        LLAMA_CPP_BOOTSTRAP_STATE["model_ready"] = True
-        _write_local_marker(
-            LLAMA_CPP_MODEL_MARKER,
-            {
-                "repo": LLAMA_CPP_MODEL_REPO,
-                "file": LLAMA_CPP_MODEL_FILE,
-                "path": str(LLAMA_CPP_MODEL_PATH),
-                "size_bytes": LLAMA_CPP_MODEL_PATH.stat().st_size,
-                "checked_at_utc": datetime.now(timezone.utc).isoformat(),
-            },
-        )
-        return True
-    if not LLAMA_CPP_AUTO_BOOTSTRAP:
-        LAST_LOCAL_LLM_ERROR = f"Phi GGUF model missing: {LLAMA_CPP_MODEL_PATH}"
-        return False
-    try:
-        from huggingface_hub import hf_hub_download
-
-        LLAMA_CPP_MODEL_DIR.mkdir(parents=True, exist_ok=True)
-        downloaded = hf_hub_download(
-            repo_id=LLAMA_CPP_MODEL_REPO,
-            filename=LLAMA_CPP_MODEL_FILE,
-            local_dir=str(LLAMA_CPP_MODEL_DIR),
-            local_dir_use_symlinks=False,
-        )
-        if downloaded and _is_valid_local_file(Path(downloaded), min_bytes=LLAMA_CPP_MODEL_MIN_BYTES):
-            if Path(downloaded) != LLAMA_CPP_MODEL_PATH:
-                try:
-                    shutil.copy2(downloaded, LLAMA_CPP_MODEL_PATH)
-                except Exception:
-                    pass
-            LLAMA_CPP_BOOTSTRAP_STATE["model_ready"] = True
-            model_path = LLAMA_CPP_MODEL_PATH if LLAMA_CPP_MODEL_PATH.exists() else Path(downloaded)
-            _write_local_marker(
-                LLAMA_CPP_MODEL_MARKER,
-                {
-                    "repo": LLAMA_CPP_MODEL_REPO,
-                    "file": LLAMA_CPP_MODEL_FILE,
-                    "path": str(model_path),
-                    "size_bytes": model_path.stat().st_size if model_path.exists() else 0,
-                    "checked_at_utc": datetime.now(timezone.utc).isoformat(),
-                },
-            )
-            return True
-    except Exception as exc:
-        LAST_LOCAL_LLM_ERROR = f"Failed to download Phi GGUF model: {exc}"
-        return False
-    LAST_LOCAL_LLM_ERROR = f"Phi GGUF model missing after download attempt: {LLAMA_CPP_MODEL_PATH}"
-    return False
-
-
-def _get_llama_cpp_instance() -> Any | None:
-    global LLAMA_CPP_INSTANCE
-    global LAST_LOCAL_LLM_ERROR
-
-    if LLAMA_CPP_INSTANCE is not None:
-        return LLAMA_CPP_INSTANCE
-    if not _ensure_llama_cpp_runtime():
-        return None
-    if not _ensure_phi_model_available():
-        return None
-
-    try:
-        from llama_cpp import Llama
-
-        LLAMA_CPP_INSTANCE = Llama(
-            model_path=str(LLAMA_CPP_MODEL_PATH),
-            n_ctx=LLAMA_CPP_N_CTX,
-            n_threads=LLAMA_CPP_N_THREADS,
-            n_gpu_layers=LLAMA_CPP_N_GPU_LAYERS,
-            verbose=False,
-        )
-        return LLAMA_CPP_INSTANCE
-    except Exception as exc:
-        LAST_LOCAL_LLM_ERROR = f"Failed to load Phi GGUF with llama.cpp: {exc}"
-        return None
-
-
-def _run_llama_cpp_cli(prompt: str) -> str:
-    global LAST_LOCAL_LLM_ERROR
-    if not _ensure_llama_cpp_runtime():
-        return ""
-    if not _ensure_phi_model_available():
-        return ""
-    if not LLAMA_CPP_CLI_PATH.exists():
-        LAST_LOCAL_LLM_ERROR = "llama.cpp CLI runtime is unavailable"
-        return ""
-
-    command = [
-        str(LLAMA_CPP_CLI_PATH),
-        "-m",
-        str(LLAMA_CPP_MODEL_PATH),
-        "-c",
-        str(LLAMA_CPP_N_CTX),
-        "-n",
-        str(LLAMA_CPP_MAX_TOKENS),
-        "-t",
-        str(LLAMA_CPP_N_THREADS),
-        "--temp",
-        "0",
-        "-p",
-        prompt,
-        "-no-cnv",
-    ]
-    if LLAMA_CPP_N_GPU_LAYERS > 0:
-        command.extend(["-ngl", str(LLAMA_CPP_N_GPU_LAYERS)])
-
-    ok, output = _run_local_command(command, timeout=600)
-    if not ok:
-        LAST_LOCAL_LLM_ERROR = f"llama.cpp CLI inference failed: {output[:240]}"
-        return ""
-    return str(output or "").strip()
-
-
-def _local_llm_chat(system_prompt: str, user_prompt: str) -> str:
-    global LAST_LOCAL_LLM_ERROR
-    LAST_LOCAL_LLM_ERROR = ""
-
-    llm = _get_llama_cpp_instance()
-    prompt = (
-        f"<|system|>\n{system_prompt.strip()}<|end|>\n"
-        f"<|user|>\n{user_prompt.strip()}<|end|>\n"
-        "<|assistant|>\n"
-    )
-    if llm is None:
-        return _run_llama_cpp_cli(prompt)
-
-    try:
-        response = llm(
-            prompt,
-            max_tokens=LLAMA_CPP_MAX_TOKENS,
-            temperature=0,
-            stop=["<|end|>", "<|user|>", "<|system|>"],
-            echo=False,
-        )
-        content = str((((response or {}).get("choices") or [{}])[0].get("text") or "")).strip()
-        if content:
-            return content
-        LAST_LOCAL_LLM_ERROR = "Empty llama.cpp response"
-        return ""
-    except Exception as exc:
-        LAST_LOCAL_LLM_ERROR = f"llama.cpp inference error: {exc}"
-        return ""
-
 
 def call_blockbrain_text(system_prompt: str, user_prompt: str, model: str | None = None) -> str:
-    """Send a text-only request to Blockbrain."""
+    """Send a text-only request to Blockbrain chat completions."""
     selected_text_model, _ = _get_selected_blockbrain_models()
-    route_mode = _get_selected_blockbrain_route_mode()
     requested_model = str(model or selected_text_model or "").strip()
     payload = {
         "messages": [
@@ -6944,15 +6757,14 @@ def call_blockbrain_text(system_prompt: str, user_prompt: str, model: str | None
             {"role": "user", "content": user_prompt.strip()},
         ],
     }
-    if requested_model and route_mode == "model_pinned":
+    if requested_model:
         payload["model"] = requested_model
     return _blockbrain_chat(payload)
 
 
 def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
-    """Send an image to Blockbrain vision agent; returns extracted label text."""
+    """Send an image to Blockbrain vision model; returns extracted label text."""
     _, selected_vision_model = _get_selected_blockbrain_models()
-    route_mode = _get_selected_blockbrain_route_mode()
     requested_model = str(model or selected_vision_model or "").strip()
     b64 = base64.b64encode(image_bytes).decode("utf-8")
     vision_prompt = (
@@ -6972,9 +6784,33 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
             }
         ],
     }
-    if requested_model and route_mode == "model_pinned":
+    if requested_model:
         payload["model"] = requested_model
-    return _blockbrain_chat(payload)
+    out = _blockbrain_chat(payload)
+    if out and not _is_blockbrain_image_missing_response(out):
+        return out
+
+    # Alternate multimodal shape for backends expecting OpenAI-style image_url.
+    alt_payload = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": vision_prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                    },
+                ],
+            }
+        ],
+    }
+    if requested_model:
+        alt_payload["model"] = requested_model
+    alt_out = _blockbrain_chat(alt_payload)
+    if alt_out:
+        return alt_out
+    return out
 
 
 def _is_blockbrain_image_missing_response(text: str) -> bool:
@@ -6992,23 +6828,18 @@ def _is_blockbrain_image_missing_response(text: str) -> bool:
     return any(marker in raw for marker in markers)
 
 
-def call_local_text_llm(system_prompt: str, user_prompt: str) -> str:
-    return _local_llm_chat(system_prompt, user_prompt)
-
-
 def call_text_llm(system_prompt: str, user_prompt: str, model: str | None = None) -> str:
-    """Route all text LLM calls through Blockbrain (agent or selected model)."""
+    """Route all text LLM calls through Blockbrain chat completions."""
     global LAST_TEXT_PROVIDER
     LAST_TEXT_PROVIDER = ""
 
     bb_reply = call_blockbrain_text(system_prompt, user_prompt, model=model)
     if bb_reply:
-        _, _, bb_agent = _load_blockbrain_secrets()
         runtime_model = str(LAST_BLOCKBRAIN_MODEL or "").strip()
         if runtime_model:
-            LAST_TEXT_PROVIDER = f"Blockbrain ({bb_agent}, model={runtime_model})"
+            LAST_TEXT_PROVIDER = f"Blockbrain model ({runtime_model})"
         else:
-            LAST_TEXT_PROVIDER = f"Blockbrain ({bb_agent})"
+            LAST_TEXT_PROVIDER = "Blockbrain model"
         return bb_reply
 
     return ""
@@ -7016,424 +6847,6 @@ def call_text_llm(system_prompt: str, user_prompt: str, model: str | None = None
 
 # Backward-compat alias
 call_openrouter_text = call_text_llm
-
-
-def _build_vision_extraction_prompt() -> tuple[str, str]:
-    system_prompt = (
-        "You are an AI system specialized in extracting structured nutrition information "
-        "from images of supplement or food labels.\n\n"
-        "TASK\n"
-        "Analyze the image and extract:\n"
-        "1. Nutrition information\n"
-        "2. Ingredient list\n\n"
-        "RULES\n"
-        "- Only extract information that is clearly visible.\n"
-        "- Do not invent or guess values.\n"
-        "- Preserve original units (mg, mcg, IU, g).\n"
-        "- Normalize nutrient names to standard names.\n"
-        "- If nutrition information appears in a table, convert rows into individual nutrient entries.\n"
-        "- Ignore %RDA or % Daily Value unless explicitly requested.\n"
-        "- Extract ingredients as a flat list split by commas or semicolons.\n"
-        "- Remove ingredient phrases like may contain, colors, INS additives when possible.\n"
-        "- If text confidence is low or partially unreadable, set uncertain=true.\n"
-        "- Output JSON only. No markdown, no commentary.\n"
-    )
-
-    user_prompt = (
-        "Return JSON only in this schema:\n"
-        "{\n"
-        '  "nutrition": [\n'
-        '    {"nutrient": "Vitamin C", "amount": 40, "unit": "mg"}\n'
-        "  ],\n"
-        '  "ingredients": ["dicalcium phosphate", "potassium chloride"],\n'
-        '  "uncertain": false\n'
-        "}\n"
-    )
-
-    return system_prompt, user_prompt
-
-
-def _extract_first_json_object(text: str) -> str:
-    raw = str(text or "").strip()
-    if not raw:
-        return ""
-    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.S | re.I)
-    if fence_match:
-        return fence_match.group(1).strip()
-    start = raw.find("{")
-    if start < 0:
-        return ""
-    depth = 0
-    for i, ch in enumerate(raw[start:], start=start):
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return raw[start:i + 1].strip()
-    return ""
-
-
-def _coerce_structured_vlm_response(raw_text: str) -> dict[str, Any]:
-    json_blob = _extract_first_json_object(raw_text)
-    if not json_blob:
-        return {}
-    try:
-        data = json.loads(json_blob)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-def _structured_vlm_response_to_text(raw_text: str) -> str:
-    data = _coerce_structured_vlm_response(raw_text)
-    if not data:
-        return str(raw_text or "").strip()
-
-    nutrition_rows = data.get("nutrition", []) or data.get("nutrients", []) or []
-    ingredients = data.get("ingredients", []) or []
-    lines: list[str] = []
-
-    for row in nutrition_rows:
-        if not isinstance(row, dict):
-            continue
-        nutrient = str(row.get("nutrient", row.get("name", "")) or "").strip()
-        amount = row.get("amount", row.get("dose_value", ""))
-        unit = str(row.get("unit", row.get("dose_unit", "")) or "").strip()
-        if nutrient and amount not in (None, "") and unit:
-            lines.append(f"{nutrient} {amount} {unit}")
-        elif nutrient:
-            lines.append(nutrient)
-
-    flat_ingredients = [str(x or "").strip() for x in ingredients if str(x or "").strip()]
-    if flat_ingredients:
-        lines.append("INGREDIENTS: " + ", ".join(flat_ingredients))
-
-    if data.get("uncertain"):
-        lines.append("uncertain true")
-
-    return "\n".join(lines).strip()
-
-
-# ---------------------------------------------------------------------------
-# Stage 1 — Image preprocessing (improves OCR accuracy before model runs)
-# ---------------------------------------------------------------------------
-
-def _preprocess_label_image(image_bytes: bytes) -> bytes:
-    """
-    Apply production-style preprocessing to a nutrition-label image:
-    auto-contrast, deskew, desnoise, resize to minimum 1400px wide.
-    Returns processed image as JPEG bytes. Falls back to original on any error.
-    """
-    try:
-        try:
-            import cv2
-            import numpy as np
-            _CV2_AVAILABLE = True
-        except ImportError:
-            _CV2_AVAILABLE = False
-
-        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-
-        # Resize: minimum 1800px on the longer side for better OCR on small labels.
-        w, h = img.size
-        min_side = 1800
-        if max(w, h) < min_side:
-            scale = min_side / max(w, h)
-            img = img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
-
-        if _CV2_AVAILABLE:
-            import cv2
-            import numpy as np
-
-            img_np = np.array(img)
-            gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-
-            # Deskew using moments (works on text-heavy label images).
-            coords = np.column_stack(np.where(gray < 200))
-            if coords.shape[0] > 100:
-                angle = cv2.minAreaRect(coords)[-1]
-                if angle < -45:
-                    angle = -(90 + angle)
-                else:
-                    angle = -angle
-                if abs(angle) < 15:
-                    center = (gray.shape[1] // 2, gray.shape[0] // 2)
-                    M = cv2.getRotationMatrix2D(center, angle, 1.0)
-                    gray = cv2.warpAffine(gray, M, (gray.shape[1], gray.shape[0]),
-                                          flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-
-            # Remove shadows: divide by blurred background.
-            blur = cv2.GaussianBlur(gray, (51, 51), 0)
-            normalized = cv2.divide(gray, blur, scale=255)
-
-            # CLAHE for local contrast enhancement.
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            enhanced = clahe.apply(normalized)
-
-            # Mild denoise.
-            denoised = cv2.fastNlMeansDenoising(enhanced, h=12)
-
-            # Dual binarization paths and conservative fusion.
-            _thr, binary_otsu = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            binary_adaptive = cv2.adaptiveThreshold(
-                denoised,
-                255,
-                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY,
-                21,
-                10,
-            )
-            binary_combined = cv2.bitwise_and(binary_otsu, binary_adaptive)
-            kernel_small = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-            binary_clean = cv2.morphologyEx(binary_combined, cv2.MORPH_OPEN, kernel_small)
-
-            # Unsharp mask to improve tiny glyph edges.
-            gaussian = cv2.GaussianBlur(binary_clean, (0, 0), 2.0)
-            unsharp = cv2.addWeighted(binary_clean, 2.0, gaussian, -1.0, 0)
-            img = Image.fromarray(unsharp).convert("RGB")
-        else:
-            # PIL-only fallback: autocontrast + sharpen.
-            img = ImageOps.autocontrast(img.convert("L"), cutoff=2).convert("RGB")
-            img = img.filter(ImageFilter.SHARPEN)
-
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=95)
-        return buf.getvalue()
-    except Exception:
-        return image_bytes
-
-
-def _detect_nutrition_table_region(image_bytes: bytes) -> bytes | None:
-    """
-    Detect a likely nutrition-table region and return cropped JPEG bytes.
-    This is a conservative detector: returns None when confidence is low.
-    """
-    try:
-        try:
-            import cv2
-            import numpy as np
-        except ImportError:
-            return None
-
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        img_np = np.array(image)
-        if img_np.size == 0:
-            return None
-
-        h, w = img_np.shape[:2]
-        if h < 180 or w < 180:
-            return None
-
-        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
-
-        grad = cv2.morphologyEx(
-            gray,
-            cv2.MORPH_GRADIENT,
-            cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)),
-        )
-        bw = cv2.threshold(grad, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-        bw = cv2.morphologyEx(
-            bw,
-            cv2.MORPH_CLOSE,
-            cv2.getStructuringElement(cv2.MORPH_RECT, (25, 5)),
-            iterations=2,
-        )
-        bw = cv2.dilate(
-            bw,
-            cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)),
-            iterations=1,
-        )
-
-        contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return None
-
-        image_area = float(h * w)
-        best_rect: tuple[int, int, int, int] | None = None
-        best_score = -1.0
-
-        for cnt in contours:
-            x, y, cw, ch = cv2.boundingRect(cnt)
-            if cw <= 0 or ch <= 0:
-                continue
-
-            area = float(cw * ch)
-            area_ratio = area / image_area
-            if area_ratio < 0.12 or area_ratio > 0.95:
-                continue
-
-            aspect = float(cw) / float(max(ch, 1))
-            if aspect < 0.45 or aspect > 4.5:
-                continue
-
-            # Prefer sizeable, roughly table-like boxes while penalizing edge-hugging noise.
-            edge_penalty = 0.0
-            if x <= 2 or y <= 2 or (x + cw) >= (w - 2) or (y + ch) >= (h - 2):
-                edge_penalty = 0.03
-            score = area_ratio - 0.08 * abs(aspect - 1.6) - edge_penalty
-            if score > best_score:
-                best_score = score
-                best_rect = (x, y, cw, ch)
-
-        if best_rect is None:
-            return None
-
-        x, y, cw, ch = best_rect
-        pad_x = max(8, int(cw * 0.03))
-        pad_y = max(8, int(ch * 0.03))
-        x1 = max(0, x - pad_x)
-        y1 = max(0, y - pad_y)
-        x2 = min(w, x + cw + pad_x)
-        y2 = min(h, y + ch + pad_y)
-        if (x2 - x1) < 120 or (y2 - y1) < 120:
-            return None
-
-        crop = img_np[y1:y2, x1:x2]
-        if crop.size == 0:
-            return None
-
-        out = Image.fromarray(crop)
-        buf = io.BytesIO()
-        out.save(buf, format="JPEG", quality=92)
-        return buf.getvalue()
-    except Exception:
-        return None
-
-
-def _generate_focus_region_crops(image_bytes: bytes) -> list[tuple[str, bytes]]:
-    """Generate conservative fallback crops (center/right) when table detection is imperfect."""
-    crops: list[tuple[str, bytes]] = []
-    try:
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        w, h = image.size
-        if w < 220 or h < 220:
-            return crops
-
-        regions = [
-            ("center_crop", (int(w * 0.10), int(h * 0.08), int(w * 0.90), int(h * 0.92))),
-            ("right_crop", (int(w * 0.32), int(h * 0.05), int(w * 0.98), int(h * 0.95))),
-        ]
-        for name, (x1, y1, x2, y2) in regions:
-            if (x2 - x1) < 120 or (y2 - y1) < 120:
-                continue
-            crop = image.crop((x1, y1, x2, y2))
-            buf = io.BytesIO()
-            crop.save(buf, format="JPEG", quality=92)
-            crops.append((name, buf.getvalue()))
-    except Exception:
-        return []
-    return crops
-
-
-def _score_ocr_nutrition_signal(text: str) -> float:
-    raw = str(text or "").strip()
-    if not raw:
-        return 0.0
-
-    dose_hits = len(EXTRACTION_DOSE_PATTERN.findall(raw))
-    nutrient_hits = len(
-        re.findall(
-            r"\b(?:vitamin|thiamin|thiamine|riboflavin|niacin|folate|folic|biotin|calcium|iron|"
-            r"magnesium|zinc|selenium|iodine|chromium|molybdenum|copper|manganese|potassium|"
-            r"phosphorus|fluoride|fluorine|cesium|protein|fat|carbohydrate|fiber|energy|sodium)\b",
-            raw,
-            re.I,
-        )
-    )
-    line_count = len([ln for ln in raw.splitlines() if ln.strip()])
-    return (dose_hits * 3.0) + (nutrient_hits * 2.0) + min(12.0, float(line_count) * 0.2)
-
-
-# ---------------------------------------------------------------------------
-# Stage 2 — PaddleOCR with bounding-box table reconstruction
-# ---------------------------------------------------------------------------
-
-def _get_paddleocr_engine() -> Any | None:
-    global PADDLE_OCR_ENGINE
-    global PADDLE_OCR_UNAVAILABLE
-    if PADDLE_OCR_UNAVAILABLE:
-        return None
-    if PADDLE_OCR_ENGINE is not None:
-        return PADDLE_OCR_ENGINE
-    try:
-        from paddleocr import PaddleOCR
-
-        PADDLE_OCR_ENGINE = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
-        return PADDLE_OCR_ENGINE
-    except Exception:
-        PADDLE_OCR_UNAVAILABLE = True
-        return None
-
-
-def _reconstruct_table_rows_from_paddle(
-    image_bytes: bytes,
-    raw_result: Any | None = None,
-) -> str:
-    """
-    Run PaddleOCR, then reconstruct table rows from bounding-box Y positions
-    (row-clustering heuristic).  Returns plain text with one row per line,
-    left column and right column joined by a tab.
-    """
-    try:
-        if raw_result is None:
-            import numpy as np
-
-            ocr_engine = _get_paddleocr_engine()
-            if ocr_engine is None:
-                return ""
-            image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-            img_np = np.array(image)
-            raw_result = ocr_engine.ocr(img_np, cls=True) or []
-
-        # Collect boxes: (y_center, x_left, text, confidence)
-        tokens: list[tuple[float, float, str, float]] = []
-        for block in raw_result:
-            for row in block or []:
-                try:
-                    box = (row or [[]])[0]
-                    text_conf = (row or [None, ["", 0]])[1] or ["", 0]
-                    text = str(text_conf[0] or "").strip()
-                    conf = float(text_conf[1] if len(text_conf) > 1 else 0.9)
-                    if not text:
-                        continue
-                    # bounding box is [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
-                    ys = [pt[1] for pt in box]
-                    xs = [pt[0] for pt in box]
-                    y_center = sum(ys) / len(ys)
-                    x_left = min(xs)
-                    tokens.append((y_center, x_left, text, conf))
-                except Exception:
-                    continue
-
-        if not tokens:
-            return ""
-
-        # Cluster tokens into rows by Y proximity (within ~12px of row median).
-        tokens.sort(key=lambda t: t[0])
-        rows: list[list[tuple[float, float, str, float]]] = []
-        current_row: list[tuple[float, float, str, float]] = [tokens[0]]
-        row_band = (tokens[-1][0] - tokens[0][0]) * 0.02 + 12  # 2% of image height + 12px
-
-        for tok in tokens[1:]:
-            if abs(tok[0] - current_row[-1][0]) <= row_band:
-                current_row.append(tok)
-            else:
-                rows.append(current_row)
-                current_row = [tok]
-        rows.append(current_row)
-
-        # Within each row sort left-to-right; reconstruct as tab-delimited line.
-        lines: list[str] = []
-        for row_tokens in rows:
-            row_tokens.sort(key=lambda t: t[1])
-            line = "\t".join(t[2] for t in row_tokens)
-            lines.append(line)
-
-        return "\n".join(lines)
-    except Exception:
-        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -8062,28 +7475,31 @@ def extract_image_text_with_tesseract(image_bytes: bytes) -> str:
         return ""
 
 
-def extract_image_text_with_local_stack(image_bytes: bytes, model: str | None = None) -> str:
+def extract_image_text_with_blockbrain(image_bytes: bytes, model: str | None = None) -> str:
     """Extract nutrition label text from an image via Blockbrain vision only."""
-    global LAST_LOCAL_LLM_ERROR
+    global LAST_TEXT_LLM_ERROR
     global LAST_VISION_PROVIDER
     LAST_VISION_PROVIDER = ""
-    LAST_LOCAL_LLM_ERROR = ""
+    LAST_TEXT_LLM_ERROR = ""
 
     bb_text = call_blockbrain_vision(image_bytes, model=model)
     if bb_text and bb_text.strip() and not _is_blockbrain_image_missing_response(bb_text):
-        _, _, bb_agent = _load_blockbrain_secrets()
         runtime_model = str(LAST_BLOCKBRAIN_MODEL or model or "").strip()
         if runtime_model:
-            LAST_VISION_PROVIDER = f"Blockbrain vision ({bb_agent}, model={runtime_model})"
+            LAST_VISION_PROVIDER = f"Blockbrain vision model ({runtime_model})"
         else:
-            LAST_VISION_PROVIDER = f"Blockbrain vision ({bb_agent})"
+            LAST_VISION_PROVIDER = "Blockbrain vision model"
         return bb_text.strip()
 
     if _is_blockbrain_image_missing_response(bb_text):
-        LAST_LOCAL_LLM_ERROR = "Blockbrain vision did not receive an image payload"
+        LAST_TEXT_LLM_ERROR = "Blockbrain vision did not receive an image payload"
     elif not bb_text or not bb_text.strip():
-        LAST_LOCAL_LLM_ERROR = "Blockbrain vision returned no text"
+        LAST_TEXT_LLM_ERROR = "Blockbrain vision returned no text"
     return ""
+
+
+# Backward-compat alias
+extract_image_text_with_local_stack = extract_image_text_with_blockbrain
 
 
 def try_tesseract_ocr(image_bytes: bytes) -> str:
@@ -8289,108 +7705,6 @@ def validate_parsed_components(rows: list[dict[str, Any]]) -> tuple[list[dict[st
     return accepted, result
 
 
-def extract_serving_info_from_text(text: str) -> dict[str, Any]:
-    """
-    Extract serving size, servings per container, and package units from label text.
-    
-    Returns:
-    {
-        "serving_size_value": int or None,
-        "serving_size_unit": str or None,
-        "servings_per_container": int or None,
-        "units_per_package": int or None,
-        "confidence": float (0-1)
-    }
-    """
-    result = {
-        "serving_size_value": None,
-        "serving_size_unit": None,
-        "servings_per_container": None,
-        "units_per_package": None,
-        "confidence": 0.0,
-    }
-    
-    if not text or len(text) < 10:
-        return result
-    
-    compact = re.sub(r"\s+", " ", text).strip().lower()
-    
-    unit_keywords = {
-        "tablet": "tablet",
-        "tablets": "tablet",
-        "capsule": "capsule",
-        "capsules": "capsule",
-        "softgel": "softgel",
-        "softgels": "softgel",
-        "scoop": "scoop",
-        "scoops": "scoop",
-        "ml": "ml",
-        "gram": "g",
-        "grams": "g",
-    }
-    
-    confidence_parts = []
-    
-    serving_patterns = [
-        r"serving\s*(?:size)?:?\s*(\d+(?:\.\d+)?)\s*(tablet|capsule|softgel|scoop|ml|gram|grams|g)",
-        r"(\d+(?:\.\d+)?)\s*(tablet|capsule|softgel|scoop|ml|gram|grams|g)\s+per\s+serving",
-    ]
-    
-    for pattern in serving_patterns:
-        match = re.search(pattern, compact)
-        if match:
-            try:
-                result["serving_size_value"] = int(float(match.group(1)))
-                raw_unit = match.group(2)
-                result["serving_size_unit"] = unit_keywords.get(raw_unit, raw_unit)
-                confidence_parts.append(0.9)
-                break
-            except Exception:
-                pass
-    
-    servings_patterns = [
-        r"servings?\s+(?:per\s+)?container:?\s*(\d+)",
-        r"(\d+)\s+servings?\s+per\s+container",
-    ]
-    
-    for pattern in servings_patterns:
-        match = re.search(pattern, compact)
-        if match:
-            try:
-                result["servings_per_container"] = int(match.group(1))
-                confidence_parts.append(0.9)
-                break
-            except Exception:
-                pass
-    
-    package_patterns = [
-        r"(\d+)\s*(tablets|capsules|softgels)\s+(?:per\s+)?(?:bottle|package|container)",
-        r"net\s+(?:weight|content):?\s*(\d+)\s*(tablets|capsules|softgels)",
-    ]
-    
-    for pattern in package_patterns:
-        match = re.search(pattern, compact)
-        if match:
-            try:
-                result["units_per_package"] = int(match.group(1))
-                confidence_parts.append(0.85)
-                break
-            except Exception:
-                pass
-    
-    if result["serving_size_value"] and result["units_per_package"] and not result["servings_per_container"]:
-        try:
-            result["servings_per_container"] = int(result["units_per_package"] / result["serving_size_value"])
-            confidence_parts.append(0.7)
-        except Exception:
-            pass
-    
-    if confidence_parts:
-        result["confidence"] = round(sum(confidence_parts) / len(confidence_parts), 2)
-    
-    return result
-
-
 def fetch_clean_page_text(url: str) -> str:
     try:
         response = _http_get(
@@ -8475,7 +7789,7 @@ def extract_supplement_text_from_url(url: str) -> str:
         LAST_URL_PARSE_REASON = "Local parser passed deterministic quality gates."
         return local_fallback_text
 
-    if local_fallback_text and not _local_text_llm_enabled():
+    if local_fallback_text and not _text_llm_available():
         LAST_TEXT_PROVIDER = "Local URL parser"
         LAST_URL_PARSE_REASON = "Local parser used because no local text-model runtime is enabled."
         return local_fallback_text
@@ -8673,7 +7987,7 @@ def extract_nutrition_doses_from_product_image(product_url: str) -> list[dict[st
             logger.info("Trying nutrition extraction from image: %s", image_url[:120])
 
             vision_rows: list[dict[str, Any]] = []
-            vision_text = extract_image_text_with_local_stack(image_bytes)
+            vision_text = extract_image_text_with_blockbrain(image_bytes)
             if vision_text:
                 vision_rows = _rows_with_doses(vision_text)
 
@@ -8705,79 +8019,6 @@ def _score_component_rows(rows: list[dict[str, Any]]) -> float:
     with_dose = sum(1 for row in rows if row.get("dose_value") is not None and row.get("dose_unit"))
     nutrient_like = sum(1 for row in rows if _looks_like_nutrient_component(str(row.get("component", "") or "")))
     return max(0.0, min(1.0, (0.6 * (with_dose / total)) + (0.4 * (nutrient_like / total))))
-
-
-def _parse_rows_with_local_llm(input_text: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    system_prompt = (
-        "You are a strict data extraction system for Supplement Facts labels. "
-        "Extract one row per nutrient/component into JSON only."
-    )
-    user_prompt = f"""
-Return STRICT JSON array only.
-Each item format:
-{{"component":"name","dose_value":number_or_null,"dose_unit":"mg/mcg/IU/g/softgel/capsule/or null"}}
-
-Rules:
-- Component must be the nutrient or ingredient name itself, not header text.
-- For bilingual lines, use the English name before '/'.
-- Do not reuse the same component for all rows.
-- Ignore Daily Value percentages.
-- Ignore serving-size metadata headers.
-- Keep entries even when dose is not provided; in that case set dose_value to null and dose_unit to null.
-
-Input:
-{input_text}
-"""
-
-    llm_out = call_text_llm(system_prompt, user_prompt)
-    candidate = clean_json_block(llm_out)
-    llm_with_dose: list[dict[str, Any]] = []
-    llm_name_only: list[dict[str, Any]] = []
-
-    if not candidate:
-        return llm_with_dose, llm_name_only
-
-    try:
-        parsed = json.loads(candidate)
-        if not isinstance(parsed, list):
-            return llm_with_dose, llm_name_only
-
-        normalized: list[dict[str, Any]] = []
-        for item in parsed:
-            if not isinstance(item, dict):
-                continue
-            component = _repair_ocr_component_name(str(item.get("component", "")))
-            if not component:
-                continue
-            dose_raw = item.get("dose_value")
-            try:
-                dose_value = float(dose_raw)
-            except Exception:
-                dose_value = None
-            unit = str(item.get("dose_unit", "")).strip().lower()
-            if dose_value is None:
-                unit = ""
-            if dose_value is None and not _looks_like_nutrient_component(component):
-                continue
-            component, dose_value, unit = _repair_ocr_dose_entry(component, dose_value, unit)
-            normalized.append(
-                {
-                    "component": component,
-                    "dose_value": dose_value,
-                    "dose_unit": unit,
-                }
-            )
-
-        normalized = [x for x in normalized if x["component"]]
-        unique_components = {x["component"] for x in normalized}
-        suspicious_repeated_name = len(normalized) >= 3 and len(unique_components) == 1
-        if normalized and not suspicious_repeated_name:
-            llm_with_dose = [x for x in normalized if x.get("dose_value") is not None]
-            llm_name_only = [x for x in normalized if x.get("dose_value") is None]
-    except Exception as e:
-        logger.warning(f"Error parsing local LLM component output: {e}")
-
-    return llm_with_dose, llm_name_only
 
 
 def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
@@ -8848,57 +8089,10 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
     local_validated, local_meta = validate_parsed_components(local_expanded)
     local_score = _score_component_rows(local_validated)
 
-    llm_with_dose: list[dict[str, Any]] = []
-    llm_name_only: list[dict[str, Any]] = []
-    llm_validated: list[dict[str, Any]] = []
-    llm_meta: dict[str, Any] = {"issues": []}
-    llm_score = 0.0
-    merged_validated: list[dict[str, Any]] = []
-    merged_meta: dict[str, Any] = {"issues": []}
-    merged_score = 0.0
-
-    _deterministic_strong = bool(
-        has_structured_table_cues
-        and sum(
-            1
-            for r in local_validated
-            if r.get('dose_value') is not None and r.get('dose_unit')
-        ) >= 5
-    )
-    if _local_text_llm_enabled() and not _deterministic_strong:
-        llm_with_dose, llm_name_only = _parse_rows_with_local_llm(parse_input_text)
-        llm_rows = merge_component_rows(llm_with_dose, llm_name_only)
-        llm_expanded = expand_umbrella_components(llm_rows)
-        llm_validated, llm_meta = validate_parsed_components(llm_expanded)
-        llm_score = _score_component_rows(llm_validated)
-
-        merged_with_dose = merge_component_rows(local_with_dose, llm_with_dose)
-        merged_name_pool = merge_component_rows(local_name_pool, llm_name_only)
-        merged_rows = merge_component_rows(merged_with_dose, merged_name_pool)
-        merged_expanded = expand_umbrella_components(merged_rows)
-        merged_validated, merged_meta = validate_parsed_components(merged_expanded)
-        merged_score = _score_component_rows(merged_validated)
-
-    candidates: list[tuple[str, list[dict[str, Any]], dict[str, Any], float]] = [
-        ("local_deterministic", local_validated, local_meta, local_score)
-    ]
-    if llm_validated:
-        candidates.append(("local_llm_primary", llm_validated, llm_meta, llm_score))
-    if merged_validated:
-        candidates.append(("local_deterministic_plus_local_llm", merged_validated, merged_meta, merged_score))
-
-    source_priority = {
-        "local_llm_primary": 3,
-        "local_deterministic_plus_local_llm": 2,
-        "local_deterministic": 1,
-    }
-
-    def _candidate_rank(item: tuple[str, list[dict[str, Any]], dict[str, Any], float]) -> tuple[float, int, int, int]:
-        source, rows, _meta, score = item
-        dose_count = sum(1 for row in rows if row.get("dose_value") is not None and row.get("dose_unit"))
-        return (score, dose_count, len(rows), source_priority.get(source, 0))
-
-    best_source, best_rows, best_meta, best_score = max(candidates, key=_candidate_rank)
+    best_source = "local_deterministic"
+    best_rows = local_validated
+    best_meta = local_meta
+    best_score = local_score
 
     if has_structured_table_cues:
         dosed_rows = [
@@ -8957,12 +8151,7 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
     warnings.extend(sanity_warnings)
 
     if best_rows:
-        if best_source == "local_llm_primary":
-            LAST_TEXT_PROVIDER = "Local LLM parser (primary)"
-        elif best_source == "local_deterministic_plus_local_llm":
-            LAST_TEXT_PROVIDER = "Local deterministic parser + local LLM"
-        else:
-            LAST_TEXT_PROVIDER = "Local deterministic parser"
+        LAST_TEXT_PROVIDER = "Local deterministic parser"
     else:
         LAST_TEXT_PROVIDER = "Local deterministic parser"
         warnings.append("no_components_extracted")
@@ -9257,476 +8446,284 @@ def render_meal_nutrition_panel(
         )  
 
 
-def build_mobile_ui() -> None:
+def _render_research_tab() -> None:
     import streamlit as st
-    import streamlit.components.v1 as components
-    global LAST_VISION_PROVIDER
+
+    st.subheader("Ask a RAG question")
+    rag_chunks, rag_status = build_rag_index()
+    rag_available = bool(rag_chunks) and str(rag_status).lower().startswith("ok")
+    if rag_available:
+        st.caption("Ask questions using your local fitness reference library.")
+    else:
+        st.warning(f"RAG currently unavailable: {rag_status}")
+
+    rag_query = st.text_area(
+        "Your question",
+        placeholder="Ask me any supplement-related question and I will search your local reference database.",
+        height=110,
+        key="rag_query_input",
+    )
+    ask_rag = st.button("Ask RAG", use_container_width=True, key="ask_rag_btn")
+    if ask_rag:
+        if not rag_query.strip():
+            st.warning("Please enter a question.")
+        elif not rag_available:
+            st.info("RAG index is not ready yet. Please refresh after indexing or check parser setup.")
+        else:
+            with st.status("Searching reference library", expanded=False) as rag_status_box:
+                rag_status_box.write("Retrieving relevant excerpts")
+                rag_answer, rag_sources, rag_meta = answer_rag_question(rag_query.strip(), rag_chunks)
+                rag_status_box.update(label="Done", state="complete")
+
+            st.markdown("**Answer**")
+            st.write(rag_answer)
+            if rag_sources:
+                st.caption("Sources: " + ", ".join(rag_sources))
+
+            retrieval_conf = float(rag_meta.get("retrieval_confidence", 0.0) or 0.0)
+            st.caption(f"Retrieval confidence: {format_float(retrieval_conf * 100, 0)}%")
+
+            needs_web_fallback = bool(rag_meta.get("needs_web_fallback", False))
+            if needs_web_fallback:
+                reason = str(rag_meta.get("reason", "") or "")
+                fallback_query = str(rag_meta.get("fallback_query", "") or "").strip()
+                if reason == "no_retrieval":
+                    st.info("No reliable local answer found for this question. You can run a web-search fallback.")
+                elif reason == "llm_unavailable":
+                    st.info("Local evidence was retrieved, but the LLM answer step is unavailable right now.")
+
+                if fallback_query:
+                    st.caption("Suggested web-search query")
+                    st.code(fallback_query)
+
+                fallback_pack = build_web_fallback_package(rag_query.strip(), fallback_query)
+                st.link_button(
+                    "Open web search now",
+                    str(fallback_pack.get("search_url", "https://duckduckgo.com")),
+                    use_container_width=True,
+                )
+
+                with st.expander("Web fallback resources", expanded=True):
+                    st.markdown("**Ready-to-use search queries**")
+                    for q in fallback_pack.get("queries", []):
+                        st.code(str(q))
+
+                    st.markdown("**Trusted sources to prioritize**")
+                    for url in fallback_pack.get("trusted_urls", []):
+                        st.markdown(f"- {url}")
+
+                if st.button("Generate optional LLM research plan", key="rag_websearch_fallback_btn", use_container_width=True):
+                    web_fallback = call_text_llm(
+                        "You are a nutrition research assistant.",
+                        (
+                            "Create a concise web-search plan for this nutrition question. "
+                            "Return: 1) 5 high-quality search queries, 2) trusted sources to prioritize, "
+                            "3) quick checklist to validate claims. "
+                            f"Question: {rag_query.strip()}"
+                        ),
+                    )
+                    if web_fallback:
+                        st.markdown("**Optional LLM research plan**")
+                        st.write(web_fallback)
+                    else:
+                        st.info("LLM planner unavailable. Use the working fallback resources above.")
+
+
+def _render_reference_tab() -> None:
+    import streamlit as st
+
+    st.subheader("Official Nutrient Reference Guide")
+    st.caption(
+        "Official adult nutrient intake recommendation averaged across several official sources."
+    )
+
+    source_rows = load_official_nutrient_sources()
+    if not source_rows:
+        st.info(
+            "No official nutrient source table found yet. Add rows to `data/official_nutrient_sources.csv` "
+            "using the provided template format."
+        )
+        st.code(
+            "nutrient,unit,life_stage,sex,source_agency,recommended_value,upper_limit_value,source_url,notes",
+            language="text",
+        )
+    else:
+        life_stage_options = sorted(
+            {
+                str(row.get("life_stage", "Adults") or "Adults")
+                for row in source_rows
+                if str(row.get("life_stage", "") or "").strip()
+            }
+        )
+        sex_options_all = sorted(
+            {
+                str(row.get("sex", "All") or "All")
+                for row in source_rows
+                if str(row.get("sex", "") or "").strip()
+            }
+        )
+        sex_options = [
+            value
+            for value in sex_options_all
+            if normalize_lookup_key(value) in {"male", "female"}
+        ]
+        if not sex_options:
+            sex_options = sex_options_all
+        if "Adults" in life_stage_options:
+            life_stage_default = life_stage_options.index("Adults")
+        else:
+            life_stage_default = 0
+        if "Male" in sex_options:
+            sex_default = sex_options.index("Male")
+        elif "Female" in sex_options:
+            sex_default = sex_options.index("Female")
+        elif "All" in sex_options:
+            sex_default = sex_options.index("All")
+        else:
+            sex_default = 0
+
+        selected_life_stage = life_stage_options[life_stage_default]
+        selected_sex = sex_options[sex_default]
+        if len(life_stage_options) > 1:
+            filter_cols = st.columns(2)
+            selected_life_stage = filter_cols[0].selectbox(
+                "Life stage",
+                options=life_stage_options,
+                index=life_stage_default,
+                key="official_ref_life_stage",
+            )
+            if len(sex_options) > 1:
+                selected_sex = filter_cols[1].selectbox(
+                    "Sex",
+                    options=sex_options,
+                    index=sex_default,
+                    key="official_ref_sex",
+                )
+            else:
+                filter_cols[1].caption(f"Sex: {selected_sex}")
+        else:
+            st.caption(f"Life stage: {selected_life_stage}")
+            if len(sex_options) > 1:
+                selected_sex = st.selectbox(
+                    "Sex",
+                    options=sex_options,
+                    index=sex_default,
+                    key="official_ref_sex",
+                )
+            else:
+                st.caption(f"Sex: {selected_sex}")
+
+        aggregate_rows = build_official_nutrient_aggregate(source_rows, selected_life_stage, selected_sex)
+        if not aggregate_rows:
+            st.warning("No matching rows for the selected life stage/sex filters.")
+        else:
+            display_rows: list[dict[str, Any]] = []
+            csv_buffer = io.StringIO()
+            csv_writer = csv.writer(csv_buffer)
+            csv_writer.writerow(
+                [
+                    "nutrient",
+                    "unit",
+                    "recommendation",
+                    "max_upper_level_intake",
+                    "source_count",
+                    "sources_used",
+                ]
+            )
+
+            for row in aggregate_rows:
+                recommendation_value = row.get("recommendation_value")
+                ul_avg = row.get("ul_average")
+                sources_used = row.get("sources_used", []) or []
+
+                display_rows.append(
+                    {
+                        "Nutrient": row.get("nutrient", ""),
+                        "Unit": row.get("unit", ""),
+                        "Recommendation": (
+                            format_float(float(recommendation_value), 2)
+                            if recommendation_value is not None
+                            else "-"
+                        ),
+                        "Max upper level intake": format_float(float(ul_avg), 2) if ul_avg is not None else "-",
+                        "Sources": int(row.get("source_count", 0) or 0),
+                    }
+                )
+
+                csv_writer.writerow(
+                    [
+                        row.get("nutrient", ""),
+                        row.get("unit", ""),
+                        (
+                            format_float(float(recommendation_value), 6)
+                            if recommendation_value is not None
+                            else ""
+                        ),
+                        format_float(float(ul_avg), 6) if ul_avg is not None else "",
+                        int(row.get("source_count", 0) or 0),
+                        " | ".join([str(s) for s in sources_used]),
+                    ]
+                )
+
+            st.dataframe(display_rows, use_container_width=True, hide_index=True)
+            st.download_button(
+                "Download aggregated table (CSV)",
+                data=csv_buffer.getvalue(),
+                file_name=f"official_nutrient_reference_{normalize_lookup_key(selected_life_stage)}_{normalize_lookup_key(selected_sex)}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+            with st.expander("Show source-level rows", expanded=False):
+                for agg in aggregate_rows:
+                    nutrient = str(agg.get("nutrient", "") or "").strip()
+                    unit = str(agg.get("unit", "") or "").strip()
+                    if not nutrient or not unit:
+                        continue
+                    st.markdown(f"**{nutrient} ({unit})**")
+                    for src in source_rows:
+                        src_n = str(src.get("nutrient", "") or "").strip()
+                        src_u = str(src.get("unit", "") or "").strip()
+                        if normalize_lookup_key(src_n) != normalize_lookup_key(nutrient):
+                            continue
+                        if normalize_lookup_key(src_u) != normalize_lookup_key(unit):
+                            continue
+
+                        src_stage = normalize_lookup_key(str(src.get("life_stage", "Adults") or "Adults"))
+                        src_sex = normalize_lookup_key(str(src.get("sex", "All") or "All"))
+                        if src_stage not in {normalize_lookup_key(selected_life_stage), "all", "general"}:
+                            continue
+                        if src_sex not in {normalize_lookup_key(selected_sex), "all", "both", "any", "general"}:
+                            continue
+
+                        rec = src.get("recommended_value")
+                        ul = src.get("upper_limit_value")
+                        source_agency = str(src.get("source_agency", "") or "").strip()
+                        source_url = str(src.get("source_url", "") or "").strip()
+                        notes = str(src.get("notes", "") or "").strip()
+
+                        line = (
+                            f"- {source_agency}: rec {format_float(float(rec), 2) if rec is not None else '-'} {unit}, "
+                            f"UL {format_float(float(ul), 2) if ul is not None else '-'} {unit}"
+                        )
+                        st.markdown(line)
+                        if source_url:
+                            st.caption(source_url)
+                        if notes:
+                            st.caption(notes)
+                    st.markdown("---")
+
+            st.caption(
+                "Upper intake level = highest daily intake unlikely to cause adverse effects in healthy people over long-term use."
+            )
+
+def _render_analyze_tab(tab_analyze: Any) -> None:
+    import streamlit as st
+    import streamlit.components.v1 as st_components
     global LAST_TEXT_PROVIDER
     global LAST_URL_PARSE_REASON
 
-    st.set_page_config(page_title="SuppSwap", page_icon="🥗", layout="centered")
-
-    # -- File uploader button CSS override --------------------------------
-    st.markdown(
-        """<style>
-        /* Hide drag-and-drop instruction text above the button */
-        [data-testid='stFileUploaderDropzoneInstructions'] {
-            display: none !important;
-        }
-        /* Hide original Browse files span text */
-        [data-testid='stFileUploaderDropzone'] button span {
-            display: none !important;
-        }
-        /* Inject custom label using actual UTF-8 emoji */
-        [data-testid='stFileUploaderDropzone'] button::before {
-            content: '📷📤🗂 Capture Supplement Info';
-            font-size: 0.95rem;
-            font-weight: 500;
-        }
-        </style>""",
-        unsafe_allow_html=True,
-    )
-    # -----------------------------------------------------------------------
-
-    st.markdown(
-        """
-<style>
-.mfitness-watermark {
-    position: fixed;
-    right: 14px;
-    bottom: 74px;
-    z-index: 99999;
-    pointer-events: none;
-    font-size: 0.85rem;
-    font-weight: 600;
-    letter-spacing: 0.2px;
-    color: rgba(120, 120, 120, 0.75);
-    background: rgba(255, 255, 255, 0.55);
-    padding: 4px 8px;
-    border-radius: 8px;
-}
-
-div[data-testid="stTabs"] button[role="tab"] p {
-    margin: 0;
-    white-space: normal;
-    overflow: visible;
-    text-overflow: clip;
-    line-height: 1.08;
-    text-align: center;
-    word-break: break-word;
-}
-
-div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
-    background: #0f766e;
-    color: #ffffff;
-    border-color: #0f766e;
-    box-shadow: 0 4px 12px rgba(15, 118, 110, 0.22);
-}
-
-.linked-value-chip {
-    display: inline-block;
-    padding: 0.12rem 0.42rem;
-    border-radius: 999px;
-    background: #e7f5f2;
-    border: 1px solid #b7e2d8;
-    color: #0f4d46;
-    font-weight: 700;
-}
-
-/* BaseWeb select fallback: hide raw icon ligature text (e.g., "arrow_down") and draw a chevron. */
-div[data-baseweb="select"] [role="button"] > div:last-child {
-    position: relative;
-    min-width: 1rem;
-}
-
-div[data-baseweb="select"] [role="button"] > div:last-child span[class*="material"],
-div[data-baseweb="select"] [role="button"] > div:last-child span[class*="icon"] {
-    display: inline-block !important;
-    width: 1rem !important;
-    height: 1rem !important;
-    min-width: 1rem !important;
-    overflow: hidden !important;
-    text-indent: -9999px !important;
-    white-space: nowrap !important;
-    font-size: 0 !important;
-    line-height: 0 !important;
-    color: transparent !important;
-}
-
-div[data-baseweb="select"] [role="button"] > div:last-child::after {
-    content: "";
-    position: absolute;
-    left: 50%;
-    top: 48%;
-    width: 0.42rem;
-    height: 0.42rem;
-    border-right: 2px solid rgba(55, 65, 81, 0.9);
-    border-bottom: 2px solid rgba(55, 65, 81, 0.9);
-    transform: translate(-50%, -50%) rotate(45deg);
-    pointer-events: none;
-}
-
-/* Bottom tab bar navigation on all screen sizes */
-div[data-testid="stTabs"] div[role="tablist"] {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 10000;
-    margin: 0;
-    padding: 0.42rem 0.56rem calc(0.42rem + env(safe-area-inset-bottom));
-    background: rgba(255, 255, 255, 0.96);
-    border-top: 1px solid rgba(0, 0, 0, 0.08);
-    backdrop-filter: blur(6px);
-    gap: 0.28rem;
-    display: grid;
-    grid-template-columns: repeat(7, minmax(0, 1fr));
-    width: 100%;
-}
-
-div[data-testid="stTabs"] button[role="tab"] {
-    width: 100%;
-    min-height: 2.7rem;
-    font-size: clamp(0.6rem, 1.2vw, 0.76rem);
-    font-weight: 600;
-    line-height: 1.08;
-    padding: 0.32rem 0.18rem;
-    border-radius: 10px;
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    background: rgba(250, 250, 250, 0.95);
-}
-
-.block-container {
-    padding-bottom: 6.4rem;
-}
-
-/* Ensure page content stays scrollable with fixed bottom chrome */
-html,
-body,
-[data-testid="stAppViewContainer"],
-[data-testid="stMain"] {
-    overflow: auto !important;
-}
-
-@media (max-width: 768px) {
-    .block-container {
-        padding-top: 0.8rem;
-        padding-left: 0.75rem;
-        padding-right: 0.75rem;
-        padding-bottom: 6.4rem;
-    }
-
-    div[data-testid="stTabs"] div[role="tablist"] {
-        gap: 0.2rem;
-    }
-
-    div[data-testid="stTabs"] button[role="tab"] {
-        min-height: 2.85rem;
-        font-size: clamp(0.56rem, 2.35vw, 0.68rem);
-        padding: 0.28rem 0.16rem;
-    }
-
-    div[data-testid="stMetricValue"] {
-        font-size: 1.15rem;
-    }
-    div[data-testid="stMetricLabel"] {
-        font-size: 0.78rem;
-    }
-}
-</style>
-<div class="mfitness-watermark">© mfitness92</div>
-""",
-        unsafe_allow_html=True,
-    )
-
-    st.title("🥗 SuppSwap")
-    # Patch: rebrand uploader button to "Capture" + camera icon.
-    st.markdown(
-        """
-<style>
-/* Replace the "Browse files" button text with a camera + Capture label */
-section[data-testid="stFileUploaderDropzone"] button  
-    font-size: 0 !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    gap: 0.4rem !important;
- 
-section[data-testid="stFileUploaderDropzone"] button::after  
-    content: "\01F4F7 \01F4C1 \02B06  Capture Supplement Info";
-    font-size: 0.9rem !important;
-    font-weight: 700 !important;
- 
-/* Show a camera symbol alongside the existing upload symbol */
-[data-testid="stFileUploaderDropzoneInstructions"]::before  
-    content: "\01F4F7 / ";
-    font-size: 1.3rem;
-    margin-right: 0.35rem;
-    vertical-align: middle;
- 
-</style>
-""",
-        unsafe_allow_html=True,
-    )
-
-    # -- Session state defaults ------------------------------------------
-    _SESSION_DEFAULTS: dict = {
-        "analysis_ready": False,
-        "analysis_components": [],
-        "analysis_combined_text": "",
-        "analysis_structured_debug": {},
-        "analysis_food_match_cache_key": "",
-        "analysis_food_match_summary": [],
-        "analysis_food_match_details": [],
-        "analysis_food_match_status": "",
-        "price_cache": {},
-        "meal_component_candidates": [],
-        "meal_suggestion_cache": {},
-        "macro_target_kcal": 500,
-        "macro_pct_protein": 30,
-        "macro_pct_carbs": 50,
-        "macro_pct_fat": 20,
-        "price_optimized_max_meal_cost": 12.0,
-        "target_tab": "",
-        "barcode_parse_cache": {},
-        "url_parse_cache": {},
-        "summary_review_signature": "",
-        "summary_review_confirmed": False,
-        "global_diet_profile": "",
-    }
-    for _k, _v in _SESSION_DEFAULTS.items():
-        st.session_state.setdefault(_k, _v)
-    # -- Mobile expander dropdown scroll fix ----------------------------
-    st.markdown(
-        """<style>
-        /* Force BaseWeb portal/popover above everything including tab bar */
-        [data-baseweb='popover'],
-        [data-baseweb='tooltip'],
-        div[role='listbox'],
-        ul[role='listbox'] {
-            z-index: 999999 !important;
-            position: fixed !important;
-            overflow-y: auto !important;
-            -webkit-overflow-scrolling: touch !important;
-            overscroll-behavior: contain !important;
-            max-height: 45vh !important;
-        }
-        /* Prevent the expander itself from clipping the dropdown */
-        details, details > summary ~ div {
-            overflow: visible !important;
-        }
-        /* Each option row — large enough touch target */
-        [role='option'] {
-            min-height: 44px !important;
-            padding: 10px 16px !important;
-            display: flex !important;
-            align-items: center !important;
-            touch-action: pan-y !important;
-        }
-        /* The select input trigger */
-        [data-baseweb='select'] > div:first-child {
-            min-height: 44px !important;
-            touch-action: manipulation !important;
-        }
-        /* Scrollable list container */
-        [data-baseweb='menu'] {
-            overflow-y: auto !important;
-            -webkit-overflow-scrolling: touch !important;
-            overscroll-behavior: contain !important;
-            max-height: 45vh !important;
-        }
-        /* Stop parent containers stealing touch events */
-        .stExpander {
-            touch-action: pan-y !important;
-            overflow: visible !important;
-        }
-        section[data-testid='stSidebar'],
-        .main .block-container {
-            overflow-x: hidden !important;
-        }
-        </style>""",
-        unsafe_allow_html=True,
-    )
-    # -----------------------------------------------------------------------
-    # Patch: make selectbox/multiselect dropdown menus scrollable and above the tab bar.  
-    st.markdown(  
-        """  
-<style>  
-div[data-baseweb="popover"]    
-    z-index: 10050 !important;  
-    overflow: visible !important;  
-   
-div[data-baseweb="popover"] ul[role="listbox"],  
-div[data-baseweb="popover"] ul[data-baseweb="menu"],  
-ul[data-baseweb="menu"]    
-    max-height: 45vh !important;  
-    overflow-y: auto !important;  
-    -webkit-overflow-scrolling: touch !important;  
-    overscroll-behavior: contain !important;  
-   
-</style>  
-""",  
-        unsafe_allow_html=True,  
-    )  
-
-    # ---------------------------------------------------------------------
-
-    tab_analyze, tab_results, tab_meals, tab_research, tab_reference, tab_about = st.tabs(
-        ["🔎 Analyze", "📊 Results", "🍽 Meals", "📚 Research", "📘 Nutrient Guide", "ℹ️ About & Feedback"]
-    )
-    # Patch: Welcome content now lives at the end inside the About & Feedback tab.
-    tab_welcome = tab_about
-    tab_feedback = tab_about
-
-    components.html(
-        """
-<script>
-const parentDoc = window.parent.document;
-const parentWin = window.parent;
-
-function suppswapScrollToTop() {
-    parentWin.scrollTo({ top: 0, left: 0, behavior: 'auto' });
-    const main = parentDoc.querySelector('[data-testid="stMain"]');
-    if (main) {
-        main.scrollTo({ top: 0, left: 0, behavior: 'auto' });
-    }
-}
-
-if (!parentWin.__suppswapTabScrollHookInstalled) {
-    parentWin.__suppswapTabScrollHookInstalled = true;
-    parentDoc.addEventListener('click', (event) => {
-        const tabButton = event.target && event.target.closest
-            ? event.target.closest('button[role="tab"]')
-            : null;
-        if (!tabButton) {
-            return;
-        }
-        setTimeout(suppswapScrollToTop, 0);
-    }, true);
-}
-</script>
-""",
-        height=0,
-    )
-
-    def _render_tab_activation_script(target_tab_name: str) -> None:
-        safe_target = json.dumps(str(target_tab_name or "").strip())
-        components.html(
-            rf"""
-<script>
-const target = {safe_target};
-const parentDoc = window.parent.document;
-const parentWin = window.parent;
-
-const canonicalize = (value) => {{
-    const raw = String(value || '').trim().toLowerCase();
-    if (!raw) return '';
-    return raw
-        .replace(/^\s*[0-9]+\s*[\)\].:\-]*\s*/, '')
-        .replace(/^[^a-z0-9]+/, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-}};
-
-const targetCanonical = canonicalize(target);
-
-const scrollToTop = () => {{
-    parentWin.scrollTo({{ top: 0, left: 0, behavior: 'auto' }});
-    const main = parentDoc.querySelector('[data-testid="stMain"]');
-    if (main) {{
-        main.scrollTo({{ top: 0, left: 0, behavior: 'auto' }});
-    }}
-}};
-
-const matchesTarget = (label) => {{
-    const plain = String(label || '').trim().toLowerCase();
-    const canon = canonicalize(label);
-    if (!canon) return false;
-    if (plain === String(target || '').trim().toLowerCase()) return true;
-    if (canon === targetCanonical) return true;
-    if (canon.startsWith(targetCanonical)) return true;
-    if (canon.includes(targetCanonical)) return true;
-    return false;
-}};
-
-const tryActivateTab = (attempt = 0) => {{
-    const tabButtons = parentDoc.querySelectorAll('button[role="tab"]');
-    let clicked = false;
-
-    for (const btn of tabButtons) {{
-        const label = (btn.innerText || '').trim();
-        const matches = matchesTarget(label);
-        if (!matches) {{
-            continue;
-        }}
-        btn.click();
-        clicked = true;
-        setTimeout(scrollToTop, 0);
-        break;
-    }}
-
-    if (!clicked && attempt < 80) {{
-        setTimeout(() => tryActivateTab(attempt + 1), 100);
-    }}
-}};
-
-setTimeout(() => tryActivateTab(0), 60);
-</script>
-""",
-            height=0,
-        )
-
-    if st.session_state.get("target_tab"):
-        target_tab = str(st.session_state.get("target_tab") or "").strip()
-        _render_tab_activation_script(target_tab)
-        st.session_state["target_tab"] = ""
-
-    with tab_welcome:
-        st.subheader("Purpose")
-        st.markdown(
-            """
-SuppSwap helps you make practical nutrition decisions so you do not overpay for supplements or miss better whole-food options.
-
-It is designed for both:
-- beginners who are still learning nutrition basics, and
-- advanced users who want faster evidence-oriented decisions.
-
-Instead of manually searching micronutrient tables for each food, you can scan a supplement label and get food-equivalent comparisons, costs, and meal ideas in one flow.
-
-The goal is simple: compare supplement doses against real foods, costs, and meal plans using transparent calculations.
-"""
-        )
-
-        st.subheader("Why Whole Foods Usually Win")
-        st.markdown(
-            """
-- Whole foods deliver micronutrients together with fiber, water, protein, fats, and food matrix effects that can change absorption and satiety.
-- Whole foods contain many bioactive compounds (polyphenols, carotenoids, peptides, phytochemicals) that are not fully captured by standard supplement labels.
-- Chemical synthesis can target known measurable compounds, but nutrition science still cannot fully quantify all interacting compounds present in real foods.
-- Food patterns are associated with better long-term health outcomes than isolated-pill strategies in many populations.
-- Whole foods improve diet quality and meal structure, which supports adherence better than stack-heavy supplement routines.
-- Supplements can still be useful in specific deficiencies or clinical contexts, but they are usually a targeted tool, not a full replacement for food quality.
-"""
-        )
-
-        st.subheader("How To Use This App")
-        st.markdown(
-            """
-1. `Analyze`: Enter your supplement details by camera, upload, URL, or text.
-2. `Results`: Review mapped whole-food alternatives, concentration per 100 g, cost comparison, and practical portion estimates.
-3. `Meals`: Generate meal ideas based on the selected alternatives and your dietary profile.
-4. `Research (RAG)`: Ask evidence-focused questions; answers are retrieved from your local fitness reference library.
-
-RAG source context:
-The local RAG library is built from curated expert nutrition notes and evidence summaries, with heavy emphasis on meta-study style synthesis and sources aligned with evidence-tracking approaches (including material in your Examine-style reference stack).
-"""
-        )
-
-        st.caption("Educational tool only. It is not a diagnosis or medical treatment service.")
-
-        if st.button("Analyze my supplement", type="primary", use_container_width=True, key="welcome_go_analyze"):
-            st.session_state["target_tab"] = "Analyze"
-            st.rerun()
-
+    selected_text_model, selected_vision_model = _get_selected_blockbrain_models()
     with tab_analyze:
         st.subheader("Provide your supplement input")
 
@@ -9856,21 +8853,21 @@ The local RAG library is built from curated expert nutrition notes and evidence 
             type=["png", "jpg", "jpeg", "webp"],
             key="supp_upload",
         )
-        components.html(
+        st_components.html(
             """
-<script>
-const doc = window.parent.document;
-function patchUploaderAccept()  
+    <script>
+    const doc = window.parent.document;
+    function patchUploaderAccept()  
     const inputs = doc.querySelectorAll('input[type="file"]');
     inputs.forEach((el) =>  
         el.setAttribute('accept', 'image/*');
         el.removeAttribute('capture');
      );
- 
-patchUploaderAccept();
-setInterval(patchUploaderAccept, 800);
-</script>
-""",
+     
+    patchUploaderAccept();
+    setInterval(patchUploaderAccept, 800);
+    </script>
+    """,
             height=0,
         )
         uploaded_label_bytes = st.session_state.get(uploaded_label_bytes_key)
@@ -9941,71 +8938,19 @@ setInterval(patchUploaderAccept, 800);
         if effective_label_capture_bytes and not effective_label_confirmed:
             st.caption("Confirm or retake the nutrition label photo before it is used for analysis.")
 
-        _, _, configured_blockbrain_agent = _load_blockbrain_secrets()
         pass  # LLM route caption hidden for simpler UX
 
-        text_model_options = _list_blockbrain_chat_model_ids(vision_required=False)
-        vision_model_options = _list_blockbrain_chat_model_ids(vision_required=True)
+        # AI model selection is pinned for best UX: the vision model defaults to the
+        # fastest benchmarked label-OCR model (anthropic-claude-haiku-4.5) and the
+        # text model to the fastest mapping model (gpt-4.1-nano), so "Resolving
+        # nutrient mappings" and label OCR stay fast instead of using the slow
+        # default reasoning backend. The manual picker is intentionally hidden;
+        # advanced users can override via BLOCKBRAIN_MODEL_VISION /
+        # BLOCKBRAIN_MODEL_TEXT (env or secrets).
         default_text_model, default_vision_model = _load_blockbrain_model_defaults()
-        default_route_mode = _load_blockbrain_route_mode_default()
-
-        if False:  # Advanced model selection hidden for simpler UX
-            route_labels = {
-                "agent_default": "Agent default routing",
-                "model_pinned": "Model-pinned routing",
-            }
-            route_options = ["agent_default", "model_pinned"]
-            st.selectbox(
-                "Routing mode",
-                options=route_options,
-                index=max(0, route_options.index(default_route_mode if default_route_mode in route_options else "agent_default")),
-                key="analyze_blockbrain_route_mode",
-                format_func=lambda x: route_labels.get(str(x), str(x)),
-                help=(
-                    "Agent default uses the agent's configured backend model. "
-                    "Model-pinned sends your selected model id in each request payload."
-                ),
-            )
-            select_cols = st.columns(2)
-            if text_model_options:
-                text_default = default_text_model if default_text_model in text_model_options else text_model_options[0]
-                select_cols[0].selectbox(
-                    "Text model",
-                    options=text_model_options,
-                    index=max(0, text_model_options.index(text_default)),
-                    key="analyze_blockbrain_text_model",
-                )
-            else:
-                select_cols[0].caption("Model catalog unavailable; text model follows agent defaults.")
-                if default_text_model:
-                    st.session_state["analyze_blockbrain_text_model"] = default_text_model
-
-            if vision_model_options:
-                vision_default = default_vision_model if default_vision_model in vision_model_options else vision_model_options[0]
-                select_cols[1].selectbox(
-                    "Vision model",
-                    options=vision_model_options,
-                    index=max(0, vision_model_options.index(vision_default)),
-                    key="analyze_blockbrain_vision_model",
-                )
-            else:
-                select_cols[1].caption("No vision-capable models found in catalog; using agent defaults.")
-                if default_vision_model:
-                    st.session_state["analyze_blockbrain_vision_model"] = default_vision_model
-
-            if st.button("Refresh model catalog", key="refresh_blockbrain_model_catalog"):
-                _get_blockbrain_models_catalog.cache_clear()
-                st.rerun()
-
+        st.session_state["analyze_blockbrain_text_model"] = default_text_model
+        st.session_state["analyze_blockbrain_vision_model"] = default_vision_model
         selected_text_model, selected_vision_model = _get_selected_blockbrain_models()
-        selected_route_mode = _get_selected_blockbrain_route_mode()
-        if selected_text_model or selected_vision_model:
-            st.caption(
-                "Active model preferences: "
-                f"route={selected_route_mode}, "
-                f"text={selected_text_model or 'agent-default'}, "
-                f"vision={selected_vision_model or 'agent-default'}"
-            )
 
         analyze = st.button("💊 Analyze Supp → 🥗 Swap With Whole Food", type="primary", use_container_width=True, key="analyze_input_btn")  
 
@@ -10031,8 +8976,8 @@ setInterval(patchUploaderAccept, 800);
                     image_bytes = effective_uploaded_image_bytes
 
                 if image_bytes:
-                    status.write(f"Step 2/4: Extracting label text via Blockbrain vision agent ({configured_blockbrain_agent})")
-                    ocr_text = extract_image_text_with_local_stack(image_bytes, model=selected_vision_model or None)
+                    status.write("Step 2/4: Extracting label text via Blockbrain vision model")
+                    ocr_text = extract_image_text_with_blockbrain(image_bytes, model=selected_vision_model or None)
                     if ocr_text and LAST_VISION_PROVIDER:
                         image_provider_label = LAST_VISION_PROVIDER
                     if not ocr_text:
@@ -10040,13 +8985,11 @@ setInterval(patchUploaderAccept, 800);
                         retry_text = call_blockbrain_vision(image_bytes, model=selected_vision_model or None)
                         if retry_text and not _is_blockbrain_image_missing_response(retry_text):
                             ocr_text = retry_text
-                            _, _, bb_agent = _load_blockbrain_secrets()
                             runtime_model = str(LAST_BLOCKBRAIN_MODEL or selected_vision_model or "").strip()
                             if runtime_model:
-                                LAST_VISION_PROVIDER = f"Blockbrain vision retry ({bb_agent}, model={runtime_model})"
+                                image_provider_label = f"Blockbrain vision retry ({runtime_model})"
                             else:
-                                LAST_VISION_PROVIDER = f"Blockbrain vision retry ({bb_agent})"
-                            image_provider_label = LAST_VISION_PROVIDER
+                                image_provider_label = "Blockbrain vision retry"
                             image_fallback_used = True
                         else:
                             ocr_text = ""
@@ -10360,7 +9303,7 @@ setInterval(patchUploaderAccept, 800);
                     )
                     status.update(label="Done", state="complete")
 
-                    structured_payload["blockbrain_routing_mode"] = selected_route_mode
+                    structured_payload["blockbrain_routing_mode"] = "direct_llm"
                     structured_payload["blockbrain_preferred_text_model"] = selected_text_model
                     structured_payload["blockbrain_preferred_vision_model"] = selected_vision_model
                     structured_payload["blockbrain_runtime_model"] = str(LAST_BLOCKBRAIN_MODEL or "").strip()
@@ -10373,6 +9316,7 @@ setInterval(patchUploaderAccept, 800);
                     st.session_state["analysis_food_match_summary"] = []
                     st.session_state["analysis_food_match_details"] = []
                     st.session_state["analysis_food_match_status"] = ""
+                    st.session_state["results_show_prices"] = False
                     st.session_state["target_tab"] = "📊 Results"
 
                     # Always unlock/reset Analyze inputs after submit so all fields are interactive again.
@@ -10393,9 +9337,15 @@ setInterval(patchUploaderAccept, 800);
             st.session_state["target_tab"] = "📊 Results"
             st.rerun()
 
+    _analysis_components = st.session_state.get("analysis_components", [])
+    _combined = st.session_state.get("analysis_combined_text", "")
+
+
+def _render_results_tab(tab_results: Any) -> None:
+    import streamlit as st
+
     components = st.session_state.get("analysis_components", [])
     combined = st.session_state.get("analysis_combined_text", "")
-
     with tab_results:
         st.markdown("### Brief Recommendation Summary")
         st.caption("Quick, user-friendly guidance first. Detailed nutrient matching remains below.")
@@ -10422,15 +9372,15 @@ setInterval(patchUploaderAccept, 800);
             if analysis_route_mode or analysis_runtime_model:
                 routing_bits: list[str] = []
                 if analysis_route_mode:
-                    routing_bits.append(f"route={analysis_route_mode}")
+                    routing_bits.append(f"mode={analysis_route_mode}")
                 if analysis_runtime_model:
                     routing_bits.append(f"resolved_model={analysis_runtime_model}")
                 st.caption("Blockbrain runtime: " + ", ".join(routing_bits))
             if analysis_text_model_pref or analysis_vision_model_pref:
                 st.caption(
                     "Blockbrain preferences: "
-                    f"text={analysis_text_model_pref or 'agent-default'}, "
-                    f"vision={analysis_vision_model_pref or 'agent-default'}"
+                    f"text={analysis_text_model_pref or 'platform-default'}, "
+                    f"vision={analysis_vision_model_pref or 'platform-default'}"
                 )
 
         if combined:
@@ -10503,6 +9453,7 @@ setInterval(patchUploaderAccept, 800);
                 st.session_state,
             )
             selected_profile_label = profile_label_by_id.get(selected_profile_id, "No restriction")
+            use_llm_dietary_adjudication = bool(st.session_state.get("dietary_use_llm_adjudication", False))
 
             selected_country = str(st.session_state.get("price_region", "Germany"))
             if selected_country not in COUNTRY_PRICE_CONFIG:
@@ -10540,10 +9491,25 @@ setInterval(patchUploaderAccept, 800);
                 "• ⚠️ alternatives exist but are filtered by your profile"
             )
 
+            # Pricing is opt-in so whole-food alternatives render instantly. Price
+            # lookups (local DB miss -> optional live web/LLM) only run on demand.
+            show_prices = bool(st.session_state.get("results_show_prices", False))
+            if not show_prices:
+                if st.button(
+                    "💶 Estimate whole-food costs",
+                    use_container_width=True,
+                    key="results_estimate_costs_btn",
+                    help="Optional. Loads price estimates for the selected whole foods.",
+                ):
+                    st.session_state["results_show_prices"] = True
+                    st.rerun()
+                st.caption("Cost estimates are optional and load on demand — alternatives above are ready now.")
+
             total_cost = 0.0
             priced_rows = 0
             meal_component_candidates: list[dict[str, Any]] = []
             selected_component_matches: list[dict[str, Any]] = []
+            pending_price_rows: list[dict[str, Any]] = []
             unmapped_components: list[dict[str, str]] = []
             prep_progress = st.progress(0, text="Preparing whole-food matches and estimated costs...")
             total_rows = max(1, len(components))
@@ -10576,7 +9542,11 @@ setInterval(patchUploaderAccept, 800);
                 dose_label = f"{format_float(float(dose_value))} {dose_unit}" if dose_value is not None else "Not available"
                 detail = detail_by_component.get(component_key)
                 foods_raw = detail.get("foods", []) if detail else []
-                foods = apply_food_filters(foods_raw, selected_profile)
+                foods = apply_food_filters(
+                    foods_raw,
+                    selected_profile,
+                    use_llm_adjudication=use_llm_dietary_adjudication,
+                )
                 status_chip = (
                     "Whole-food alternative found"
                     if foods
@@ -10700,129 +9670,140 @@ setInterval(patchUploaderAccept, 800);
                             }
                         )
 
-                        cost_label = "Not available"
-                        price_info: dict[str, Any] | None = None
-                        auto_live_fallback_used = False
-                        if grams_needed is not None and grams_needed > 0:
-                            ean_hint = _extract_ean_from_text(component_raw)
-                            cache_key = (
-                                normalize_lookup_key(str(selected_food.get("food_description", ""))),
-                                selected_country,
-                                selected_currency,
-                                selected_market,
-                                str(enable_live_price_fallback),
-                                str(use_serpapi),
-                                str(use_dataforseo),
-                                format_float(float(grams_needed), 3),
-                                ean_hint,
-                            )
-                            auto_cache_key = (
-                                normalize_lookup_key(str(selected_food.get("food_description", ""))),
-                                selected_country,
-                                selected_currency,
-                                selected_market,
-                                "auto_live_on_miss",
-                                str(use_serpapi),
-                                str(use_dataforseo),
-                                format_float(float(grams_needed), 3),
-                                ean_hint,
-                            )
-                            price_cache: dict[str, Any] = st.session_state.get("price_cache", {})
-                            cached = price_cache.get(cache_key)
-                            if cached and cached.get("price_per_kg") is not None:
-                                price_info = cached
+                        selected_match_row = {
+                            "component": component_display,
+                            "food_description": str(selected_food.get("food_description", "") or ""),
+                            "grams_needed": grams_needed,
+                            "price_per_kg": None,
+                            "currency": selected_currency,
+                        }
+                        selected_component_matches.append(selected_match_row)
+
+                        if show_prices:
+                            cost_slot = st.empty()
+                            audit_slot = st.empty()
+
+                            if grams_needed is None or grams_needed <= 0:
+                                cost_slot.markdown("**Estimated cost for required amount:** Not available")
                             else:
-                                price_info = get_food_price_estimate(
-                                    str(selected_food.get("food_description", "")),
+                                ean_hint = _extract_ean_from_text(component_raw)
+                                cache_key = (
+                                    normalize_lookup_key(str(selected_food.get("food_description", ""))),
                                     selected_country,
                                     selected_currency,
                                     selected_market,
-                                    enable_live_price_fallback,
-                                    grams_needed,
+                                    str(enable_live_price_fallback),
+                                    str(use_serpapi),
+                                    str(use_dataforseo),
+                                    format_float(float(grams_needed), 3),
                                     ean_hint,
-                                    use_serpapi,
-                                    use_dataforseo,
                                 )
-                                if price_info and price_info.get("price_per_kg") is not None:
-                                    price_cache[cache_key] = price_info
-                                    st.session_state["price_cache"] = price_cache
+                                pending_price_rows.append(
+                                    {
+                                        "cache_key": cache_key,
+                                        "food_name": str(selected_food.get("food_description", "")),
+                                        "country": selected_country,
+                                        "currency": selected_currency,
+                                        "market": selected_market,
+                                        "enable_live": enable_live_price_fallback,
+                                        "grams_needed": float(grams_needed),
+                                        "ean_hint": ean_hint,
+                                        "use_serpapi": use_serpapi,
+                                        "use_dataforseo": use_dataforseo,
+                                        "cost_slot": cost_slot,
+                                        "audit_slot": audit_slot,
+                                        "selected_row": selected_match_row,
+                                    }
+                                )
 
-                            # UX default: if local estimate misses, try live fallback automatically.
-                            if (not price_info or price_info.get("price_per_kg") is None) and not enable_live_price_fallback:
-                                cached_auto = price_cache.get(auto_cache_key)
-                                if cached_auto and cached_auto.get("price_per_kg") is not None:
-                                    price_info = cached_auto
-                                    auto_live_fallback_used = True
-                                else:
-                                    auto_price = get_food_price_estimate(
-                                        str(selected_food.get("food_description", "")),
-                                        selected_country,
-                                        selected_currency,
-                                        selected_market,
-                                        True,
-                                        grams_needed,
-                                        ean_hint,
-                                        use_serpapi,
-                                        use_dataforseo,
-                                    )
-                                    if auto_price and auto_price.get("price_per_kg") is not None:
-                                        price_cache[auto_cache_key] = auto_price
-                                        st.session_state["price_cache"] = price_cache
-                                        price_info = auto_price
-                                        auto_live_fallback_used = True
+            if show_prices and pending_price_rows:
+                price_cache: dict[str, Any] = st.session_state.get("price_cache", {})
+                futures: dict[Any, dict[str, Any]] = {}
 
-                            if price_info and price_info.get("price_per_kg") is not None:
-                                try:
-                                    price_per_kg = float(price_info.get("price_per_kg"))
-                                    required_cost = (float(grams_needed) / 1000.0) * price_per_kg
-                                    symbol = CURRENCY_SYMBOL.get(str(price_info.get("currency", selected_currency)), str(price_info.get("currency", selected_currency)))
-                                    source = str(price_info.get("source", "price db"))
-                                    cost_label = f"~{symbol}{format_float(required_cost)} ({source})"
-                                    total_cost += required_cost
-                                    priced_rows += 1
-                                except Exception:
-                                    cost_label = "Not available"
+                rows_to_fetch: list[dict[str, Any]] = []
+                for row in pending_price_rows:
+                    cached = price_cache.get(row["cache_key"])
+                    if cached and cached.get("price_per_kg") is not None:
+                        row["price_info"] = cached
+                    else:
+                        rows_to_fetch.append(row)
 
-                        st.markdown(f"**Estimated cost for required amount:** {cost_label}")
-                        if cost_label != "Not available" and isinstance(price_info, dict):
-                            if auto_live_fallback_used:
-                                st.caption("Price came from automatic live fallback because no local price match was found.")
-                            score = format_float(float(price_info.get("final_score", 0.0)), 3)
-                            match_method = str(price_info.get("match_method", "title_similarity") or "title_similarity")
-                            confidence = str(price_info.get("confidence", "low") or "low")
-                            ppk = format_float(float(price_info.get("price_per_kg", 0.0)), 2)
-                            curr = str(price_info.get("currency", selected_currency) or selected_currency)
-                            st.caption(
-                                f"{curr}/{ppk} per kg • confidence: {confidence} • match: {match_method} • score: {score}"
+                if rows_to_fetch:
+                    worker_count = min(8, max(1, len(rows_to_fetch)))
+                    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                        for row in rows_to_fetch:
+                            future = executor.submit(
+                                get_food_price_estimate,
+                                row["food_name"],
+                                row["country"],
+                                row["currency"],
+                                row["market"],
+                                row["enable_live"],
+                                row["grams_needed"],
+                                row["ean_hint"],
+                                row["use_serpapi"],
+                                row["use_dataforseo"],
                             )
-                            top_candidates = price_info.get("audit_top_candidates") or []
-                            if top_candidates:
-                                short = []
-                                for cand in top_candidates[:3]:
-                                    c_src = str(cand.get("source", "unknown") or "unknown")
-                                    c_score = format_float(float(cand.get("final_score", 0.0)), 2)
-                                    c_ppk = format_float(float(cand.get("price_per_kg", 0.0)), 2)
-                                    c_cur = str(cand.get("currency", selected_currency) or selected_currency)
-                                    short.append(f"{c_src}: {c_cur} {c_ppk}/kg (score {c_score})")
-                                st.caption(" | ".join(short))
+                            futures[future] = row
 
-                        selected_component_matches.append(
-                            {
-                                "component": component_display,
-                                "food_description": str(selected_food.get("food_description", "") or ""),
-                                "grams_needed": grams_needed,
-                                "price_per_kg": (
-                                    float(price_info.get("price_per_kg"))
-                                    if isinstance(price_info, dict) and price_info.get("price_per_kg") is not None
-                                    else None
-                                ),
-                                "currency": (
-                                    str(price_info.get("currency", selected_currency) or selected_currency)
-                                    if isinstance(price_info, dict)
-                                    else selected_currency
-                                ),
-                            }
+                        for future in as_completed(futures):
+                            row = futures[future]
+                            try:
+                                price_info = future.result()
+                            except Exception:
+                                price_info = None
+                            row["price_info"] = price_info
+                            if isinstance(price_info, dict) and price_info.get("price_per_kg") is not None:
+                                price_cache[row["cache_key"]] = price_info
+
+                    st.session_state["price_cache"] = price_cache
+
+                for row in pending_price_rows:
+                    price_info = row.get("price_info")
+                    cost_slot = row.get("cost_slot")
+                    audit_slot = row.get("audit_slot")
+                    grams_needed = float(row.get("grams_needed", 0.0) or 0.0)
+                    selected_row = row.get("selected_row") or {}
+
+                    cost_label = "Not available"
+                    if isinstance(price_info, dict) and price_info.get("price_per_kg") is not None:
+                        try:
+                            price_per_kg = float(price_info.get("price_per_kg"))
+                            required_cost = (grams_needed / 1000.0) * price_per_kg
+                            symbol = CURRENCY_SYMBOL.get(
+                                str(price_info.get("currency", selected_currency)),
+                                str(price_info.get("currency", selected_currency)),
+                            )
+                            source = str(price_info.get("source", "price db"))
+                            cost_label = f"~{symbol}{format_float(required_cost)} ({source})"
+                            total_cost += required_cost
+                            priced_rows += 1
+                            selected_row["price_per_kg"] = price_per_kg
+                            selected_row["currency"] = str(price_info.get("currency", selected_currency) or selected_currency)
+                        except Exception:
+                            cost_label = "Not available"
+
+                    cost_slot.markdown(f"**Estimated cost for required amount:** {cost_label}")
+
+                    if cost_label != "Not available" and isinstance(price_info, dict):
+                        score = format_float(float(price_info.get("final_score", 0.0)), 3)
+                        match_method = str(price_info.get("match_method", "title_similarity") or "title_similarity")
+                        confidence = str(price_info.get("confidence", "low") or "low")
+                        ppk = format_float(float(price_info.get("price_per_kg", 0.0)), 2)
+                        curr = str(price_info.get("currency", selected_currency) or selected_currency)
+                        audit_slot.caption(
+                            f"{curr}/{ppk} per kg • confidence: {confidence} • match: {match_method} • score: {score}"
                         )
+                        top_candidates = price_info.get("audit_top_candidates") or []
+                        if top_candidates:
+                            short = []
+                            for cand in top_candidates[:3]:
+                                c_src = str(cand.get("source", "unknown") or "unknown")
+                                c_score = format_float(float(cand.get("final_score", 0.0)), 2)
+                                c_ppk = format_float(float(cand.get("price_per_kg", 0.0)), 2)
+                                c_cur = str(cand.get("currency", selected_currency) or selected_currency)
+                                short.append(f"{c_src}: {c_cur} {c_ppk}/kg (score {c_score})")
+                            audit_slot.caption(" | ".join(short))
 
             prep_progress.progress(100, text="Alternative matching and pricing ready")
             prep_progress.empty()
@@ -10929,6 +9910,8 @@ setInterval(patchUploaderAccept, 800);
                         )
                     else:
                         st.caption("Enter your supplement price to compare supplement vs selected whole-food costs.")
+                elif not show_prices:
+                    st.caption("Tap 'Estimate whole-food costs' above to load price estimates and the cost comparison.")
                 else:
                     st.caption("Total cost is unavailable until at least one row has both dose-match grams and a price source.")
 
@@ -10936,6 +9919,11 @@ setInterval(patchUploaderAccept, 800);
                 st.caption("Adjust filters and pricing options below to recalculate results.")
 
                 with st.expander("Dietary restriction", expanded=False):
+                    def _sync_results_dietary_llm_toggle() -> None:
+                        st.session_state["dietary_use_llm_adjudication"] = bool(
+                            st.session_state.get("results_dietary_use_llm_adjudication_toggle", False)
+                        )
+
                     def _sync_results_dietary_profile() -> None:
                         selected_id, _ = _resolve_dietary_profile_selection(
                             profiles,
@@ -10960,7 +9948,21 @@ setInterval(patchUploaderAccept, 800);
                         st.session_state["global_diet_profile"] = selected_profile_id_after
                     if selected_profile_after and selected_profile_after.get("description"):
                         st.caption(f"Profile note: {selected_profile_after.get('description')}")
-                    st.caption("Filtering uses local keyword/rule screening and is not a medical, allergy, halal, or kosher certification.")
+                    use_llm_dietary_adjudication = st.toggle(
+                        "Use Blockbrain AI cross-check for ambiguous dietary matches",
+                        value=use_llm_dietary_adjudication,
+                        key="results_dietary_use_llm_adjudication_toggle",
+                        on_change=_sync_results_dietary_llm_toggle,
+                        help="Deterministic keyword/rule blocks stay primary; AI cross-check adds a secondary block layer for uncertain items.",
+                    )
+                    st.session_state["dietary_use_llm_adjudication"] = bool(use_llm_dietary_adjudication)
+                    if use_llm_dietary_adjudication:
+                        st.caption(
+                            "Mode: Hybrid (deterministic hard-block + limited Blockbrain adjudication for ambiguous items). Slightly slower."
+                        )
+                    else:
+                        st.caption("Mode: Fast deterministic filter (keyword/rule screening only).")
+                    st.caption("Filtering is not a medical, allergy, halal, or kosher certification.")
 
                 with st.expander("Pricing settings", expanded=False):
                     country_options = list(COUNTRY_PRICE_CONFIG.keys())
@@ -11020,6 +10022,9 @@ setInterval(patchUploaderAccept, 800);
                         st.session_state["price_cache"] = {}
                         st.caption("Price cache cleared. Next render will fetch fresh prices.")
 
+
+def _render_meals_tab(tab_meals: Any) -> None:
+    import streamlit as st
     with tab_meals:
         st.subheader("Meal ideas from suggested whole foods")
         st.caption(
@@ -11037,6 +10042,7 @@ setInterval(patchUploaderAccept, 800);
                 st.session_state.get("global_diet_profile", _default_dietary_profile_id(profiles)),
             )
             selected_profile_label = profile_label_by_id.get(selected_profile_id, "No restriction")
+            use_llm_dietary_adjudication = bool(st.session_state.get("dietary_use_llm_adjudication", False))
 
             selected_country = str(st.session_state.get("price_region", "Germany"))
             selected_currency = str(st.session_state.get("price_currency", "EUR"))
@@ -11055,8 +10061,22 @@ setInterval(patchUploaderAccept, 800);
             )
             if selected_profile and selected_profile.get("description"):
                 st.caption(f"Profile note: {selected_profile.get('description')}")
+
+            def _sync_meals_dietary_llm_toggle() -> None:
+                st.session_state["dietary_use_llm_adjudication"] = bool(
+                    st.session_state.get("meals_dietary_use_llm_adjudication_toggle", False)
+                )
+
+            use_llm_dietary_adjudication = st.toggle(
+                "Use Blockbrain AI cross-check for ambiguous dietary matches",
+                value=use_llm_dietary_adjudication,
+                key="meals_dietary_use_llm_adjudication_toggle",
+                on_change=_sync_meals_dietary_llm_toggle,
+                help="Deterministic keyword/rule blocks stay primary; AI cross-check adds a secondary block layer for uncertain recipes.",
+            )
+            st.session_state["dietary_use_llm_adjudication"] = bool(use_llm_dietary_adjudication)
             st.caption(
-                "Dietary profiles use practical ingredient-keyword screening and are not medical advice, halal/kosher certification, or allergy safety guarantees."
+                "Dietary profiles use practical ingredient-keyword screening; optional AI cross-check can further block uncertain recipes."
             )
 
             st.caption("AI-only mode active: meal suggestions are generated by the selected LLM.")
@@ -11094,6 +10114,7 @@ setInterval(patchUploaderAccept, 800);
                     ],
                     "profile": normalize_lookup_key(str(selected_profile.get("id", "none") if selected_profile else "none")),
                     "must_exclude": normalize_lookup_key(must_exclude_ingredient),
+                    "use_llm_dietary_adjudication": bool(use_llm_dietary_adjudication),
                     "country": normalize_lookup_key(selected_country),
                     "currency": normalize_lookup_key(selected_currency),
                     "macro_kcal": macro_target_kcal,
@@ -11174,6 +10195,7 @@ setInterval(patchUploaderAccept, 800);
 
                         strategy_meal_options: dict[str, list[dict[str, Any]]] = {}
                         strategy_fail_reasons: dict[str, str] = {}
+                        strategy_ai_meal_cache: dict[str, list[dict[str, Any]]] = {}
                         max_options_per_strategy = 12
 
                         for strategy in strategy_sets:
@@ -11182,8 +10204,28 @@ setInterval(patchUploaderAccept, 800);
                             if not reqs:
                                 continue
 
-                            ai_meals_raw = generate_llm_meal_suggestions(reqs, max_results=12)
-                            ai_meals = apply_meal_filters(ai_meals_raw, selected_profile, must_exclude_ingredient)
+                            req_signature = json.dumps(
+                                [
+                                    {
+                                        "component": normalize_lookup_key(str(r.get("component", ""))),
+                                        "food_name": normalize_lookup_key(str(r.get("food_name", ""))),
+                                        "grams_needed": round(float(r.get("grams_needed", 0.0) or 0.0), 4),
+                                    }
+                                    for r in reqs
+                                ],
+                                sort_keys=True,
+                            )
+                            if req_signature in strategy_ai_meal_cache:
+                                ai_meals_raw = strategy_ai_meal_cache[req_signature]
+                            else:
+                                ai_meals_raw = generate_llm_meal_suggestions(reqs, max_results=12)
+                                strategy_ai_meal_cache[req_signature] = ai_meals_raw
+                            ai_meals = apply_meal_filters(
+                                ai_meals_raw,
+                                selected_profile,
+                                must_exclude_ingredient,
+                                use_llm_adjudication=use_llm_dietary_adjudication,
+                            )
                             if strategy.get("require_selected_food") and selected_food_names:
                                 ai_meals = [m for m in ai_meals if _recipe_contains_any_food(m, selected_food_names)]
 
@@ -11286,7 +10328,7 @@ setInterval(patchUploaderAccept, 800);
 
                             if not strategy_options:
                                 _tpl = build_strategy_template_meal(
-                                    reqs, strategy_label, f" strategy_label  (auto template)"
+                                    reqs, strategy_label, f"{strategy_label} (auto template)"
                                 )
                                 if _tpl:
                                     strategy_options = [_tpl]
@@ -11502,271 +10544,491 @@ setInterval(patchUploaderAccept, 800);
                     if uncovered:
                         st.caption("Not fully covered in this meal: " + ", ".join([str(x) for x in uncovered]))
 
-    with tab_research:
-        st.subheader("Ask a RAG question")
-        rag_chunks, rag_status = build_rag_index()
-        rag_available = bool(rag_chunks) and str(rag_status).lower().startswith("ok")
-        if rag_available:
-            st.caption("Ask questions using your local fitness reference library.")
-        else:
-            st.warning(f"RAG currently unavailable: {rag_status}")
 
-        rag_query = st.text_area(
-            "Your question",
-            placeholder="Ask me any supplement-related question and I will search your local reference database.",
-            height=110,
-            key="rag_query_input",
+def build_mobile_ui() -> None:
+    import streamlit as st
+    import streamlit.components.v1 as components
+    global LAST_VISION_PROVIDER
+    global LAST_TEXT_PROVIDER
+    global LAST_URL_PARSE_REASON
+
+    st.set_page_config(page_title="SuppSwap", page_icon="🥗", layout="centered")
+
+    # -- File uploader button CSS override --------------------------------
+    st.markdown(
+        """<style>
+        /* Hide drag-and-drop instruction text above the button */
+        [data-testid='stFileUploaderDropzoneInstructions'] {
+            display: none !important;
+        }
+        /* Hide original Browse files span text */
+        [data-testid='stFileUploaderDropzone'] button span {
+            display: none !important;
+        }
+        /* Inject custom label using actual UTF-8 emoji */
+        [data-testid='stFileUploaderDropzone'] button::before {
+            content: '📷📤🗂 Capture Supplement Info';
+            font-size: 0.95rem;
+            font-weight: 500;
+        }
+        </style>""",
+        unsafe_allow_html=True,
+    )
+    # -----------------------------------------------------------------------
+
+    st.markdown(
+        """
+<style>
+.mfitness-watermark {
+    position: fixed;
+    right: 14px;
+    bottom: 74px;
+    z-index: 99999;
+    pointer-events: none;
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    color: rgba(120, 120, 120, 0.75);
+    background: rgba(255, 255, 255, 0.55);
+    padding: 4px 8px;
+    border-radius: 8px;
+}
+
+div[data-testid="stTabs"] button[role="tab"] p {
+    margin: 0;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.08;
+    text-align: center;
+    word-break: break-word;
+}
+
+div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+    background: #0f766e;
+    color: #ffffff;
+    border-color: #0f766e;
+    box-shadow: 0 4px 12px rgba(15, 118, 110, 0.22);
+}
+
+.linked-value-chip {
+    display: inline-block;
+    padding: 0.12rem 0.42rem;
+    border-radius: 999px;
+    background: #e7f5f2;
+    border: 1px solid #b7e2d8;
+    color: #0f4d46;
+    font-weight: 700;
+}
+
+/* BaseWeb select fallback: hide raw icon ligature text (e.g., "arrow_down") and draw a chevron. */
+div[data-baseweb="select"] [role="button"] > div:last-child {
+    position: relative;
+    min-width: 1rem;
+}
+
+div[data-baseweb="select"] [role="button"] > div:last-child span[class*="material"],
+div[data-baseweb="select"] [role="button"] > div:last-child span[class*="icon"] {
+    display: inline-block !important;
+    width: 1rem !important;
+    height: 1rem !important;
+    min-width: 1rem !important;
+    overflow: hidden !important;
+    text-indent: -9999px !important;
+    white-space: nowrap !important;
+    font-size: 0 !important;
+    line-height: 0 !important;
+    color: transparent !important;
+}
+
+div[data-baseweb="select"] [role="button"] > div:last-child::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 48%;
+    width: 0.42rem;
+    height: 0.42rem;
+    border-right: 2px solid rgba(55, 65, 81, 0.9);
+    border-bottom: 2px solid rgba(55, 65, 81, 0.9);
+    transform: translate(-50%, -50%) rotate(45deg);
+    pointer-events: none;
+}
+
+/* Bottom tab bar navigation on all screen sizes */
+div[data-testid="stTabs"] div[role="tablist"] {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10000;
+    margin: 0;
+    padding: 0.42rem 0.56rem calc(0.42rem + env(safe-area-inset-bottom));
+    background: rgba(255, 255, 255, 0.96);
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+    backdrop-filter: blur(6px);
+    gap: 0.28rem;
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    width: 100%;
+}
+
+div[data-testid="stTabs"] button[role="tab"] {
+    width: 100%;
+    min-height: 2.7rem;
+    font-size: clamp(0.6rem, 1.2vw, 0.76rem);
+    font-weight: 600;
+    line-height: 1.08;
+    padding: 0.32rem 0.18rem;
+    border-radius: 10px;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    background: rgba(250, 250, 250, 0.95);
+}
+
+.block-container {
+    padding-bottom: 6.4rem;
+}
+
+/* Ensure page content stays scrollable with fixed bottom chrome */
+html,
+body,
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"] {
+    overflow: auto !important;
+}
+
+@media (max-width: 768px) {
+    .block-container {
+        padding-top: 0.8rem;
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+        padding-bottom: 6.4rem;
+    }
+
+    div[data-testid="stTabs"] div[role="tablist"] {
+        gap: 0.2rem;
+    }
+
+    div[data-testid="stTabs"] button[role="tab"] {
+        min-height: 2.85rem;
+        font-size: clamp(0.56rem, 2.35vw, 0.68rem);
+        padding: 0.28rem 0.16rem;
+    }
+
+    div[data-testid="stMetricValue"] {
+        font-size: 1.15rem;
+    }
+    div[data-testid="stMetricLabel"] {
+        font-size: 0.78rem;
+    }
+}
+</style>
+<div class="mfitness-watermark">© mfitness92</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    st.title("🥗 SuppSwap")
+    # Patch: rebrand uploader button to "Capture" + camera icon.
+    st.markdown(
+        """
+<style>
+/* Replace the "Browse files" button text with a camera + Capture label */
+section[data-testid="stFileUploaderDropzone"] button {
+    font-size: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 0.4rem !important;
+}
+
+section[data-testid="stFileUploaderDropzone"] button::after {
+    content: "\01F4F7 \01F4C1 \02B06  Capture Supplement Info";
+    font-size: 0.9rem !important;
+    font-weight: 700 !important;
+}
+
+/* Show a camera symbol alongside the existing upload symbol */
+[data-testid="stFileUploaderDropzoneInstructions"]::before {
+    content: "\01F4F7 / ";
+    font-size: 1.3rem;
+    margin-right: 0.35rem;
+    vertical-align: middle;
+}
+
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+    # -- Session state defaults ------------------------------------------
+    _SESSION_DEFAULTS: dict = {
+        "analysis_ready": False,
+        "analysis_components": [],
+        "analysis_combined_text": "",
+        "analysis_structured_debug": {},
+        "analysis_food_match_cache_key": "",
+        "analysis_food_match_summary": [],
+        "analysis_food_match_details": [],
+        "analysis_food_match_status": "",
+        "price_cache": {},
+        "meal_component_candidates": [],
+        "meal_suggestion_cache": {},
+        "macro_target_kcal": 500,
+        "macro_pct_protein": 30,
+        "macro_pct_carbs": 50,
+        "macro_pct_fat": 20,
+        "price_optimized_max_meal_cost": 12.0,
+        "target_tab": "",
+        "barcode_parse_cache": {},
+        "url_parse_cache": {},
+        "summary_review_signature": "",
+        "summary_review_confirmed": False,
+        "global_diet_profile": "",
+        "results_show_prices": False,
+        "dietary_use_llm_adjudication": False,
+    }
+    for _k, _v in _SESSION_DEFAULTS.items():
+        st.session_state.setdefault(_k, _v)
+    # -- Mobile expander dropdown scroll fix ----------------------------
+    st.markdown(
+        """<style>
+        /* Force BaseWeb portal/popover above everything including tab bar */
+        [data-baseweb='popover'],
+        [data-baseweb='tooltip'],
+        div[role='listbox'],
+        ul[role='listbox'] {
+            z-index: 999999 !important;
+            position: fixed !important;
+            overflow-y: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            overscroll-behavior: contain !important;
+            max-height: 45vh !important;
+        }
+        /* Prevent the expander itself from clipping the dropdown */
+        details, details > summary ~ div {
+            overflow: visible !important;
+        }
+        /* Each option row — large enough touch target */
+        [role='option'] {
+            min-height: 44px !important;
+            padding: 10px 16px !important;
+            display: flex !important;
+            align-items: center !important;
+            touch-action: pan-y !important;
+        }
+        /* The select input trigger */
+        [data-baseweb='select'] > div:first-child {
+            min-height: 44px !important;
+            touch-action: manipulation !important;
+        }
+        /* Scrollable list container */
+        [data-baseweb='menu'] {
+            overflow-y: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            overscroll-behavior: contain !important;
+            max-height: 45vh !important;
+        }
+        /* Stop parent containers stealing touch events */
+        .stExpander {
+            touch-action: pan-y !important;
+            overflow: visible !important;
+        }
+        section[data-testid='stSidebar'],
+        .main .block-container {
+            overflow-x: hidden !important;
+        }
+        </style>""",
+        unsafe_allow_html=True,
+    )
+    # -----------------------------------------------------------------------
+    # Patch: make selectbox/multiselect dropdown menus scrollable and above the tab bar.  
+    st.markdown(  
+        """  
+<style>  
+div[data-baseweb="popover"]    
+    z-index: 10050 !important;  
+    overflow: visible !important;  
+   
+div[data-baseweb="popover"] ul[role="listbox"],  
+div[data-baseweb="popover"] ul[data-baseweb="menu"],  
+ul[data-baseweb="menu"]    
+    max-height: 45vh !important;  
+    overflow-y: auto !important;  
+    -webkit-overflow-scrolling: touch !important;  
+    overscroll-behavior: contain !important;  
+   
+</style>  
+""",  
+        unsafe_allow_html=True,  
+    )  
+
+    # ---------------------------------------------------------------------
+
+    tab_analyze, tab_results, tab_meals, tab_research, tab_reference, tab_about = st.tabs(
+        ["🔎 Analyze", "📊 Results", "🍽 Meals", "📚 Research", "📘 Nutrient Guide", "ℹ️ About & Feedback"]
+    )
+    # Patch: Welcome content now lives at the end inside the About & Feedback tab.
+    tab_welcome = tab_about
+    tab_feedback = tab_about
+
+    components.html(
+        """
+<script>
+const parentDoc = window.parent.document;
+const parentWin = window.parent;
+
+function suppswapScrollToTop() {
+    parentWin.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    const main = parentDoc.querySelector('[data-testid="stMain"]');
+    if (main) {
+        main.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    }
+}
+
+if (!parentWin.__suppswapTabScrollHookInstalled) {
+    parentWin.__suppswapTabScrollHookInstalled = true;
+    parentDoc.addEventListener('click', (event) => {
+        const tabButton = event.target && event.target.closest
+            ? event.target.closest('button[role="tab"]')
+            : null;
+        if (!tabButton) {
+            return;
+        }
+        setTimeout(suppswapScrollToTop, 0);
+    }, true);
+}
+</script>
+""",
+        height=0,
+    )
+
+    def _render_tab_activation_script(target_tab_name: str) -> None:
+        safe_target = json.dumps(str(target_tab_name or "").strip())
+        components.html(
+            rf"""
+<script>
+const target = {safe_target};
+const parentDoc = window.parent.document;
+const parentWin = window.parent;
+
+const canonicalize = (value) => {{
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return '';
+    return raw
+        .replace(/^\s*[0-9]+\s*[\)\].:\-]*\s*/, '')
+        .replace(/^[^a-z0-9]+/, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}};
+
+const targetCanonical = canonicalize(target);
+
+const scrollToTop = () => {{
+    parentWin.scrollTo({{ top: 0, left: 0, behavior: 'auto' }});
+    const main = parentDoc.querySelector('[data-testid="stMain"]');
+    if (main) {{
+        main.scrollTo({{ top: 0, left: 0, behavior: 'auto' }});
+    }}
+}};
+
+const matchesTarget = (label) => {{
+    const plain = String(label || '').trim().toLowerCase();
+    const canon = canonicalize(label);
+    if (!canon) return false;
+    if (plain === String(target || '').trim().toLowerCase()) return true;
+    if (canon === targetCanonical) return true;
+    if (canon.startsWith(targetCanonical)) return true;
+    if (canon.includes(targetCanonical)) return true;
+    return false;
+}};
+
+const tryActivateTab = (attempt = 0) => {{
+    const tabButtons = parentDoc.querySelectorAll('button[role="tab"]');
+    let clicked = false;
+
+    for (const btn of tabButtons) {{
+        const label = (btn.innerText || '').trim();
+        const matches = matchesTarget(label);
+        if (!matches) {{
+            continue;
+        }}
+        btn.click();
+        clicked = true;
+        setTimeout(scrollToTop, 0);
+        break;
+    }}
+
+    if (!clicked && attempt < 80) {{
+        setTimeout(() => tryActivateTab(attempt + 1), 100);
+    }}
+}};
+
+setTimeout(() => tryActivateTab(0), 60);
+</script>
+""",
+            height=0,
         )
-        ask_rag = st.button("Ask RAG", use_container_width=True, key="ask_rag_btn")
-        if ask_rag:
-            if not rag_query.strip():
-                st.warning("Please enter a question.")
-            elif not rag_available:
-                st.info("RAG index is not ready yet. Please refresh after indexing or check parser setup.")
-            else:
-                with st.status("Searching reference library", expanded=False) as rag_status_box:
-                    rag_status_box.write("Retrieving relevant excerpts")
-                    rag_answer, rag_sources, rag_meta = answer_rag_question(rag_query.strip(), rag_chunks)
-                    rag_status_box.update(label="Done", state="complete")
 
-                st.markdown("**Answer**")
-                st.write(rag_answer)
-                if rag_sources:
-                    st.caption("Sources: " + ", ".join(rag_sources))
+    if st.session_state.get("target_tab"):
+        target_tab = str(st.session_state.get("target_tab") or "").strip()
+        _render_tab_activation_script(target_tab)
+        st.session_state["target_tab"] = ""
 
-                retrieval_conf = float(rag_meta.get("retrieval_confidence", 0.0) or 0.0)
-                st.caption(f"Retrieval confidence: {format_float(retrieval_conf * 100, 0)}%")
+    with tab_welcome:
+        st.subheader("Purpose")
+        st.markdown(
+            """
+SuppSwap helps you make practical nutrition decisions so you do not overpay for supplements or miss better whole-food options.
 
-                needs_web_fallback = bool(rag_meta.get("needs_web_fallback", False))
-                if needs_web_fallback:
-                    reason = str(rag_meta.get("reason", "") or "")
-                    fallback_query = str(rag_meta.get("fallback_query", "") or "").strip()
-                    if reason == "no_retrieval":
-                        st.info("No reliable local answer found for this question. You can run a web-search fallback.")
-                    elif reason == "llm_unavailable":
-                        st.info("Local evidence was retrieved, but the LLM answer step is unavailable right now.")
+It is designed for both:
+- beginners who are still learning nutrition basics, and
+- advanced users who want faster evidence-oriented decisions.
 
-                    if fallback_query:
-                        st.caption("Suggested web-search query")
-                        st.code(fallback_query)
+Instead of manually searching micronutrient tables for each food, you can scan a supplement label and get food-equivalent comparisons, costs, and meal ideas in one flow.
 
-                    fallback_pack = build_web_fallback_package(rag_query.strip(), fallback_query)
-                    st.link_button(
-                        "Open web search now",
-                        str(fallback_pack.get("search_url", "https://duckduckgo.com")),
-                        use_container_width=True,
-                    )
+The goal is simple: compare supplement doses against real foods, costs, and meal plans using transparent calculations.
+"""
+        )
 
-                    with st.expander("Web fallback resources", expanded=True):
-                        st.markdown("**Ready-to-use search queries**")
-                        for q in fallback_pack.get("queries", []):
-                            st.code(str(q))
+        st.subheader("Why Whole Foods Usually Win")
+        st.markdown(
+            """
+- Whole foods deliver micronutrients together with fiber, water, protein, fats, and food matrix effects that can change absorption and satiety.
+- Whole foods contain many bioactive compounds (polyphenols, carotenoids, peptides, phytochemicals) that are not fully captured by standard supplement labels.
+- Chemical synthesis can target known measurable compounds, but nutrition science still cannot fully quantify all interacting compounds present in real foods.
+- Food patterns are associated with better long-term health outcomes than isolated-pill strategies in many populations.
+- Whole foods improve diet quality and meal structure, which supports adherence better than stack-heavy supplement routines.
+- Supplements can still be useful in specific deficiencies or clinical contexts, but they are usually a targeted tool, not a full replacement for food quality.
+"""
+        )
 
-                        st.markdown("**Trusted sources to prioritize**")
-                        for url in fallback_pack.get("trusted_urls", []):
-                            st.markdown(f"- {url}")
+        st.subheader("How To Use This App")
+        st.markdown(
+            """
+1. `Analyze`: Enter your supplement details by camera, upload, URL, or text.
+2. `Results`: Review mapped whole-food alternatives, concentration per 100 g, cost comparison, and practical portion estimates.
+3. `Meals`: Generate meal ideas based on the selected alternatives and your dietary profile.
+4. `Research (RAG)`: Ask evidence-focused questions; answers are retrieved from your local fitness reference library.
 
-                    if st.button("Generate optional LLM research plan", key="rag_websearch_fallback_btn", use_container_width=True):
-                        web_fallback = call_text_llm(
-                            "You are a nutrition research assistant.",
-                            (
-                                "Create a concise web-search plan for this nutrition question. "
-                                "Return: 1) 5 high-quality search queries, 2) trusted sources to prioritize, "
-                                "3) quick checklist to validate claims. "
-                                f"Question: {rag_query.strip()}"
-                            ),
-                        )
-                        if web_fallback:
-                            st.markdown("**Optional LLM research plan**")
-                            st.write(web_fallback)
-                        else:
-                            st.info("LLM planner unavailable. Use the working fallback resources above.")
+RAG source context:
+The local RAG library is built from curated expert nutrition notes and evidence summaries, with heavy emphasis on meta-study style synthesis and sources aligned with evidence-tracking approaches (including material in your Examine-style reference stack).
+"""
+        )
+
+        st.caption("Educational tool only. It is not a diagnosis or medical treatment service.")
+
+        if st.button("Analyze my supplement", type="primary", use_container_width=True, key="welcome_go_analyze"):
+            st.session_state["target_tab"] = "Analyze"
+            st.rerun()
+
+    _render_analyze_tab(tab_analyze)
+    _render_results_tab(tab_results)
+    _render_meals_tab(tab_meals)
+
+    with tab_research:
+        _render_research_tab()
 
     with tab_reference:
-        st.subheader("Official Nutrient Reference Guide")
-        st.caption(
-            "Official adult nutrient intake recommendation averaged across several official sources."
-        )
-
-        source_rows = load_official_nutrient_sources()
-        if not source_rows:
-            st.info(
-                "No official nutrient source table found yet. Add rows to `data/official_nutrient_sources.csv` "
-                "using the provided template format."
-            )
-            st.code(
-                "nutrient,unit,life_stage,sex,source_agency,recommended_value,upper_limit_value,source_url,notes",
-                language="text",
-            )
-        else:
-            life_stage_options = sorted(
-                {
-                    str(row.get("life_stage", "Adults") or "Adults")
-                    for row in source_rows
-                    if str(row.get("life_stage", "") or "").strip()
-                }
-            )
-            sex_options_all = sorted(
-                {
-                    str(row.get("sex", "All") or "All")
-                    for row in source_rows
-                    if str(row.get("sex", "") or "").strip()
-                }
-            )
-            sex_options = [
-                value
-                for value in sex_options_all
-                if normalize_lookup_key(value) in {"male", "female"}
-            ]
-            if not sex_options:
-                sex_options = sex_options_all
-            if "Adults" in life_stage_options:
-                life_stage_default = life_stage_options.index("Adults")
-            else:
-                life_stage_default = 0
-            if "Male" in sex_options:
-                sex_default = sex_options.index("Male")
-            elif "Female" in sex_options:
-                sex_default = sex_options.index("Female")
-            elif "All" in sex_options:
-                sex_default = sex_options.index("All")
-            else:
-                sex_default = 0
-
-            selected_life_stage = life_stage_options[life_stage_default]
-            selected_sex = sex_options[sex_default]
-            if len(life_stage_options) > 1:
-                filter_cols = st.columns(2)
-                selected_life_stage = filter_cols[0].selectbox(
-                    "Life stage",
-                    options=life_stage_options,
-                    index=life_stage_default,
-                    key="official_ref_life_stage",
-                )
-                if len(sex_options) > 1:
-                    selected_sex = filter_cols[1].selectbox(
-                        "Sex",
-                        options=sex_options,
-                        index=sex_default,
-                        key="official_ref_sex",
-                    )
-                else:
-                    filter_cols[1].caption(f"Sex: {selected_sex}")
-            else:
-                st.caption(f"Life stage: {selected_life_stage}")
-                if len(sex_options) > 1:
-                    selected_sex = st.selectbox(
-                        "Sex",
-                        options=sex_options,
-                        index=sex_default,
-                        key="official_ref_sex",
-                    )
-                else:
-                    st.caption(f"Sex: {selected_sex}")
-
-            aggregate_rows = build_official_nutrient_aggregate(source_rows, selected_life_stage, selected_sex)
-            if not aggregate_rows:
-                st.warning("No matching rows for the selected life stage/sex filters.")
-            else:
-                display_rows: list[dict[str, Any]] = []
-                csv_buffer = io.StringIO()
-                csv_writer = csv.writer(csv_buffer)
-                csv_writer.writerow(
-                    [
-                        "nutrient",
-                        "unit",
-                        "recommendation",
-                        "max_upper_level_intake",
-                        "source_count",
-                        "sources_used",
-                    ]
-                )
-
-                for row in aggregate_rows:
-                    recommendation_value = row.get("recommendation_value")
-                    ul_avg = row.get("ul_average")
-                    sources_used = row.get("sources_used", []) or []
-
-                    display_rows.append(
-                        {
-                            "Nutrient": row.get("nutrient", ""),
-                            "Unit": row.get("unit", ""),
-                            "Recommendation": (
-                                format_float(float(recommendation_value), 2)
-                                if recommendation_value is not None
-                                else "-"
-                            ),
-                            "Max upper level intake": format_float(float(ul_avg), 2) if ul_avg is not None else "-",
-                            "Sources": int(row.get("source_count", 0) or 0),
-                        }
-                    )
-
-                    csv_writer.writerow(
-                        [
-                            row.get("nutrient", ""),
-                            row.get("unit", ""),
-                            (
-                                format_float(float(recommendation_value), 6)
-                                if recommendation_value is not None
-                                else ""
-                            ),
-                            format_float(float(ul_avg), 6) if ul_avg is not None else "",
-                            int(row.get("source_count", 0) or 0),
-                            " | ".join([str(s) for s in sources_used]),
-                        ]
-                    )
-
-                st.dataframe(display_rows, use_container_width=True, hide_index=True)
-                st.download_button(
-                    "Download aggregated table (CSV)",
-                    data=csv_buffer.getvalue(),
-                    file_name=f"official_nutrient_reference_{normalize_lookup_key(selected_life_stage)}_{normalize_lookup_key(selected_sex)}.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                )
-
-                with st.expander("Show source-level rows", expanded=False):
-                    for agg in aggregate_rows:
-                        nutrient = str(agg.get("nutrient", "") or "").strip()
-                        unit = str(agg.get("unit", "") or "").strip()
-                        if not nutrient or not unit:
-                            continue
-                        st.markdown(f"**{nutrient} ({unit})**")
-                        for src in source_rows:
-                            src_n = str(src.get("nutrient", "") or "").strip()
-                            src_u = str(src.get("unit", "") or "").strip()
-                            if normalize_lookup_key(src_n) != normalize_lookup_key(nutrient):
-                                continue
-                            if normalize_lookup_key(src_u) != normalize_lookup_key(unit):
-                                continue
-
-                            src_stage = normalize_lookup_key(str(src.get("life_stage", "Adults") or "Adults"))
-                            src_sex = normalize_lookup_key(str(src.get("sex", "All") or "All"))
-                            if src_stage not in {normalize_lookup_key(selected_life_stage), "all", "general"}:
-                                continue
-                            if src_sex not in {normalize_lookup_key(selected_sex), "all", "both", "any", "general"}:
-                                continue
-
-                            rec = src.get("recommended_value")
-                            ul = src.get("upper_limit_value")
-                            source_agency = str(src.get("source_agency", "") or "").strip()
-                            source_url = str(src.get("source_url", "") or "").strip()
-                            notes = str(src.get("notes", "") or "").strip()
-
-                            line = (
-                                f"- {source_agency}: rec {format_float(float(rec), 2) if rec is not None else '-'} {unit}, "
-                                f"UL {format_float(float(ul), 2) if ul is not None else '-'} {unit}"
-                            )
-                            st.markdown(line)
-                            if source_url:
-                                st.caption(source_url)
-                            if notes:
-                                st.caption(notes)
-                        st.markdown("---")
-
-                st.caption(
-                    "Upper intake level = highest daily intake unlikely to cause adverse effects in healthy people over long-term use."
-                )
+        _render_reference_tab()
 
     with tab_feedback:
         st.subheader("Report incorrect or unsafe output")
