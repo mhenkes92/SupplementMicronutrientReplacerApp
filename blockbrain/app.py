@@ -2,6 +2,7 @@ import base64
 import csv
 import difflib
 import functools
+import hashlib
 import html
 import io
 import json
@@ -78,7 +79,8 @@ def _load_blockbrain_secrets() -> tuple[str, str, str]:
     agent_id is retained for backward compatibility with older configs.
     """
     _default_base = "https://agentic.theblockbrain.ai"
-    _default_route_id = "researchAgent"
+    # User-selected production agent for all Blockbrain LLM calls.
+    _default_route_id = "6a4bc43653952e29ba6ef1d6"
 
     def _strip_path(base: str) -> str:
         """Return only the scheme+host, stripping any /v1/... path."""
@@ -98,15 +100,13 @@ def _load_blockbrain_secrets() -> tuple[str, str, str]:
             or os.getenv("BLOCKBRAIN_API_URL", "")
             or _default_base
         )
-        route_id = (
-            st.secrets.get("BLOCKBRAIN_AGENT_ID", "")
-            or os.getenv("BLOCKBRAIN_AGENT_ID", "")
-            or _default_route_id
-        )
+        # Intentionally ignore legacy BLOCKBRAIN_AGENT_ID from secrets/env so all
+        # app calls are forced through the pinned production agent.
+        route_id = _default_route_id
         return str(api_key).strip(), _strip_path(str(base_url)), str(route_id).strip()
     except Exception:
         base_url = os.getenv("BLOCKBRAIN_BASE_URL") or os.getenv("BLOCKBRAIN_API_URL") or _default_base
-        route_id = os.getenv("BLOCKBRAIN_AGENT_ID", _default_route_id)
+        route_id = _default_route_id
         return (
             os.getenv("BLOCKBRAIN_API_KEY", ""),
             _strip_path(base_url),
@@ -418,9 +418,45 @@ def _file_mtime_or_minus_one(path: Path) -> float:
 def _parse_float(value: Any) -> float | None:
     if value is None:
         return None
-    text = str(value).strip().replace(",", ".")
+    text = str(value).strip()
     if not text:
         return None
+    # Keep only numeric punctuation; remove spaces used as thousand separators.
+    text = re.sub(r"\s+", "", text)
+    text = re.sub(r"[^0-9,\.-]", "", text)
+    if not text:
+        return None
+
+    # Locale-aware parsing for common OCR/output variants:
+    #  - 1,000 / 1.000 (thousand separator)
+    #  - 1,5 / 1.5 (decimal separator)
+    #  - 1,234.56 / 1.234,56 (mixed locale)
+    if "," in text and "." in text:
+        last_comma = text.rfind(",")
+        last_dot = text.rfind(".")
+        if last_dot > last_comma:
+            # US style: 1,234.56
+            text = text.replace(",", "")
+        else:
+            # EU style: 1.234,56
+            text = text.replace(".", "").replace(",", ".")
+    elif "," in text:
+        parts = text.split(",")
+        if len(parts) > 2:
+            text = "".join(parts)
+        elif len(parts) == 2 and len(parts[1]) == 3 and parts[0] not in {"", "0", "-0"}:
+            # Treat "1,000" as one thousand, but keep "0,125" as decimal.
+            text = "".join(parts)
+        else:
+            text = text.replace(",", ".")
+    elif "." in text:
+        parts = text.split(".")
+        if len(parts) > 2:
+            text = "".join(parts)
+        elif len(parts) == 2 and len(parts[1]) == 3 and parts[0] not in {"", "0", "-0"}:
+            # Treat "1.000" as one thousand, but keep "0.125" as decimal.
+            text = "".join(parts)
+
     try:
         return float(text)
     except (ValueError, TypeError) as e:
@@ -5375,14 +5411,10 @@ def _parse_ocr_numeric_value(raw_value: str) -> float | None:
     # OCR often confuses 1 with l, I, or | in small table fonts.
     if token and token[0] in {"l", "I", "|"}:
         token = "1" + token[1:]
-    token = token.replace(",", ".")
-    token = re.sub(r"[^0-9\.]", "", token)
+    token = re.sub(r"[^0-9,\.-]", "", token)
     if not token:
         return None
-    try:
-        return float(token)
-    except Exception:
-        return None
+    return _parse_float(token)
 
 
 def _extract_last_component_before_dose(prefix_text: str) -> str:
@@ -6593,10 +6625,9 @@ def _get_selected_blockbrain_models() -> tuple[str, str]:
 def _blockbrain_chat(payload: dict[str, Any]) -> str:
     """Send a request to Blockbrain and return the assistant text.
 
-    Primary transport is the Blockbrain agent stream endpoint
-    (/v1/api/agents/{agent}/stream), which is the only endpoint this host
-    exposes. If BLOCKBRAIN_CHAT_ENDPOINT is set (e.g. an OpenAI-compatible
-    /v1/chat/completions on a different host), that is tried first.
+    Primary transport is the Blockbrain agent stream endpoint (v2 first, v1
+    fallback). If BLOCKBRAIN_CHAT_ENDPOINT is set (for example an
+    OpenAI-compatible /v1/chat/completions route), that is tried first.
     """
     global LAST_BLOCKBRAIN_ERROR
     global LAST_BLOCKBRAIN_MODEL
@@ -6684,6 +6715,56 @@ def _blockbrain_chat(payload: dict[str, Any]) -> str:
         LAST_BLOCKBRAIN_ERROR = "Blockbrain response did not include assistant text"
         return True, ""
 
+    def _collect_text_chunks(value: Any) -> list[str]:
+        chunks: list[str] = []
+        if isinstance(value, str):
+            text = value.strip()
+            if text and text != "[DONE]":
+                chunks.append(text)
+            return chunks
+        if isinstance(value, list):
+            for item in value:
+                chunks.extend(_collect_text_chunks(item))
+            return chunks
+        if not isinstance(value, dict):
+            return chunks
+
+        # Common event-level fields across v1/v2 stream variants.
+        for key in ("text", "delta", "content", "value"):
+            raw = value.get(key)
+            if isinstance(raw, str) and raw.strip():
+                chunks.append(raw.strip())
+
+        # OpenAI-style delta/messages payloads.
+        choices = value.get("choices")
+        if isinstance(choices, list):
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                chunks.extend(_collect_text_chunks(choice.get("delta")))
+                chunks.extend(_collect_text_chunks(choice.get("message")))
+
+        # Recurse through nested structures where streaming payload text often lives.
+        for nested_key in ("data", "payload", "message", "messages", "parts", "output"):
+            nested = value.get(nested_key)
+            if nested is not None:
+                chunks.extend(_collect_text_chunks(nested))
+
+        return chunks
+
+    def _fast_stream_payload(src: dict[str, Any], endpoint_path: str) -> dict[str, Any]:
+        out = dict(src or {})
+        fast_mode = str(os.getenv("BLOCKBRAIN_FAST_STREAM", "1") or "1").strip().lower() not in {"0", "false", "off", "no"}
+        if not fast_mode:
+            return out
+        # Only add these to v2 stream calls where they are expected.
+        if "/v2/" in endpoint_path:
+            out.setdefault("maxSteps", 1)
+            out.setdefault("activeTools", [])
+            out.setdefault("toolChoice", "none")
+            out.setdefault("trigger", "submit-message")
+        return out
+
     # Optional OpenAI-compatible endpoint override (tried first when configured).
     custom_endpoint = os.getenv("BLOCKBRAIN_CHAT_ENDPOINT", "").strip()
     if custom_endpoint:
@@ -6692,58 +6773,76 @@ def _blockbrain_chat(payload: dict[str, Any]) -> str:
         if handled:
             return text
 
-    # Primary transport: Blockbrain agent stream endpoint (SSE).
-    stream_url = f"{base_url}/v1/api/agents/{agent_id}/stream"
-    try:
-        resp = _http_post(
-            stream_url,
-            headers=headers,
-            json=dict(payload or {}),
-            timeout=HTTP_TIMEOUT,
-            stream=True,
-        )
-        if resp.status_code != 200:
-            LAST_BLOCKBRAIN_ERROR = f"Blockbrain HTTP {resp.status_code}: {resp.text[:200]}"
-            return ""
-        text_parts: list[str] = []
-        for raw_line in resp.iter_lines():
-            if not raw_line:
+    # Primary transport: Blockbrain agent stream endpoint (SSE), preferring v2.
+    stream_endpoints = [
+        f"{base_url}/v2/api/agents/{agent_id}/stream",
+        f"{base_url}/v1/api/agents/{agent_id}/stream",
+    ]
+    last_error = ""
+    for stream_url in stream_endpoints:
+        endpoint_path = stream_url[len(base_url):] if stream_url.startswith(base_url) else stream_url
+        try:
+            resp = _http_post(
+                stream_url,
+                headers=headers,
+                json=_fast_stream_payload(dict(payload or {}), endpoint_path),
+                timeout=HTTP_TIMEOUT,
+                stream=True,
+            )
+            if resp.status_code == 404:
                 continue
-            line = raw_line.decode("utf-8", errors="replace") if isinstance(raw_line, bytes) else raw_line
-            if not line.startswith("data:"):
+            if resp.status_code != 200:
+                last_error = f"Blockbrain HTTP {resp.status_code}: {resp.text[:200]}"
                 continue
-            json_str = line[len("data:"):].strip()
-            if not json_str:
-                continue
-            try:
-                event = json.loads(json_str)
-            except Exception:
-                continue
-            event_type = str(event.get("type", "") or "")
-            if event_type == "step-start":
+
+            text_parts: list[str] = []
+            for raw_line in resp.iter_lines():
+                if not raw_line:
+                    continue
+                line = raw_line.decode("utf-8", errors="replace") if isinstance(raw_line, bytes) else raw_line
+                if not line.startswith("data:"):
+                    continue
+                json_str = line[len("data:"):].strip()
+                if not json_str or json_str == "[DONE]":
+                    continue
                 try:
-                    runtime_model = str(
-                        event.get("data", {})
-                        .get("payload", {})
-                        .get("request", {})
-                        .get("body", {})
-                        .get("model", "")
-                        or ""
-                    ).strip()
+                    event = json.loads(json_str)
                 except Exception:
-                    runtime_model = ""
-                if runtime_model:
-                    LAST_BLOCKBRAIN_MODEL = runtime_model
-            if event_type == "text-delta":
-                chunk = event.get("data", {}).get("payload", {}).get("text", "")
-                if chunk:
-                    text_parts.append(chunk)
-            elif event_type == "finish":
-                break
-        return "".join(text_parts).strip()
-    except Exception as exc:
-        LAST_BLOCKBRAIN_ERROR = f"Blockbrain request error: {exc}"
-        return ""
+                    continue
+
+                if isinstance(event, dict):
+                    runtime_model = str(event.get("model", "") or event.get("resolved_model", "") or "").strip()
+                    if not runtime_model:
+                        try:
+                            runtime_model = str(
+                                event.get("data", {})
+                                .get("payload", {})
+                                .get("request", {})
+                                .get("body", {})
+                                .get("model", "")
+                                or ""
+                            ).strip()
+                        except Exception:
+                            runtime_model = ""
+                    if runtime_model:
+                        LAST_BLOCKBRAIN_MODEL = runtime_model
+
+                    chunks = _collect_text_chunks(event)
+                    if chunks:
+                        text_parts.extend(chunks)
+
+                    event_type = str(event.get("type", "") or "").strip().lower()
+                    if event_type in {"finish", "done", "response.completed", "response.done", "message.stop"}:
+                        break
+
+            merged = "\n".join([c for c in text_parts if str(c).strip()]).strip()
+            if merged:
+                return merged
+        except Exception as exc:
+            last_error = f"Blockbrain request error: {exc}"
+
+    LAST_BLOCKBRAIN_ERROR = last_error or "Blockbrain response did not include assistant text"
+    return ""
 
 
 
@@ -7498,6 +7597,69 @@ def extract_image_text_with_blockbrain(image_bytes: bytes, model: str | None = N
     return ""
 
 
+def _build_blockbrain_ocr_image_variants(image_bytes: bytes) -> list[tuple[str, bytes]]:
+    """Build lightweight image variants to improve first-pass OCR reliability."""
+    variants: list[tuple[str, bytes]] = [("original", image_bytes)]
+    try:
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        image = ImageOps.exif_transpose(image)
+
+        max_side = 1800
+        width, height = image.size
+        if max(width, height) > max_side:
+            scale = max_side / float(max(width, height))
+            image = image.resize(
+                (max(1, int(width * scale)), max(1, int(height * scale))),
+                Image.Resampling.LANCZOS,
+            )
+
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=88, optimize=True)
+        resized_payload = buffer.getvalue()
+        if resized_payload and resized_payload != image_bytes:
+            variants.append(("resized_jpeg", resized_payload))
+    except Exception:
+        pass
+
+    deduped: list[tuple[str, bytes]] = []
+    seen_hashes: set[str] = set()
+    for variant_name, payload in variants:
+        payload_hash = hashlib.sha1(payload).hexdigest() if payload else ""
+        if payload_hash in seen_hashes:
+            continue
+        seen_hashes.add(payload_hash)
+        deduped.append((variant_name, payload))
+    return deduped
+
+
+def extract_image_text_with_blockbrain_best_effort(image_bytes: bytes, model: str | None = None) -> tuple[str, str]:
+    """Try fast image variants and return (text, route label)."""
+    best_text = ""
+    best_route = ""
+    best_score = -1
+
+    for variant_name, variant_bytes in _build_blockbrain_ocr_image_variants(image_bytes):
+        candidate_text = extract_image_text_with_blockbrain(variant_bytes, model=model)
+        if not candidate_text:
+            continue
+
+        route_label = str(LAST_VISION_PROVIDER or "Blockbrain vision model").strip()
+        if variant_name != "original":
+            route_label = f"{route_label} ({variant_name})"
+
+        gate = extraction_gate_report(candidate_text)
+        candidate_score = int(gate.get("score", 0)) * 100 + int(gate.get("dose_hits", 0))
+        if candidate_score > best_score:
+            best_score = candidate_score
+            best_text = candidate_text
+            best_route = route_label
+
+        if gate.get("passed"):
+            return candidate_text, route_label
+
+    return best_text, best_route
+
+
 # Backward-compat alias
 extract_image_text_with_local_stack = extract_image_text_with_blockbrain
 
@@ -7987,7 +8149,7 @@ def extract_nutrition_doses_from_product_image(product_url: str) -> list[dict[st
             logger.info("Trying nutrition extraction from image: %s", image_url[:120])
 
             vision_rows: list[dict[str, Any]] = []
-            vision_text = extract_image_text_with_blockbrain(image_bytes)
+            vision_text, _vision_route = extract_image_text_with_blockbrain_best_effort(image_bytes)
             if vision_text:
                 vision_rows = _rows_with_doses(vision_text)
 
@@ -8977,22 +9139,11 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
 
                 if image_bytes:
                     status.write("Step 2/4: Extracting label text via Blockbrain vision model")
-                    ocr_text = extract_image_text_with_blockbrain(image_bytes, model=selected_vision_model or None)
-                    if ocr_text and LAST_VISION_PROVIDER:
-                        image_provider_label = LAST_VISION_PROVIDER
-                    if not ocr_text:
-                        status.write("Vision extraction returned no text, retrying with Blockbrain vision…")
-                        retry_text = call_blockbrain_vision(image_bytes, model=selected_vision_model or None)
-                        if retry_text and not _is_blockbrain_image_missing_response(retry_text):
-                            ocr_text = retry_text
-                            runtime_model = str(LAST_BLOCKBRAIN_MODEL or selected_vision_model or "").strip()
-                            if runtime_model:
-                                image_provider_label = f"Blockbrain vision retry ({runtime_model})"
-                            else:
-                                image_provider_label = "Blockbrain vision retry"
-                            image_fallback_used = True
-                        else:
-                            ocr_text = ""
+                    ocr_text, image_provider_label = extract_image_text_with_blockbrain_best_effort(
+                        image_bytes,
+                        model=selected_vision_model or None,
+                    )
+                    image_fallback_used = "(resized_jpeg)" in image_provider_label
                     if ocr_text:
                         image_ocr_text_fallback = ocr_text
                         ocr_gate = extraction_gate_report(ocr_text)
