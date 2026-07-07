@@ -9048,7 +9048,9 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
             _upload_bytes = uploaded_image.getvalue()
             _det_barcode, _det_method = detect_barcode_from_image(_upload_bytes)
             _upload_barcode = _normalize_barcode_digits(_det_barcode)
-            if _upload_barcode:
+            # Only auto-route upload as barcode when a real scanner decoded it.
+            # OCR fallback can produce false 8-14 digit tokens from nutrition tables.
+            if _upload_barcode and str(_det_method or "").strip().lower() == "pyzbar":
                 st.session_state[barcode_scan_method_key] = _det_method or "upload"
                 uploaded_label_bytes = None
                 st.session_state[uploaded_label_bytes_key] = None
@@ -9056,7 +9058,10 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
             else:
                 uploaded_label_bytes = _upload_bytes
                 st.session_state[uploaded_label_bytes_key] = uploaded_label_bytes
-                st.info("No barcode found in upload - treating image as a nutrition label.")
+                if _upload_barcode:
+                    st.info("Possible barcode text detected via OCR fallback; treating upload as nutrition label to avoid false barcode routing.")
+                else:
+                    st.info("No barcode found in upload - treating image as a nutrition label.")
         elif active_input_source not in {"", "label"}:
             uploaded_label_bytes = None
             st.session_state[uploaded_label_bytes_key] = None
@@ -9469,6 +9474,15 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                     st.session_state[analyze_is_running_key] = False
                     st.session_state[analyze_pending_request_key] = None
                     status.update(label="No input detected", state="error")
+                    st.caption(
+                        "Input diagnostics: "
+                        f"pending_uploaded_image_bytes={len(pending_uploaded_image_bytes or b'')}, "
+                        f"pending_uploaded_label_bytes={len(pending_uploaded_label_bytes or b'')}, "
+                        f"pending_label_capture_bytes={len(pending_label_capture_bytes or b'')}, "
+                        f"pending_scanned_barcode={'yes' if pending_scanned_barcode_value else 'no'}, "
+                        f"pending_manual_text={'yes' if pending_manual_text.strip() else 'no'}, "
+                        f"pending_product_url={'yes' if pending_product_url.strip() else 'no'}"
+                    )
                     st.error("Please provide at least one input source: image, barcode, link, or text.")
                 else:
                     status.write("Step 5/5: Extracting supplement components")
