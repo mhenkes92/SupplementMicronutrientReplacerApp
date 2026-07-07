@@ -8899,12 +8899,18 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
         active_input_source_key = "analyze_active_input_source"
         barcode_fail_notice_key = "analyze_barcode_autounlock_notice"
         auto_signature_key = "analyze_last_auto_signature"
+        analyze_is_running_key = "analyze_is_running"
+        analyze_pending_request_key = "analyze_pending_request"
         if camera_mode_key not in st.session_state:
             st.session_state[camera_mode_key] = ""
         if active_input_source_key not in st.session_state:
             st.session_state[active_input_source_key] = ""
         if auto_signature_key not in st.session_state:
             st.session_state[auto_signature_key] = ""
+        if analyze_is_running_key not in st.session_state:
+            st.session_state[analyze_is_running_key] = False
+        if analyze_pending_request_key not in st.session_state:
+            st.session_state[analyze_pending_request_key] = None
 
         def _reset_analyze_inputs_after_submit() -> None:
             st.session_state[active_input_source_key] = ""
@@ -9012,12 +9018,6 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                     st.session_state[camera_mode_key] = "barcode"
                     st.rerun()
 
-        if allow_label_source:
-            camera_image = st.camera_input(
-                "Take a photo (label, product, or EAN code)",
-                key="supp_camera",
-            )
-
         # Patch: single smart uploader (label OR barcode, auto-detected).
         uploaded_image = st.file_uploader(
             "",
@@ -9028,13 +9028,14 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
             """
     <script>
     const doc = window.parent.document;
-    function patchUploaderAccept()  
+    function patchUploaderAccept() {
     const inputs = doc.querySelectorAll('input[type="file"]');
-    inputs.forEach((el) =>  
+    inputs.forEach((el) => {
         el.setAttribute('accept', 'image/*');
         el.removeAttribute('capture');
-     );
-     
+     });
+    }
+
     patchUploaderAccept();
     setInterval(patchUploaderAccept, 800);
     </script>
@@ -9126,7 +9127,7 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
         st.session_state["analyze_blockbrain_vision_model"] = default_vision_model
         selected_text_model, selected_vision_model = _get_selected_blockbrain_models()
 
-        camera_bytes = camera_image.getvalue() if camera_image is not None else b""
+        camera_bytes = b""
         upload_bytes = uploaded_image.getvalue() if uploaded_image is not None else b""
         has_any_input = bool(
             camera_bytes
@@ -9156,11 +9157,41 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
         auto_trigger = has_any_input and auto_signature != str(st.session_state.get(auto_signature_key, "") or "")
         if auto_trigger and not analyze_clicked:
             st.caption("Input detected. Starting analysis automatically...")
+        if analyze_clicked or auto_trigger:
             st.session_state[auto_signature_key] = auto_signature
+            st.session_state[analyze_pending_request_key] = {
+                "camera_bytes": camera_bytes,
+                "uploaded_image_bytes": upload_bytes,
+                "label_capture_bytes": effective_label_capture_bytes,
+                "label_confirmed": bool(effective_label_confirmed),
+                "uploaded_label_bytes": effective_uploaded_image_bytes,
+                "scanned_barcode_value": effective_scanned_barcode_value,
+                "barcode_input": effective_barcode_input,
+                "barcode_upload": effective_barcode_upload,
+                "product_url": effective_product_url,
+                "manual_text": effective_manual_text,
+            }
+            st.session_state[analyze_is_running_key] = True
+            st.rerun()
 
-        analyze = bool(analyze_clicked or auto_trigger)
+        analyze = bool(st.session_state.get(analyze_is_running_key, False)) and isinstance(
+            st.session_state.get(analyze_pending_request_key),
+            dict,
+        )
 
         if analyze:
+            pending_req = dict(st.session_state.get(analyze_pending_request_key) or {})
+            pending_camera_bytes = pending_req.get("camera_bytes") if isinstance(pending_req.get("camera_bytes"), (bytes, bytearray)) else b""
+            pending_uploaded_image_bytes = pending_req.get("uploaded_image_bytes") if isinstance(pending_req.get("uploaded_image_bytes"), (bytes, bytearray)) else b""
+            pending_label_capture_bytes = pending_req.get("label_capture_bytes") if isinstance(pending_req.get("label_capture_bytes"), (bytes, bytearray)) else b""
+            pending_label_confirmed = bool(pending_req.get("label_confirmed", False))
+            pending_uploaded_label_bytes = pending_req.get("uploaded_label_bytes") if isinstance(pending_req.get("uploaded_label_bytes"), (bytes, bytearray)) else b""
+            pending_scanned_barcode_value = str(pending_req.get("scanned_barcode_value", "") or "")
+            pending_barcode_input = str(pending_req.get("barcode_input", "") or "")
+            pending_barcode_upload = pending_req.get("barcode_upload")
+            pending_product_url = str(pending_req.get("product_url", "") or "")
+            pending_manual_text = str(pending_req.get("manual_text", "") or "")
+
             extracted_chunks: list[tuple[str, str]] = []
             source_details: dict[str, dict[str, str]] = {}
             image_locked_payload: dict[str, Any] | None = None
@@ -9174,12 +9205,14 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                 image_bytes = None
                 image_provider_label = ""
                 image_fallback_used = False
-                if camera_image is not None:
-                    image_bytes = camera_image.getvalue()
-                elif effective_label_capture_bytes and effective_label_confirmed:
-                    image_bytes = effective_label_capture_bytes
-                elif effective_uploaded_image_bytes:
-                    image_bytes = effective_uploaded_image_bytes
+                if pending_camera_bytes:
+                    image_bytes = bytes(pending_camera_bytes)
+                elif pending_label_capture_bytes and pending_label_confirmed:
+                    image_bytes = bytes(pending_label_capture_bytes)
+                elif pending_uploaded_label_bytes:
+                    image_bytes = bytes(pending_uploaded_label_bytes)
+                elif pending_uploaded_image_bytes:
+                    image_bytes = bytes(pending_uploaded_image_bytes)
 
                 if image_bytes:
                     status.write("Step 2/4: Extracting label text via Blockbrain vision model")
@@ -9254,14 +9287,17 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                             st.caption(f"Image OCR route: {image_provider_label} (primary)")
 
                 if image_locked_payload is None:
-                    manual_barcode_value = _normalize_barcode_digits(effective_barcode_input)
-                    barcode_value = manual_barcode_value or effective_scanned_barcode_value
+                    manual_barcode_value = _normalize_barcode_digits(pending_barcode_input)
+                    barcode_value = manual_barcode_value or pending_scanned_barcode_value
                     barcode_method = "manual" if manual_barcode_value else str(st.session_state.get(barcode_scan_method_key, "camera") or "camera")
                     barcode_image_bytes = None
                     if barcode_camera is not None:
                         barcode_image_bytes = barcode_camera.getvalue()
-                    elif effective_barcode_upload is not None:
-                        barcode_image_bytes = effective_barcode_upload.read()
+                    elif pending_barcode_upload is not None:
+                        try:
+                            barcode_image_bytes = pending_barcode_upload.read()
+                        except Exception:
+                            barcode_image_bytes = None
 
                     if not barcode_value and barcode_image_bytes:
                         detected_barcode, barcode_method = detect_barcode_from_image(barcode_image_bytes)
@@ -9322,9 +9358,9 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                                 status.write(f"Barcode lookup note: {barcode_reason}")
                             _clear_barcode_lock_after_failure()
 
-                if effective_product_url.strip() and image_locked_payload is None:
+                if pending_product_url.strip() and image_locked_payload is None:
                     status.write("Step 4/5: Parsing product link (local deterministic parser)")
-                    url_key = effective_product_url.strip()
+                    url_key = pending_product_url.strip()
                     url_parse_cache = st.session_state.setdefault("url_parse_cache", {})
                     cached_item = url_parse_cache.get(url_key, "")
                     cached_url_text = ""
@@ -9386,8 +9422,8 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                     else:
                         st.warning("Could not parse link content")
 
-                if effective_manual_text.strip() and image_locked_payload is None:
-                    manual_text_clean = effective_manual_text.strip()
+                if pending_manual_text.strip() and image_locked_payload is None:
+                    manual_text_clean = pending_manual_text.strip()
                     manual_gate = extraction_gate_report(manual_text_clean)
                     extracted_chunks.append(("manual", manual_text_clean))
                     source_details["manual"] = {
@@ -9430,6 +9466,8 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                     st.session_state["analysis_components"] = []
                     st.session_state["analysis_combined_text"] = ""
                     st.session_state["analysis_structured_debug"] = {}
+                    st.session_state[analyze_is_running_key] = False
+                    st.session_state[analyze_pending_request_key] = None
                     status.update(label="No input detected", state="error")
                     st.error("Please provide at least one input source: image, barcode, link, or text.")
                 else:
@@ -9527,6 +9565,8 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                     st.session_state["analysis_food_match_status"] = ""
                     st.session_state["results_show_prices"] = False
                     st.session_state["target_tab"] = "📊 Results"
+                    st.session_state[analyze_is_running_key] = False
+                    st.session_state[analyze_pending_request_key] = None
 
                     # Always unlock/reset Analyze inputs after submit so all fields are interactive again.
                     _reset_analyze_inputs_after_submit()
