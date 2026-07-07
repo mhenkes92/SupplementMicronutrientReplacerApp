@@ -1542,7 +1542,7 @@ def _normalize_barcode_digits(value: str) -> str:
 
 
 def detect_barcode_from_image(image_bytes: bytes) -> tuple[str, str]:
-    """Return (barcode, method). method is one of: pyzbar, ocr_fallback, none."""
+    """Return (barcode, method). method is one of: pyzbar, none."""
     if not image_bytes:
         return "", "none"
 
@@ -1563,15 +1563,6 @@ def detect_barcode_from_image(image_bytes: bytes) -> tuple[str, str]:
         if candidates:
             candidates.sort(key=len, reverse=True)
             return candidates[0], "pyzbar"
-    except Exception:
-        pass
-
-    try:
-        # Fallback path: OCR near-barcode text and extract best EAN-like token.
-        ocr_text = try_tesseract_ocr(image_bytes)
-        token = _normalize_barcode_digits(_extract_ean_from_text(ocr_text))
-        if token:
-            return token, "ocr_fallback"
     except Exception:
         pass
 
@@ -7818,10 +7809,6 @@ def extract_image_text_with_blockbrain_best_effort(image_bytes: bytes, model: st
 extract_image_text_with_local_stack = extract_image_text_with_blockbrain
 
 
-def try_tesseract_ocr(image_bytes: bytes) -> str:
-    return extract_image_text_with_tesseract(image_bytes)
-
-
 def _count_nutrient_hints(text: str) -> int:
     if not text:
         return 0
@@ -8307,13 +8294,7 @@ def extract_nutrition_doses_from_product_image(product_url: str) -> list[dict[st
             if vision_text:
                 vision_rows = _rows_with_doses(vision_text)
 
-            tesseract_rows: list[dict[str, Any]] = []
-            if len(vision_rows) < 8:
-                local_ocr_text = try_tesseract_ocr(image_bytes)
-                if local_ocr_text:
-                    tesseract_rows = _rows_with_doses(local_ocr_text)
-
-            image_best = vision_rows if len(vision_rows) >= len(tesseract_rows) else tesseract_rows
+            image_best = vision_rows
             if len(image_best) > len(best_rows):
                 best_rows = image_best
 
@@ -9333,6 +9314,7 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                 "barcode_upload": effective_barcode_upload,
                 "product_url": effective_product_url,
                 "manual_text": effective_manual_text,
+                "single_input_raw": _single_raw,
             }
             st.session_state[analyze_is_running_key] = True
             st.rerun()
@@ -9354,6 +9336,31 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
             pending_barcode_upload = pending_req.get("barcode_upload")
             pending_product_url = str(pending_req.get("product_url", "") or "")
             pending_manual_text = str(pending_req.get("manual_text", "") or "")
+            pending_single_input_raw = str(pending_req.get("single_input_raw", "") or "")
+
+            # Safety net: recover persisted upload bytes from session state if
+            # pending payload had empty bytes after rerun.
+            if not pending_uploaded_label_bytes:
+                persisted_upload = st.session_state.get(uploaded_label_bytes_key)
+                if isinstance(persisted_upload, (bytes, bytearray)):
+                    pending_uploaded_label_bytes = bytes(persisted_upload)
+
+            # Safety net: if routed fields were lost, re-derive them from the
+            # original single-input text snapshot.
+            if pending_single_input_raw and not (
+                pending_manual_text.strip()
+                or pending_product_url.strip()
+                or _normalize_barcode_digits(pending_barcode_input)
+            ):
+                recovered_raw = pending_single_input_raw.strip()
+                recovered_digits_only = bool(re.fullmatch(r"[\d\s\-_.]+", recovered_raw))
+                recovered_digits = _normalize_barcode_digits(recovered_raw) if recovered_digits_only else ""
+                if recovered_digits:
+                    pending_barcode_input = recovered_digits
+                elif recovered_raw.startswith(("http://", "https://")):
+                    pending_product_url = recovered_raw
+                else:
+                    pending_manual_text = recovered_raw
 
             extracted_chunks: list[tuple[str, str]] = []
             source_details: dict[str, dict[str, str]] = {}
@@ -9384,13 +9391,6 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                         model=selected_vision_model or None,
                     )
                     image_fallback_used = "(resized_jpeg)" in image_provider_label
-                    if not ocr_text:
-                        status.write("Vision extraction failed; trying local OCR fallback")
-                        local_ocr_text = try_tesseract_ocr(image_bytes)
-                        if local_ocr_text and local_ocr_text.strip():
-                            ocr_text = local_ocr_text.strip()
-                            image_provider_label = "Local OCR fallback (Tesseract)"
-                            image_fallback_used = True
                     if ocr_text:
                         image_ocr_text_fallback = ocr_text
                         ocr_gate = extraction_gate_report(ocr_text)
@@ -9624,6 +9624,30 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                     status.write("URL/manual inputs skipped because image-only lock is active.")
                     combined = image_locked_text
 
+                had_raw_input = bool(
+                    pending_camera_bytes
+                    or pending_uploaded_image_bytes
+                    or pending_label_capture_bytes
+                    or pending_uploaded_label_bytes
+                    or pending_product_url.strip()
+                    or pending_manual_text.strip()
+                    or _normalize_barcode_digits(pending_barcode_input)
+                    or pending_scanned_barcode_value
+                    or pending_single_input_raw.strip()
+                )
+
+                if not combined and pending_manual_text.strip():
+                    # Last-resort: always trust explicit user-entered supplement text.
+                    manual_text_clean = pending_manual_text.strip()
+                    extracted_chunks.append(("manual_force", manual_text_clean))
+                    source_details["manual_force"] = {
+                        "provider": "Manual input",
+                        "reason": "Forced fallback: using explicit user-entered text after upstream extraction yielded no chunks.",
+                        "url": "",
+                    }
+                    combined = manual_text_clean
+                    status.write("Using manual text fallback because no other source produced analyzable text.")
+
                 if not combined:
                     st.session_state["analysis_ready"] = False
                     st.session_state["analysis_components"] = []
@@ -9631,7 +9655,10 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                     st.session_state["analysis_structured_debug"] = {}
                     st.session_state[analyze_is_running_key] = False
                     st.session_state[analyze_pending_request_key] = None
-                    status.update(label="No input detected", state="error")
+                    if had_raw_input:
+                        status.update(label="Input received but extraction failed", state="error")
+                    else:
+                        status.update(label="No input detected", state="error")
                     st.caption(
                         "Input diagnostics: "
                         f"pending_uploaded_image_bytes={len(pending_uploaded_image_bytes or b'')}, "
@@ -9641,7 +9668,13 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                         f"pending_manual_text={'yes' if pending_manual_text.strip() else 'no'}, "
                         f"pending_product_url={'yes' if pending_product_url.strip() else 'no'}"
                     )
-                    st.error("Please provide at least one input source: image, barcode, link, or text.")
+                    if had_raw_input:
+                        st.error(
+                            "Input was received, but no analyzable supplement text could be extracted. "
+                            "Please try clearer label text/image or provide direct supplement facts text."
+                        )
+                    else:
+                        st.error("Please provide at least one input source: image, barcode, link, or text.")
                 else:
                     status.write("Step 5/5: Extracting supplement components")
                     if image_locked_payload is not None:
