@@ -10881,7 +10881,7 @@ body,
         unsafe_allow_html=True,
     )
 
-    st.title("🥗 SuppSwap")
+    st.title("🥗 SuppSwap 🟢")
     # Patch: rebrand uploader button to "Capture" + camera icon.
     st.markdown(
         """
