@@ -9082,7 +9082,7 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                 "supp_barcode_camera",
                 "supp_barcode_upload",
                 "supp_url",
-                "supp_manual_text",
+                "supp_single_input",
             ]:
                 if widget_key in st.session_state:
                     st.session_state.pop(widget_key)
@@ -9127,7 +9127,7 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                     "supp_barcode_camera",
                     "supp_barcode_upload",
                     "supp_url",
-                    "supp_manual_text",
+                    "supp_single_input",
                 ]:
                     if widget_key in st.session_state:
                         st.session_state.pop(widget_key)
@@ -9229,7 +9229,11 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
         )
         barcode_upload = None
         _single_raw = str(supp_single_input or "").strip()
-        _single_digits = _normalize_barcode_digits(_single_raw)
+        # Treat as barcode only when user entered digits/separators only.
+        # Otherwise, supplement text like "D3 2000 IU + K2 100 mcg" could be
+        # incorrectly collapsed into an 8-14 digit token and misrouted.
+        _single_is_digits_only = bool(re.fullmatch(r"[\d\s\-_.]+", _single_raw))
+        _single_digits = _normalize_barcode_digits(_single_raw) if _single_is_digits_only else ""
         barcode_input = _single_digits or _upload_barcode
         if _single_digits:
             product_url = ""
