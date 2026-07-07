@@ -8898,10 +8898,13 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
         barcode_scan_method_key = "analyze_barcode_scan_method"
         active_input_source_key = "analyze_active_input_source"
         barcode_fail_notice_key = "analyze_barcode_autounlock_notice"
+        auto_signature_key = "analyze_last_auto_signature"
         if camera_mode_key not in st.session_state:
             st.session_state[camera_mode_key] = ""
         if active_input_source_key not in st.session_state:
             st.session_state[active_input_source_key] = ""
+        if auto_signature_key not in st.session_state:
+            st.session_state[auto_signature_key] = ""
 
         def _reset_analyze_inputs_after_submit() -> None:
             st.session_state[active_input_source_key] = ""
@@ -9008,6 +9011,12 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                     st.session_state[barcode_scan_method_key] = ""
                     st.session_state[camera_mode_key] = "barcode"
                     st.rerun()
+
+        if allow_label_source:
+            camera_image = st.camera_input(
+                "Take a photo (label, product, or EAN code)",
+                key="supp_camera",
+            )
 
         # Patch: single smart uploader (label OR barcode, auto-detected).
         uploaded_image = st.file_uploader(
@@ -9117,7 +9126,39 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
         st.session_state["analyze_blockbrain_vision_model"] = default_vision_model
         selected_text_model, selected_vision_model = _get_selected_blockbrain_models()
 
-        analyze = st.button("💊 Analyze Supp → 🥗 Swap With Whole Food", type="primary", use_container_width=True, key="analyze_input_btn")  
+        camera_bytes = camera_image.getvalue() if camera_image is not None else b""
+        upload_bytes = uploaded_image.getvalue() if uploaded_image is not None else b""
+        has_any_input = bool(
+            camera_bytes
+            or upload_bytes
+            or effective_label_capture_bytes
+            or effective_uploaded_image_bytes
+            or effective_product_url.strip()
+            or effective_manual_text.strip()
+            or _normalize_barcode_digits(effective_barcode_input)
+            or effective_scanned_barcode_value
+        )
+        auto_signature_blob = "|".join(
+            [
+                f"cam:{len(camera_bytes)}",
+                f"upl:{len(upload_bytes)}",
+                f"lbl:{len(effective_label_capture_bytes or b'')}",
+                f"upb:{len(effective_uploaded_image_bytes or b'')}",
+                f"bar:{_normalize_barcode_digits(effective_barcode_input)}",
+                f"scan:{effective_scanned_barcode_value}",
+                f"url:{effective_product_url.strip()}",
+                f"txt:{effective_manual_text.strip()}",
+            ]
+        )
+        auto_signature = hashlib.sha1(auto_signature_blob.encode("utf-8", errors="ignore")).hexdigest()
+
+        analyze_clicked = st.button("💊 Analyze Supp → 🥗 Swap With Whole Food", type="primary", use_container_width=True, key="analyze_input_btn")
+        auto_trigger = has_any_input and auto_signature != str(st.session_state.get(auto_signature_key, "") or "")
+        if auto_trigger and not analyze_clicked:
+            st.caption("Input detected. Starting analysis automatically...")
+            st.session_state[auto_signature_key] = auto_signature
+
+        analyze = bool(analyze_clicked or auto_trigger)
 
         if analyze:
             extracted_chunks: list[tuple[str, str]] = []
@@ -9147,6 +9188,13 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                         model=selected_vision_model or None,
                     )
                     image_fallback_used = "(resized_jpeg)" in image_provider_label
+                    if not ocr_text:
+                        status.write("Vision extraction failed; trying local OCR fallback")
+                        local_ocr_text = try_tesseract_ocr(image_bytes)
+                        if local_ocr_text and local_ocr_text.strip():
+                            ocr_text = local_ocr_text.strip()
+                            image_provider_label = "Local OCR fallback (Tesseract)"
+                            image_fallback_used = True
                     if ocr_text:
                         image_ocr_text_fallback = ocr_text
                         ocr_gate = extraction_gate_report(ocr_text)
@@ -9364,7 +9412,14 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                     and image_ocr_text_fallback.strip()
                     and image_gate_failed
                 ):
-                    status.write("Image text did not pass quality gates and will not be used.")
+                    status.write("Image text did not pass quality gates; using it as a fallback source.")
+                    extracted_chunks.append(("image_fallback", image_ocr_text_fallback.strip()))
+                    source_details["image_fallback"] = {
+                        "provider": str(image_provider_label or "Image OCR fallback").strip(),
+                        "reason": "Used fallback image OCR text because no stronger source was available.",
+                        "url": "",
+                    }
+                    combined = "\n\n".join([x for _, x in extracted_chunks if x.strip()])
 
                 if image_locked_payload is not None:
                     status.write("URL/manual inputs skipped because image-only lock is active.")
