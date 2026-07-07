@@ -11343,18 +11343,26 @@ if __name__ == "__main__":
         build_mobile_ui()
     else:
         script_path = os.path.abspath(__file__)
+        # Use a dedicated local port by default to avoid collisions with other
+        # Streamlit apps (for example the swipe app) that often run on 8501.
+        streamlit_port = str(os.getenv("BLOCKBRAIN_STREAMLIT_PORT", "8511") or "8511").strip()
         cmd = [
             sys.executable,
             "-m",
             "streamlit",
             "run",
             script_path,
+            "--server.port",
+            streamlit_port,
             "--browser.gatherUsageStats",
             "false",
         ]
-        print("Launching Streamlit app...")
+        print(f"Launching Blockbrain Streamlit app from: {script_path}")
+        print(f"Local URL (expected): http://localhost:{streamlit_port}")
         try:
             subprocess.run(cmd, check=False)
+        except KeyboardInterrupt:
+            print("Streamlit launcher interrupted by user.")
         except Exception as exc:
             print(f"Failed to launch Streamlit automatically: {exc}")
-            print("Please run: python -m streamlit run app.py")
+            print(f"Please run: python -m streamlit run {script_path} --server.port {streamlit_port}")
