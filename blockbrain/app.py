@@ -9088,14 +9088,17 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                 st.rerun()
 
         active_input_source = str(st.session_state.get(active_input_source_key, "") or "")
-        effective_label_capture_bytes = label_capture_bytes if active_input_source in {"", "label"} else None
-        effective_label_confirmed = bool(label_confirmed and active_input_source in {"", "label"})
-        effective_uploaded_image_bytes = uploaded_label_bytes if active_input_source in {"", "label"} else None
-        effective_scanned_barcode_value = scanned_barcode_value if active_input_source in {"", "barcode"} else ""
-        effective_barcode_input = barcode_input if active_input_source in {"", "barcode"} else ""
-        effective_barcode_upload = barcode_upload if active_input_source in {"", "barcode"} else None
-        effective_product_url = product_url if active_input_source in {"", "url"} else ""
-        effective_manual_text = manual_text if active_input_source in {"", "manual"} else ""
+        # Be permissive at extraction time: if users provide multiple sources (for
+        # example image + manual fallback), evaluate all non-empty sources instead
+        # of dropping inputs because of a transient source lock.
+        effective_label_capture_bytes = label_capture_bytes
+        effective_label_confirmed = bool(label_confirmed)
+        effective_uploaded_image_bytes = uploaded_label_bytes
+        effective_scanned_barcode_value = scanned_barcode_value
+        effective_barcode_input = barcode_input
+        effective_barcode_upload = barcode_upload
+        effective_product_url = product_url
+        effective_manual_text = manual_text
 
         if effective_label_capture_bytes and not effective_label_confirmed:
             st.caption("Confirm or retake the nutrition label photo before it is used for analysis.")
