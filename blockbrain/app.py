@@ -5028,13 +5028,151 @@ def filter_and_rank_common_foods(
     return [e[2] for e in enriched[:limit]]  
 
 
+@functools.lru_cache(maxsize=1)
+def _load_usda_nutrients_index() -> list[dict[str, Any]]:
+    conn = try_open_usda_db()
+    if conn is None:
+        return []
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, nutrient_name, unit_name
+            FROM nutrients
+            """
+        ).fetchall()
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            nutrient_id = int(row[0])
+        except Exception:
+            continue
+        nutrient_name = str(row[1] or "").strip()
+        unit_name = str(row[2] or "").strip()
+        key = normalize_lookup_key(nutrient_name)
+        if not nutrient_name or not key:
+            continue
+        out.append({
+            "id": nutrient_id,
+            "name": nutrient_name,
+            "unit": unit_name,
+            "key": key,
+            "compact": re.sub(r"[^a-z0-9]+", "", key),
+        })
+    return out
+
+
+def _resolve_local_nutrient_candidates(component_key: str, max_ids: int = 3) -> list[dict[str, Any]]:
+    target = normalize_lookup_key(component_key)
+    if not target:
+        return []
+
+    target_compact = re.sub(r"[^a-z0-9]+", "", target)
+    target_tokens = {t for t in target.split() if len(t) >= 2}
+    ranked: list[tuple[tuple[int, int, int], dict[str, Any]]] = []
+    for nutrient in _load_usda_nutrients_index():
+        nkey = str(nutrient.get("key", "") or "")
+        ncompact = str(nutrient.get("compact", "") or "")
+        ntokens = {t for t in nkey.split() if len(t) >= 2}
+        overlap = len(target_tokens & ntokens)
+        direct = int(target in nkey or nkey in target)
+        compact_match = int(target_compact and ncompact and (target_compact in ncompact or ncompact in target_compact))
+        score = (direct + compact_match + min(overlap, 4), overlap, -len(nkey))
+        if score[0] <= 0:
+            continue
+        ranked.append((score, nutrient))
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    out: list[dict[str, Any]] = []
+    seen_ids: set[int] = set()
+    for _score, nutrient in ranked:
+        nid = int(nutrient.get("id", 0) or 0)
+        if nid <= 0 or nid in seen_ids:
+            continue
+        seen_ids.add(nid)
+        out.append(nutrient)
+        if len(out) >= max_ids:
+            break
+    return out
+
+
+def _build_local_food_rows_for_component(component_key: str, limit: int = TOP_FOODS_PER_COMPONENT) -> list[dict[str, Any]]:
+    nutrient_candidates = _resolve_local_nutrient_candidates(component_key, max_ids=3)
+    if not nutrient_candidates:
+        return []
+
+    nutrient_ids = [int(x.get("id", 0) or 0) for x in nutrient_candidates if int(x.get("id", 0) or 0) > 0]
+    if not nutrient_ids:
+        return []
+
+    conn = try_open_usda_db()
+    if conn is None:
+        return []
+    try:
+        placeholders = ",".join(["?"] * len(nutrient_ids))
+        sql = (
+            "SELECT nr.food_description, nr.food_category, nr.amount_per_100g, nr.nutrient_id, n.nutrient_name, n.unit_name "
+            "FROM nutrient_rankings nr "
+            "JOIN nutrients n ON n.id = nr.nutrient_id "
+            f"WHERE nr.nutrient_id IN ({placeholders}) "
+            "AND nr.amount_per_100g IS NOT NULL "
+            "AND nr.amount_per_100g > 0 "
+            "ORDER BY nr.amount_per_100g DESC "
+            "LIMIT 120"
+        )
+        rows = conn.execute(sql, nutrient_ids).fetchall()
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+    nutrient_by_id = {int(x["id"]): x for x in nutrient_candidates}
+    foods: list[dict[str, Any]] = []
+    seen_foods: set[str] = set()
+    for idx, row in enumerate(rows, start=1):
+        food_desc = str(row[0] or "").strip()
+        if not food_desc:
+            continue
+        fkey = normalize_lookup_key(food_desc)
+        if not fkey or fkey in seen_foods:
+            continue
+        seen_foods.add(fkey)
+        try:
+            amount = float(row[2] or 0.0)
+        except Exception:
+            amount = 0.0
+        if amount <= 0:
+            continue
+        nutrient_id = int(row[3] or 0)
+        candidate = nutrient_by_id.get(nutrient_id, {})
+        unit_name = str(row[5] or candidate.get("unit", "") or "")
+        foods.append(
+            {
+                "rank": idx,
+                "food_description": food_desc,
+                "food_category": str(row[1] or "Whole food"),
+                "amount_per_100g": amount,
+                "unit": _normalize_component_unit_token(unit_name),
+                "source_db": "USDA Local DB",
+            }
+        )
+
+    foods = filter_and_rank_common_foods(foods, limit)
+    return foods[:limit]
+
+
 def build_ai_food_matches(components: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
     """Single batched LLM call for ALL components (replaces N serial round-trips)."""
-    if not _text_llm_available():
-        logger.warning("Blockbrain text model unavailable for whole-food matching")
-        return [], [], "llm_unavailable"
     if not components:
         return [], [], "ok"
+
+    llm_enabled = _text_llm_available()
+    if not llm_enabled:
+        logger.warning("Blockbrain text model unavailable for whole-food matching; using local USDA fallback")
 
     seen_keys: set[str] = set()
     prompt_lines: list[str] = []
@@ -5080,7 +5218,7 @@ def build_ai_food_matches(components: list[dict[str, Any]]) -> tuple[list[dict[s
         + "Components:" + nl + nl.join(prompt_lines)
     )
 
-    raw = call_text_llm(system_prompt, user_prompt)
+    raw = call_text_llm(system_prompt, user_prompt) if llm_enabled else ""
     candidate = clean_json_block(raw)
     parsed_components: list[dict[str, Any]] = []
     try:
@@ -5149,6 +5287,14 @@ def build_ai_food_matches(components: list[dict[str, Any]]) -> tuple[list[dict[s
         resolved = str(parsed.get("resolved_nutrient", "") or "")
 
         if not top_foods:
+            # Deterministic local fallback so Results still show alternatives when
+            # LLM mapping is unavailable or returns sparse/invalid JSON.
+            local_foods = _build_local_food_rows_for_component(component_key, limit=TOP_FOODS_PER_COMPONENT)
+            if local_foods:
+                top_foods = local_foods
+                deduped_foods = local_foods
+
+        if not top_foods:
             log_unmapped_component(component_key, dose_value=dose_value, dose_unit=dose_unit)
             summaries.append({
                 "component": component_key,
@@ -5182,8 +5328,16 @@ def build_ai_food_matches(components: list[dict[str, Any]]) -> tuple[list[dict[s
             "supplement_dose_unit": dose_unit,
             "resolved_nutrient": resolved,
             "confidence": confidence,
-            "match_method": "llm_official_db_batched",
-            "proxy_rationale": "Resolved via single batched LLM call with USDA references.",
+            "match_method": (
+                "llm_official_db_batched"
+                if llm_enabled and bool(foods_in)
+                else "local_usda_fallback"
+            ),
+            "proxy_rationale": (
+                "Resolved via single batched LLM call with USDA references."
+                if llm_enabled and bool(foods_in)
+                else "Resolved via deterministic USDA local fallback."
+            ),
             "related_nutrients": related,
             "foods": deduped_foods,
         })
@@ -9578,6 +9732,7 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                     st.session_state["analysis_food_match_details"] = []
                     st.session_state["analysis_food_match_status"] = ""
                     st.session_state["results_show_prices"] = False
+                    st.session_state["show_inline_results_fallback"] = False
                     st.session_state["target_tab"] = "📊 Results"
                     st.session_state[analyze_is_running_key] = False
                     st.session_state[analyze_pending_request_key] = None
@@ -9599,6 +9754,77 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
         if go_to_results:
             st.session_state["target_tab"] = "📊 Results"
             st.rerun()
+
+        if st.session_state.get("analysis_ready", False):
+            with st.expander("Results fallback (for mobile/tab-switch issues)", expanded=False):
+                st.caption(
+                    "If your browser does not switch tabs after tapping 'Go to Results', "
+                    "load your alternatives directly here."
+                )
+                if st.button(
+                    "Load alternatives here",
+                    key="analyze_load_inline_results",
+                    use_container_width=True,
+                ):
+                    st.session_state["show_inline_results_fallback"] = True
+
+                if st.session_state.get("show_inline_results_fallback", False):
+                    inline_components = st.session_state.get("analysis_components", [])
+                    if not inline_components:
+                        st.info("No extracted components yet. Run Analyze first.")
+                    else:
+                        inline_cache_key = json.dumps(
+                            {
+                                "schema_version": FOOD_MATCH_CACHE_SCHEMA_VERSION,
+                                "components": [
+                                    {
+                                        "component": normalize_lookup_key(str(c.get("component", ""))),
+                                        "dose_value": c.get("dose_value"),
+                                        "dose_unit": str(c.get("dose_unit", "") or "").lower(),
+                                    }
+                                    for c in inline_components
+                                ],
+                            },
+                            sort_keys=True,
+                        )
+                        if st.session_state.get("analysis_food_match_cache_key", "") != inline_cache_key:
+                            food_match_summary, food_match_details, food_match_status = build_ai_food_matches(inline_components)
+                            st.session_state["analysis_food_match_cache_key"] = inline_cache_key
+                            st.session_state["analysis_food_match_summary"] = food_match_summary
+                            st.session_state["analysis_food_match_details"] = food_match_details
+                            st.session_state["analysis_food_match_status"] = food_match_status
+                        else:
+                            food_match_summary = st.session_state.get("analysis_food_match_summary", [])
+                            food_match_details = st.session_state.get("analysis_food_match_details", [])
+                            food_match_status = st.session_state.get("analysis_food_match_status", "")
+
+                        if food_match_status != "ok":
+                            st.warning("AI mapping is unavailable. Showing local USDA fallback alternatives when possible.")
+
+                        if not food_match_details:
+                            st.info("No whole-food alternatives found yet.")
+                        else:
+                            shown = 0
+                            for entry in food_match_details:
+                                foods = entry.get("foods", []) if isinstance(entry.get("foods"), list) else []
+                                if not foods:
+                                    continue
+                                shown += 1
+                                component_name = str(entry.get("component", "") or "").title() or "Component"
+                                st.markdown(f"**{component_name}**")
+                                for food in foods[:3]:
+                                    try:
+                                        amt = float(food.get("amount_per_100g", 0.0) or 0.0)
+                                    except Exception:
+                                        amt = 0.0
+                                    unit = str(food.get("unit", "") or "")
+                                    amt_txt, unit_txt = format_amount_unit_for_display(amt, unit)
+                                    st.write(
+                                        f"- {str(food.get('food_description', '') or '').strip()} "
+                                        f"({amt_txt} {unit_txt}/100g)"
+                                    )
+                            if shown == 0:
+                                st.info("No whole-food alternatives found yet.")
 
     _analysis_components = st.session_state.get("analysis_components", [])
     _combined = st.session_state.get("analysis_combined_text", "")
@@ -11048,6 +11274,7 @@ section[data-testid="stFileUploaderDropzone"] button::after {
         "global_diet_profile": "",
         "results_show_prices": False,
         "dietary_use_llm_adjudication": False,
+        "show_inline_results_fallback": False,
     }
     for _k, _v in _SESSION_DEFAULTS.items():
         st.session_state.setdefault(_k, _v)
