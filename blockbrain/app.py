@@ -227,6 +227,11 @@ LAST_TEXT_LLM_ERROR = ""
 LAST_VISION_PROVIDER = ""
 LAST_TEXT_PROVIDER = ""
 LAST_URL_PARSE_REASON = ""
+# Diagnostic: raw text returned by the last vision attempt (even when rejected),
+# and which payload schema variants were tried. Surfaced in the UI so image
+# extraction failures can be diagnosed instead of guessed.
+LAST_VISION_RAW_RESPONSE = ""
+LAST_VISION_ATTEMPT_LOG: list[str] = []
 
 
 def _load_title_push_toggle() -> bool:
@@ -7027,6 +7032,10 @@ def call_blockbrain_text(system_prompt: str, user_prompt: str, model: str | None
 
 def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
     """Send an image to Blockbrain vision model; returns extracted label text."""
+    global LAST_VISION_RAW_RESPONSE
+    global LAST_VISION_ATTEMPT_LOG
+    LAST_VISION_RAW_RESPONSE = ""
+    LAST_VISION_ATTEMPT_LOG = []
     _, selected_vision_model = _get_selected_blockbrain_models()
     requested_model = str(model or selected_vision_model or "").strip()
 
@@ -7051,7 +7060,7 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
         "Output plain text lines only — no markdown, no commentary."
     )
 
-    def _vision_payloads() -> list[dict[str, Any]]:
+    def _vision_payloads() -> list[tuple[str, dict[str, Any]]]:
         base_messages = [
             {
                 "role": "user",
@@ -7089,24 +7098,73 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
                 ],
             }
         ]
+        # Blockbrain agentic attachment schema: some agent backends expect an
+        # explicit attachments/files array rather than inline message content.
+        attachment_messages = [
+            {
+                "role": "user",
+                "content": vision_prompt,
+                "attachments": [
+                    {
+                        "type": "image",
+                        "mimeType": "image/jpeg",
+                        "name": "label.jpg",
+                        "data": b64,
+                    }
+                ],
+            }
+        ]
         return [
-            {"messages": base_messages},
-            {"messages": alt_messages},
-            {"messages": anthro_messages},
+            ("content_image", {"messages": base_messages}),
+            ("content_image_url", {"messages": alt_messages}),
+            ("anthropic_source", {"messages": anthro_messages}),
+            ("message_attachments", {"messages": attachment_messages}),
+            (
+                "top_level_attachments",
+                {
+                    "messages": [{"role": "user", "content": vision_prompt}],
+                    "attachments": [
+                        {
+                            "type": "image",
+                            "mimeType": "image/jpeg",
+                            "name": "label.jpg",
+                            "data": f"data:image/jpeg;base64,{b64}",
+                        }
+                    ],
+                },
+            ),
         ]
 
-    for payload in _vision_payloads():
+    def _record(schema_name: str, with_model: bool, out: str) -> None:
+        global LAST_VISION_RAW_RESPONSE
+        snippet = str(out or "").strip().replace("\n", " ")[:180]
+        status = "empty"
+        if out and _is_blockbrain_image_missing_response(out):
+            status = "image_missing"
+        elif out and str(out).strip():
+            status = "text"
+        LAST_VISION_ATTEMPT_LOG.append(
+            f"{schema_name}{'+model' if with_model else ''}:{status}"
+            + (f" | {snippet}" if snippet else "")
+        )
+        if out and str(out).strip():
+            LAST_VISION_RAW_RESPONSE = str(out).strip()
+
+    for schema_name, payload in _vision_payloads():
         request_payload = dict(payload)
         if requested_model:
             request_payload["model"] = requested_model
         out = _blockbrain_chat(request_payload)
+        _record(schema_name, True, out)
         if out and not _is_blockbrain_image_missing_response(out):
             return out
 
-    for payload in _vision_payloads():
+    for schema_name, payload in _vision_payloads():
         out = _blockbrain_chat(payload)
+        _record(schema_name, False, out)
         if out and not _is_blockbrain_image_missing_response(out):
             return out
+
 
     return ""
 
@@ -9511,6 +9569,21 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                     else:
                         _bb_err = LAST_BLOCKBRAIN_ERROR
                         st.warning("Could not extract text from image" + (f" — {_bb_err}" if _bb_err else ""))
+                        # Surface the exact vision failure so image issues can be
+                        # diagnosed from the UI instead of guessed.
+                        with st.expander("Image extraction diagnostics", expanded=True):
+                            st.caption(f"Image bytes received: {len(image_bytes)}")
+                            if LAST_TEXT_LLM_ERROR:
+                                st.caption(f"Vision status: {LAST_TEXT_LLM_ERROR}")
+                            if LAST_BLOCKBRAIN_ERROR:
+                                st.caption(f"Transport error: {LAST_BLOCKBRAIN_ERROR}")
+                            if LAST_VISION_ATTEMPT_LOG:
+                                st.caption("Vision attempts:")
+                                for _line in LAST_VISION_ATTEMPT_LOG:
+                                    st.write(f"- {_line}")
+                            if LAST_VISION_RAW_RESPONSE:
+                                st.caption("Raw vision response (first 500 chars):")
+                                st.code(LAST_VISION_RAW_RESPONSE[:500])
 
                     if image_provider_label:
                         if image_fallback_used:
@@ -9744,6 +9817,30 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
                         )
                     else:
                         st.error("Please provide at least one input source: image, barcode, link, or text.")
+
+                    # If an image was provided, always surface the exact vision
+                    # failure detail here so the root cause is captured even when
+                    # the inline diagnostics expander above was collapsed.
+                    _had_image_input = bool(
+                        pending_camera_bytes
+                        or pending_uploaded_image_bytes
+                        or pending_label_capture_bytes
+                        or pending_uploaded_label_bytes
+                    )
+                    if _had_image_input:
+                        with st.expander("Vision failure details (share this if photos fail)", expanded=True):
+                            if LAST_TEXT_LLM_ERROR:
+                                st.caption(f"Vision status: {LAST_TEXT_LLM_ERROR}")
+                            if LAST_BLOCKBRAIN_ERROR:
+                                st.caption(f"Transport error: {LAST_BLOCKBRAIN_ERROR}")
+                            if LAST_VISION_ATTEMPT_LOG:
+                                st.caption("Vision attempts:")
+                                for _line in LAST_VISION_ATTEMPT_LOG:
+                                    st.write(f"- {_line}")
+                            if LAST_VISION_RAW_RESPONSE:
+                                st.caption("Raw vision response (first 500 chars):")
+                                st.code(LAST_VISION_RAW_RESPONSE[:500])
+
                 else:
                     status.write("Step 5/5: Extracting supplement components")
                     if image_locked_payload is not None:
