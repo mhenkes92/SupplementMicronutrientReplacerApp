@@ -7049,6 +7049,8 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
         "Read all visible text from this label image exactly as printed. "
         "Preserve nutrient names, numeric doses, and units (mg, mcg, IU, g). "
         "Output plain text lines only — no markdown, no commentary."
+    )
+
     def _vision_payloads() -> list[dict[str, Any]]:
         base_messages = [
             {
@@ -7105,6 +7107,8 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
         out = _blockbrain_chat(payload)
         if out and not _is_blockbrain_image_missing_response(out):
             return out
+
+    return ""
 
 
 def _is_blockbrain_image_missing_response(text: str) -> bool:
