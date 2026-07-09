@@ -454,8 +454,15 @@ def _render_header() -> None:
             }
             .block-container {
                 max-width: 440px;
-                padding-top: 1.1rem;
                 padding-bottom: 1.1rem;
+            }
+            /* Keep Streamlit's default top padding on desktop so the title is
+               not hidden behind the Streamlit top toolbar; only compact it on
+               narrow/mobile widths (mirrors the blockbrain app). */
+            @media (max-width: 768px) {
+                .block-container {
+                    padding-top: 1.1rem;
+                }
             }
             .swipe-title {
                 font-size: 2.05rem;
@@ -1150,3 +1157,5 @@ if __name__ == "__main__":
             print(f"Failed to launch Streamlit automatically: {exc}")
 else:
     _build_mobile_ui()
+
+
