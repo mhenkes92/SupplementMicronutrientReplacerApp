@@ -227,6 +227,25 @@ LAST_TEXT_LLM_ERROR = ""
 LAST_VISION_PROVIDER = ""
 LAST_TEXT_PROVIDER = ""
 LAST_URL_PARSE_REASON = ""
+
+
+def _load_title_push_toggle() -> bool:
+    """Read the committed push-toggle flag used to alternate the title dot."""
+    candidates = [
+        os.path.join(os.path.dirname(__file__), ".title_dot_toggle"),
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "blockbrain", ".title_dot_toggle"),
+    ]
+    for path in candidates:
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                value = handle.read().strip().lower()
+            if value in {"1", "true", "on", "yes", "green"}:
+                return True
+            if value in {"0", "false", "off", "no", "none"}:
+                return False
+        except Exception:
+            continue
+    return True
 LAST_RAG_ERROR = ""
 
 
@@ -7066,8 +7085,34 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
     if requested_model:
         alt_payload["model"] = requested_model
     alt_out = _blockbrain_chat(alt_payload)
-    if alt_out:
+    if alt_out and not _is_blockbrain_image_missing_response(alt_out):
         return alt_out
+
+    # Anthropic-style multimodal shape. This is the most likely schema when the
+    # selected runtime model is a Claude variant.
+    anthro_payload = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": vision_prompt},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": b64,
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+    if requested_model:
+        anthro_payload["model"] = requested_model
+    anthro_out = _blockbrain_chat(anthro_payload)
+    if anthro_out and not _is_blockbrain_image_missing_response(anthro_out):
+        return anthro_out
     return out
 
 
@@ -11267,7 +11312,7 @@ body,
         unsafe_allow_html=True,
     )
 
-    st.title("🥗 SuppSwap 🟢")
+    st.title("🥗 SuppSwap 🟢" if _load_title_push_toggle() else "🥗 SuppSwap")
     # Patch: rebrand uploader button to "Capture" + camera icon.
     st.markdown(
         """
