@@ -446,9 +446,9 @@ def _render_header() -> None:
     st.markdown(
         """
         <style>
-            /* Hide the Streamlit top toolbar so it never overlaps the title (mobile especially). */
+            /* Keep the Streamlit top bar visible but transparent, and push content below it. */
             [data-testid="stHeader"] {
-                display: none;
+                background: transparent;
             }
             [data-testid="stAppViewContainer"] {
                 background:
@@ -458,8 +458,33 @@ def _render_header() -> None:
             }
             .block-container {
                 max-width: 440px;
-                padding-top: 1.5rem;
-                padding-bottom: 1.1rem;
+                padding-top: 3rem;
+                padding-bottom: 0.6rem;
+            }
+            /* Dietary filter: horizontally scrollable pills (not a dropdown). */
+            div[role="radiogroup"] {
+                flex-wrap: nowrap !important;
+                overflow-x: auto !important;
+                gap: 6px;
+                padding: 2px 0 8px 0;
+                scrollbar-width: thin;
+            }
+            div[role="radiogroup"] > label {
+                flex: 0 0 auto !important;
+                border: 1px solid #d6dde7;
+                background: #ffffff;
+                border-radius: 999px;
+                padding: 3px 12px;
+                margin: 0 !important;
+                white-space: nowrap;
+            }
+            .diet-strip-label {
+                font-size: 0.72rem;
+                font-weight: 800;
+                letter-spacing: 0.05em;
+                text-transform: uppercase;
+                color: #64748b;
+                margin: 0.25rem 0 0.3rem 0;
             }
             .swipe-title {
                 font-size: 2.05rem;
@@ -533,8 +558,8 @@ def _render_header() -> None:
             }
             .tinder-stage {
                 position: relative;
-                margin: 0.05rem 0 0.7rem 0;
-                min-height: 495px;
+                margin: 0.05rem 0 0.35rem 0;
+                min-height: 8px;
             }
             .stack-under-1,
             .stack-under-2 {
@@ -771,213 +796,275 @@ def _render_header() -> None:
     )
 
 
-def _render_global_dietary_filter() -> None:
+def _reset_swipe_state() -> None:
+    """Clear all swipe session state without triggering a rerun."""
+    next_nonce = int(st.session_state.get("swipe_reset_nonce", 0)) + 1
+    for key in [k for k in list(st.session_state.keys()) if k.startswith("swipe_")]:
+        st.session_state.pop(key, None)
+    st.session_state["swipe_reset_nonce"] = next_nonce
+    _init_state()
+
+
+def _selected_session_in_progress() -> bool:
+    if not (st.session_state.get("swipe_cards") or []):
+        return False
+    return bool(int(st.session_state.get("swipe_index", 0)) > 0 or (st.session_state.get("swipe_decisions") or {}))
+
+
+def _extract_ean_from_text(text: str) -> str:
+    for chunk in re.findall(r"\d[\d\s\-]{6,18}\d", str(text or "")):
+        digits = re.sub(r"\D", "", chunk)
+        if 8 <= len(digits) <= 14:
+            return digits
+    return ""
+
+
+def _research_barcode_label(barcode: str) -> str:
+    """Retrieve a supplement label for an EAN/UPC barcode.
+
+    Tries Blockbrain's deterministic web lookup first, then falls back to an
+    agentic Blockbrain research prompt so the bot can look the product up.
+    """
+    barcode = re.sub(r"\D", "", str(barcode or ""))
+    if not (8 <= len(barcode) <= 14):
+        return ""
+    try:
+        text, _name, _provider, _reason = bb.extract_supplement_text_from_barcode(barcode)
+        if text and text.strip():
+            return text.strip()
+    except Exception:
+        pass
+    system_prompt = (
+        "You are a supplement-label research assistant. Given a product barcode "
+        "(EAN-13/EAN-8/UPC), identify the exact product and return its Supplement "
+        "Facts / nutrition label as plain text: one nutrient per line with amount "
+        "and unit (for example 'Vitamin D 25 mcg', 'Magnesium 300 mg'). Include the "
+        "ingredient list if available. Never invent values. If you cannot confidently "
+        "identify the product, reply with exactly NONE."
+    )
+    user_prompt = (
+        f"Barcode: {barcode}\n"
+        "Research this product and return only its supplement facts label text."
+    )
+    try:
+        reply = str(bb.call_blockbrain_text(system_prompt, user_prompt) or "").strip()
+    except Exception:
+        reply = ""
+    if reply and reply.upper() != "NONE":
+        return reply
+    return ""
+
+
+def _render_dietary_pills() -> None:
     ordered_ids, profile_by_id = _dietary_profile_lookup()
     if not ordered_ids:
         return
-
     selected_id = bb.normalize_lookup_key(str(st.session_state.get("swipe_diet_profile_id", "none") or "none"))
     if selected_id not in profile_by_id:
-        selected_id = "none" if "none" in profile_by_id else ordered_ids[0]
-        st.session_state["swipe_diet_profile_id"] = selected_id
+        st.session_state["swipe_diet_profile_id"] = "none" if "none" in profile_by_id else ordered_ids[0]
+
+    st.markdown("<div class='diet-strip-label'>Dietary filter</div>", unsafe_allow_html=True)
+    st.radio(
+        "Dietary filter",
+        options=ordered_ids,
+        key="swipe_diet_profile_id",
+        horizontal=True,
+        label_visibility="collapsed",
+        format_func=lambda pid: str(profile_by_id.get(pid, {}).get("label", pid)).strip() or pid,
+    )
+
+
+def _run_pending_analysis() -> None:
+    req = dict(st.session_state.get("swipe_pending_request") or {})
 
     with st.container(border=True):
-        st.markdown(
-            "<div class='filter-topline'><div class='filter-title'>Dietary filters</div>"
-            "<div class='filter-chip'><span class='filter-chip-dot'></span> Applied to all whole-food suggestions</div></div>",
-            unsafe_allow_html=True,
-        )
+        st.markdown("<div class='chip'>Analyzing…</div>", unsafe_allow_html=True)
+        loading_block = st.empty()
+        progress_bar = st.progress(int(st.session_state.get("swipe_progress_pct", 0) or 0))
+        progress_text = st.empty()
 
-        controls_left, controls_right = st.columns([3.25, 1.05])
-        with controls_left:
-            st.selectbox(
-                "Dietary restrictions",
-                options=ordered_ids,
-                key="swipe_diet_profile_id",
-                label_visibility="collapsed",
-                format_func=lambda pid: str(profile_by_id.get(pid, {}).get("label", pid)).strip() or pid,
-                help="Filters all whole-food alternatives shown on every card.",
+        def _set_progress(pct: int, sub: str) -> None:
+            pct_clamped = max(0, min(100, int(pct)))
+            st.session_state["swipe_progress_pct"] = pct_clamped
+            loading_block.markdown(
+                f"""
+                <div class='analyze-loading-wrap'>
+                    <div class='analyze-loading-arrow'>↻</div>
+                    <div class='analyze-loading-title'>Finding Whole Food Alternatives</div>
+                    <div class='analyze-loading-sub'>{sub}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
+            progress_bar.progress(pct_clamped)
+            progress_text.markdown(f"**{pct_clamped}%**")
 
-        with controls_right:
-            st.write("")
-            if st.button("Start Over", use_container_width=True, key="swipe_start_over_btn"):
-                _reset_swipe_app()
-
-        active_id = bb.normalize_lookup_key(str(st.session_state.get("swipe_diet_profile_id", "none") or "none"))
-        active_profile = profile_by_id.get(active_id)
-        active_label = str(active_profile.get("label", "No restriction") if active_profile else "No restriction").strip()
-        if active_id == "none":
-            active_label = "All ingredients allowed"
-        st.markdown(
-            f"<div class='filter-chip' style='margin-top:0.7rem;'><span class='filter-chip-dot' style='background:#38bdf8;box-shadow:0 0 0 3px rgba(56,189,248,0.14);'></span>{active_label}</div>",
-            unsafe_allow_html=True,
-        )
-
-
-def _render_analyze_card() -> None:
-    nonce = int(st.session_state.get("swipe_reset_nonce", 0))
-    show_inputs = bool(st.session_state.get("swipe_show_input_methods", False))
-    with st.container(border=True):
-        st.markdown("<div class='chip'>Step 1/1 • Analyze to begin swiping</div>", unsafe_allow_html=True)
-        st.markdown("<div class='micro-name'>Capture Supplement Label</div>", unsafe_allow_html=True)
-
-        precheck_error = _blockbrain_ready_error()
-        if precheck_error:
-            st.error(precheck_error)
-
-        if bool(st.session_state.get("swipe_is_analyzing", False)) and isinstance(st.session_state.get("swipe_pending_request"), dict):
-            loading_block = st.empty()
-            progress_bar = st.progress(int(st.session_state.get("swipe_progress_pct", 0) or 0))
-            progress_text = st.empty()
-
-            def _set_progress(pct: int, sub: str) -> None:
-                pct_clamped = max(0, min(100, int(pct)))
-                st.session_state["swipe_progress_pct"] = pct_clamped
-                loading_block.markdown(
-                    f"""
-                    <div class='analyze-loading-wrap'>
-                        <div class='analyze-loading-arrow'>↻</div>
-                        <div class='analyze-loading-title'>Finding Whole Food Alternatives</div>
-                        <div class='analyze-loading-sub'>{sub}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                progress_bar.progress(pct_clamped)
-                progress_text.markdown(f"**{pct_clamped}%**")
-
-            _set_progress(5, "Preparing AI analysis...")
-
-            req = dict(st.session_state.get("swipe_pending_request") or {})
-            text_parts: list[str] = []
-
-            with st.spinner("Extracting and parsing supplement info..."):
-                _set_progress(12, "Checking Blockbrain connectivity...")
-
-                upload_bytes = req.get("upload_bytes")
-                if isinstance(upload_bytes, (bytes, bytearray)) and upload_bytes:
-                    _set_progress(28, "Reading uploaded image...")
-                    try:
-                        ocr_text, ocr_route = _extract_image_text_best_effort(bytes(upload_bytes))
-                        if ocr_text.strip():
-                            text_parts.append(ocr_text)
-                        else:
-                            details = str(getattr(bb, "LAST_TEXT_LLM_ERROR", "") or getattr(bb, "LAST_BLOCKBRAIN_ERROR", "") or "").strip()
-                            suffix = f" ({details})" if details else ""
-                            st.warning(f"Could not extract text from uploaded label image using Blockbrain.{suffix}")
-                    except Exception as exc:
-                        st.warning(f"Upload OCR failed: {exc}")
-
-                camera_bytes = req.get("camera_bytes")
-                if isinstance(camera_bytes, (bytes, bytearray)) and camera_bytes:
-                    _set_progress(44, "Reading camera image...")
-                    try:
-                        ocr_text, ocr_route = _extract_image_text_best_effort(bytes(camera_bytes))
-                        if ocr_text.strip():
-                            text_parts.append(ocr_text)
-                        else:
-                            details = str(getattr(bb, "LAST_TEXT_LLM_ERROR", "") or getattr(bb, "LAST_BLOCKBRAIN_ERROR", "") or "").strip()
-                            suffix = f" ({details})" if details else ""
-                            st.warning(f"Could not extract text from camera label image using Blockbrain.{suffix}")
-                    except Exception as exc:
-                        st.warning(f"Camera OCR failed: {exc}")
-
-                req_manual = str(req.get("manual", "") or "").strip()
-                if req_manual:
-                    _set_progress(58, "Processing provided text input...")
-                    text_parts.append(req_manual)
-
-                combined = "\n\n".join([x for x in text_parts if str(x).strip()]).strip()
-                if not combined:
-                    st.session_state["swipe_is_analyzing"] = False
-                    st.session_state["swipe_pending_request"] = None
-                    st.session_state["swipe_progress_pct"] = 0
-                    st.error(
-                        "No analyzable input found. Upload/take picture or paste supplement facts. "
-                        "If image OCR fails, ensure Blockbrain is configured and the Supplement Facts panel fills most of the frame."
-                    )
-                    return
-
-                _set_progress(72, "Parsing micronutrients...")
-                components = bb.parse_components(combined)
-                if not components:
-                    st.session_state["swipe_is_analyzing"] = False
-                    st.session_state["swipe_pending_request"] = None
-                    st.session_state["swipe_progress_pct"] = 0
-                    st.error("No micronutrients parsed from the provided input.")
-                    return
-
-                _set_progress(86, "Matching whole-food alternatives...")
-                _summaries, details, match_status = bb.build_ai_food_matches(components)
-                if match_status != "ok":
-                    st.warning(
-                        "Food matching did not return full data. You can still swipe cards and keep micronutrients."
-                    )
-
-            _set_progress(100, "Done. Opening your first card...")
-
-            cards = _build_swipe_cards(components, details)
-            st.session_state["swipe_cards"] = cards
-            st.session_state["swipe_analysis_text"] = combined
-            st.session_state["swipe_components"] = components
-            st.session_state["swipe_decisions"] = {}
-            st.session_state["swipe_rag_chats"] = {}
-            st.session_state["swipe_index"] = 0
+        def _abort(message: str) -> None:
             st.session_state["swipe_is_analyzing"] = False
             st.session_state["swipe_pending_request"] = None
             st.session_state["swipe_progress_pct"] = 0
+            st.error(message)
+
+        _set_progress(6, "Preparing AI analysis…")
+        text_parts: list[str] = []
+
+        with st.spinner("Extracting and parsing supplement info…"):
+            for label, key, pct in (("uploaded image", "upload_bytes", 26), ("camera image", "camera_bytes", 42)):
+                img = req.get(key)
+                if isinstance(img, (bytes, bytearray)) and img:
+                    _set_progress(pct, f"Reading {label}…")
+                    try:
+                        ocr_text, _route = _extract_image_text_best_effort(bytes(img))
+                        if ocr_text.strip():
+                            text_parts.append(ocr_text)
+                        # Barcode fallback: if the label text is not strong, try to
+                        # read an EAN from the OCR text and research the product.
+                        if not bb.extraction_gate_report("\n".join(text_parts)).get("passed"):
+                            ean = _extract_ean_from_text(ocr_text)
+                            if ean:
+                                _set_progress(min(96, pct + 8), f"Researching barcode {ean}…")
+                                researched = _research_barcode_label(ean)
+                                if researched:
+                                    text_parts.append(researched)
+                    except Exception as exc:
+                        st.warning(f"Image OCR failed: {exc}")
+
+            manual = str(req.get("manual", "") or "").strip()
+            if manual:
+                digits = re.sub(r"\D", "", manual)
+                if re.fullmatch(r"[\d\s\-]{8,18}", manual) and 8 <= len(digits) <= 14:
+                    _set_progress(56, "Researching barcode…")
+                    researched = _research_barcode_label(manual)
+                    if researched:
+                        text_parts.append(researched)
+                    else:
+                        st.warning("Could not research that barcode. Try a photo or paste the label text.")
+                elif re.match(r"https?://", manual, re.I):
+                    _set_progress(56, "Fetching product page…")
+                    try:
+                        url_text = _cached_extract_from_url(manual)
+                        if url_text.strip():
+                            text_parts.append(url_text)
+                    except Exception as exc:
+                        st.warning(f"URL fetch failed: {exc}")
+                else:
+                    _set_progress(58, "Processing text input…")
+                    text_parts.append(manual)
+
+            combined = "\n\n".join([x for x in text_parts if str(x).strip()]).strip()
+            if not combined:
+                _abort("No analyzable input found. Add a photo, barcode, URL, or supplement-facts text.")
+                return
+
+            _set_progress(72, "Parsing micronutrients…")
+            components = bb.parse_components(combined)
+            if not components:
+                _abort("No micronutrients could be parsed from the provided input.")
+                return
+
+            _set_progress(86, "Matching whole-food alternatives…")
+            _summaries, details, match_status = bb.build_ai_food_matches(components)
+            if match_status != "ok":
+                st.warning("Food matching was partial — you can still swipe and keep micronutrients.")
+
+        _set_progress(100, "Opening your first card…")
+
+        st.session_state["swipe_cards"] = _build_swipe_cards(components, details)
+        st.session_state["swipe_analysis_text"] = combined
+        st.session_state["swipe_components"] = components
+        st.session_state["swipe_decisions"] = {}
+        st.session_state["swipe_rag_chats"] = {}
+        st.session_state["swipe_index"] = 0
+        st.session_state["swipe_is_analyzing"] = False
+        st.session_state["swipe_pending_request"] = None
+        st.session_state["swipe_progress_pct"] = 0
+        st.rerun()
+
+
+def _stage_analysis_from_inputs(upload_bytes: bytes, camera_bytes: bytes, manual_text: str) -> bool:
+    """Stage a pending analysis if new input is present. Returns True if staged."""
+    if not (upload_bytes or camera_bytes or manual_text):
+        return False
+    sig = _analysis_input_signature(upload_bytes, camera_bytes, manual_text)
+    if sig == str(st.session_state.get("swipe_last_auto_signature", "") or ""):
+        return False
+    st.session_state["swipe_pending_request"] = {
+        "upload_bytes": upload_bytes,
+        "camera_bytes": camera_bytes,
+        "manual": manual_text,
+    }
+    st.session_state["swipe_last_auto_signature"] = sig
+    st.session_state["swipe_progress_pct"] = 1
+    st.session_state["swipe_is_analyzing"] = True
+    return True
+
+
+@st.dialog("Analyze my supplement")
+def _analyze_dialog() -> None:
+    nonce = int(st.session_state.get("swipe_reset_nonce", 0))
+    precheck_error = _blockbrain_ready_error()
+    if precheck_error:
+        st.error(precheck_error)
+    st.caption("Analysis starts automatically once you add a photo, barcode, file, URL, or text.")
+
+    tab_cam, tab_file, tab_text = st.tabs(["📷 Photo / Barcode", "🖼️ File / Gallery", "🔗 URL / Text"])
+    with tab_cam:
+        camera = st.camera_input(
+            "Take a photo of the label or barcode",
+            key=f"dlg_camera_{nonce}",
+            label_visibility="collapsed",
+        )
+    with tab_file:
+        upload = st.file_uploader(
+            "Choose an image from your files or gallery",
+            type=["png", "jpg", "jpeg", "webp"],
+            key=f"dlg_upload_{nonce}",
+            label_visibility="collapsed",
+        )
+    with tab_text:
+        manual = st.text_area(
+            "Paste a product URL, a barcode number, or the supplement facts text",
+            height=120,
+            key=f"dlg_manual_{nonce}",
+            label_visibility="collapsed",
+        )
+
+    upload_bytes = upload.getvalue() if upload is not None else b""
+    camera_bytes = camera.getvalue() if camera is not None else b""
+    manual_text = str(manual or "").strip()
+
+    if not precheck_error and _stage_analysis_from_inputs(upload_bytes, camera_bytes, manual_text):
+        st.rerun()
+
+    if st.button("Cancel", use_container_width=True, key=f"dlg_cancel_{nonce}"):
+        st.rerun()
+
+
+@st.dialog("Start over?")
+def _confirm_restart_dialog() -> None:
+    st.write(
+        "You've already started swiping. Analyzing a new supplement will clear your "
+        "current cards and decisions."
+    )
+    col_cancel, col_ok = st.columns(2)
+    with col_cancel:
+        if st.button("Cancel", use_container_width=True, key="swipe_restart_cancel"):
+            st.rerun()
+    with col_ok:
+        if st.button("Start over", type="primary", use_container_width=True, key="swipe_restart_confirm"):
+            _reset_swipe_state()
+            st.session_state["swipe_open_analyze"] = True
             st.rerun()
 
-        if not show_inputs:
-            cta_label = f"Analyze my Supplement {LEFT_SWIPE_ICON} -> {TITLE_WHOLE_FOOD_ICON}"
-            if st.button(cta_label, type="primary", use_container_width=True, key=f"swipe_tap_to_start_{nonce}"):
-                st.session_state["swipe_show_input_methods"] = True
-                st.rerun()
-            return
 
-        camera = st.camera_input("Take a photo (label, product, or EAN code)", key=f"swipe_camera_{nonce}")
-        upload = st.file_uploader(
-            "Upload label/product/EAN image",
-            type=["png", "jpg", "jpeg", "webp"],
-            key=f"swipe_upload_{nonce}",
-        )
-        manual = st.text_area(
-            "Provide text input",
-            height=120,
-            key=f"swipe_manual_{nonce}",
-        )
-
-        upload_bytes = upload.getvalue() if upload is not None else b""
-        camera_bytes = camera.getvalue() if camera is not None else b""
-        manual_text = str(manual or "").strip()
-        has_any_input = bool(upload_bytes or camera_bytes or manual_text)
-        input_signature = _analysis_input_signature(upload_bytes, camera_bytes, manual_text)
-
-        top_left, top_right = st.columns(2)
-        with top_left:
-            if st.button("Back", use_container_width=True, key=f"swipe_back_to_tap_{nonce}"):
-                st.session_state["swipe_show_input_methods"] = False
-                st.rerun()
-
-        with top_right:
-            st.caption("Analysis starts automatically after input is provided.")
-
-        if has_any_input and not bool(st.session_state.get("swipe_is_analyzing", False)):
-            if input_signature != str(st.session_state.get("swipe_last_auto_signature", "") or ""):
-                if precheck_error:
-                    st.error(precheck_error)
-                    return
-
-                st.session_state["swipe_pending_request"] = {
-                    "upload_bytes": upload_bytes,
-                    "camera_bytes": camera_bytes,
-                    "manual": manual_text,
-                }
-                st.session_state["swipe_last_auto_signature"] = input_signature
-                st.session_state["swipe_progress_pct"] = 1
-                st.session_state["swipe_is_analyzing"] = True
-                st.rerun()
+def _render_analyze_bar() -> None:
+    label = f"Analyze my Supplement {LEFT_SWIPE_ICON} → {TITLE_WHOLE_FOOD_ICON}"
+    if st.button(label, type="primary", use_container_width=True, key="swipe_analyze_btn"):
+        if _selected_session_in_progress():
+            st.session_state["swipe_confirm_restart"] = True
+        else:
+            st.session_state["swipe_open_analyze"] = True
+        st.rerun()
 
 
 def _render_card() -> None:
@@ -986,7 +1073,16 @@ def _render_card() -> None:
     decisions: dict[str, dict[str, Any]] = st.session_state.get("swipe_decisions", {})
 
     if not cards:
-        st.info("Analyze input first to unlock swipe cards.")
+        with st.container(border=True):
+            st.markdown(
+                "<div class='tap-card-wrap'>"
+                "<div class='analyze-loading-arrow' style='animation:none;'>\U0001F957</div>"
+                "<div class='tap-card-title'>No supplement analyzed yet</div>"
+                "<div class='tap-card-sub'>Tap \u201cAnalyze my Supplement\u201d below to scan a label or barcode, "
+                "upload a photo, or paste a URL / text \u2014 your first swipe card appears here.</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
         return
 
     if index >= len(cards):
@@ -1117,11 +1213,15 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
 def _build_mobile_ui() -> None:
     _init_state()
     _render_header()
-    _render_global_dietary_filter()
-    if st.session_state.get("swipe_cards"):
-        _render_card()
-    else:
-        _render_analyze_card()
+    if bool(st.session_state.get("swipe_is_analyzing", False)) and isinstance(st.session_state.get("swipe_pending_request"), dict):
+        _run_pending_analysis()
+    _render_card()
+    _render_dietary_pills()
+    _render_analyze_bar()
+    if st.session_state.pop("swipe_confirm_restart", False):
+        _confirm_restart_dialog()
+    if st.session_state.pop("swipe_open_analyze", False):
+        _analyze_dialog()
 
 
 def _is_streamlit_runtime() -> bool:
