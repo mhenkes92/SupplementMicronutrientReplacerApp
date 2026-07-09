@@ -7049,9 +7049,8 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
         "Read all visible text from this label image exactly as printed. "
         "Preserve nutrient names, numeric doses, and units (mg, mcg, IU, g). "
         "Output plain text lines only — no markdown, no commentary."
-    )
-    payload = {
-        "messages": [
+    def _vision_payloads() -> list[dict[str, Any]]:
+        base_messages = [
             {
                 "role": "user",
                 "content": [
@@ -7059,17 +7058,8 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
                     {"type": "image", "image": f"data:image/jpeg;base64,{b64}"},
                 ],
             }
-        ],
-    }
-    if requested_model:
-        payload["model"] = requested_model
-    out = _blockbrain_chat(payload)
-    if out and not _is_blockbrain_image_missing_response(out):
-        return out
-
-    # Alternate multimodal shape for backends expecting OpenAI-style image_url.
-    alt_payload = {
-        "messages": [
+        ]
+        alt_messages = [
             {
                 "role": "user",
                 "content": [
@@ -7080,18 +7070,8 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
                     },
                 ],
             }
-        ],
-    }
-    if requested_model:
-        alt_payload["model"] = requested_model
-    alt_out = _blockbrain_chat(alt_payload)
-    if alt_out and not _is_blockbrain_image_missing_response(alt_out):
-        return alt_out
-
-    # Anthropic-style multimodal shape. This is the most likely schema when the
-    # selected runtime model is a Claude variant.
-    anthro_payload = {
-        "messages": [
+        ]
+        anthro_messages = [
             {
                 "role": "user",
                 "content": [
@@ -7106,14 +7086,25 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
                     },
                 ],
             }
-        ],
-    }
-    if requested_model:
-        anthro_payload["model"] = requested_model
-    anthro_out = _blockbrain_chat(anthro_payload)
-    if anthro_out and not _is_blockbrain_image_missing_response(anthro_out):
-        return anthro_out
-    return out
+        ]
+        return [
+            {"messages": base_messages},
+            {"messages": alt_messages},
+            {"messages": anthro_messages},
+        ]
+
+    for payload in _vision_payloads():
+        request_payload = dict(payload)
+        if requested_model:
+            request_payload["model"] = requested_model
+        out = _blockbrain_chat(request_payload)
+        if out and not _is_blockbrain_image_missing_response(out):
+            return out
+
+    for payload in _vision_payloads():
+        out = _blockbrain_chat(payload)
+        if out and not _is_blockbrain_image_missing_response(out):
+            return out
 
 
 def _is_blockbrain_image_missing_response(text: str) -> bool:
