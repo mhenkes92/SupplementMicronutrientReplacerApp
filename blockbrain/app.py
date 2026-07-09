@@ -7087,8 +7087,26 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
         "Output plain text lines only — no markdown, no commentary."
     )
 
-    def _vision_payloads() -> list[tuple[str, dict[str, Any]]]:
-        base_messages = [
+    def _record(out: str) -> None:
+        global LAST_VISION_RAW_RESPONSE
+        snippet = str(out or "").strip().replace("\n", " ")[:180]
+        if out and _is_blockbrain_image_missing_response(out):
+            status = "image_missing"
+        elif out and str(out).strip():
+            status = "text"
+        else:
+            status = "empty"
+        LAST_VISION_ATTEMPT_LOG.append("content_image:" + status + (f" | {snippet}" if snippet else ""))
+        if out and str(out).strip():
+            LAST_VISION_RAW_RESPONSE = str(out).strip()
+
+    # Single verified path: the content_image schema with the pinned best model.
+    # Vision requires a pinned vision-capable model (the default agent backend
+    # returns "no image attached"). Benchmarks proved accuracy is identical across
+    # models, so there is exactly ONE model and ONE schema here — no fan-out.
+    effective_model = requested_model or BLOCKBRAIN_PINNED_VISION_MODEL
+    payload = {
+        "messages": [
             {
                 "role": "user",
                 "content": [
@@ -7096,105 +7114,14 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
                     {"type": "image", "image": f"data:image/jpeg;base64,{b64}"},
                 ],
             }
-        ]
-        alt_messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": vision_prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
-                    },
-                ],
-            }
-        ]
-        anthro_messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": vision_prompt},
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/jpeg",
-                            "data": b64,
-                        },
-                    },
-                ],
-            }
-        ]
-        # Blockbrain agentic attachment schema: some agent backends expect an
-        # explicit attachments/files array rather than inline message content.
-        attachment_messages = [
-            {
-                "role": "user",
-                "content": vision_prompt,
-                "attachments": [
-                    {
-                        "type": "image",
-                        "mimeType": "image/jpeg",
-                        "name": "label.jpg",
-                        "data": b64,
-                    }
-                ],
-            }
-        ]
-        return [
-            ("content_image", {"messages": base_messages}),
-            ("content_image_url", {"messages": alt_messages}),
-            ("anthropic_source", {"messages": anthro_messages}),
-            ("message_attachments", {"messages": attachment_messages}),
-            (
-                "top_level_attachments",
-                {
-                    "messages": [{"role": "user", "content": vision_prompt}],
-                    "attachments": [
-                        {
-                            "type": "image",
-                            "mimeType": "image/jpeg",
-                            "name": "label.jpg",
-                            "data": f"data:image/jpeg;base64,{b64}",
-                        }
-                    ],
-                },
-            ),
-        ]
-
-    def _record(schema_name: str, with_model: bool, out: str) -> None:
-        global LAST_VISION_RAW_RESPONSE
-        snippet = str(out or "").strip().replace("\n", " ")[:180]
-        status = "empty"
-        if out and _is_blockbrain_image_missing_response(out):
-            status = "image_missing"
-        elif out and str(out).strip():
-            status = "text"
-        LAST_VISION_ATTEMPT_LOG.append(
-            f"{schema_name}{'+model' if with_model else ''}:{status}"
-            + (f" | {snippet}" if snippet else "")
-        )
-        if out and str(out).strip():
-            LAST_VISION_RAW_RESPONSE = str(out).strip()
-
-    # Verified: vision only works when a real vision-capable model is pinned via
-    # the payload "model" field; the default agent backend returns "no image
-    # attached". So we require a model and try the known-good schema first, then
-    # the alternate schemas only if the backend returned nothing usable. We do
-    # NOT retry without a model (that hits the non-vision default backend and
-    # only adds 12-95s per call).
-    effective_model = requested_model or BLOCKBRAIN_PINNED_VISION_MODEL
-    for schema_name, payload in _vision_payloads():
-        request_payload = dict(payload)
-        if effective_model:
-            request_payload["model"] = effective_model
-        out = _blockbrain_chat(request_payload)
-        _record(schema_name, bool(effective_model), out)
-        if out and not _is_blockbrain_image_missing_response(out):
-            return out
-    return ""
-
-
+        ],
+    }
+    if effective_model:
+        payload["model"] = effective_model
+    out = _blockbrain_chat(payload)
+    _record(out)
+    if out and not _is_blockbrain_image_missing_response(out):
+        return out
     return ""
 
 
@@ -7884,97 +7811,44 @@ def extract_image_text_with_blockbrain(image_bytes: bytes, model: str | None = N
 
 
 def _build_blockbrain_ocr_image_variants(image_bytes: bytes) -> list[tuple[str, bytes]]:
-    """Build lightweight image variants to improve first-pass OCR reliability.
+    """Return a single downscaled JPEG (fast, small payload).
 
-    Verified: vision latency is dominated by image size (a ~300KB label ~= 12-37s,
-    a ~767KB one ~= 95s and can exceed the request timeout). So a downscaled
-    variant is tried FIRST and the full original only as a last resort.
+    Vision latency is dominated by image size, so the image is capped to a
+    ~1400px long edge at JPEG q80. No full-size fallback variant.
     """
-    downscaled: list[tuple[str, bytes]] = []
     try:
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         image = ImageOps.exif_transpose(image)
-
-        # Aggressive first pass: cap the long edge so the payload stays small and
-        # fast. Labels remain legible at ~1400px.
         max_side = 1400
         width, height = image.size
-        work = image
         if max(width, height) > max_side:
             scale = max_side / float(max(width, height))
-            work = image.resize(
+            image = image.resize(
                 (max(1, int(width * scale)), max(1, int(height * scale))),
                 Image.Resampling.LANCZOS,
             )
-
-        for quality, tag in ((80, "fast_jpeg"), (88, "resized_jpeg")):
-            buffer = io.BytesIO()
-            work.save(buffer, format="JPEG", quality=quality, optimize=True)
-            payload = buffer.getvalue()
-            if payload:
-                downscaled.append((tag, payload))
-                # If the fast pass is already small enough, don't add the larger one.
-                if quality == 80 and len(payload) <= 320_000:
-                    break
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=80, optimize=True)
+        payload = buffer.getvalue()
+        if payload:
+            return [("fast_jpeg", payload)]
     except Exception:
         pass
-
-    # Downscaled variants first (fast), original last (fallback only).
-    variants: list[tuple[str, bytes]] = list(downscaled)
-    variants.append(("original", image_bytes))
-
-    deduped: list[tuple[str, bytes]] = []
-    seen_hashes: set[str] = set()
-    for variant_name, payload in variants:
-        payload_hash = hashlib.sha1(payload).hexdigest() if payload else ""
-        if not payload or payload_hash in seen_hashes:
-            continue
-        seen_hashes.add(payload_hash)
-        deduped.append((variant_name, payload))
-    return deduped
+    # Only if re-encoding failed entirely, send the original bytes as-is.
+    return [("original", image_bytes)]
 
 
 def extract_image_text_with_blockbrain_best_effort(image_bytes: bytes, model: str | None = None) -> tuple[str, str]:
-    """Try fast image variants and return (text, route label)."""
-    best_text = ""
-    best_route = ""
-    best_score = -1
-
+    """Single fast path: downscaled image -> pinned best vision model."""
     for variant_name, variant_bytes in _build_blockbrain_ocr_image_variants(image_bytes):
         candidate_text = extract_image_text_with_blockbrain(variant_bytes, model=model)
         if not candidate_text:
             continue
-
         route_label = str(LAST_VISION_PROVIDER or "Blockbrain vision model").strip()
         if variant_name != "original":
             route_label = f"{route_label} ({variant_name})"
-
-        gate = extraction_gate_report(candidate_text)
-        candidate_score = int(gate.get("score", 0)) * 100 + int(gate.get("dose_hits", 0))
-        if candidate_score > best_score:
-            best_score = candidate_score
-            best_text = candidate_text
-            best_route = route_label
-
-        if gate.get("passed"):
-            return candidate_text, route_label
-
-    # Last resort for photo inputs: use local OCR silently when the vision path
-    # returns nothing. This preserves the all-in-one capture flow without showing
-    # the old user-facing "trying local OCR fallback" message.
-    local_text = extract_image_text_with_tesseract(image_bytes)
-    if local_text:
-        route_label = "Photo OCR retry (local)"
-        gate = extraction_gate_report(local_text)
-        candidate_score = int(gate.get("score", 0)) * 100 + int(gate.get("dose_hits", 0))
-        if candidate_score > best_score:
-            best_score = candidate_score
-            best_text = local_text
-            best_route = route_label
-        if gate.get("passed"):
-            return local_text, route_label
-
-    return best_text, best_route
+        return candidate_text, route_label
+    return "", ""
 
 
 # Backward-compat alias
