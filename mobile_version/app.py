@@ -53,11 +53,90 @@ load_dotenv()
 # Also load .env from the app directory so VS Code Play/Run works from any CWD.
 load_dotenv(APP_DIR / ".env")
 
-# Offline-only configuration.
-# Cloud LLM providers are intentionally disabled. OCR remains local, and all local
-# language-model features route through a llama.cpp-backed Phi GGUF runtime.
+# Blockbrain-first vision configuration.
+# Nutrition-label OCR routes exclusively through the Blockbrain agentic vision API
+# (primary and only OCR path — the previous local Tesseract/PaddleOCR stack has been
+# removed). Credentials load from environment (.env) or, under Streamlit, st.secrets.
 BLOCKBRAIN_API_KEY = ""
 BLOCKBRAIN_BOT_ID = ""
+
+# Fallback agents tried (in order) when the primary agent errors (e.g. HTTP 500).
+BLOCKBRAIN_FALLBACK_AGENTS = ["customAgent", "researchAgent", "scientificAgent"]
+# Pinned vision model for label OCR (agentic vision route). Fast, cheapest tier.
+BLOCKBRAIN_PINNED_VISION_MODEL = "gpt-4.1-nano"
+# Fast non-thinking text model for structured JSON generation.
+BLOCKBRAIN_PINNED_TEXT_MODEL = "gpt-4.1-nano"
+# Vision calls can be slow; use a generous timeout.
+BLOCKBRAIN_HTTP_TIMEOUT = 120
+
+
+def _load_blockbrain_secrets() -> tuple[str, str, str]:
+    """Load Blockbrain credentials. Returns (api_key, base_url, agent_id)."""
+    _default_base = "https://agentic.theblockbrain.ai"
+    _default_route_id = "customAgent"
+
+    def _strip_path(base: str) -> str:
+        base = str(base or "").strip()
+        for suffix in ("/v1/chat/completions", "/v1"):
+            if base.endswith(suffix):
+                base = base[: -len(suffix)]
+        return base.rstrip("/")
+
+    try:
+        import streamlit as st  # noqa: F401
+        api_key = st.secrets.get("BLOCKBRAIN_API_KEY", "") or os.getenv("BLOCKBRAIN_API_KEY", "")
+        base_url = (
+            st.secrets.get("BLOCKBRAIN_BASE_URL", "")
+            or st.secrets.get("BLOCKBRAIN_API_URL", "")
+            or os.getenv("BLOCKBRAIN_BASE_URL", "")
+            or os.getenv("BLOCKBRAIN_API_URL", "")
+            or _default_base
+        )
+        route_id = (
+            st.secrets.get("BLOCKBRAIN_AGENT_ID", "")
+            or os.getenv("BLOCKBRAIN_AGENT_ID", "")
+            or _default_route_id
+        )
+        return str(api_key).strip(), _strip_path(str(base_url)), str(route_id).strip()
+    except Exception:
+        base_url = os.getenv("BLOCKBRAIN_BASE_URL") or os.getenv("BLOCKBRAIN_API_URL") or _default_base
+        route_id = os.getenv("BLOCKBRAIN_AGENT_ID", "") or _default_route_id
+        return os.getenv("BLOCKBRAIN_API_KEY", ""), _strip_path(base_url), route_id
+
+
+def _load_blockbrain_model_defaults() -> tuple[str, str]:
+    """Return (text_model, vision_model) defaults."""
+    try:
+        import streamlit as st  # noqa: F401
+        text_model = (
+            st.secrets.get("BLOCKBRAIN_MODEL_TEXT", "")
+            or os.getenv("BLOCKBRAIN_MODEL_TEXT", "")
+            or BLOCKBRAIN_PINNED_TEXT_MODEL
+        )
+        vision_model = (
+            st.secrets.get("BLOCKBRAIN_MODEL_VISION", "")
+            or os.getenv("BLOCKBRAIN_MODEL_VISION", "")
+            or BLOCKBRAIN_PINNED_VISION_MODEL
+        )
+        return str(text_model).strip(), str(vision_model).strip()
+    except Exception:
+        return (
+            str(os.getenv("BLOCKBRAIN_MODEL_TEXT", "") or BLOCKBRAIN_PINNED_TEXT_MODEL).strip(),
+            str(os.getenv("BLOCKBRAIN_MODEL_VISION", "") or BLOCKBRAIN_PINNED_VISION_MODEL).strip(),
+        )
+
+
+def _get_selected_blockbrain_models() -> tuple[str, str]:
+    """Return selected text/vision model IDs from session state or defaults."""
+    default_text_model, default_vision_model = _load_blockbrain_model_defaults()
+    try:
+        import streamlit as st
+        text_model = str(st.session_state.get("analyze_blockbrain_text_model", default_text_model) or "").strip()
+        vision_model = str(st.session_state.get("analyze_blockbrain_vision_model", default_vision_model) or "").strip()
+        return text_model, vision_model
+    except Exception:
+        return default_text_model, default_vision_model
+
 
 OPENROUTER_API_KEY = ""
 OPENROUTER_MODEL_TEXT = ""
@@ -162,6 +241,9 @@ LAST_OPENROUTER_ERROR = ""
 LAST_OPENAI_ERROR = ""
 LAST_GITHUB_MODELS_ERROR = ""
 LAST_BLOCKBRAIN_ERROR = ""
+LAST_BLOCKBRAIN_MODEL = ""
+LAST_VISION_RAW_RESPONSE = ""
+LAST_VISION_ATTEMPT_LOG: list[str] = []
 LAST_LOCAL_LLM_ERROR = ""
 LAST_VISION_PROVIDER = ""
 LAST_TEXT_PROVIDER = ""
@@ -2332,15 +2414,6 @@ def detect_barcode_from_image(image_bytes: bytes) -> tuple[str, str]:
         if candidates:
             candidates.sort(key=len, reverse=True)
             return candidates[0], "pyzbar"
-    except Exception:
-        pass
-
-    try:
-        # Fallback path: OCR near-barcode text and extract best EAN-like token.
-        ocr_text = try_tesseract_ocr(image_bytes)
-        token = _normalize_barcode_digits(_extract_ean_from_text(ocr_text))
-        if token:
-            return token, "ocr_fallback"
     except Exception:
         pass
 
@@ -6574,49 +6647,6 @@ def _extract_vitamin_dose_candidates_from_text(input_text: str) -> dict[str, tup
     return anchors
 
 
-def _vitamin_consensus_lines_from_ocr(paddle_text: str, tesseract_text: str) -> list[str]:
-    """Cross-validate vitamin doses from both OCR engines and return canonical lines."""
-    paddle_map = _extract_vitamin_dose_candidates_from_text(paddle_text)
-    tesseract_map = _extract_vitamin_dose_candidates_from_text(tesseract_text)
-    lines: list[str] = []
-    keys = sorted(set(paddle_map.keys()) | set(tesseract_map.keys()))
-    for key in keys:
-        p = paddle_map.get(key)
-        t = tesseract_map.get(key)
-        chosen_val: float | None = None
-        chosen_unit = ""
-
-        if p and t and p[1] == t[1]:
-            p_val, p_unit = p
-            t_val, _ = t
-            larger = max(p_val, t_val)
-            smaller = max(1e-9, min(p_val, t_val))
-            ratio = larger / smaller
-            if ratio <= 1.35:
-                chosen_val = round((p_val + t_val) / 2.0, 4)
-                chosen_unit = p_unit
-            else:
-                # Decimal-shift disagreement: prefer the smaller value when values differ by ~10x.
-                if 8.5 <= ratio <= 11.5:
-                    chosen_val = round(min(p_val, t_val), 4)
-                    chosen_unit = p_unit
-                else:
-                    chosen_val = round(p_val if p_val <= t_val else t_val, 4)
-                    chosen_unit = p_unit
-        elif p:
-            chosen_val, chosen_unit = p
-        elif t:
-            chosen_val, chosen_unit = t
-
-        if chosen_val is None or not chosen_unit:
-            continue
-        pretty = key.title() if key else ""
-        if not pretty:
-            continue
-        lines.append(f"{pretty}\t{format_float(float(chosen_val))} {chosen_unit}")
-    return lines
-
-
 def _apply_contextual_vitamin_dose_corrections(
     rows: list[dict[str, Any]],
     source_text: str,
@@ -7501,25 +7531,6 @@ def check_openrouter_key_status() -> tuple[bool, str]:
     return False, "OpenRouter is disabled in offline-only mode"
 
 
-def resolve_tesseract_cmd() -> str:
-    if TESSERACT_CMD.strip():
-        return TESSERACT_CMD.strip()
-
-    from_path = shutil.which("tesseract")
-    if from_path:
-        return from_path
-
-    windows_candidates = [
-        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-    ]
-    for candidate in windows_candidates:
-        if os.path.exists(candidate):
-            return candidate
-
-    return ""
-
-
 def openrouter_headers() -> dict[str, str]:
     return {}
 
@@ -7565,13 +7576,134 @@ def _github_models_chat(payload: dict[str, Any]) -> str:
 
 
 def blockbrain_headers() -> dict[str, str]:
-    return {}
+    return {"Content-Type": "application/json"}
 
 
 def _blockbrain_chat(payload: dict[str, Any]) -> str:
+    """Send a request to Blockbrain and return the assistant text.
+
+    Transport is the Blockbrain agent stream endpoint (v2 first, v1 fallback),
+    iterating the configured agent then fallback agents so a single dead/500
+    agent cannot break vision or text extraction.
+    """
     global LAST_BLOCKBRAIN_ERROR
-    del payload
-    LAST_BLOCKBRAIN_ERROR = "Blockbrain is disabled in offline-only mode"
+    global LAST_BLOCKBRAIN_MODEL
+    LAST_BLOCKBRAIN_ERROR = ""
+    LAST_BLOCKBRAIN_MODEL = ""
+    api_key, base_url, agent_id = _load_blockbrain_secrets()
+    if not api_key:
+        LAST_BLOCKBRAIN_ERROR = "Blockbrain API key not configured"
+        return ""
+    if not base_url:
+        LAST_BLOCKBRAIN_ERROR = "Blockbrain base URL not configured"
+        return ""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    def _collect_text_chunks(value: Any) -> list[str]:
+        chunks: list[str] = []
+        if isinstance(value, str):
+            text = value.strip()
+            if text and text != "[DONE]":
+                chunks.append(text)
+            return chunks
+        if isinstance(value, list):
+            for item in value:
+                chunks.extend(_collect_text_chunks(item))
+            return chunks
+        if not isinstance(value, dict):
+            return chunks
+        for key in ("text", "delta", "content", "value"):
+            raw = value.get(key)
+            if isinstance(raw, str) and raw.strip():
+                chunks.append(raw.strip())
+        choices = value.get("choices")
+        if isinstance(choices, list):
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                chunks.extend(_collect_text_chunks(choice.get("delta")))
+                chunks.extend(_collect_text_chunks(choice.get("message")))
+        for nested_key in ("data", "payload", "message", "messages", "parts", "output"):
+            nested = value.get(nested_key)
+            if nested is not None:
+                chunks.extend(_collect_text_chunks(nested))
+        return chunks
+
+    def _fast_stream_payload(src: dict[str, Any], endpoint_path: str) -> dict[str, Any]:
+        out = dict(src or {})
+        fast_mode = str(os.getenv("BLOCKBRAIN_FAST_STREAM", "1") or "1").strip().lower() not in {"0", "false", "off", "no"}
+        if not fast_mode:
+            return out
+        if "/v2/" in endpoint_path:
+            out.setdefault("maxSteps", 1)
+            out.setdefault("activeTools", [])
+            out.setdefault("toolChoice", "none")
+            out.setdefault("trigger", "submit-message")
+        return out
+
+    agent_order: list[str] = []
+    for _a in [agent_id] + list(BLOCKBRAIN_FALLBACK_AGENTS):
+        _a = str(_a or "").strip()
+        if _a and _a not in agent_order:
+            agent_order.append(_a)
+
+    stream_endpoints: list[str] = []
+    for _a in agent_order:
+        stream_endpoints.append(f"{base_url}/v2/api/agents/{_a}/stream")
+        stream_endpoints.append(f"{base_url}/v1/api/agents/{_a}/stream")
+
+    last_error = ""
+    for stream_url in stream_endpoints:
+        endpoint_path = stream_url[len(base_url):] if stream_url.startswith(base_url) else stream_url
+        try:
+            resp = requests.post(
+                stream_url,
+                headers=headers,
+                json=_fast_stream_payload(dict(payload or {}), endpoint_path),
+                timeout=BLOCKBRAIN_HTTP_TIMEOUT,
+                stream=True,
+            )
+            if resp.status_code == 404:
+                continue
+            if resp.status_code != 200:
+                last_error = f"Blockbrain HTTP {resp.status_code}: {resp.text[:200]}"
+                continue
+
+            text_parts: list[str] = []
+            for raw_line in resp.iter_lines():
+                if not raw_line:
+                    continue
+                line = raw_line.decode("utf-8", errors="replace") if isinstance(raw_line, bytes) else raw_line
+                if not line.startswith("data:"):
+                    continue
+                json_str = line[len("data:"):].strip()
+                if not json_str or json_str == "[DONE]":
+                    continue
+                try:
+                    event = json.loads(json_str)
+                except Exception:
+                    continue
+                if isinstance(event, dict):
+                    runtime_model = str(event.get("model", "") or event.get("resolved_model", "") or "").strip()
+                    if runtime_model:
+                        LAST_BLOCKBRAIN_MODEL = runtime_model
+                    chunks = _collect_text_chunks(event)
+                    if chunks:
+                        text_parts.extend(chunks)
+                    event_type = str(event.get("type", "") or "").strip().lower()
+                    if event_type in {"finish", "done", "response.completed", "response.done", "message.stop"}:
+                        break
+
+            merged = "\n".join([c for c in text_parts if str(c).strip()]).strip()
+            if merged:
+                return merged
+        except Exception as exc:
+            last_error = f"Blockbrain request error: {exc}"
+
+    LAST_BLOCKBRAIN_ERROR = last_error or "Blockbrain response did not include assistant text"
     return ""
 
 
@@ -7845,25 +7977,155 @@ def _local_llm_chat(system_prompt: str, user_prompt: str) -> str:
 
 
 def call_blockbrain_text(system_prompt: str, user_prompt: str, model: str | None = None) -> str:
-    del model
-    payload = {
-        "bot_id": BLOCKBRAIN_BOT_ID,
-        "message": f"{system_prompt}\n\n{user_prompt}".strip(),
+    selected_text_model, _ = _get_selected_blockbrain_models()
+    requested_model = str(model or selected_text_model or "").strip()
+    payload: dict[str, Any] = {
+        "messages": [
+            {"role": "system", "content": system_prompt.strip()},
+            {"role": "user", "content": user_prompt.strip()},
+        ],
     }
+    if requested_model:
+        payload["model"] = requested_model
     return _blockbrain_chat(payload)
 
 
-def call_blockbrain_vision(image_bytes: bytes) -> str:
-    b64 = base64.b64encode(image_bytes).decode("utf-8")
-    payload = {
-        "bot_id": BLOCKBRAIN_BOT_ID,
-        "message": (
-            "You are a strict OCR extractor for supplement labels. "
-            "Return only the readable label text."
-        ),
-        "image": f"data:image/jpeg;base64,{b64}",
+def _is_blockbrain_image_missing_response(text: str) -> bool:
+    raw = str(text or "").strip().lower()
+    if not raw:
+        return False
+    markers = [
+        "no image has been attached",
+        "no file, image, or document has been attached",
+        "no label image",
+        "there is nothing for me to extract",
+        "please attach",
+        "i do not see any image",
+    ]
+    return any(marker in raw for marker in markers)
+
+
+def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
+    """Send an image to the Blockbrain vision model; returns extracted label text."""
+    global LAST_VISION_RAW_RESPONSE
+    global LAST_VISION_ATTEMPT_LOG
+    LAST_VISION_RAW_RESPONSE = ""
+    LAST_VISION_ATTEMPT_LOG = []
+    _, selected_vision_model = _get_selected_blockbrain_models()
+    requested_model = str(model or selected_vision_model or "").strip()
+
+    def _as_jpeg_payload(data: bytes) -> bytes:
+        try:
+            image = Image.open(io.BytesIO(data)).convert("RGB")
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=92, optimize=True)
+            payload = buffer.getvalue()
+            if payload:
+                return payload
+        except Exception:
+            pass
+        return data
+
+    jpeg_bytes = _as_jpeg_payload(image_bytes)
+    b64 = base64.b64encode(jpeg_bytes).decode("utf-8")
+    vision_prompt = (
+        "You are a strict OCR extractor for supplement and nutrition labels. "
+        "Read all visible text from this label image exactly as printed. "
+        "Preserve nutrient names, numeric doses, and units (mg, mcg, IU, g). "
+        "Output plain text lines only — no markdown, no commentary."
+    )
+
+    def _record(out: str) -> None:
+        global LAST_VISION_RAW_RESPONSE
+        snippet = str(out or "").strip().replace("\n", " ")[:180]
+        if out and _is_blockbrain_image_missing_response(out):
+            status = "image_missing"
+        elif out and str(out).strip():
+            status = "text"
+        else:
+            status = "empty"
+        LAST_VISION_ATTEMPT_LOG.append("content_image:" + status + (f" | {snippet}" if snippet else ""))
+        if out and str(out).strip():
+            LAST_VISION_RAW_RESPONSE = str(out).strip()
+
+    # Single verified path: content_image schema with the pinned vision model.
+    effective_model = requested_model or BLOCKBRAIN_PINNED_VISION_MODEL
+    payload: dict[str, Any] = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": vision_prompt},
+                    {"type": "image", "image": f"data:image/jpeg;base64,{b64}"},
+                ],
+            }
+        ],
     }
-    return _blockbrain_chat(payload)
+    if effective_model:
+        payload["model"] = effective_model
+    out = _blockbrain_chat(payload)
+    _record(out)
+    if out and not _is_blockbrain_image_missing_response(out):
+        return out
+    return ""
+
+
+def extract_image_text_with_blockbrain(image_bytes: bytes, model: str | None = None) -> str:
+    """Extract nutrition label text from an image via Blockbrain vision only."""
+    global LAST_VISION_PROVIDER
+    LAST_VISION_PROVIDER = ""
+    bb_text = call_blockbrain_vision(image_bytes, model=model)
+    if bb_text and bb_text.strip() and not _is_blockbrain_image_missing_response(bb_text):
+        runtime_model = str(LAST_BLOCKBRAIN_MODEL or model or "").strip()
+        if runtime_model:
+            LAST_VISION_PROVIDER = f"Blockbrain vision model ({runtime_model})"
+        else:
+            LAST_VISION_PROVIDER = "Blockbrain vision model"
+        return bb_text.strip()
+    return ""
+
+
+def _build_blockbrain_ocr_image_variants(image_bytes: bytes) -> list[tuple[str, bytes]]:
+    """Return a single downscaled JPEG (fast, small payload; long edge <=1400px)."""
+    try:
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        image = ImageOps.exif_transpose(image)
+        max_side = 1400
+        width, height = image.size
+        if max(width, height) > max_side:
+            scale = max_side / float(max(width, height))
+            image = image.resize(
+                (max(1, int(width * scale)), max(1, int(height * scale))),
+                Image.Resampling.LANCZOS,
+            )
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=80, optimize=True)
+        payload = buffer.getvalue()
+        if payload:
+            return [("fast_jpeg", payload)]
+    except Exception:
+        pass
+    return [("original", image_bytes)]
+
+
+def extract_image_text_with_blockbrain_best_effort(image_bytes: bytes, model: str | None = None) -> tuple[str, str]:
+    """Single fast path: downscaled image -> pinned Blockbrain vision model."""
+    for variant_name, variant_bytes in _build_blockbrain_ocr_image_variants(image_bytes):
+        candidate_text = extract_image_text_with_blockbrain(variant_bytes, model=model)
+        if not candidate_text:
+            continue
+        route_label = str(LAST_VISION_PROVIDER or "Blockbrain vision model").strip()
+        if variant_name != "original":
+            route_label = f"{route_label} ({variant_name})"
+        return candidate_text, route_label
+    return "", ""
+
+
+def extract_image_text_with_local_stack(image_bytes: bytes) -> str:
+    """Compat wrapper: label OCR now routes exclusively through Blockbrain vision."""
+    text, _route = extract_image_text_with_blockbrain_best_effort(image_bytes)
+    return text
+
 
 
 def call_local_text_llm(system_prompt: str, user_prompt: str) -> str:
@@ -7978,327 +8240,6 @@ def _structured_vlm_response_to_text(raw_text: str) -> str:
         lines.append("uncertain true")
 
     return "\n".join(lines).strip()
-
-
-# ---------------------------------------------------------------------------
-# Stage 1 — Image preprocessing (improves OCR accuracy before model runs)
-# ---------------------------------------------------------------------------
-
-def _preprocess_label_image(image_bytes: bytes) -> bytes:
-    """
-    Apply production-style preprocessing to a nutrition-label image:
-    auto-contrast, deskew, desnoise, resize to minimum 1400px wide.
-    Returns processed image as JPEG bytes. Falls back to original on any error.
-    """
-    try:
-        try:
-            import cv2
-            import numpy as np
-            _CV2_AVAILABLE = True
-        except ImportError:
-            _CV2_AVAILABLE = False
-
-        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-
-        # Resize: minimum 1800px on the longer side for better OCR on small labels.
-        w, h = img.size
-        min_side = 1800
-        if max(w, h) < min_side:
-            scale = min_side / max(w, h)
-            img = img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
-
-        if _CV2_AVAILABLE:
-            import cv2
-            import numpy as np
-
-            img_np = np.array(img)
-            gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-
-            # Deskew using moments (works on text-heavy label images).
-            coords = np.column_stack(np.where(gray < 200))
-            if coords.shape[0] > 100:
-                angle = cv2.minAreaRect(coords)[-1]
-                if angle < -45:
-                    angle = -(90 + angle)
-                else:
-                    angle = -angle
-                if abs(angle) < 15:
-                    center = (gray.shape[1] // 2, gray.shape[0] // 2)
-                    M = cv2.getRotationMatrix2D(center, angle, 1.0)
-                    gray = cv2.warpAffine(gray, M, (gray.shape[1], gray.shape[0]),
-                                          flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-
-            # Remove shadows: divide by blurred background.
-            blur = cv2.GaussianBlur(gray, (51, 51), 0)
-            normalized = cv2.divide(gray, blur, scale=255)
-
-            # CLAHE for local contrast enhancement.
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            enhanced = clahe.apply(normalized)
-
-            # Mild denoise.
-            denoised = cv2.fastNlMeansDenoising(enhanced, h=12)
-
-            # Dual binarization paths and conservative fusion.
-            _thr, binary_otsu = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            binary_adaptive = cv2.adaptiveThreshold(
-                denoised,
-                255,
-                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY,
-                21,
-                10,
-            )
-            binary_combined = cv2.bitwise_and(binary_otsu, binary_adaptive)
-            kernel_small = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-            binary_clean = cv2.morphologyEx(binary_combined, cv2.MORPH_OPEN, kernel_small)
-
-            # Unsharp mask to improve tiny glyph edges.
-            gaussian = cv2.GaussianBlur(binary_clean, (0, 0), 2.0)
-            unsharp = cv2.addWeighted(binary_clean, 2.0, gaussian, -1.0, 0)
-            img = Image.fromarray(unsharp).convert("RGB")
-        else:
-            # PIL-only fallback: autocontrast + sharpen.
-            img = ImageOps.autocontrast(img.convert("L"), cutoff=2).convert("RGB")
-            img = img.filter(ImageFilter.SHARPEN)
-
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=95)
-        return buf.getvalue()
-    except Exception:
-        return image_bytes
-
-
-def _detect_nutrition_table_region(image_bytes: bytes) -> bytes | None:
-    """
-    Detect a likely nutrition-table region and return cropped JPEG bytes.
-    This is a conservative detector: returns None when confidence is low.
-    """
-    try:
-        try:
-            import cv2
-            import numpy as np
-        except ImportError:
-            return None
-
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        img_np = np.array(image)
-        if img_np.size == 0:
-            return None
-
-        h, w = img_np.shape[:2]
-        if h < 180 or w < 180:
-            return None
-
-        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
-
-        grad = cv2.morphologyEx(
-            gray,
-            cv2.MORPH_GRADIENT,
-            cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)),
-        )
-        bw = cv2.threshold(grad, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-        bw = cv2.morphologyEx(
-            bw,
-            cv2.MORPH_CLOSE,
-            cv2.getStructuringElement(cv2.MORPH_RECT, (25, 5)),
-            iterations=2,
-        )
-        bw = cv2.dilate(
-            bw,
-            cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)),
-            iterations=1,
-        )
-
-        contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return None
-
-        image_area = float(h * w)
-        best_rect: tuple[int, int, int, int] | None = None
-        best_score = -1.0
-
-        for cnt in contours:
-            x, y, cw, ch = cv2.boundingRect(cnt)
-            if cw <= 0 or ch <= 0:
-                continue
-
-            area = float(cw * ch)
-            area_ratio = area / image_area
-            if area_ratio < 0.12 or area_ratio > 0.95:
-                continue
-
-            aspect = float(cw) / float(max(ch, 1))
-            if aspect < 0.45 or aspect > 4.5:
-                continue
-
-            # Prefer sizeable, roughly table-like boxes while penalizing edge-hugging noise.
-            edge_penalty = 0.0
-            if x <= 2 or y <= 2 or (x + cw) >= (w - 2) or (y + ch) >= (h - 2):
-                edge_penalty = 0.03
-            score = area_ratio - 0.08 * abs(aspect - 1.6) - edge_penalty
-            if score > best_score:
-                best_score = score
-                best_rect = (x, y, cw, ch)
-
-        if best_rect is None:
-            return None
-
-        x, y, cw, ch = best_rect
-        pad_x = max(8, int(cw * 0.03))
-        pad_y = max(8, int(ch * 0.03))
-        x1 = max(0, x - pad_x)
-        y1 = max(0, y - pad_y)
-        x2 = min(w, x + cw + pad_x)
-        y2 = min(h, y + ch + pad_y)
-        if (x2 - x1) < 120 or (y2 - y1) < 120:
-            return None
-
-        crop = img_np[y1:y2, x1:x2]
-        if crop.size == 0:
-            return None
-
-        out = Image.fromarray(crop)
-        buf = io.BytesIO()
-        out.save(buf, format="JPEG", quality=92)
-        return buf.getvalue()
-    except Exception:
-        return None
-
-
-def _generate_focus_region_crops(image_bytes: bytes) -> list[tuple[str, bytes]]:
-    """Generate conservative fallback crops (center/right) when table detection is imperfect."""
-    crops: list[tuple[str, bytes]] = []
-    try:
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        w, h = image.size
-        if w < 220 or h < 220:
-            return crops
-
-        regions = [
-            ("center_crop", (int(w * 0.10), int(h * 0.08), int(w * 0.90), int(h * 0.92))),
-            ("right_crop", (int(w * 0.32), int(h * 0.05), int(w * 0.98), int(h * 0.95))),
-        ]
-        for name, (x1, y1, x2, y2) in regions:
-            if (x2 - x1) < 120 or (y2 - y1) < 120:
-                continue
-            crop = image.crop((x1, y1, x2, y2))
-            buf = io.BytesIO()
-            crop.save(buf, format="JPEG", quality=92)
-            crops.append((name, buf.getvalue()))
-    except Exception:
-        return []
-    return crops
-
-
-def _score_ocr_nutrition_signal(text: str) -> float:
-    raw = str(text or "").strip()
-    if not raw:
-        return 0.0
-
-    dose_hits = len(EXTRACTION_DOSE_PATTERN.findall(raw))
-    nutrient_hits = len(
-        re.findall(
-            r"\b(?:vitamin|thiamin|thiamine|riboflavin|niacin|folate|folic|biotin|calcium|iron|"
-            r"magnesium|zinc|selenium|iodine|chromium|molybdenum|copper|manganese|potassium|"
-            r"phosphorus|fluoride|fluorine|cesium|protein|fat|carbohydrate|fiber|energy|sodium)\b",
-            raw,
-            re.I,
-        )
-    )
-    line_count = len([ln for ln in raw.splitlines() if ln.strip()])
-    return (dose_hits * 3.0) + (nutrient_hits * 2.0) + min(12.0, float(line_count) * 0.2)
-
-
-# ---------------------------------------------------------------------------
-# Stage 2 — PaddleOCR with bounding-box table reconstruction
-# ---------------------------------------------------------------------------
-
-def _get_paddleocr_engine() -> Any | None:
-    global PADDLE_OCR_ENGINE
-    global PADDLE_OCR_UNAVAILABLE
-    if PADDLE_OCR_UNAVAILABLE:
-        return None
-    if PADDLE_OCR_ENGINE is not None:
-        return PADDLE_OCR_ENGINE
-    try:
-        from paddleocr import PaddleOCR
-
-        PADDLE_OCR_ENGINE = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
-        return PADDLE_OCR_ENGINE
-    except Exception:
-        PADDLE_OCR_UNAVAILABLE = True
-        return None
-
-
-def _reconstruct_table_rows_from_paddle(
-    image_bytes: bytes,
-    raw_result: Any | None = None,
-) -> str:
-    """
-    Run PaddleOCR, then reconstruct table rows from bounding-box Y positions
-    (row-clustering heuristic).  Returns plain text with one row per line,
-    left column and right column joined by a tab.
-    """
-    try:
-        if raw_result is None:
-            import numpy as np
-
-            ocr_engine = _get_paddleocr_engine()
-            if ocr_engine is None:
-                return ""
-            image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-            img_np = np.array(image)
-            raw_result = ocr_engine.ocr(img_np, cls=True) or []
-
-        # Collect boxes: (y_center, x_left, text, confidence)
-        tokens: list[tuple[float, float, str, float]] = []
-        for block in raw_result:
-            for row in block or []:
-                try:
-                    box = (row or [[]])[0]
-                    text_conf = (row or [None, ["", 0]])[1] or ["", 0]
-                    text = str(text_conf[0] or "").strip()
-                    conf = float(text_conf[1] if len(text_conf) > 1 else 0.9)
-                    if not text:
-                        continue
-                    # bounding box is [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
-                    ys = [pt[1] for pt in box]
-                    xs = [pt[0] for pt in box]
-                    y_center = sum(ys) / len(ys)
-                    x_left = min(xs)
-                    tokens.append((y_center, x_left, text, conf))
-                except Exception:
-                    continue
-
-        if not tokens:
-            return ""
-
-        # Cluster tokens into rows by Y proximity (within ~12px of row median).
-        tokens.sort(key=lambda t: t[0])
-        rows: list[list[tuple[float, float, str, float]]] = []
-        current_row: list[tuple[float, float, str, float]] = [tokens[0]]
-        row_band = (tokens[-1][0] - tokens[0][0]) * 0.02 + 12  # 2% of image height + 12px
-
-        for tok in tokens[1:]:
-            if abs(tok[0] - current_row[-1][0]) <= row_band:
-                current_row.append(tok)
-            else:
-                rows.append(current_row)
-                current_row = [tok]
-        rows.append(current_row)
-
-        # Within each row sort left-to-right; reconstruct as tab-delimited line.
-        lines: list[str] = []
-        for row_tokens in rows:
-            row_tokens.sort(key=lambda t: t[1])
-            line = "\t".join(t[2] for t in row_tokens)
-            lines.append(line)
-
-        return "\n".join(lines)
-    except Exception:
-        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -8922,235 +8863,6 @@ def _validate_nutrition_label_sanity(
     return validated, warnings
 
 
-def _is_strong_ocr_candidate(text: str) -> bool:
-    gate = extraction_gate_report(text)
-    return bool(
-        gate.get("passed")
-        and int(gate.get("dose_hits", 0)) >= 4
-        and int(gate.get("nutrient_hint_hits", 0)) >= 2
-    )
-
-
-def _core_vitamin_coverage_count(text: str) -> int:
-    raw = str(text or "")
-    if not raw:
-        return 0
-
-    checks = {
-        "a": re.search(r"\bvit(?:amin|main)?\s*a\b", raw, re.I),
-        "d": re.search(r"\bvit(?:amin|main)?\s*d(?:\d{1,2})?\b", raw, re.I),
-        "e": re.search(r"\bvit(?:amin|main)?\s*e\b", raw, re.I),
-        "k": re.search(r"\bvit(?:amin|main)?\s*k(?:\d{1,2})?\b", raw, re.I),
-    }
-    return sum(1 for matched in checks.values() if matched)
-
-
-def try_paddleocr_ocr(image_bytes: bytes, raw_result: Any | None = None) -> str:
-    try:
-        import numpy as np
-        ocr = _get_paddleocr_engine()
-        if ocr is None:
-            return ""
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        img_np = np.array(image)
-        result = raw_result if raw_result is not None else (ocr.ocr(img_np, cls=True) or [])
-        lines: list[str] = []
-        for block in result:
-            for row in block or []:
-                try:
-                    text = str(((row or [None, [""]])[1] or [""])[0] or "").strip()
-                except Exception:
-                    text = ""
-                if text:
-                    lines.append(text)
-        return "\n".join(lines).strip()
-    except Exception:
-        return ""
-
-
-def extract_image_text_with_local_stack(image_bytes: bytes) -> str:
-    global LAST_LOCAL_LLM_ERROR
-    global LAST_VISION_PROVIDER
-    LAST_VISION_PROVIDER = ""
-    started_at = time.perf_counter()
-    total_budget_sec = 2.4
-
-    def _within_budget(reserve_sec: float = 0.0) -> bool:
-        return (time.perf_counter() - started_at) < max(0.0, total_budget_sec - reserve_sec)
-
-    # Stage 1: preprocess image to improve OCR accuracy.
-    processed_full = _preprocess_label_image(image_bytes)
-    tier_candidates: list[list[tuple[str, bytes]]] = [[("full", processed_full)]]
-
-    # Defer extra crops unless full-image OCR is weak and budget remains.
-    extra_tiers_built = False
-
-    def _build_extra_tiers_if_needed() -> None:
-        nonlocal extra_tiers_built
-        if extra_tiers_built or not _within_budget(1.6):
-            return
-        extra_tiers_built = True
-        table_crop = _detect_nutrition_table_region(image_bytes)
-        if table_crop and _within_budget(1.4):
-            tier_candidates.append([("table_crop", _preprocess_label_image(table_crop))])
-        if _within_budget(1.2):
-            focus_raw = _generate_focus_region_crops(image_bytes)
-            # Only try a single focus crop in fast mode.
-            if focus_raw:
-                crop_name, crop_bytes = focus_raw[0]
-                tier_candidates.append([(crop_name, _preprocess_label_image(crop_bytes))])
-
-    best_text = ""
-    best_score = -1.0
-    best_source = ""
-    tier_idx = 0
-    while tier_idx < len(tier_candidates):
-        if not _within_budget(1.4):
-            break
-        tier = tier_candidates[tier_idx]
-        for source, candidate_bytes in tier:
-            if not _within_budget(1.2):
-                break
-            # Fast first pass: Tesseract only. Paddle is used selectively when
-            # signal remains weak and budget allows.
-            tesseract_text = try_tesseract_ocr(candidate_bytes)
-            paddle_text = ""
-
-            paddle_raw = None
-            if not _is_strong_ocr_candidate(tesseract_text) and _within_budget(1.0):
-                try:
-                    import numpy as np
-
-                    ocr_engine = _get_paddleocr_engine()
-                    if ocr_engine is not None:
-                        image = Image.open(io.BytesIO(candidate_bytes)).convert("RGB")
-                        paddle_raw = ocr_engine.ocr(np.array(image), cls=True) or []
-                except Exception:
-                    paddle_raw = None
-
-                table_text = _reconstruct_table_rows_from_paddle(candidate_bytes, raw_result=paddle_raw)
-                paddle_text = try_paddleocr_ocr(candidate_bytes, raw_result=paddle_raw) if not table_text else table_text
-
-            consensus_lines = _vitamin_consensus_lines_from_ocr(paddle_text, tesseract_text)
-            merged = "\n".join([x for x in [paddle_text, tesseract_text] if str(x or "").strip()]).strip()
-            if consensus_lines:
-                merged = "\n".join([merged, *consensus_lines]).strip()
-            if not merged:
-                continue
-            score = _score_ocr_nutrition_signal(merged)
-            if score > best_score or (abs(score - best_score) < 1e-9 and len(merged) > len(best_text)):
-                best_score = score
-                best_text = merged
-                best_source = source
-
-        # Strong result found in this tier: skip deeper/fallback tiers unless
-        # core vitamins look almost complete but one is missing (common on bottle labels).
-        if _is_strong_ocr_candidate(best_text):
-            core_count = _core_vitamin_coverage_count(best_text)
-            if core_count >= 4:
-                break
-            # If 3/4 core vitamins are present, allow one extra tier when budget permits
-            # to recover the missing vitamin row (e.g., K2).
-            if core_count == 3 and _within_budget(1.0):
-                if tier_idx == 0:
-                    _build_extra_tiers_if_needed()
-            else:
-                break
-
-        # Build and attempt deeper tiers only if current result is weak.
-        if tier_idx == 0 and not _is_strong_ocr_candidate(best_text):
-            _build_extra_tiers_if_needed()
-        tier_idx += 1
-
-    if not best_text:
-        LAST_LOCAL_LLM_ERROR = "Local OCR returned no text"
-        return ""
-
-    # Pure deterministic pipeline — no LLM, no download required.
-    if best_source == "table_crop":
-        LAST_VISION_PROVIDER = "Fast OCR (Tesseract + selective Paddle, table-crop best)"
-    else:
-        LAST_VISION_PROVIDER = "Fast OCR (Tesseract + selective Paddle)"
-    return best_text
-
-
-
-def try_tesseract_ocr(image_bytes: bytes) -> str:
-    def preprocess_for_tesseract(image: Image.Image, scale: float = 1.0) -> Image.Image:
-        gray = image.convert("L")
-        # Upscale for better OCR when needed.
-        width, height = gray.size
-        if scale > 1.0:
-            gray = gray.resize((int(width * scale), int(height * scale)), Image.Resampling.LANCZOS)
-        elif min(width, height) < 1200:
-            gray = gray.resize((width * 2, height * 2), Image.Resampling.LANCZOS)
-        gray = ImageOps.autocontrast(gray)
-        gray = gray.filter(ImageFilter.MedianFilter(size=3))
-        # Basic binarization for high-contrast nutrition tables.
-        return gray.point(lambda px: 255 if px > 150 else 0)
-
-    def preprocess_high_contrast(image: Image.Image, scale: float = 1.0) -> Image.Image:
-        """Higher-contrast variant for dark/low-light bottle label photos."""
-        gray = image.convert("L")
-        width, height = gray.size
-        if scale > 1.0:
-            gray = gray.resize((int(width * scale), int(height * scale)), Image.Resampling.LANCZOS)
-        elif min(width, height) < 900:
-            gray = gray.resize((width * 2, height * 2), Image.Resampling.LANCZOS)
-        gray = ImageOps.autocontrast(gray, cutoff=5)
-        gray = gray.filter(ImageFilter.SHARPEN)
-        return gray.point(lambda px: 255 if px > 120 else 0)
-
-    try:
-        import pytesseract
-
-        resolved_cmd = resolve_tesseract_cmd()
-        if resolved_cmd:
-            pytesseract.pytesseract.tesseract_cmd = resolved_cmd
-
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        w, h = image.size
-        is_small = min(w, h) < 1000
-
-        # Determine available language(s).  Prefer deu+eng for European supplement labels.
-        try:
-            available_langs = set(pytesseract.get_languages(config=""))
-            lang_config = "deu+eng" if "deu" in available_langs else "eng"
-        except Exception:
-            lang_config = "eng"
-
-        # Fast adaptive OCR attempts with tight per-attempt timeouts.
-        attempts: list[tuple[Image.Image, int, int]] = [
-            (preprocess_for_tesseract(image, scale=1.0), 6, 1),
-            (preprocess_high_contrast(image, scale=1.0), 6, 1),
-        ]
-
-        best_text = ""
-        best_score = -1
-        for variant, psm, timeout_sec in attempts:
-            cfg = f"--oem 3 --psm {psm} -l {lang_config}"
-            try:
-                raw_text = pytesseract.image_to_string(variant, config=cfg, timeout=timeout_sec)
-                candidate_text = str(raw_text or "").strip()
-                gate = extraction_gate_report(candidate_text)
-                score = (
-                    int(gate.get("score", 0)) * 10
-                    + int(gate.get("dose_hits", 0)) * 3
-                    + int(gate.get("nutrient_hint_hits", 0))
-                )
-                if score > best_score:
-                    best_score = score
-                    best_text = candidate_text
-                if _is_strong_ocr_candidate(candidate_text):
-                    break
-            except Exception:
-                pass
-
-        return best_text.strip()
-    except Exception:
-        return ""
-
-
 def _count_nutrient_hints(text: str) -> int:
     if not text:
         return 0
@@ -9743,15 +9455,8 @@ def extract_nutrition_doses_from_product_image(product_url: str) -> list[dict[st
             if vision_text:
                 vision_rows = _rows_with_doses(vision_text)
 
-            tesseract_rows: list[dict[str, Any]] = []
-            if len(vision_rows) < 8:
-                local_ocr_text = try_tesseract_ocr(image_bytes)
-                if local_ocr_text:
-                    tesseract_rows = _rows_with_doses(local_ocr_text)
-
-            image_best = vision_rows if len(vision_rows) >= len(tesseract_rows) else tesseract_rows
-            if len(image_best) > len(best_rows):
-                best_rows = image_best
+            if len(vision_rows) > len(best_rows):
+                best_rows = vision_rows
 
             if len(best_rows) >= 12:
                 break
@@ -10608,17 +10313,10 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     image_bytes = effective_uploaded_image.read()
 
                 if image_bytes:
-                    status.write("Step 2/4: OCR from image (PaddleOCR + Tesseract, deterministic pipeline)")
+                    status.write("Step 2/4: OCR from image (Blockbrain vision)")
                     ocr_text = extract_image_text_with_local_stack(image_bytes)
                     if ocr_text and LAST_VISION_PROVIDER:
                         image_provider_label = LAST_VISION_PROVIDER
-                    if not ocr_text:
-                        status.write("OCR returned no text, retrying with Tesseract fallback")
-                        ocr_text = try_tesseract_ocr(image_bytes)
-                        if ocr_text:
-                            LAST_VISION_PROVIDER = "Tesseract"
-                            image_provider_label = "Tesseract"
-                            image_fallback_used = True
                     if ocr_text:
                         image_ocr_text_fallback = ocr_text
                         ocr_gate = extraction_gate_report(ocr_text)
