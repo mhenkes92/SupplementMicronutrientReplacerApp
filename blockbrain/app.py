@@ -7150,20 +7150,22 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
         if out and str(out).strip():
             LAST_VISION_RAW_RESPONSE = str(out).strip()
 
+    # Verified: vision only works when a real vision-capable model is pinned via
+    # the payload "model" field; the default agent backend returns "no image
+    # attached". So we require a model and try the known-good schema first, then
+    # the alternate schemas only if the backend returned nothing usable. We do
+    # NOT retry without a model (that hits the non-vision default backend and
+    # only adds 12-95s per call).
+    effective_model = requested_model or BLOCKBRAIN_PINNED_VISION_MODEL
     for schema_name, payload in _vision_payloads():
         request_payload = dict(payload)
-        if requested_model:
-            request_payload["model"] = requested_model
+        if effective_model:
+            request_payload["model"] = effective_model
         out = _blockbrain_chat(request_payload)
-        _record(schema_name, True, out)
+        _record(schema_name, bool(effective_model), out)
         if out and not _is_blockbrain_image_missing_response(out):
             return out
-
-    for schema_name, payload in _vision_payloads():
-        out = _blockbrain_chat(payload)
-        _record(schema_name, False, out)
-        if out and not _is_blockbrain_image_missing_response(out):
-            return out
+    return ""
 
 
     return ""
@@ -7855,34 +7857,50 @@ def extract_image_text_with_blockbrain(image_bytes: bytes, model: str | None = N
 
 
 def _build_blockbrain_ocr_image_variants(image_bytes: bytes) -> list[tuple[str, bytes]]:
-    """Build lightweight image variants to improve first-pass OCR reliability."""
-    variants: list[tuple[str, bytes]] = [("original", image_bytes)]
+    """Build lightweight image variants to improve first-pass OCR reliability.
+
+    Verified: vision latency is dominated by image size (a ~300KB label ~= 12-37s,
+    a ~767KB one ~= 95s and can exceed the request timeout). So a downscaled
+    variant is tried FIRST and the full original only as a last resort.
+    """
+    downscaled: list[tuple[str, bytes]] = []
     try:
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         image = ImageOps.exif_transpose(image)
 
-        max_side = 1800
+        # Aggressive first pass: cap the long edge so the payload stays small and
+        # fast. Labels remain legible at ~1400px.
+        max_side = 1400
         width, height = image.size
+        work = image
         if max(width, height) > max_side:
             scale = max_side / float(max(width, height))
-            image = image.resize(
+            work = image.resize(
                 (max(1, int(width * scale)), max(1, int(height * scale))),
                 Image.Resampling.LANCZOS,
             )
 
-        buffer = io.BytesIO()
-        image.save(buffer, format="JPEG", quality=88, optimize=True)
-        resized_payload = buffer.getvalue()
-        if resized_payload and resized_payload != image_bytes:
-            variants.append(("resized_jpeg", resized_payload))
+        for quality, tag in ((80, "fast_jpeg"), (88, "resized_jpeg")):
+            buffer = io.BytesIO()
+            work.save(buffer, format="JPEG", quality=quality, optimize=True)
+            payload = buffer.getvalue()
+            if payload:
+                downscaled.append((tag, payload))
+                # If the fast pass is already small enough, don't add the larger one.
+                if quality == 80 and len(payload) <= 320_000:
+                    break
     except Exception:
         pass
+
+    # Downscaled variants first (fast), original last (fallback only).
+    variants: list[tuple[str, bytes]] = list(downscaled)
+    variants.append(("original", image_bytes))
 
     deduped: list[tuple[str, bytes]] = []
     seen_hashes: set[str] = set()
     for variant_name, payload in variants:
         payload_hash = hashlib.sha1(payload).hexdigest() if payload else ""
-        if payload_hash in seen_hashes:
+        if not payload or payload_hash in seen_hashes:
             continue
         seen_hashes.add(payload_hash)
         deduped.append((variant_name, payload))
