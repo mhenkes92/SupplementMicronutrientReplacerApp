@@ -7856,6 +7856,21 @@ def extract_image_text_with_blockbrain_best_effort(image_bytes: bytes, model: st
         if gate.get("passed"):
             return candidate_text, route_label
 
+    # Last resort for photo inputs: use local OCR silently when the vision path
+    # returns nothing. This preserves the all-in-one capture flow without showing
+    # the old user-facing "trying local OCR fallback" message.
+    local_text = extract_image_text_with_tesseract(image_bytes)
+    if local_text:
+        route_label = "Photo OCR retry (local)"
+        gate = extraction_gate_report(local_text)
+        candidate_score = int(gate.get("score", 0)) * 100 + int(gate.get("dose_hits", 0))
+        if candidate_score > best_score:
+            best_score = candidate_score
+            best_text = local_text
+            best_route = route_label
+        if gate.get("passed"):
+            return local_text, route_label
+
     return best_text, best_route
 
 
