@@ -7010,7 +7010,21 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
     """Send an image to Blockbrain vision model; returns extracted label text."""
     _, selected_vision_model = _get_selected_blockbrain_models()
     requested_model = str(model or selected_vision_model or "").strip()
-    b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+    def _as_jpeg_payload(data: bytes) -> bytes:
+        try:
+            image = Image.open(io.BytesIO(data)).convert("RGB")
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=92, optimize=True)
+            payload = buffer.getvalue()
+            if payload:
+                return payload
+        except Exception:
+            pass
+        return data
+
+    jpeg_bytes = _as_jpeg_payload(image_bytes)
+    b64 = base64.b64encode(jpeg_bytes).decode("utf-8")
     vision_prompt = (
         "You are a strict OCR extractor for supplement and nutrition labels. "
         "Read all visible text from this label image exactly as printed. "
