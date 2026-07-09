@@ -127,16 +127,21 @@ def _load_blockbrain_secrets() -> tuple[str, str, str]:
 BLOCKBRAIN_FALLBACK_AGENTS = ["customAgent", "researchAgent", "scientificAgent"]
 
 
-# Fastest verified vision model for nutrition-label OCR (agentic vision route).
-# Benchmark on a real supplement label (downscaled to ~300 KB), per-call latency:
-#   anthropic-claude-haiku-4.5     ~12.7s   <-- fastest, full valid OCR
-#   gpt-4.1-nano                   ~15.6s
-#   gpt-4o-mini                    ~16.4s
-#   gpt-4.1-mini                   ~20.2s
-#   google-gemini-2.5-flash-lite   ~36.9s
-#   azure-gpt-4o-mini              ~39.3s
+# Pinned vision model for nutrition-label OCR (agentic vision route).
+# Benchmarked live on the real One A Day Men's 50+ label (22 ground-truth values,
+# image downscaled to ~140 KB), per-call latency; ACCURACY WAS IDENTICAL across
+# all 21 models tested (22/22 names+values, 20/22 exact doses) because every
+# request routes through the same agent — the pinned model id only toggles the
+# slow "thinking" step, i.e. it changes SPEED, not accuracy:
+#   xai-grok-2-vision            ~4.0s
+#   gpt-4o / gpt-4.1             ~4.9s
+#   gpt-4.1-nano                 ~5.2s   <-- chosen: fast, cheapest tier, same family as text
+#   claude-sonnet-4.6-fast       ~5.3s
+#   anthropic-claude-haiku-4.5   ~5.5s   (previous pin)
+#   gpt-4o-mini                  ~15.1s
+#   anthropic-claude-sonnet-4.6  ~15.3s  (thinking — avoid)
 # Override via BLOCKBRAIN_MODEL_VISION (env or secrets) when needed.
-BLOCKBRAIN_PINNED_VISION_MODEL = "anthropic-claude-haiku-4.5"
+BLOCKBRAIN_PINNED_VISION_MODEL = "gpt-4.1-nano"
 
 # Fastest verified text model for the "Resolving nutrient mappings" step
 # (build_ai_food_matches -> strict JSON generation). Benchmarked on the real
