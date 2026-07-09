@@ -5,9 +5,13 @@ import os
 import re
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 from typing import Any
+
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:  # pragma: no cover - older runtimes
+    tomllib = None  # type: ignore
 
 import streamlit as st
 from PIL import Image, ImageOps
@@ -19,6 +23,8 @@ if str(ROOT_DIR) not in sys.path:
 
 
 def _bootstrap_blockbrain_env_from_secrets() -> None:
+    if tomllib is None:
+        return
     secrets_path = ROOT_DIR / "blockbrain" / ".streamlit" / "secrets.toml"
     if not secrets_path.exists():
         return
