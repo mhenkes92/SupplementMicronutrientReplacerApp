@@ -446,6 +446,10 @@ def _render_header() -> None:
     st.markdown(
         """
         <style>
+            /* Hide the Streamlit top toolbar so it never overlaps the title (mobile especially). */
+            [data-testid="stHeader"] {
+                display: none;
+            }
             [data-testid="stAppViewContainer"] {
                 background:
                     radial-gradient(circle at 0% 0%, #fff4de 0%, rgba(255, 244, 222, 0.22) 45%, transparent 70%),
@@ -454,15 +458,8 @@ def _render_header() -> None:
             }
             .block-container {
                 max-width: 440px;
+                padding-top: 1.5rem;
                 padding-bottom: 1.1rem;
-            }
-            /* Keep Streamlit's default top padding on desktop so the title is
-               not hidden behind the Streamlit top toolbar; only compact it on
-               narrow/mobile widths (mirrors the blockbrain app). */
-            @media (max-width: 768px) {
-                .block-container {
-                    padding-top: 1.1rem;
-                }
             }
             .swipe-title {
                 font-size: 2.05rem;
