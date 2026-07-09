@@ -399,14 +399,29 @@ def _build_swipe_cards(components: list[dict[str, Any]], details: list[dict[str,
     for item in components:
         comp_name = str(item.get("component", "") or "").strip()
         comp_key = bb.normalize_lookup_key(comp_name)
-        detail = detail_by_component.get(comp_key, {})
-        foods = detail.get("foods", []) if isinstance(detail, dict) else []
+        # Primary source: USDA single-ingredient whole foods, ranked by the
+        # amount of THIS nutrient per 100 g (highest dose on top).
+        foods: list[dict[str, Any]] = []
+        try:
+            foods = list(bb._build_local_food_rows_for_component(comp_key) or [])
+        except Exception:
+            foods = []
+        # Fallback to LLM-generated matches only if USDA has nothing.
+        if not foods:
+            detail = detail_by_component.get(comp_key, {})
+            d_foods = detail.get("foods", []) if isinstance(detail, dict) else []
+            foods = list(d_foods) if isinstance(d_foods, list) else []
+        # Guarantee highest dose first.
+        try:
+            foods.sort(key=lambda f: float(f.get("amount_per_100g", 0) or 0), reverse=True)
+        except Exception:
+            pass
         cards.append(
             {
                 "component": comp_name,
                 "component_key": comp_key,
                 "dose_label": _dose_label(item),
-                "foods": foods if isinstance(foods, list) else [],
+                "foods": foods,
             }
         )
     return cards
@@ -962,10 +977,8 @@ def _run_pending_analysis() -> None:
                 _abort("No micronutrients could be parsed from the provided input.")
                 return
 
-            _set_progress(86, "Matching whole-food alternatives…")
-            _summaries, details, match_status = bb.build_ai_food_matches(components)
-            if match_status != "ok":
-                st.warning("Food matching was partial — you can still swipe and keep micronutrients.")
+            _set_progress(86, "Ranking whole-food alternatives from the USDA database…")
+            details: list[dict[str, Any]] = []
 
         _set_progress(100, "Opening your first card…")
 
@@ -1131,7 +1144,7 @@ def _render_card() -> None:
         if foods:
             option_labels = [_food_label(food) for food in foods]
             selected_label = st.selectbox(
-                "Whole food alternatives (scrollable)",
+                "Whole-food replacement — USDA single-ingredient foods, highest dose first",
                 options=option_labels,
                 index=0,
                 key=f"swipe_food_select_{component_key}_{index}",
@@ -1183,29 +1196,38 @@ def _render_card() -> None:
 
 def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[str, Any]]) -> None:
     with st.container(border=True):
-        st.subheader("Final card: Your whole-food replacements")
+        st.subheader("Your results")
 
         replace_items = [d for d in decisions.values() if d.get("decision") == "replace"]
-        st.write(f"Saved as whole-food replacements: {len(replace_items)}")
+        keep_items = [d for d in decisions.values() if d.get("decision") == "keep"]
+        st.caption("Tap any item to reopen its card and change your choice.")
 
+        st.markdown(f"**{TITLE_WHOLE_FOOD_ICON} Whole-food replacements ({len(replace_items)})**")
         if not replace_items:
-            st.info("You have no right-swiped replacements yet.")
-        else:
-            st.caption("Tap any item to reopen its card and change the alternative or ask more RAG questions.")
-
+            st.caption("Nothing swiped right yet.")
         for decision in replace_items:
             component_key = str(decision.get("component_key", "") or "")
             if not component_key:
                 continue
-
             selected_food = decision.get("selected_food") or {}
             food_name = str(selected_food.get("food_description", "") or "")
             right_icon = _whole_food_icon_from_food(selected_food, component_key)
-            label = f"Replace {right_icon} • {decision.get('component', 'Unknown')} ({decision.get('dose_label', '')})"
+            label = f"{right_icon} {decision.get('component', 'Unknown')} ({decision.get('dose_label', '')})"
             if food_name:
                 label += f" → {food_name}"
+            if st.button(label, use_container_width=True, key=f"final_replace_{component_key}"):
+                st.session_state["swipe_index"] = int(decision.get("card_index", 0))
+                st.rerun()
 
-            if st.button(label, use_container_width=True, key=f"edit_card_{component_key}"):
+        st.markdown(f"**{LEFT_SWIPE_ICON} Kept as supplements ({len(keep_items)})**")
+        if not keep_items:
+            st.caption("Nothing swiped left yet.")
+        for decision in keep_items:
+            component_key = str(decision.get("component_key", "") or "")
+            if not component_key:
+                continue
+            label = f"{LEFT_SWIPE_ICON} {decision.get('component', 'Unknown')} ({decision.get('dose_label', '')})"
+            if st.button(label, use_container_width=True, key=f"final_keep_{component_key}"):
                 st.session_state["swipe_index"] = int(decision.get("card_index", 0))
                 st.rerun()
 
