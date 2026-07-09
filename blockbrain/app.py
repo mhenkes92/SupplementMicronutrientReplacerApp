@@ -79,8 +79,12 @@ def _load_blockbrain_secrets() -> tuple[str, str, str]:
     agent_id is retained for backward compatibility with older configs.
     """
     _default_base = "https://agentic.theblockbrain.ai"
-    # User-selected production agent for all Blockbrain LLM calls.
-    _default_route_id = "6a4bc43653952e29ba6ef1d6"
+    # Working Blockbrain agent for all LLM/vision calls. The previously pinned
+    # hex id (6a4bc43653952e29ba6ef1d6) now returns HTTP 500 server-side, which
+    # silently broke image OCR (text still worked via the local parser). Named
+    # agents (customAgent/researchAgent/scientificAgent) are verified working
+    # for both text and vision. Override via BLOCKBRAIN_AGENT_ID if needed.
+    _default_route_id = "customAgent"
 
     def _strip_path(base: str) -> str:
         """Return only the scheme+host, stripping any /v1/... path."""
@@ -100,18 +104,27 @@ def _load_blockbrain_secrets() -> tuple[str, str, str]:
             or os.getenv("BLOCKBRAIN_API_URL", "")
             or _default_base
         )
-        # Intentionally ignore legacy BLOCKBRAIN_AGENT_ID from secrets/env so all
-        # app calls are forced through the pinned production agent.
-        route_id = _default_route_id
+        # Allow overriding the agent via secrets/env so a dead agent can be
+        # fixed by config instead of code.
+        route_id = (
+            st.secrets.get("BLOCKBRAIN_AGENT_ID", "")
+            or os.getenv("BLOCKBRAIN_AGENT_ID", "")
+            or _default_route_id
+        )
         return str(api_key).strip(), _strip_path(str(base_url)), str(route_id).strip()
     except Exception:
         base_url = os.getenv("BLOCKBRAIN_BASE_URL") or os.getenv("BLOCKBRAIN_API_URL") or _default_base
-        route_id = _default_route_id
+        route_id = os.getenv("BLOCKBRAIN_AGENT_ID", "") or _default_route_id
         return (
             os.getenv("BLOCKBRAIN_API_KEY", ""),
             _strip_path(base_url),
             route_id,
         )
+
+
+# Fallback agents tried (in order) when the primary agent errors (e.g. HTTP 500
+# because an agent was removed). All are verified working for text + vision.
+BLOCKBRAIN_FALLBACK_AGENTS = ["customAgent", "researchAgent", "scientificAgent"]
 
 
 # Fastest verified vision model for nutrition-label OCR (agentic vision route).
@@ -6943,10 +6956,19 @@ def _blockbrain_chat(payload: dict[str, Any]) -> str:
             return text
 
     # Primary transport: Blockbrain agent stream endpoint (SSE), preferring v2.
-    stream_endpoints = [
-        f"{base_url}/v2/api/agents/{agent_id}/stream",
-        f"{base_url}/v1/api/agents/{agent_id}/stream",
-    ]
+    # Include fallback agents so a single dead/500 agent cannot break the app
+    # (the previously pinned agent started returning HTTP 500 and silently killed
+    # image OCR). Ordered, de-duplicated: configured agent first, then fallbacks.
+    agent_order: list[str] = []
+    for _a in [agent_id] + list(BLOCKBRAIN_FALLBACK_AGENTS):
+        _a = str(_a or "").strip()
+        if _a and _a not in agent_order:
+            agent_order.append(_a)
+
+    stream_endpoints: list[str] = []
+    for _a in agent_order:
+        stream_endpoints.append(f"{base_url}/v2/api/agents/{_a}/stream")
+        stream_endpoints.append(f"{base_url}/v1/api/agents/{_a}/stream")
     last_error = ""
     for stream_url in stream_endpoints:
         endpoint_path = stream_url[len(base_url):] if stream_url.startswith(base_url) else stream_url
