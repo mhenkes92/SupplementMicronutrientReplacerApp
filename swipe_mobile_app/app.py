@@ -55,7 +55,7 @@ _bootstrap_blockbrain_env_from_secrets()
 import blockbrain.app as bb  # noqa: E402
 
 
-st.set_page_config(page_title="SuppSwap Swipe", page_icon="🥗", layout="centered")
+st.set_page_config(page_title="SuppSwipe", page_icon="🥗", layout="centered")
 
 # Real Tinder-style swipe card: a bidirectional custom component served from a
 # static HTML file (no npm/build step needed, works on Streamlit Cloud).
@@ -783,7 +783,7 @@ def _render_header() -> None:
                 border-radius: 999px;
                 border: 4px solid #d5deeb;
                 border-top-color: #16a34a;
-                animation: suppswap-spin 1s linear infinite;
+                animation: suppswipe-spin 1s linear infinite;
             }
             .analyze-loading-arrow {
                 width: 54px;
@@ -797,7 +797,7 @@ def _render_header() -> None:
                 border: 1px solid #8dd9c0;
                 font-size: 1.45rem;
                 font-weight: 900;
-                animation: suppswap-spin 0.95s linear infinite;
+                animation: suppswipe-spin 0.95s linear infinite;
             }
             .analyze-loading-title {
                 font-size: 1rem;
@@ -828,7 +828,7 @@ def _render_header() -> None:
                 color: #516476;
                 max-width: 280px;
             }
-            @keyframes suppswap-spin {
+            @keyframes suppswipe-spin {
                 from { transform: rotate(0deg); }
                 to { transform: rotate(360deg); }
             }
@@ -839,7 +839,7 @@ def _render_header() -> None:
         """,
         unsafe_allow_html=True,
     )
-    st.markdown("<div class='swipe-title'>SuppSwap Swipe</div>", unsafe_allow_html=True)
+    st.markdown("<div class='swipe-title'>SuppSwipe</div>", unsafe_allow_html=True)
 
 
 def _reset_swipe_state() -> None:
@@ -1053,31 +1053,42 @@ def _analyze_dialog() -> None:
         st.error(precheck_error)
     st.caption("Analysis starts automatically once you add a photo, barcode, file, URL, or text.")
 
-    tab_cam, tab_file, tab_text = st.tabs(["📷 Photo / Barcode", "🖼️ File / Gallery", "🔗 URL / Text"])
-    with tab_cam:
+    method = st.radio(
+        "How would you like to add your supplement?",
+        options=["📷 Photo / Barcode", "🖼️ File / Gallery", "🔗 URL / Text"],
+        key=f"dlg_method_{nonce}",
+        label_visibility="collapsed",
+    )
+
+    upload_bytes = b""
+    camera_bytes = b""
+    manual_text = ""
+
+    if "Photo" in method:
+        # The camera widget (and its browser permission prompt) is only created
+        # when the user actually chooses this option — not when the dialog opens.
         camera = st.camera_input(
             "Take a photo of the label or barcode",
             key=f"dlg_camera_{nonce}",
             label_visibility="collapsed",
         )
-    with tab_file:
+        camera_bytes = camera.getvalue() if camera is not None else b""
+    elif "File" in method:
         upload = st.file_uploader(
             "Choose an image from your files or gallery",
             type=["png", "jpg", "jpeg", "webp"],
             key=f"dlg_upload_{nonce}",
             label_visibility="collapsed",
         )
-    with tab_text:
+        upload_bytes = upload.getvalue() if upload is not None else b""
+    else:
         manual = st.text_area(
             "Paste a product URL, a barcode number, or the supplement facts text",
             height=120,
             key=f"dlg_manual_{nonce}",
             label_visibility="collapsed",
         )
-
-    upload_bytes = upload.getvalue() if upload is not None else b""
-    camera_bytes = camera.getvalue() if camera is not None else b""
-    manual_text = str(manual or "").strip()
+        manual_text = str(manual or "").strip()
 
     if not precheck_error and _stage_analysis_from_inputs(upload_bytes, camera_bytes, manual_text):
         st.rerun()
@@ -1292,7 +1303,7 @@ if __name__ == "__main__":
             "--browser.gatherUsageStats",
             "false",
         ]
-        print("Launching SuppSwap Swipe in Streamlit...")
+        print("Launching SuppSwipe in Streamlit...")
         try:
             subprocess.run(cmd, check=False)
         except Exception as exc:
