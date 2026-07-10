@@ -1158,49 +1158,50 @@ def _render_card() -> None:
         dots.append(f"<span class='{css_class}'></span>")
     st.markdown(f"<div class='swipe-progress'>{''.join(dots)}</div>", unsafe_allow_html=True)
 
-    # Reserve the top slot for the draggable swipe card; it is filled after the
-    # controls below so it can show the currently-selected whole food.
-    stage = st.container()
-
-    # --- Controls below the card ---
-    selected_food = None
-    if foods:
-        option_labels = [_food_label(food) for food in foods]
-        selected_label = st.selectbox(
-            "Whole-food replacement",
-            options=option_labels,
-            index=0,
-            key=f"swipe_food_select_{component_key}_{index}",
-            label_visibility="collapsed",
-        )
-        selected_food = foods[option_labels.index(selected_label)]
-    else:
-        st.caption(
-            "No whole-food alternatives remain after dietary filtering."
-            if foods_raw
-            else "No whole-food alternatives found for this card."
-        )
-
-    _render_rag_chat_popup(card, component_key, index)
-
-    # --- Draggable Tinder card (rendered into the reserved top slot) ---
+    # The swipe card and its controls (whole-food dropdown + Ask AI) share one
+    # bordered container so they read as a single card.
     theme = _component_card_theme(str(card.get("component", "") or ""))
-    food_label = str((selected_food or {}).get("food_description", "") or "").strip()
     nonce = int(st.session_state.get("swipe_reset_nonce", 0))
-    with stage:
-        swipe_result = tinder_swipe(
-            name=str(card.get("component", "Unknown micronutrient")),
-            dose=str(card.get("dose_label", "Not available")),
-            food=food_label,
-            index=index,
-            total=len(cards),
-            accent=theme["accent"],
-            ink=theme["accent2"],
-            bg=theme["bg"],
-            height=300,
-            key=f"tinder_{component_key}_{index}_{nonce}",
-            default=None,
-        )
+    swipe_result = None
+    selected_food = None
+    with st.container(border=True):
+        stage = st.container()  # draggable swipe card sits at the top of this card
+
+        # --- On-card controls ---
+        if foods:
+            option_labels = [_food_label(food) for food in foods]
+            selected_label = st.selectbox(
+                "Whole-food replacement",
+                options=option_labels,
+                index=0,
+                key=f"swipe_food_select_{component_key}_{index}",
+                label_visibility="collapsed",
+            )
+            selected_food = foods[option_labels.index(selected_label)]
+        else:
+            st.caption(
+                "No whole-food alternatives remain after dietary filtering."
+                if foods_raw
+                else "No whole-food alternatives found for this card."
+            )
+
+        _render_rag_chat_popup(card, component_key, index)
+
+        food_label = str((selected_food or {}).get("food_description", "") or "").strip()
+        with stage:
+            swipe_result = tinder_swipe(
+                name=str(card.get("component", "Unknown micronutrient")),
+                dose=str(card.get("dose_label", "Not available")),
+                food=food_label,
+                index=index,
+                total=len(cards),
+                accent=theme["accent"],
+                ink=theme["accent2"],
+                bg=theme["bg"],
+                height=250,
+                key=f"tinder_{component_key}_{index}_{nonce}",
+                default=None,
+            )
 
     # Advance only via swiping the card (Keep = left, Replace = right).
     decision = None

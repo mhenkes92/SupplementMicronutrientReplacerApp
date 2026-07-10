@@ -40,12 +40,12 @@
     position: absolute;
     inset: 0;
     z-index: 2;
-    border-radius: 26px;
-    padding: 20px 18px 16px 18px;
+    border-radius: 18px;
+    padding: 16px 16px 12px 16px;
     box-sizing: border-box;
     background: var(--card-bg, linear-gradient(160deg, #ffffff 0%, #f8fbff 55%, #f4f7fb 100%));
-    border: 1px solid rgba(148,163,184,0.28);
-    box-shadow: 0 18px 40px rgba(15,36,64,0.20), 0 3px 8px rgba(15,36,64,0.08);
+    border: none;
+    box-shadow: none;
     cursor: grab;
     touch-action: none;
     display: flex;
@@ -69,6 +69,7 @@
     background: #e8eef6;
     border: 1px solid #d4deea;
     z-index: 1;
+    display: none;
   }
   .stack.s1 { top: 10px; bottom: 6px; opacity: .8; transform: scale(.985); }
   .stack.s2 { top: 4px;  bottom: 12px; opacity: .5; transform: scale(.97); }
