@@ -29,6 +29,15 @@
   .ghost { background: #e2e8f0; color: #0f172a; }
   #err { color: #b91c1c; font-size: 0.85rem; margin-top: 8px; min-height: 1em; }
   .hint { color: #64748b; font-size: 0.8rem; margin-top: 6px; text-align: center; }
+  #processing { display: none; text-align: center; padding: 18px 0 8px 0; }
+  .cam-spinner {
+    width: 42px; height: 42px; margin: 0 auto 10px auto;
+    border-radius: 999px;
+    border: 4px solid #d5deeb; border-top-color: #16a34a;
+    animation: cam-spin 0.9s linear infinite;
+  }
+  .cam-proc-text { color: #0f766e; font-size: 0.95rem; font-weight: 800; }
+  @keyframes cam-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -41,6 +50,10 @@
   <div class="btnrow" id="previewBtns" style="display:none;">
     <button class="ghost" id="retake">↺ Retake</button>
     <button class="primary" id="use">✅ Use photo</button>
+  </div>
+  <div id="processing">
+    <div class="cam-spinner"></div>
+    <div class="cam-proc-text">Sending photo for analysis…</div>
   </div>
   <div class="hint">Uses your device's <b>back camera</b> when available.</div>
   <div id="err"></div>
@@ -99,13 +112,13 @@
   document.getElementById("snap").addEventListener("click", function () {
     if (!video.videoWidth) { errEl.textContent = "Camera not ready yet."; return; }
     var vw = video.videoWidth, vh = video.videoHeight;
-    var maxSide = 1600;
+    var maxSide = 1280;
     var scale = Math.min(1, maxSide / Math.max(vw, vh));
     var canvas = document.createElement("canvas");
     canvas.width = Math.round(vw * scale);
     canvas.height = Math.round(vh * scale);
     canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
-    lastDataUrl = canvas.toDataURL("image/jpeg", 0.9);
+    lastDataUrl = canvas.toDataURL("image/jpeg", 0.72);
     preview.src = lastDataUrl;
     showPreview();
   });
@@ -116,7 +129,19 @@
   });
 
   document.getElementById("use").addEventListener("click", function () {
-    if (lastDataUrl) { setValue({ image: lastDataUrl, id: Date.now() }); }
+    if (!lastDataUrl) { return; }
+    // Instant feedback: swap to a processing state right away so the user never
+    // sees a frozen dialog while the image is posted to Python and analyzed.
+    video.style.display = "none";
+    preview.style.display = "none";
+    liveBtns.style.display = "none";
+    previewBtns.style.display = "none";
+    document.getElementById("processing").style.display = "block";
+    stopCamera();
+    // Defer the (large) value post one frame so the processing UI paints first.
+    requestAnimationFrame(function () {
+      setTimeout(function () { setValue({ image: lastDataUrl, id: Date.now() }); }, 0);
+    });
   });
 
   window.addEventListener("message", function (event) {
