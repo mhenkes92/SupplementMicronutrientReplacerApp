@@ -1169,7 +1169,8 @@ def _analyze_dialog() -> None:
         manual_text = str(manual or "").strip()
 
     if not precheck_error and _stage_analysis_from_inputs(upload_bytes, camera_bytes, manual_text):
-        st.rerun()
+        # Close the dialog and let the main app run the analysis immediately.
+        st.rerun(scope="app")
 
     if st.button("Cancel", use_container_width=True, key=f"dlg_cancel_{nonce}"):
         st.rerun()
@@ -1328,7 +1329,6 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
             if st.button(label, use_container_width=True, key=f"final_replace_{component_key}"):
                 st.session_state["swipe_index"] = int(decision.get("card_index", 0))
                 st.rerun()
-            _render_rag_chat_popup({"component": decision.get("component", "")}, component_key, int(decision.get("card_index", 0)))
 
         st.markdown(f"**{LEFT_SWIPE_ICON} Kept as supplements ({len(keep_items)})**")
         if not keep_items:
@@ -1341,7 +1341,11 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
             if st.button(label, use_container_width=True, key=f"final_keep_{component_key}"):
                 st.session_state["swipe_index"] = int(decision.get("card_index", 0))
                 st.rerun()
-            _render_rag_chat_popup({"component": decision.get("component", "")}, component_key, int(decision.get("card_index", 0)))
+
+    # A single Ask AI chat for the whole summary, shown once below the card.
+    all_components = [str(d.get("component", "") or "") for d in decisions.values() if d.get("component")]
+    summary_context = {"component": ", ".join(all_components)} if all_components else {"component": ""}
+    _render_rag_chat_popup(summary_context, "summary", 0)
 
 
 def _build_mobile_ui() -> None:
