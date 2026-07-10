@@ -14,6 +14,7 @@ except ModuleNotFoundError:  # pragma: no cover - older runtimes
     tomllib = None  # type: ignore
 
 import streamlit as st
+import streamlit.components.v1 as components
 from PIL import Image, ImageOps
 
 # Make sibling package imports work when running this app directly.
@@ -55,6 +56,24 @@ import blockbrain.app as bb  # noqa: E402
 
 
 st.set_page_config(page_title="SuppSwap Swipe", page_icon="🥗", layout="centered")
+
+# Real Tinder-style swipe card: a bidirectional custom component served from a
+# static HTML file (no npm/build step needed, works on Streamlit Cloud).
+_SWIPE_COMPONENT_DIR = Path(__file__).resolve().parent / "swipe_component"
+try:
+    _tinder_swipe = components.declare_component("tinder_swipe", path=str(_SWIPE_COMPONENT_DIR))
+except Exception:
+    _tinder_swipe = None
+
+
+def tinder_swipe(**kwargs: Any):
+    """Render the draggable swipe card; returns {'dir': 'left'|'right', ...} on swipe."""
+    if _tinder_swipe is None:
+        return None
+    try:
+        return _tinder_swipe(**kwargs)
+    except Exception:
+        return None
 
 LEFT_SWIPE_ICON = "💊"
 TITLE_WHOLE_FOOD_ICON = "🥗"
@@ -465,6 +484,22 @@ def _render_header() -> None:
             [data-testid="stHeader"] {
                 background: transparent;
             }
+            /* Tinder-style page lock: the page itself never scrolls (no left/right/up/down);
+               only the swipe card moves. */
+            html, body {
+                overflow: hidden !important;
+                overscroll-behavior: none !important;
+            }
+            [data-testid="stAppViewContainer"],
+            [data-testid="stMain"],
+            section.main {
+                overflow: hidden !important;
+                overscroll-behavior: none !important;
+            }
+            .block-container {
+                overflow-x: hidden !important;
+                max-width: 100vw;
+            }
             [data-testid="stAppViewContainer"] {
                 background:
                     radial-gradient(circle at 0% 0%, #fff4de 0%, rgba(255, 244, 222, 0.22) 45%, transparent 70%),
@@ -805,19 +840,17 @@ def _render_header() -> None:
         unsafe_allow_html=True,
     )
     st.markdown("<div class='swipe-title'>SuppSwap Swipe</div>", unsafe_allow_html=True)
-    st.markdown(
-        "<div class='swipe-subtitle'>Right swipe = whole food choice. Left swipe = pill choice.</div>",
-        unsafe_allow_html=True,
-    )
 
 
 def _reset_swipe_state() -> None:
-    """Clear all swipe session state without triggering a rerun."""
+    """Clear swipe session state, but keep the chosen dietary filter."""
+    saved_diet = st.session_state.get("swipe_diet_profile_id", "none")
     next_nonce = int(st.session_state.get("swipe_reset_nonce", 0)) + 1
     for key in [k for k in list(st.session_state.keys()) if k.startswith("swipe_")]:
         st.session_state.pop(key, None)
     st.session_state["swipe_reset_nonce"] = next_nonce
     _init_state()
+    st.session_state["swipe_diet_profile_id"] = saved_diet
 
 
 def _selected_session_in_progress() -> bool:
@@ -1114,84 +1147,74 @@ def _render_card() -> None:
         dots.append(f"<span class='{css_class}'></span>")
     st.markdown(f"<div class='swipe-progress'>{''.join(dots)}</div>", unsafe_allow_html=True)
 
-    st.markdown("<div class='tinder-stage'><div class='stack-under-2'></div><div class='stack-under-1'></div></div>", unsafe_allow_html=True)
+    # Reserve the top slot for the draggable swipe card; it is filled after the
+    # controls below so it can show the currently-selected whole food.
+    stage = st.container()
 
-    with st.container(border=True):
-        st.markdown(
-            f"<div class='chip'>Card {index + 1} / {len(cards)}</div>",
-            unsafe_allow_html=True,
+    # --- Controls below the card ---
+    selected_food = None
+    if foods:
+        option_labels = [_food_label(food) for food in foods]
+        selected_label = st.selectbox(
+            "Whole-food replacement — USDA single-ingredient foods, highest dose first",
+            options=option_labels,
+            index=0,
+            key=f"swipe_food_select_{component_key}_{index}",
         )
-        st.markdown(
-            f"<div class='decision-rail'><span class='decision-badge left'>KEEP {LEFT_SWIPE_ICON}</span><span class='decision-badge right'>REPLACE {TITLE_WHOLE_FOOD_ICON}</span></div>",
-            unsafe_allow_html=True,
-        )
-        theme = _component_card_theme(str(card.get("component", "") or ""))
-        st.markdown(
-            f"""
-            <div class='card-hero' style='--card-accent:{theme['accent']}; --card-ink:{theme['accent2']}; --card-bg:{theme['bg']}; --card-chip-bg:{theme['chip_bg']}; --card-chip-text:{theme['chip_text']};'>
-                <div class='card-hero-top'>
-                    <div class='card-hero-name'>{card.get('component', 'Unknown micronutrient')}</div>
-                </div>
-                <div class='card-hero-dose'>Dose: <b>{card.get('dose_label', 'Not available')}</b></div>
-                <div class='card-hero-pill'>Micro-nutrient card</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        selected_food = foods[option_labels.index(selected_label)]
+    else:
+        st.caption(
+            "No whole-food alternatives remain after dietary filtering."
+            if foods_raw
+            else "No whole-food alternatives found for this card."
         )
 
-        selected_food = None
-        right_icon = _whole_food_icon(component_key)
-        if foods:
-            option_labels = [_food_label(food) for food in foods]
-            selected_label = st.selectbox(
-                "Whole-food replacement — USDA single-ingredient foods, highest dose first",
-                options=option_labels,
-                index=0,
-                key=f"swipe_food_select_{component_key}_{index}",
-            )
-            selected_food = foods[option_labels.index(selected_label)]
-            right_icon = _whole_food_icon_from_food(selected_food, component_key)
-        else:
-            if foods_raw:
-                st.caption("No alternatives remain after dietary filtering.")
-            else:
-                st.caption("No whole-food alternatives found for this card.")
+    _render_rag_chat_popup(card, component_key, index)
 
-        _render_rag_chat_popup(card, component_key, index)
+    # --- Draggable Tinder card (rendered into the reserved top slot) ---
+    theme = _component_card_theme(str(card.get("component", "") or ""))
+    food_label = str((selected_food or {}).get("food_description", "") or "").strip()
+    nonce = int(st.session_state.get("swipe_reset_nonce", 0))
+    with stage:
+        swipe_result = tinder_swipe(
+            name=str(card.get("component", "Unknown micronutrient")),
+            dose=str(card.get("dose_label", "Not available")),
+            food=food_label,
+            index=index,
+            total=len(cards),
+            accent=theme["accent"],
+            ink=theme["accent2"],
+            bg=theme["bg"],
+            height=300,
+            key=f"tinder_{component_key}_{index}_{nonce}",
+            default=None,
+        )
 
-        left_col, right_col = st.columns(2)
-        with left_col:
-            if st.button("Keep synthetic micronutrient", use_container_width=True, key=f"swipe_left_{component_key}_{index}"):
-                st.toast("keep synthetic micronutrient", icon="⬅️")
-                decisions[component_key] = {
-                    "component_key": component_key,
-                    "component": card.get("component", ""),
-                    "dose_label": card.get("dose_label", ""),
-                    "decision": "keep",
-                    "selected_food": selected_food,
-                    "card_index": index,
-                }
-                st.session_state["swipe_decisions"] = decisions
-                st.session_state["swipe_index"] = index + 1
-                st.rerun()
+    # Fallback controls (desktop / if the drag gesture is unavailable).
+    col_keep, col_repl = st.columns(2)
+    keep_click = col_keep.button(f"Keep {LEFT_SWIPE_ICON}", use_container_width=True, key=f"swipe_left_{component_key}_{index}")
+    repl_click = col_repl.button(f"Replace {TITLE_WHOLE_FOOD_ICON}", type="primary", use_container_width=True, key=f"swipe_right_{component_key}_{index}")
 
-        with right_col:
-            if st.button("Replace with Whole Food", type="primary", use_container_width=True, key=f"swipe_right_{component_key}_{index}"):
-                if selected_food is None:
-                    st.warning("Pick a whole-food alternative first before swiping right.")
-                    st.stop()
-                st.toast("Replace with Whole Food", icon="➡️")
-                decisions[component_key] = {
-                    "component_key": component_key,
-                    "component": card.get("component", ""),
-                    "dose_label": card.get("dose_label", ""),
-                    "decision": "replace",
-                    "selected_food": selected_food,
-                    "card_index": index,
-                }
-                st.session_state["swipe_decisions"] = decisions
-                st.session_state["swipe_index"] = index + 1
-                st.rerun()
+    decision = None
+    if isinstance(swipe_result, dict) and swipe_result.get("dir") in ("left", "right"):
+        decision = "keep" if swipe_result["dir"] == "left" else "replace"
+    elif keep_click:
+        decision = "keep"
+    elif repl_click:
+        decision = "replace"
+
+    if decision:
+        decisions[component_key] = {
+            "component_key": component_key,
+            "component": card.get("component", ""),
+            "dose_label": card.get("dose_label", ""),
+            "decision": decision,
+            "selected_food": selected_food,
+            "card_index": index,
+        }
+        st.session_state["swipe_decisions"] = decisions
+        st.session_state["swipe_index"] = index + 1
+        st.rerun()
 
 
 def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[str, Any]]) -> None:
