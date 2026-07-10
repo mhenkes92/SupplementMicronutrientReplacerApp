@@ -993,10 +993,16 @@ def _extract_ean_from_text(text: str) -> str:
 
 
 def _research_barcode_label(barcode: str) -> str:
-    """Retrieve a supplement label for an EAN/UPC barcode.
+    """Retrieve a supplement label for an EAN/UPC barcode via trusted product
+    databases (OpenFoodFacts + secondary lookups only).
 
-    Tries Blockbrain's deterministic web lookup first, then falls back to an
-    agentic Blockbrain research prompt so the bot can look the product up.
+    We deliberately do NOT ask the LLM to guess a product from a bare barcode
+    number: language models have no reliable barcode→product mapping and will
+    confidently hallucinate an unrelated label (e.g. returning a generic
+    multivitamin — whose vitamin K then maps to parsley — for a turmeric
+    product). When the databases don't know the code we return "" so the caller
+    can ask the user to photograph the label instead, which we can research
+    reliably from the product name.
     """
     barcode = re.sub(r"\D", "", str(barcode or ""))
     if not (8 <= len(barcode) <= 14):
@@ -1007,17 +1013,36 @@ def _research_barcode_label(barcode: str) -> str:
             return text.strip()
     except Exception:
         pass
+    return ""
+
+
+def _research_product_from_label_text(label_text: str) -> str:
+    """Identify a supplement from text read off a product photo and return its
+    full Supplement Facts label.
+
+    Used when a photo shows the product (brand / product name / marketing copy)
+    but not a complete, readable Supplement Facts panel. Researching by the
+    visible product NAME is far more reliable than guessing from a barcode
+    number, so the model is much less likely to hallucinate.
+    """
+    snippet = str(label_text or "").strip()
+    if len(snippet) < 3:
+        return ""
+    snippet = snippet[:1200]
     system_prompt = (
-        "You are a supplement-label research assistant. Given a product barcode "
-        "(EAN-13/EAN-8/UPC), identify the exact product and return its Supplement "
-        "Facts / nutrition label as plain text: one nutrient per line with amount "
-        "and unit (for example 'Vitamin D 25 mcg', 'Magnesium 300 mg'). Include the "
-        "ingredient list if available. Never invent values. If you cannot confidently "
-        "identify the product, reply with exactly NONE."
+        "You are a supplement-label research assistant. You are given raw text read "
+        "from a photo of a supplement product (often the front of the pack: brand, "
+        "product name, and marketing text). Identify the exact product and return its "
+        "full Supplement Facts / nutrition label as plain text: one nutrient or active "
+        "ingredient per line with amount and unit (for example 'Vitamin D 25 mcg', "
+        "'Magnesium 300 mg', 'Curcumin 500 mg'). Include the active ingredient list "
+        "when relevant. Never invent values. If you cannot confidently identify the "
+        "product from the text, reply with exactly NONE."
     )
     user_prompt = (
-        f"Barcode: {barcode}\n"
-        "Research this product and return only its supplement facts label text."
+        "Text read from the product photo:\n"
+        f"{snippet}\n\n"
+        "Identify the product and return only its supplement facts label text."
     )
     try:
         reply = str(bb.call_blockbrain_text(system_prompt, user_prompt) or "").strip()
@@ -1123,6 +1148,14 @@ def _run_pending_analysis() -> None:
                                 researched = _research_barcode_label(ean)
                                 if researched:
                                     text_parts.append(researched)
+                        # Product-name fallback: if we still don't have a readable
+                        # facts panel, treat the photo as a product shot and research
+                        # the label from its visible brand / product name.
+                        if ocr_text.strip() and not bb.extraction_gate_report("\n".join(text_parts)).get("passed"):
+                            _set_progress(min(96, pct + 6), "Researching the product from the label…")
+                            researched_name = _research_product_from_label_text(ocr_text)
+                            if researched_name:
+                                text_parts.append(researched_name)
                     except Exception as exc:
                         st.warning(f"Image OCR failed: {exc}")
 
@@ -1135,7 +1168,12 @@ def _run_pending_analysis() -> None:
                     if researched:
                         text_parts.append(researched)
                     else:
-                        st.warning("Could not research that barcode. Try a photo or paste the label text.")
+                        st.warning(
+                            "I couldn't find that barcode in the product databases. "
+                            "Snap a photo of the label (the front of the pack or the "
+                            "Supplement Facts panel) instead — I'll research the product "
+                            "from the photo."
+                        )
                 elif re.match(r"https?://", manual, re.I):
                     _set_progress(56, "Fetching product page…")
                     try:
