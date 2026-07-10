@@ -75,6 +75,29 @@ def tinder_swipe(**kwargs: Any):
     except Exception:
         return None
 
+
+# Back-camera capture component (getUserMedia facingMode 'environment').
+_CAMERA_COMPONENT_DIR = Path(__file__).resolve().parent / "camera_component"
+try:
+    _back_camera = components.declare_component("back_camera", path=str(_CAMERA_COMPONENT_DIR))
+except Exception:
+    _back_camera = None
+
+
+def _decode_camera_image(value: Any) -> bytes:
+    """Decode the {'image': dataURL} value from the camera component into JPEG bytes."""
+    if not isinstance(value, dict):
+        return b""
+    data_url = str(value.get("image", "") or "")
+    if "," not in data_url:
+        return b""
+    try:
+        import base64 as _b64
+        return _b64.b64decode(data_url.split(",", 1)[1])
+    except Exception:
+        return b""
+
+
 LEFT_SWIPE_ICON = "💊"
 TITLE_WHOLE_FOOD_ICON = "🥗"
 WHOLE_FOOD_ICONS = ["🥦", "🥕", "🥚", "🍓", "🐟", "🥜", "🍠", "🥬"]
@@ -446,34 +469,85 @@ def _build_swipe_cards(components: list[dict[str, Any]], details: list[dict[str,
     return cards
 
 
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    h = str(hex_color or "").lstrip("#")
+    if len(h) != 6:
+        return (100, 116, 139)
+    try:
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+    except Exception:
+        return (100, 116, 139)
+
+
+def _mix_hex(hex_a: str, hex_b: str, t: float) -> str:
+    ar, ag, ab = _hex_to_rgb(hex_a)
+    br, bg, bb = _hex_to_rgb(hex_b)
+    t = max(0.0, min(1.0, t))
+    return "#{:02x}{:02x}{:02x}".format(
+        round(ar + (br - ar) * t),
+        round(ag + (bg - ag) * t),
+        round(ab + (bb - ab) * t),
+    )
+
+
+# Card colours reflect the real-world colour associated with each micronutrient
+# (physical compound colour, or its classic food/branding hue):
+#   riboflavin/B2 & D = yellow-gold, B12/cobalamin & iron = red, folate & K =
+#   leafy green (foliage / "Koagulation"), A & C = orange (carotene/citrus),
+#   iodine = violet (iodine vapour), copper = copper, magnesium = teal, zinc =
+#   metallic slate, potassium = lilac (flame test), omega-3/EPA/DHA = ocean blue.
+_NUTRIENT_BASE_COLORS: list[tuple[str, str]] = [
+    ("vitamin b12", "#e11d48"), ("cobalamin", "#e11d48"),
+    ("vitamin b9", "#22c55e"), ("folate", "#22c55e"), ("folic", "#22c55e"),
+    ("vitamin b7", "#d97706"), ("biotin", "#d97706"),
+    ("vitamin b6", "#f59e0b"), ("pyridoxine", "#f59e0b"),
+    ("vitamin b5", "#eab308"), ("pantothenic", "#eab308"),
+    ("vitamin b3", "#f59e0b"), ("niacin", "#f59e0b"),
+    ("vitamin b2", "#f59e0b"), ("riboflavin", "#f59e0b"),
+    ("vitamin b1", "#eab308"), ("thiamin", "#eab308"),
+    ("vitamin a", "#f97316"), ("beta-carotene", "#f97316"), ("beta carotene", "#f97316"),
+    ("vitamin c", "#f97316"), ("ascorbic", "#f97316"),
+    ("vitamin d", "#f59e0b"),
+    ("vitamin e", "#ca8a04"), ("tocopherol", "#ca8a04"),
+    ("vitamin k", "#16a34a"),
+    ("calcium", "#94a3b8"),
+    ("iron", "#dc2626"),
+    ("magnesium", "#14b8a6"),
+    ("zinc", "#64748b"),
+    ("iodine", "#7c3aed"),
+    ("selenium", "#a16207"),
+    ("copper", "#c2410c"),
+    ("manganese", "#db2777"),
+    ("chromium", "#059669"),
+    ("molybdenum", "#2563eb"),
+    ("potassium", "#8b5cf6"),
+    ("sodium", "#eab308"),
+    ("phosphorus", "#a855f7"),
+    ("chloride", "#22c55e"),
+    ("choline", "#0ea5e9"),
+    ("omega", "#0ea5e9"), ("epa", "#0ea5e9"), ("dha", "#0ea5e9"), ("fish oil", "#0ea5e9"),
+    ("vitamin", "#6366f1"),
+]
+
+
 def _component_card_theme(component_name: str) -> dict[str, str]:
     key = bb.normalize_lookup_key(component_name)
-    palette = {
-        "accent": "#64748b",
-        "accent2": "#0f172a",
-        "bg": "linear-gradient(160deg, #ffffff 0%, #f8fbff 55%, #f4f7fb 100%)",
-        "chip_bg": "rgba(100, 116, 139, 0.12)",
-        "chip_text": "#334155",
-    }
-
-    rules = [
-        ("vitamin a", {"accent": "#ef4444", "accent2": "#7f1d1d", "chip_bg": "rgba(239, 68, 68, 0.12)", "chip_text": "#991b1b", "bg": "linear-gradient(160deg, #fff7f7 0%, #fff1f1 55%, #fff8f5 100%)"}),
-        ("vitamin c", {"accent": "#f97316", "accent2": "#9a3412", "chip_bg": "rgba(249, 115, 22, 0.12)", "chip_text": "#c2410c", "bg": "linear-gradient(160deg, #fff8f1 0%, #fff2e8 55%, #fffaf4 100%)"}),
-        ("vitamin d", {"accent": "#f59e0b", "accent2": "#92400e", "chip_bg": "rgba(245, 158, 11, 0.14)", "chip_text": "#b45309", "bg": "linear-gradient(160deg, #fffaf0 0%, #fff5db 55%, #fffdf6 100%)"}),
-        ("vitamin e", {"accent": "#eab308", "accent2": "#854d0e", "chip_bg": "rgba(234, 179, 8, 0.14)", "chip_text": "#a16207", "bg": "linear-gradient(160deg, #fffbeb 0%, #fef3c7 55%, #fffdf4 100%)"}),
-        ("vitamin k", {"accent": "#10b981", "accent2": "#065f46", "chip_bg": "rgba(16, 185, 129, 0.14)", "chip_text": "#047857", "bg": "linear-gradient(160deg, #f3fff9 0%, #e7fdf3 55%, #fbfffd 100%)"}),
-        ("vitamin b12", {"accent": "#3b82f6", "accent2": "#1e3a8a", "chip_bg": "rgba(59, 130, 246, 0.14)", "chip_text": "#1d4ed8", "bg": "linear-gradient(160deg, #f7fbff 0%, #eaf2ff 55%, #fbfdff 100%)"}),
-        ("folate", {"accent": "#8b5cf6", "accent2": "#4c1d95", "chip_bg": "rgba(139, 92, 246, 0.14)", "chip_text": "#6d28d9", "bg": "linear-gradient(160deg, #fbf8ff 0%, #f1eaff 55%, #fffdfa 100%)"}),
-        ("magnesium", {"accent": "#06b6d4", "accent2": "#155e75", "chip_bg": "rgba(6, 182, 212, 0.14)", "chip_text": "#0e7490", "bg": "linear-gradient(160deg, #f4fdff 0%, #e9fbff 55%, #fbfeff 100%)"}),
-        ("zinc", {"accent": "#14b8a6", "accent2": "#115e59", "chip_bg": "rgba(20, 184, 166, 0.14)", "chip_text": "#0f766e", "bg": "linear-gradient(160deg, #f5fffd 0%, #e2fbf7 55%, #fbfffe 100%)"}),
-        ("calcium", {"accent": "#a855f7", "accent2": "#581c87", "chip_bg": "rgba(168, 85, 247, 0.14)", "chip_text": "#7e22ce", "bg": "linear-gradient(160deg, #fcf8ff 0%, #f2e7ff 55%, #fffdfd 100%)"}),
-        ("iron", {"accent": "#f43f5e", "accent2": "#881337", "chip_bg": "rgba(244, 63, 94, 0.14)", "chip_text": "#be123c", "bg": "linear-gradient(160deg, #fff7f8 0%, #ffe8ec 55%, #fffdfd 100%)"}),
-    ]
-    for needle, update in rules:
+    base = "#64748b"
+    for needle, color in _NUTRIENT_BASE_COLORS:
         if needle in key:
-            palette.update(update)
+            base = color
             break
-    return palette
+    r, g, b = _hex_to_rgb(base)
+    return {
+        "accent": base,
+        "accent2": _mix_hex(base, "#0f172a", 0.55),
+        "bg": (
+            "linear-gradient(160deg, #ffffff 0%, "
+            f"{_mix_hex(base, '#ffffff', 0.9)} 55%, {_mix_hex(base, '#ffffff', 0.82)} 100%)"
+        ),
+        "chip_bg": f"rgba({r}, {g}, {b}, 0.14)",
+        "chip_text": _mix_hex(base, "#0f172a", 0.4),
+    }
 
 
 def _render_header() -> None:
@@ -1065,14 +1139,18 @@ def _analyze_dialog() -> None:
     manual_text = ""
 
     if "Photo" in method:
-        # The camera widget (and its browser permission prompt) is only created
-        # when the user actually chooses this option — not when the dialog opens.
-        camera = st.camera_input(
-            "Take a photo of the label or barcode",
-            key=f"dlg_camera_{nonce}",
-            label_visibility="collapsed",
-        )
-        camera_bytes = camera.getvalue() if camera is not None else b""
+        # Custom back-camera component (getUserMedia facingMode 'environment').
+        # Falls back to Streamlit's default camera if the component is unavailable.
+        if _back_camera is not None:
+            cam_value = _back_camera(key=f"dlg_backcam_{nonce}", default=None)
+            camera_bytes = _decode_camera_image(cam_value)
+        else:
+            camera = st.camera_input(
+                "Take a photo of the label or barcode",
+                key=f"dlg_camera_{nonce}",
+                label_visibility="collapsed",
+            )
+            camera_bytes = camera.getvalue() if camera is not None else b""
     elif "File" in method:
         upload = st.file_uploader(
             "Choose an image from your files or gallery",
@@ -1198,6 +1276,7 @@ def _render_card() -> None:
                 accent=theme["accent"],
                 ink=theme["accent2"],
                 bg=theme["bg"],
+                canReplace=selected_food is not None,
                 height=250,
                 key=f"tinder_{component_key}_{index}_{nonce}",
                 default=None,
@@ -1207,6 +1286,9 @@ def _render_card() -> None:
     decision = None
     if isinstance(swipe_result, dict) and swipe_result.get("dir") in ("left", "right"):
         decision = "keep" if swipe_result["dir"] == "left" else "replace"
+    # Can't replace with a whole food that doesn't exist.
+    if decision == "replace" and selected_food is None:
+        decision = None
 
     if decision:
         decisions[component_key] = {
@@ -1246,6 +1328,7 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
             if st.button(label, use_container_width=True, key=f"final_replace_{component_key}"):
                 st.session_state["swipe_index"] = int(decision.get("card_index", 0))
                 st.rerun()
+            _render_rag_chat_popup({"component": decision.get("component", "")}, component_key, int(decision.get("card_index", 0)))
 
         st.markdown(f"**{LEFT_SWIPE_ICON} Kept as supplements ({len(keep_items)})**")
         if not keep_items:
@@ -1258,6 +1341,7 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
             if st.button(label, use_container_width=True, key=f"final_keep_{component_key}"):
                 st.session_state["swipe_index"] = int(decision.get("card_index", 0))
                 st.rerun()
+            _render_rag_chat_popup({"component": decision.get("component", "")}, component_key, int(decision.get("card_index", 0)))
 
 
 def _build_mobile_ui() -> None:

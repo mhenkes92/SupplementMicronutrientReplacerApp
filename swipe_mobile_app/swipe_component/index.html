@@ -101,6 +101,7 @@
   var railRepl = document.getElementById("railRepl");
   var HEIGHT = 360;
   var committed = false;
+  var canReplace = true;
 
   function send(type, extra) {
     var msg = { isStreamlitMessage: true, type: type };
@@ -119,6 +120,7 @@
   function render(args) {
     args = args || {};
     committed = false;
+    canReplace = (args.canReplace !== false);
     HEIGHT = parseInt(args.height || 360, 10) || 360;
     stage.style.setProperty("--accent", args.accent || "#64748b");
     stage.style.setProperty("--ink", args.ink || "#0f172a");
@@ -134,7 +136,9 @@
       '<div class="name">' + esc(args.name || "Micronutrient") + '</div>' +
       '<div class="dose">Dose: <b>' + esc(args.dose || "n/a") + '</b></div>' +
       '<div class="foodwrap"><div class="foodlbl">Whole-food replacement</div><div class="food">' + foodTxt + '</div></div>' +
-      '<div class="hint">Swipe <b class="k">◀ left = keep pill</b> · <b class="r">replace = whole food ▶</b></div>';
+      '<div class="hint">' + (canReplace
+        ? 'Swipe <b class="k">◀ left = keep pill</b> · <b class="r">replace = whole food ▶</b>'
+        : '<b class="k">◀ Swipe left to keep</b> · no whole-food match to replace') + '</div>';
 
     card.style.transition = "none";
     card.style.transform = "";
@@ -145,7 +149,7 @@
 
   function rails(dx) {
     var t = Math.min(1, Math.abs(dx) / 90);
-    railRepl.style.opacity = dx > 8 ? t : 0;
+    railRepl.style.opacity = (dx > 8 && canReplace) ? t : 0;
     railKeep.style.opacity = dx < -8 ? t : 0;
   }
 
@@ -184,8 +188,10 @@
   function up() {
     if (!dragging) return;
     dragging = false;
-    if (Math.abs(dx) > THRESH) {
-      fly(dx > 0 ? "right" : "left");
+    if (dx > THRESH && canReplace) {
+      fly("right");
+    } else if (dx < -THRESH) {
+      fly("left");
     } else {
       card.style.transition = "transform .22s ease";
       card.style.transform = "";

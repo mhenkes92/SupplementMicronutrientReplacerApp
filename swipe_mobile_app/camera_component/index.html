@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #wrap { width: 100%; }
+  video, #preview {
+    width: 100%;
+    border-radius: 14px;
+    background: #0f172a;
+    display: block;
+    aspect-ratio: 3 / 4;
+    object-fit: cover;
+  }
+  #preview { display: none; }
+  .btnrow { display: flex; gap: 8px; margin-top: 10px; }
+  button {
+    flex: 1;
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: none;
+    font-size: 1rem;
+    font-weight: 800;
+    cursor: pointer;
+  }
+  .primary { background: #16a34a; color: #fff; }
+  .ghost { background: #e2e8f0; color: #0f172a; }
+  #err { color: #b91c1c; font-size: 0.85rem; margin-top: 8px; min-height: 1em; }
+  .hint { color: #64748b; font-size: 0.8rem; margin-top: 6px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <video id="video" playsinline autoplay muted></video>
+  <img id="preview" alt="captured" />
+  <div class="btnrow" id="liveBtns">
+    <button class="primary" id="snap">📸 Capture</button>
+  </div>
+  <div class="btnrow" id="previewBtns" style="display:none;">
+    <button class="ghost" id="retake">↺ Retake</button>
+    <button class="primary" id="use">✅ Use photo</button>
+  </div>
+  <div class="hint">Uses your device's <b>back camera</b> when available.</div>
+  <div id="err"></div>
+</div>
+<script>
+(function () {
+  var video = document.getElementById("video");
+  var preview = document.getElementById("preview");
+  var liveBtns = document.getElementById("liveBtns");
+  var previewBtns = document.getElementById("previewBtns");
+  var errEl = document.getElementById("err");
+  var HEIGHT = 430;
+  var stream = null;
+  var lastDataUrl = "";
+
+  function send(type, extra) {
+    var msg = { isStreamlitMessage: true, type: type };
+    if (extra) { for (var k in extra) { msg[k] = extra[k]; } }
+    window.parent.postMessage(msg, "*");
+  }
+  function setHeight(h) { send("streamlit:setFrameHeight", { height: h }); }
+  function setValue(v) { send("streamlit:setComponentValue", { value: v, dataType: "json" }); }
+
+  async function startCamera() {
+    errEl.textContent = "";
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false
+      });
+      video.srcObject = stream;
+      await video.play().catch(function () {});
+    } catch (e) {
+      errEl.textContent = "Camera unavailable: " + (e && e.message ? e.message : e) + ". Use the File / Gallery tab instead.";
+    }
+    setHeight(HEIGHT);
+  }
+
+  function stopCamera() {
+    if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+  }
+
+  function showLive() {
+    preview.style.display = "none";
+    video.style.display = "block";
+    liveBtns.style.display = "flex";
+    previewBtns.style.display = "none";
+  }
+  function showPreview() {
+    video.style.display = "none";
+    preview.style.display = "block";
+    liveBtns.style.display = "none";
+    previewBtns.style.display = "flex";
+  }
+
+  document.getElementById("snap").addEventListener("click", function () {
+    if (!video.videoWidth) { errEl.textContent = "Camera not ready yet."; return; }
+    var vw = video.videoWidth, vh = video.videoHeight;
+    var maxSide = 1600;
+    var scale = Math.min(1, maxSide / Math.max(vw, vh));
+    var canvas = document.createElement("canvas");
+    canvas.width = Math.round(vw * scale);
+    canvas.height = Math.round(vh * scale);
+    canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+    lastDataUrl = canvas.toDataURL("image/jpeg", 0.9);
+    preview.src = lastDataUrl;
+    showPreview();
+  });
+
+  document.getElementById("retake").addEventListener("click", function () {
+    lastDataUrl = "";
+    showLive();
+  });
+
+  document.getElementById("use").addEventListener("click", function () {
+    if (lastDataUrl) { setValue({ image: lastDataUrl, id: Date.now() }); }
+  });
+
+  window.addEventListener("message", function (event) {
+    var d = event.data;
+    if (!d || d.type !== "streamlit:render") return;
+    setHeight(HEIGHT);
+  });
+
+  send("streamlit:componentReady", { apiVersion: 1 });
+  setHeight(HEIGHT);
+  startCamera();
+})();
+</script>
+</body>
+</html>
