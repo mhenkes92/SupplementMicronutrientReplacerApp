@@ -324,8 +324,8 @@ def _cached_rag_chunks() -> list[dict[str, str]]:
 
 
 def _render_rag_chat_popup(card: dict[str, Any], component_key: str, index: int) -> None:
-    with st.popover("💬 Ask Research", use_container_width=True):
-        st.caption("Ask research questions about this micronutrient in chat form.")
+    with st.popover("💬 Ask AI", use_container_width=True):
+        st.caption("Ask AI research questions about this micronutrient in chat form.")
         chat_store: dict[str, list[dict[str, str]]] = st.session_state.get("swipe_rag_chats", {})
         history = list(chat_store.get(component_key, []))
 
@@ -1167,10 +1167,11 @@ def _render_card() -> None:
     if foods:
         option_labels = [_food_label(food) for food in foods]
         selected_label = st.selectbox(
-            "Whole-food replacement — USDA single-ingredient foods, highest dose first",
+            "Whole-food replacement",
             options=option_labels,
             index=0,
             key=f"swipe_food_select_{component_key}_{index}",
+            label_visibility="collapsed",
         )
         selected_food = foods[option_labels.index(selected_label)]
     else:
@@ -1201,18 +1202,10 @@ def _render_card() -> None:
             default=None,
         )
 
-    # Fallback controls (desktop / if the drag gesture is unavailable).
-    col_keep, col_repl = st.columns(2)
-    keep_click = col_keep.button(f"Keep {LEFT_SWIPE_ICON}", use_container_width=True, key=f"swipe_left_{component_key}_{index}")
-    repl_click = col_repl.button(f"Replace {TITLE_WHOLE_FOOD_ICON}", type="primary", use_container_width=True, key=f"swipe_right_{component_key}_{index}")
-
+    # Advance only via swiping the card (Keep = left, Replace = right).
     decision = None
     if isinstance(swipe_result, dict) and swipe_result.get("dir") in ("left", "right"):
         decision = "keep" if swipe_result["dir"] == "left" else "replace"
-    elif keep_click:
-        decision = "keep"
-    elif repl_click:
-        decision = "replace"
 
     if decision:
         decisions[component_key] = {
