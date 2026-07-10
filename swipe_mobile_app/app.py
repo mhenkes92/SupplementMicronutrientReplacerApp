@@ -434,6 +434,54 @@ def _food_label(food: dict[str, Any]) -> str:
     return food_name
 
 
+def _amount_to_match_dose(decision: dict[str, Any]) -> str:
+    """How much of the chosen whole food is needed to match the supplement dose.
+
+    Returns a short label like "eat ~85 g" (plus a portion estimate such as
+    "~2 eggs" when one is available), or "" when it can't be computed.
+    """
+    food = decision.get("selected_food") or {}
+    if not isinstance(food, dict):
+        return ""
+    try:
+        amount_per_100g = float(food.get("amount_per_100g", 0.0) or 0.0)
+    except Exception:
+        amount_per_100g = 0.0
+    unit = str(food.get("unit", "") or "")
+    food_name = str(food.get("food_description", "") or "")
+    dose_value = decision.get("dose_value")
+    dose_unit = str(decision.get("dose_unit", "") or "")
+    component = str(decision.get("component", "") or "")
+
+    try:
+        grams = bb.grams_needed_to_match_dose(dose_value, dose_unit, amount_per_100g, unit, component)
+    except Exception:
+        grams = None
+    if grams is None or grams <= 0:
+        return ""
+
+    if grams >= 1000:
+        grams_txt = f"{bb.format_float(grams / 1000.0, 2)} kg"
+    elif grams >= 10:
+        grams_txt = f"{bb.format_float(grams, 0)} g"
+    else:
+        grams_txt = f"{bb.format_float(grams, 1)} g"
+
+    portion = ""
+    try:
+        portion_full = bb.estimate_whole_food_units(food_name, grams)
+        # estimate_whole_food_units returns a long sentence; extract just the "~N unit" part.
+        m = re.search(r"~[^()]+", str(portion_full or ""))
+        if m:
+            portion = m.group(0).strip().rstrip(".").strip()
+    except Exception:
+        portion = ""
+
+    if portion:
+        return f"eat ~{grams_txt} ({portion})"
+    return f"eat ~{grams_txt}"
+
+
 def _build_swipe_cards(components: list[dict[str, Any]], details: list[dict[str, Any]]) -> list[dict[str, Any]]:
     detail_by_component = {
         bb.normalize_lookup_key(str(d.get("component", ""))): d for d in details
@@ -464,6 +512,8 @@ def _build_swipe_cards(components: list[dict[str, Any]], details: list[dict[str,
                 "component": comp_name,
                 "component_key": comp_key,
                 "dose_label": _dose_label(item),
+                "dose_value": item.get("dose_value"),
+                "dose_unit": str(item.get("dose_unit", "") or ""),
                 "foods": foods,
             }
         )
@@ -1323,6 +1373,8 @@ def _render_card() -> None:
             "component_key": component_key,
             "component": card.get("component", ""),
             "dose_label": card.get("dose_label", ""),
+            "dose_value": card.get("dose_value"),
+            "dose_unit": card.get("dose_unit", ""),
             "decision": decision,
             "selected_food": selected_food,
             "card_index": index,
@@ -1353,6 +1405,9 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
             label = f"{right_icon} {decision.get('component', 'Unknown')} ({decision.get('dose_label', '')})"
             if food_name:
                 label += f" → {food_name}"
+                amount_txt = _amount_to_match_dose(decision)
+                if amount_txt:
+                    label += f" — {amount_txt}"
             if st.button(label, use_container_width=True, key=f"final_replace_{component_key}"):
                 st.session_state["swipe_index"] = int(decision.get("card_index", 0))
                 st.rerun()
