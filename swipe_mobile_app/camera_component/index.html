@@ -8,10 +8,10 @@
   #wrap { width: 100%; }
   video, #preview {
     width: 100%;
+    height: 300px;
     border-radius: 14px;
     background: #0f172a;
     display: block;
-    aspect-ratio: 3 / 4;
     object-fit: cover;
   }
   #preview { display: none; }
@@ -52,7 +52,7 @@
   var liveBtns = document.getElementById("liveBtns");
   var previewBtns = document.getElementById("previewBtns");
   var errEl = document.getElementById("err");
-  var HEIGHT = 430;
+  var HEIGHT = 450;
   var stream = null;
   var lastDataUrl = "";
 
