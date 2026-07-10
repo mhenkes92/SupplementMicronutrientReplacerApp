@@ -179,6 +179,7 @@ def _init_state() -> None:
         "swipe_reset_nonce": 0,
         "swipe_is_analyzing": False,
         "swipe_pending_request": None,
+        "swipe_analysis_kicked": False,
         "swipe_show_input_methods": False,
         "swipe_progress_pct": 0,
         "swipe_last_auto_signature": "",
@@ -999,6 +1000,29 @@ def _render_dietary_pills() -> None:
 def _run_pending_analysis() -> None:
     req = dict(st.session_state.get("swipe_pending_request") or {})
 
+    # First pass right after the dialog closes: paint the progress skeleton fast
+    # and immediately rerun. This guarantees the Analyze dialog is fully gone and
+    # the user sees the progress card BEFORE the slow OCR/analysis work begins,
+    # instead of staring at a frozen dialog while the request runs.
+    if not bool(st.session_state.get("swipe_analysis_kicked", False)):
+        st.session_state["swipe_analysis_kicked"] = True
+        st.session_state["swipe_progress_pct"] = 3
+        with st.container(border=True):
+            st.markdown("<div class='chip'>Analyzing…</div>", unsafe_allow_html=True)
+            st.markdown(
+                """
+                <div class='analyze-loading-wrap'>
+                    <div class='analyze-loading-arrow'>↻</div>
+                    <div class='analyze-loading-title'>Finding Whole Food Alternatives</div>
+                    <div class='analyze-loading-sub'>Starting analysis…</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.progress(3)
+            st.markdown("**3%**")
+        st.rerun()
+
     with st.container(border=True):
         st.markdown("<div class='chip'>Analyzing…</div>", unsafe_allow_html=True)
         loading_block = st.empty()
@@ -1024,6 +1048,7 @@ def _run_pending_analysis() -> None:
         def _abort(message: str) -> None:
             st.session_state["swipe_is_analyzing"] = False
             st.session_state["swipe_pending_request"] = None
+            st.session_state["swipe_analysis_kicked"] = False
             st.session_state["swipe_progress_pct"] = 0
             st.error(message)
 
@@ -1097,6 +1122,7 @@ def _run_pending_analysis() -> None:
         st.session_state["swipe_index"] = 0
         st.session_state["swipe_is_analyzing"] = False
         st.session_state["swipe_pending_request"] = None
+        st.session_state["swipe_analysis_kicked"] = False
         st.session_state["swipe_progress_pct"] = 0
         st.rerun()
 
@@ -1115,6 +1141,7 @@ def _stage_analysis_from_inputs(upload_bytes: bytes, camera_bytes: bytes, manual
     }
     st.session_state["swipe_last_auto_signature"] = sig
     st.session_state["swipe_progress_pct"] = 1
+    st.session_state["swipe_analysis_kicked"] = False
     st.session_state["swipe_is_analyzing"] = True
     return True
 
