@@ -1178,6 +1178,42 @@ def llm_extract_supplement_facts_from_page(page_text: str, product_name: str = "
     return out
 
 
+def _research_product_from_label_text(label_text: str) -> str:
+    """Identify a supplement from text read off a product photo and return its
+    full Supplement Facts label.
+
+    Used when OCR of a label image returns the product's brand / product name /
+    marketing copy but not a complete, readable Supplement Facts panel.
+    Researching by the visible product NAME is far more reliable than guessing
+    from a bare barcode number, so the model is much less likely to hallucinate.
+    Returns "" when the product cannot be confidently identified.
+    """
+    snippet = str(label_text or "").strip()
+    if len(snippet) < 3:
+        return ""
+    snippet = snippet[:1200]
+    system = (
+        "You are a supplement-label research assistant. You are given raw text read "
+        "from a photo of a supplement product (often the front of the pack: brand, "
+        "product name, and marketing text). Identify the exact product and return its "
+        "full Supplement Facts / nutrition label as plain text: one nutrient or active "
+        "ingredient per line with amount and unit (for example 'Vitamin D 25 mcg', "
+        "'Magnesium 300 mg', 'Curcumin 500 mg'). Include the active ingredient list "
+        "when relevant. Never invent values. If you cannot confidently identify the "
+        "product from the text, reply with exactly NONE."
+    )
+    user = (
+        "Text read from the product photo:\n"
+        f"{snippet}\n\n"
+        "Identify the product and return only its supplement facts label text."
+    )
+    try:
+        reply = str(call_llm(system, user, temperature=0.0, timeout=60) or "").strip()
+        if reply.upper() == "NONE" or not reply or reply.startswith("OCR") or "API ERROR" in reply:
+            return ""
+        return reply
+    except Exception:
+        return ""
 
 
 # ============================================================
@@ -2628,13 +2664,29 @@ TEXT:
         # try regex fallback before failing
         fallback_only = fallback_parse_supplement_label(input_used)
         if not fallback_only:
-            fail(
-                "Parse Error",
-                err_key="error_parse",
-                err_msg="No supplement data found. Try label image or paste Supplement Facts text.",
-                msg_key="error_no_supplement",
-            )
-            return
+            # Last resort: the input may be front-of-pack text (brand/product name
+            # without a readable Supplement Facts panel). Research the product by
+            # its visible name — far more reliable than guessing from a barcode.
+            progress("Step 2/6: Researching product from label text…", "step_parsing", 0.45)
+            researched = _research_product_from_label_text(input_used)
+            if researched:
+                fallback_only = fallback_parse_supplement_label(researched)
+                if not fallback_only:
+                    # Re-run the LLM parse on the researched label text
+                    researched_user = parse_user.replace(
+                        f"TEXT:\n{input_used}", f"TEXT:\n{researched}"
+                    )
+                    researched_out = call_llm(SYSTEM_PARSER, researched_user, temperature=0.0, timeout=60)
+                    if researched_out and researched_out.strip() not in {"NO_DATA", "", "API ERROR"}:
+                        fallback_only = llm_json(SYSTEM_PARSER, researched_user, retries=2)
+            if not fallback_only:
+                fail(
+                    "Parse Error",
+                    err_key="error_parse",
+                    err_msg="No supplement data found. Try label image or paste Supplement Facts text.",
+                    msg_key="error_no_supplement",
+                )
+                return
         parsed_raw = parse_out
         parsed = fallback_only
     else:

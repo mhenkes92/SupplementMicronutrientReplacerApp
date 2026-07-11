@@ -1,0 +1,7 @@
+# Dependencies for the NutriSwap Swipe UI (imports blockbrain.app for core logic).
+# Mirrors blockbrain/requirements.txt since this app reuses that module.
+streamlit>=1.39.0
+requests>=2.32.3
+beautifulsoup4>=4.12.3
+python-dotenv>=1.0.1
+pillow>=10.4.0
