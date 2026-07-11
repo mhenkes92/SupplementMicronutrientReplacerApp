@@ -1327,10 +1327,23 @@ def _render_card() -> None:
         with st.container(border=True):
             st.markdown(
                 "<div class='tap-card-wrap'>"
-                "<div class='analyze-loading-arrow' style='animation:none;'>\U0001F957</div>"
-                "<div class='tap-card-title'>No supplement analyzed yet</div>"
-                "<div class='tap-card-sub'>Tap \u201cAnalyze my Supplement\u201d below to scan a label or barcode, "
-                "upload a photo, or paste a URL / text \u2014 your first swipe card appears here.</div>"
+                "<div style='font-size:2.8rem;line-height:1;'>🥦</div>"
+                "<div class='tap-card-title' style='font-size:1.1rem;'>Tired of big supp companies ripping&nbsp;you&nbsp;off?</div>"
+                "<div class='tap-card-sub' style='max-width:300px;'>"
+                "Whole Foods are <em>generally superior</em> to synthetic alternatives — "
+                "more bioavailable, naturally balanced, and packed with synergistic co-nutrients "
+                "your pill can never replicate."
+                "</div>"
+                "<div class='tap-card-sub' style='max-width:300px;margin-top:0.4rem;'>"
+                "📸 Capture your supplement's micronutrients, then <strong>swipe</strong> to discover "
+                "the whole-food equivalent for each one."
+                "</div>"
+                "<div class='tap-card-sub' style='max-width:300px;margin-top:0.4rem;'>"
+                "🤖 Not sure? Ask the <strong>RAG AI</strong> for science-backed answers on any card."
+                "</div>"
+                "<div style='margin-top:1rem;font-size:0.95rem;font-weight:800;color:#047857;'>"
+                "To get started \u2192 tap <em>Analyze my Supplement</em> below \u2193"
+                "</div>"
                 "</div>",
                 unsafe_allow_html=True,
             )
