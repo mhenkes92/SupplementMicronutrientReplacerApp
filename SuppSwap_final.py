@@ -17,6 +17,7 @@ import diskcache
 import httpx
 import asyncio
 import hashlib
+import atexit
 
 
 
@@ -1758,9 +1759,6 @@ def is_forbidden_food(desc_lower: str, diet: str, exclusions: list[str]) -> bool
     return False
 
 def is_single_ingredient_food(desc: str) -> bool:
-    return False
-
-def is_single_ingredient_food(desc: str) -> bool:
     desc = (desc or "").lower()
 
     # reject if obviously multi-ingredient
@@ -2013,6 +2011,8 @@ LOW_FOOD_FEASIBILITY = {
 }
 
 _usda_cache = {}
+_usda_session = requests.Session()
+atexit.register(_usda_session.close)
 
 def usda_search_food(query: str, page_size: int = 25) -> list[dict] | None:
     q = (query or "").strip().lower()
@@ -2032,7 +2032,7 @@ def usda_search_food(query: str, page_size: int = 25) -> list[dict] | None:
     }
 
     try:
-        r = requests.get(url, params=params, timeout=USDA_TIMEOUT)
+        r = _usda_session.get(url, params=params, timeout=USDA_TIMEOUT)
     except:
         return None
 
@@ -2419,7 +2419,45 @@ def convert_to_mg(value, unit, nutrient_name):
             return value * 0.67
 
     return value
-    
+
+
+# ============================================================
+# PRE-COMPILED REGEX PATTERNS FOR SUPPLEMENT LABEL PARSING
+# Compiled once at module load to avoid re-compilation on every call.
+# ============================================================
+_LABEL_VAL_RGX = r"(\d+(?:\.\d+)?)(?:\s*[-–]\s*(\d+(?:\.\d+)?))?"
+_LABEL_UNIT_RGX = r"(µg|μg|mcg|ug|mg|g|iu)"
+_LABEL_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(rf"\bvitamin\s*k2\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "vitamin k2"),
+    (re.compile(rf"\bvitamin\s*k1\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "vitamin k1"),
+    (re.compile(rf"\bvitamin\s*k\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "vitamin k"),
+    (re.compile(rf"\bvitamin\s*a\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "vitamin a"),
+    (re.compile(rf"\bvitamin\s*c\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "vitamin c"),
+    (re.compile(rf"\bvitamin\s*d3\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "vitamin d3"),
+    (re.compile(rf"\bvitamin\s*d2\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "vitamin d2"),
+    (re.compile(rf"\bvitamin\s*d\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "vitamin d"),
+    (re.compile(rf"\bvitamin\s*e\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "vitamin e"),
+    (re.compile(rf"\bvitamin\s*b1\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "vitamin b1"),
+    (re.compile(rf"\bthiamine\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "vitamin b1"),
+    (re.compile(rf"\bvitamin\s*b2\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "vitamin b2"),
+    (re.compile(rf"\bvitamin\s*b6\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "vitamin b6"),
+    (re.compile(rf"\bvitamin\s*b9\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "folate"),
+    (re.compile(rf"\bfolate\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "folate"),
+    (re.compile(rf"\bvitamin\s*b12\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "vitamin b12"),
+    (re.compile(rf"\bbiotin\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "biotin"),
+    (re.compile(rf"\bpantothenic\s*acid\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "pantothenic acid"),
+    (re.compile(rf"\bselenium\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "selenium"),
+    (re.compile(rf"\bmagnesium\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "magnesium"),
+    (re.compile(rf"\bmanganese\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "manganese"),
+    (re.compile(rf"\bpotassium\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "potassium"),
+    (re.compile(rf"\bsodium\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "sodium"),
+    (re.compile(rf"\bcaffeine\b\s*[:\-]?\s*{_LABEL_VAL_RGX}\s*{_LABEL_UNIT_RGX}\b", re.IGNORECASE), "caffeine"),
+]
+
+# Pre-compiled helper regex used inside fallback_parse_supplement_label
+_DECIMAL_COMMA_RE = re.compile(r"(\d),(\d)")
+
+
 def fallback_parse_supplement_label(text: str) -> dict:
     """
     Regex-based fallback extractor for common supplement-label lines like:
@@ -2434,7 +2472,7 @@ def fallback_parse_supplement_label(text: str) -> dict:
     t = fix_common_ocr_errors((text or "").lower())
 
     # normalize decimal commas: "3,5 mg" -> "3.5 mg"
-    t = re.sub(r"(\d),(\d)", r"\1.\2", t)
+    t = _DECIMAL_COMMA_RE.sub(r"\1.\2", t)
 
     out: dict = {}
 
@@ -2453,36 +2491,7 @@ def fallback_parse_supplement_label(text: str) -> dict:
         if val is not None and val > 0 and unit in ["mg", "mcg", "iu", "g"]:
             out[key] = {"value": val, "unit": unit}
 
-    # patterns: nutrient name + number/range + unit (handles optional punctuation)
-    val_rgx = r"(\d+(?:\.\d+)?)(?:\s*[-–]\s*(\d+(?:\.\d+)?))?"
-    patterns = [
-        (re.compile(rf"\bvitamin\s*k2\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "vitamin k2"),
-        (re.compile(rf"\bvitamin\s*k1\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "vitamin k1"),
-        (re.compile(rf"\bvitamin\s*k\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "vitamin k"),
-        (re.compile(rf"\bvitamin\s*a\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "vitamin a"),
-        (re.compile(rf"\bvitamin\s*c\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "vitamin c"),
-        (re.compile(rf"\bvitamin\s*d3\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "vitamin d3"),
-        (re.compile(rf"\bvitamin\s*d2\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "vitamin d2"),
-        (re.compile(rf"\bvitamin\s*d\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "vitamin d"),
-        (re.compile(rf"\bvitamin\s*e\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "vitamin e"),
-        (re.compile(rf"\bvitamin\s*b1\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "vitamin b1"),
-        (re.compile(rf"\bthiamine\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "vitamin b1"),
-        (re.compile(rf"\bvitamin\s*b2\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "vitamin b2"),
-        (re.compile(rf"\bvitamin\s*b6\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "vitamin b6"),
-        (re.compile(rf"\bvitamin\s*b9\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "folate"),
-        (re.compile(rf"\bfolate\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "folate"),
-        (re.compile(rf"\bvitamin\s*b12\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "vitamin b12"),
-        (re.compile(rf"\bbiotin\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "biotin"),
-        (re.compile(rf"\bpantothenic\s*acid\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "pantothenic acid"),
-        (re.compile(rf"\bselenium\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "selenium"),
-        (re.compile(rf"\bmagnesium\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "magnesium"),
-        (re.compile(rf"\bmanganese\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "manganese"),
-        (re.compile(rf"\bpotassium\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "potassium"),
-        (re.compile(rf"\bsodium\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "sodium"),
-        (re.compile(rf"\bcaffeine\b\s*[:\-]?\s*{val_rgx}\s*(µg|μg|mcg|ug|mg|g|iu)\b", re.IGNORECASE), "caffeine"),
-    ]
-
-    for pat, key in patterns:
+    for pat, key in _LABEL_PATTERNS:
         m = pat.search(t)
         if not m:
             continue
