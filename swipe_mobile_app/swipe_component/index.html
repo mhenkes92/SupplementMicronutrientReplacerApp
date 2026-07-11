@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    overflow: hidden;
+    font-family: "Source Sans Pro", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  #stage {
+    position: relative;
+    width: 100%;
+    height: 100vh;
+    overflow: hidden;
+    touch-action: none;
+  }
+  .rail {
+    position: absolute;
+    top: 16px;
+    z-index: 3;
+    font-weight: 900;
+    font-size: 0.9rem;
+    letter-spacing: 0.06em;
+    padding: 6px 12px;
+    border-radius: 12px;
+    border: 3px solid;
+    opacity: 0;
+    transition: opacity .12s ease;
+    pointer-events: none;
+  }
+  .rail.keep  { left: 16px;  color: #b91c1c; border-color: #ef4444; transform: rotate(-12deg); }
+  .rail.repl  { right: 16px; color: #047857; border-color: #10b981; transform: rotate(12deg); }
+  .tcard {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    border-radius: 18px;
+    padding: 16px 16px 12px 16px;
+    box-sizing: border-box;
+    background: var(--card-bg, linear-gradient(160deg, #ffffff 0%, #f8fbff 55%, #f4f7fb 100%));
+    border: none;
+    box-shadow: none;
+    cursor: grab;
+    touch-action: none;
+    display: flex;
+    flex-direction: column;
+    will-change: transform;
+  }
+  .tcard::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 26px;
+    background: linear-gradient(135deg, var(--accent, #64748b) 0%, transparent 46%);
+    opacity: 0.16;
+    pointer-events: none;
+  }
+  .tcard:active { cursor: grabbing; }
+  .stack {
+    position: absolute;
+    left: 10px; right: 10px;
+    border-radius: 26px;
+    background: #e8eef6;
+    border: 1px solid #d4deea;
+    z-index: 1;
+    display: none;
+  }
+  .stack.s1 { top: 10px; bottom: 6px; opacity: .8; transform: scale(.985); }
+  .stack.s2 { top: 4px;  bottom: 12px; opacity: .5; transform: scale(.97); }
+  .row { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .count { font-size: .74rem; font-weight: 800; color: #64748b; }
+  .name { position: relative; z-index: 2; font-size: 1.7rem; font-weight: 900; line-height: 1.05; color: var(--ink, #0f172a); margin-top: 8px; letter-spacing: -0.02em; }
+  .dose { position: relative; z-index: 2; margin-top: 8px; color: #334155; font-size: 1rem; font-weight: 600; }
+  .foodwrap { position: relative; z-index: 2; margin-top: auto; }
+  .foodlbl { font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #64748b; }
+  .food { margin-top: 4px; font-size: 1.02rem; font-weight: 800; color: #0f172a; line-height: 1.15; }
+  .hint { position: relative; z-index: 2; text-align: center; margin-top: 12px; font-size: .78rem; color: #64748b; }
+  .hint b.k { color: #b91c1c; }
+  .hint b.r { color: #047857; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="stack s2"></div>
+  <div class="stack s1"></div>
+  <div class="rail keep" id="railKeep">KEEP</div>
+  <div class="rail repl" id="railRepl">REPLACE</div>
+  <div class="tcard" id="card"></div>
+</div>
+<script>
+(function () {
+  var stage = document.getElementById("stage");
+  var card = document.getElementById("card");
+  var railKeep = document.getElementById("railKeep");
+  var railRepl = document.getElementById("railRepl");
+  var HEIGHT = 360;
+  var committed = false;
+  var canReplace = true;
+
+  function send(type, extra) {
+    var msg = { isStreamlitMessage: true, type: type };
+    if (extra) { for (var k in extra) { msg[k] = extra[k]; } }
+    window.parent.postMessage(msg, "*");
+  }
+  function setHeight(h) { send("streamlit:setFrameHeight", { height: h }); }
+  function setValue(v) { send("streamlit:setComponentValue", { value: v, dataType: "json" }); }
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+
+  function render(args) {
+    args = args || {};
+    committed = false;
+    canReplace = (args.canReplace !== false);
+    HEIGHT = parseInt(args.height || 360, 10) || 360;
+    stage.style.setProperty("--accent", args.accent || "#64748b");
+    stage.style.setProperty("--ink", args.ink || "#0f172a");
+    card.style.setProperty("--accent", args.accent || "#64748b");
+    card.style.setProperty("--ink", args.ink || "#0f172a");
+    if (args.bg) { card.style.setProperty("--card-bg", args.bg); }
+
+    var idx = parseInt(args.index || 0, 10) + 1;
+    var total = parseInt(args.total || 1, 10);
+    var foodTxt = args.food ? esc(args.food) : "Pick a food below";
+    card.innerHTML =
+      '<div class="row"><span class="count">Card ' + idx + ' / ' + total + '</span></div>' +
+      '<div class="name">' + esc(args.name || "Micronutrient") + '</div>' +
+      '<div class="dose">Dose: <b>' + esc(args.dose || "n/a") + '</b></div>' +
+      '<div class="foodwrap"><div class="foodlbl">Whole-food replacement</div><div class="food">' + foodTxt + '</div></div>' +
+      '<div class="hint">' + (canReplace
+        ? 'Swipe <b class="k">◀ left = keep pill</b> · <b class="r">replace = whole food ▶</b>'
+        : '<b class="k">◀ Swipe left to keep</b> · no whole-food match to replace') + '</div>';
+
+    card.style.transition = "none";
+    card.style.transform = "";
+    railKeep.style.opacity = 0;
+    railRepl.style.opacity = 0;
+    setHeight(HEIGHT);
+  }
+
+  function rails(dx) {
+    var t = Math.min(1, Math.abs(dx) / 90);
+    railRepl.style.opacity = (dx > 8 && canReplace) ? t : 0;
+    railKeep.style.opacity = dx < -8 ? t : 0;
+  }
+
+  function fly(dir) {
+    if (committed) return;
+    committed = true;
+    var w = Math.max(window.innerWidth, 480);
+    var off = dir === "right" ? w : -w;
+    card.style.transition = "transform .34s ease";
+    card.style.transform = "translate(" + off + "px, -30px) rotate(" + (dir === "right" ? 22 : -22) + "deg)";
+    (dir === "right" ? railRepl : railKeep).style.opacity = 1;
+    setTimeout(function () { setValue({ dir: dir, id: Date.now() }); }, 250);
+  }
+
+  var dragging = false, sx = 0, sy = 0, dx = 0, dy = 0;
+  var THRESH = 90;
+
+  function down(e) {
+    if (committed) return;
+    dragging = true;
+    var p = e.touches ? e.touches[0] : e;
+    sx = p.clientX; sy = p.clientY; dx = 0; dy = 0;
+    card.style.transition = "none";
+    if (card.setPointerCapture && e.pointerId != null) {
+      try { card.setPointerCapture(e.pointerId); } catch (err) {}
+    }
+  }
+  function move(e) {
+    if (!dragging) return;
+    var p = e.touches ? e.touches[0] : e;
+    dx = p.clientX - sx; dy = p.clientY - sy;
+    card.style.transform = "translate(" + dx + "px," + (dy * 0.22) + "px) rotate(" + (dx / 18) + "deg)";
+    rails(dx);
+    if (e.cancelable) e.preventDefault();
+  }
+  function up() {
+    if (!dragging) return;
+    dragging = false;
+    if (dx > THRESH && canReplace) {
+      fly("right");
+    } else if (dx < -THRESH) {
+      fly("left");
+    } else {
+      card.style.transition = "transform .22s ease";
+      card.style.transform = "";
+      rails(0);
+    }
+  }
+
+  card.addEventListener("pointerdown", down);
+  window.addEventListener("pointermove", move, { passive: false });
+  window.addEventListener("pointerup", up);
+  card.addEventListener("touchstart", down, { passive: false });
+  window.addEventListener("touchmove", move, { passive: false });
+  window.addEventListener("touchend", up);
+
+  window.addEventListener("message", function (event) {
+    var d = event.data;
+    if (!d || d.type !== "streamlit:render") return;
+    render(d.args);
+  });
+
+  send("streamlit:componentReady", { apiVersion: 1 });
+  setHeight(HEIGHT);
+})();
+</script>
+</body>
+</html>
