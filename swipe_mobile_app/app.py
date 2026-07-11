@@ -885,6 +885,70 @@ def _render_header() -> None:
                 border: 1px solid #e2d5c0;
                 box-shadow: 0 14px 30px rgba(37, 48, 64, 0.12);
             }
+            .final-hero-banner {
+                background: linear-gradient(135deg, #dcfce7 0%, #d1fae5 100%);
+                border: 1px solid #86efac;
+                border-radius: 14px;
+                padding: 12px 16px;
+                margin-bottom: 0.9rem;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .final-hero-emoji {
+                font-size: 1.8rem;
+                line-height: 1;
+                flex-shrink: 0;
+            }
+            .final-hero-text {
+                flex: 1;
+            }
+            .final-hero-title {
+                font-size: 1rem;
+                font-weight: 900;
+                color: #14532d;
+                line-height: 1.15;
+            }
+            .final-hero-sub {
+                font-size: 0.78rem;
+                color: #166534;
+                margin-top: 2px;
+            }
+            .final-stats-badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                background: #f0fdf4;
+                border: 1px solid #bbf7d0;
+                border-radius: 99px;
+                padding: 4px 12px;
+                font-size: 0.75rem;
+                font-weight: 800;
+                color: #15803d;
+                margin-bottom: 0.75rem;
+            }
+            .final-col-header {
+                font-size: 0.72rem;
+                font-weight: 900;
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+                margin-bottom: 0.45rem;
+                padding-bottom: 4px;
+                border-bottom: 2px solid;
+            }
+            .final-col-header.replace { color: #15803d; border-color: #86efac; }
+            .final-col-header.keep    { color: #6b7280; border-color: #d1d5db; }
+            .final-item-amount {
+                font-size: 0.72rem;
+                font-weight: 700;
+                color: #047857;
+                margin-top: 1px;
+            }
+            .final-rda-btn-wrap {
+                margin-top: 0.9rem;
+                border-top: 1px solid #e5e7eb;
+                padding-top: 0.75rem;
+            }
             .analyze-loading-wrap {
                 min-height: 360px;
                 display: flex;
@@ -1319,18 +1383,18 @@ def _render_card() -> None:
             st.markdown(
                 "<div class='tap-card-wrap'>"
                 "<div style='font-size:2.8rem;line-height:1;'>🥦</div>"
-                "<div class='tap-card-title' style='font-size:1.1rem;'>Tired of big supp companies ripping&nbsp;you&nbsp;off?</div>"
+                "<div class='tap-card-title' style='font-size:1.1rem;'>Big supplement companies are ripping&nbsp;you&nbsp;off.</div>"
                 "<div class='tap-card-sub' style='max-width:300px;'>"
-                "Whole Foods are <em>generally superior</em> to synthetic alternatives — "
-                "more bioavailable, naturally balanced, and packed with synergistic co-nutrients "
-                "your pill can never replicate."
+                "They charge a premium for micronutrients you can get cheaper — and better — "
+                "straight from whole foods. We're here to prove it."
                 "</div>"
                 "<div class='tap-card-sub' style='max-width:300px;margin-top:0.4rem;'>"
-                "📸 Capture your supplement's micronutrients, then <strong>swipe</strong> to discover "
-                "the whole-food equivalent for each one."
+                "📸 Scan your supplement label. Swipe through each micronutrient. "
+                "At the end you'll get a <strong>real-food shopping list</strong> showing exactly "
+                "how much to eat to hit the same dose — and realise you're probably already covered."
                 "</div>"
                 "<div class='tap-card-sub' style='max-width:300px;margin-top:0.4rem;'>"
-                "🤖 Not sure? Ask the <strong>RAG AI</strong> for science-backed answers on any card."
+                "🤖 Not sure about a nutrient? Ask the <strong>RAG AI</strong> for science-backed answers on any card."
                 "</div>"
                 "<div style='margin-top:1rem;font-size:0.95rem;font-weight:800;color:#047857;' aria-label='To get started, tap the Analyze my Supplement button below'>"
                 "To get started &#8594; tap <em>Analyze my Supplement</em> below &#8595;"
@@ -1426,45 +1490,141 @@ def _render_card() -> None:
         st.rerun()
 
 
-def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[str, Any]]) -> None:
-    with st.container(border=True):
-        st.subheader("Your results")
+def _render_athlete_rda_popup() -> None:
+    """Show an expander with a static athlete micronutrient RDA reference table.
 
-        replace_items = [d for d in decisions.values() if d.get("decision") == "replace"]
-        keep_items = [d for d in decisions.values() if d.get("decision") == "keep"]
+    Values are approximate consensus figures drawn from:
+    - ISSN Position Stand: Nutrient Timing (Kerksick et al., 2017)
+    - ACSM/AND/DC Joint Position Statement on Nutrition and Athletic Performance (2016/2021)
+    - NIH Office of Dietary Supplements RDA fact sheets (sedentary baseline)
+    - Larson-Meyer et al., "Vitamin D and Athletes", Curr Sports Med Rep, 2010
+    - Lukaski, "Vitamin and mineral status: effects on physical performance", Nutrition, 2004
+    """
+    with st.expander("ℹ️ Athlete Micronutrient RDA Guide", expanded=False):
+        st.markdown(
+            "**Daily micronutrient reference values for athletes** "
+            "(approximate — consult a sports dietitian for personalised advice). "
+            "Sources: ISSN, ACSM/AND/DC, NIH ODS.",
+        )
+        # Each row: (Nutrient, Unit, Sedentary adult RDA, Endurance athlete, Strength athlete)
+        # Sedentary values: NIH ODS RDA for adults 19-50 y.
+        # Athlete values: upper practical intakes from ISSN/ACSM position papers and
+        # supporting literature; marked ~approx where ranges differ between studies.
+        rda_rows = [
+            # nutrient            unit  sedentary  endurance  strength
+            ("Vitamin D",         "IU",   600,       1500,      1500),   # Larson-Meyer 2010; Endurance/strength: same practical upper intake
+            ("Magnesium",         "mg",   320,        500,       450),   # ACSM/AND/DC 2016; sweat loss increases need in endurance
+            ("Iron (♂)",          "mg",     8,         15,        10),   # NIH ODS; endurance runners show higher turnover (Lukaski 2004)
+            ("Iron (♀)",          "mg",    18,         25,        20),   # Premenopausal; endurance athletes highest risk
+            ("Zinc",              "mg",     8,         12,        15),   # ISSN; strength athletes need more for testosterone/recovery
+            ("Vitamin B12",       "µg",   2.4,        4.0,       4.0),  # NIH ODS RDA; athletes on plant-based diets at high risk
+            ("Calcium",           "mg",  1000,       1300,      1200),  # ACSM/AND/DC; high sweat loss in endurance
+            ("Vitamin C",         "mg",    90,        200,       150),  # NIH ODS; ACSM notes antioxidant needs rise with training load
+            ("Vitamin B6",        "mg",   1.3,        2.0,       2.0),  # NIH ODS; protein metabolism demand higher in athletes
+            ("Folate",            "µg",   400,        600,       500),  # NIH ODS; cell repair demand elevated with heavy training
+            ("Potassium",         "mg",  2600,       3500,      3000),  # NIH AI; sweat losses drive higher needs in endurance
+            ("Omega-3 (EPA+DHA)", "g",   0.25,       2.0,       1.5),  # ISSN Position Stand 2017; anti-inflammatory benefit for athletes
+        ]
+        table_rows = [
+            {
+                "Nutrient": r[0],
+                "Unit": r[1],
+                "Sedentary adult": r[2],
+                "Endurance athlete": r[3],
+                "Strength athlete": r[4],
+            }
+            for r in rda_rows
+        ]
+        st.table(table_rows)
+        st.caption(
+            "💡 Tip: Athletes training >10 h/week, living in low-sunlight regions, "
+            "or following plant-based diets are most at risk of Vitamin D, Iron, B12, "
+            "Zinc and Omega-3 deficiencies."
+        )
+
+
+def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[str, Any]]) -> None:
+    replace_items = [d for d in decisions.values() if d.get("decision") == "replace"]
+    keep_items = [d for d in decisions.values() if d.get("decision") == "keep"]
+    total = len(replace_items) + len(keep_items)
+
+    with st.container(border=True):
+        # --- Hero banner ---
+        replaced_count = len(replace_items)
+        hero_sub = (
+            f"{replaced_count} of {total} nutrients covered by whole food — save money, eat better."
+            if total > 0
+            else "Swipe the cards to build your food plan."
+        )
+        st.markdown(
+            f"<div class='final-hero-banner'>"
+            f"<div class='final-hero-emoji'>🎉</div>"
+            f"<div class='final-hero-text'>"
+            f"<div class='final-hero-title'>You're done!</div>"
+            f"<div class='final-hero-sub'>{hero_sub}</div>"
+            f"</div></div>",
+            unsafe_allow_html=True,
+        )
+
+        # Stats badge
+        if total > 0:
+            st.markdown(
+                f"<div class='final-stats-badge'>🥗 {replaced_count} / {total} supplements replaced with food</div>",
+                unsafe_allow_html=True,
+            )
+
         st.caption("Tap any item to reopen its card and change your choice.")
 
-        st.markdown(f"**{TITLE_WHOLE_FOOD_ICON} Whole-food replacements ({len(replace_items)})**")
-        if not replace_items:
-            st.caption("Nothing swiped right yet.")
-        for decision in replace_items:
-            component_key = str(decision.get("component_key", "") or "")
-            if not component_key:
-                continue
-            selected_food = decision.get("selected_food") or {}
-            food_name = str(selected_food.get("food_description", "") or "")
-            right_icon = _whole_food_icon_from_food(selected_food, component_key)
-            label = f"{right_icon} {decision.get('component', 'Unknown')} ({decision.get('dose_label', '')})"
-            if food_name:
-                label += f" → {food_name}"
-                amount_txt = _amount_to_match_dose(decision)
-                if amount_txt:
-                    label += f" — {amount_txt}"
-            if st.button(label, use_container_width=True, key=f"final_replace_{component_key}"):
-                st.session_state["swipe_index"] = int(decision.get("card_index", 0))
-                st.rerun()
+        # --- Two-column layout: left = 💊 keep, right = 🥗 replace ---
+        col_keep, col_replace = st.columns(2)
 
-        st.markdown(f"**{LEFT_SWIPE_ICON} Kept as supplements ({len(keep_items)})**")
-        if not keep_items:
-            st.caption("Nothing swiped left yet.")
-        for decision in keep_items:
-            component_key = str(decision.get("component_key", "") or "")
-            if not component_key:
-                continue
-            label = f"{LEFT_SWIPE_ICON} {decision.get('component', 'Unknown')} ({decision.get('dose_label', '')})"
-            if st.button(label, use_container_width=True, key=f"final_keep_{component_key}"):
-                st.session_state["swipe_index"] = int(decision.get("card_index", 0))
-                st.rerun()
+        with col_keep:
+            st.markdown(
+                f"<div class='final-col-header keep'>{LEFT_SWIPE_ICON} Keep pill</div>",
+                unsafe_allow_html=True,
+            )
+            if not keep_items:
+                st.caption("None kept.")
+            for decision in keep_items:
+                component_key = str(decision.get("component_key", "") or "")
+                if not component_key:
+                    continue
+                label = f"{decision.get('component', 'Unknown')} ({decision.get('dose_label', '')})"
+                if st.button(f"{LEFT_SWIPE_ICON} {label}", use_container_width=True, key=f"final_keep_{component_key}"):
+                    st.session_state["swipe_index"] = int(decision.get("card_index", 0))
+                    st.rerun()
+
+        with col_replace:
+            st.markdown(
+                f"<div class='final-col-header replace'>{TITLE_WHOLE_FOOD_ICON} Eat food</div>",
+                unsafe_allow_html=True,
+            )
+            if not replace_items:
+                st.caption("None replaced.")
+            for decision in replace_items:
+                component_key = str(decision.get("component_key", "") or "")
+                if not component_key:
+                    continue
+                selected_food = decision.get("selected_food") or {}
+                food_name = str(selected_food.get("food_description", "") or "")
+                right_icon = _whole_food_icon_from_food(selected_food, component_key)
+                component_label = f"{decision.get('component', 'Unknown')} ({decision.get('dose_label', '')})"
+                amount_txt = _amount_to_match_dose(decision) if food_name else ""
+                btn_label = f"{right_icon} {component_label}"
+                if food_name:
+                    btn_label += f" → {food_name}"
+                if st.button(btn_label, use_container_width=True, key=f"final_replace_{component_key}"):
+                    st.session_state["swipe_index"] = int(decision.get("card_index", 0))
+                    st.rerun()
+                if amount_txt:
+                    st.markdown(
+                        f"<div class='final-item-amount'>🥄 {amount_txt}</div>",
+                        unsafe_allow_html=True,
+                    )
+
+        # --- Athlete RDA reference ---
+        st.markdown("<div class='final-rda-btn-wrap'></div>", unsafe_allow_html=True)
+        _render_athlete_rda_popup()
 
     # A single Ask AI chat for the whole summary, shown once below the card.
     all_components = [str(d.get("component", "") or "") for d in decisions.values() if d.get("component")]
