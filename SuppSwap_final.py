@@ -2668,8 +2668,7 @@ TEXT:
                         f"TEXT:\n{input_used}", f"TEXT:\n{researched}"
                     )
                     researched_out = call_llm(SYSTEM_PARSER, researched_user, temperature=0.0, timeout=60)
-                    if researched_out and researched_out.strip() not in ("NO_DATA", "") \
-                            and "API ERROR" not in researched_out:
+                    if researched_out and researched_out.strip() not in {"NO_DATA", "", "API ERROR"}:
                         fallback_only = llm_json(SYSTEM_PARSER, researched_user, retries=2)
             if not fallback_only:
                 fail(

@@ -1341,8 +1341,8 @@ def _render_card() -> None:
                 "<div class='tap-card-sub' style='max-width:300px;margin-top:0.4rem;'>"
                 "🤖 Not sure? Ask the <strong>RAG AI</strong> for science-backed answers on any card."
                 "</div>"
-                "<div style='margin-top:1rem;font-size:0.95rem;font-weight:800;color:#047857;'>"
-                "To get started \u2192 tap <em>Analyze my Supplement</em> below \u2193"
+                "<div style='margin-top:1rem;font-size:0.95rem;font-weight:800;color:#047857;' aria-label='To get started, tap the Analyze my Supplement button below'>"
+                "To get started &#8594; tap <em>Analyze my Supplement</em> below &#8595;"
                 "</div>"
                 "</div>",
                 unsafe_allow_html=True,
