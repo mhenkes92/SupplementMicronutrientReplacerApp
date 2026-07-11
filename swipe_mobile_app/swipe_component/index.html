@@ -74,6 +74,21 @@
   .stack.s1 { top: 10px; bottom: 6px; opacity: .8; transform: scale(.985); }
   .stack.s2 { top: 4px;  bottom: 12px; opacity: .5; transform: scale(.97); }
   .row { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .brand-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: #e8f5e9;
+    color: #166534;
+    font-size: 0.65rem;
+    font-weight: 900;
+    letter-spacing: 0.07em;
+    padding: 3px 8px;
+    border-radius: 99px;
+    text-transform: uppercase;
+    pointer-events: none;
+    user-select: none;
+  }
   .count { font-size: .74rem; font-weight: 800; color: #64748b; }
   .name { position: relative; z-index: 2; font-size: 1.7rem; font-weight: 900; line-height: 1.05; color: var(--ink, #0f172a); margin-top: 8px; letter-spacing: -0.02em; }
   .dose { position: relative; z-index: 2; margin-top: 8px; color: #334155; font-size: 1rem; font-weight: 600; }
@@ -132,7 +147,7 @@
     var total = parseInt(args.total || 1, 10);
     var foodTxt = args.food ? esc(args.food) : "Pick a food below";
     card.innerHTML =
-      '<div class="row"><span class="count">Card ' + idx + ' / ' + total + '</span></div>' +
+      '<div class="row"><span class="brand-pill">🥗 NutriSwap</span><span class="count">Card ' + idx + ' / ' + total + '</span></div>' +
       '<div class="name">' + esc(args.name || "Micronutrient") + '</div>' +
       '<div class="dose">Dose: <b>' + esc(args.dose || "n/a") + '</b></div>' +
       '<div class="foodwrap"><div class="foodlbl">Whole-food replacement</div><div class="food">' + foodTxt + '</div></div>' +

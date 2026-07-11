@@ -1,4 +1,4 @@
-# SuppSwap Swipe Mobile UX Prototype
+# NutriSwap Swipe Mobile UX Prototype
 
 This folder contains a mobile-first, Tinder-style interaction prototype for the supplement replacement flow.
 

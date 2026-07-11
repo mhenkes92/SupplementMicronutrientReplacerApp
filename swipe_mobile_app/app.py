@@ -55,7 +55,7 @@ _bootstrap_blockbrain_env_from_secrets()
 import blockbrain.app as bb  # noqa: E402
 
 
-st.set_page_config(page_title="SuppSwipe", page_icon="🥗", layout="centered")
+st.set_page_config(page_title="NutriSwap", page_icon="🥗", layout="centered")
 
 # Real Tinder-style swipe card: a bidirectional custom component served from a
 # static HTML file (no npm/build step needed, works on Streamlit Cloud).
@@ -661,14 +661,6 @@ def _render_header() -> None:
                 color: #64748b;
                 margin: 0.25rem 0 0.3rem 0;
             }
-            .swipe-title {
-                font-size: 2.05rem;
-                font-weight: 900;
-                letter-spacing: 0.015em;
-                line-height: 1.05;
-                margin-bottom: 0.15rem;
-                color: #111827;
-            }
             .swipe-subtitle {
                 color: #425466;
                 margin-bottom: 1rem;
@@ -964,7 +956,6 @@ def _render_header() -> None:
         """,
         unsafe_allow_html=True,
     )
-    st.markdown("<div class='swipe-title'>SuppSwipe</div>", unsafe_allow_html=True)
 
 
 def _reset_swipe_state() -> None:
@@ -1518,7 +1509,7 @@ if __name__ == "__main__":
             "--browser.gatherUsageStats",
             "false",
         ]
-        print("Launching SuppSwipe in Streamlit...")
+        print("Launching NutriSwap in Streamlit...")
         try:
             subprocess.run(cmd, check=False)
         except Exception as exc:
