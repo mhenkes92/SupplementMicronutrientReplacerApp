@@ -1440,49 +1440,71 @@ def _render_card() -> None:
 
 
 def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[str, Any]]) -> None:
+    replace_items = [d for d in decisions.values() if d.get("decision") == "replace"]
+    keep_items = [d for d in decisions.values() if d.get("decision") == "keep"]
+
     with st.container(border=True):
         st.subheader("Your results")
 
-        replace_items = [d for d in decisions.values() if d.get("decision") == "replace"]
-        keep_items = [d for d in decisions.values() if d.get("decision") == "keep"]
-        st.caption("Tap any item to reopen its card and change your choice.")
+        # Two side-by-side tables: kept supplements (left) vs whole-food swaps (right).
+        col_keep, col_replace = st.columns(2)
+        with col_keep:
+            st.markdown(f"**{LEFT_SWIPE_ICON} Kept ({len(keep_items)})**")
+            if keep_items:
+                st.table(
+                    [
+                        {
+                            "Nutrient": str(d.get("component", "") or "Unknown"),
+                            "Dose": str(d.get("dose_label", "") or ""),
+                        }
+                        for d in keep_items
+                    ]
+                )
+            else:
+                st.caption("Nothing swiped left.")
+        with col_replace:
+            st.markdown(f"**{TITLE_WHOLE_FOOD_ICON} Replaced ({len(replace_items)})**")
+            if replace_items:
+                replace_rows = []
+                for d in replace_items:
+                    food = d.get("selected_food") or {}
+                    food_name = str(food.get("food_description", "") or "")
+                    amount_txt = _amount_to_match_dose(d)
+                    whole = food_name + (f" ({amount_txt})" if (food_name and amount_txt) else "")
+                    replace_rows.append(
+                        {
+                            "Nutrient": str(d.get("component", "") or "Unknown"),
+                            "Whole food": whole or "\u2014",
+                        }
+                    )
+                st.table(replace_rows)
+            else:
+                st.caption("Nothing swiped right.")
 
-        st.markdown(f"**{TITLE_WHOLE_FOOD_ICON} Whole-food replacements ({len(replace_items)})**")
-        if not replace_items:
-            st.caption("Nothing swiped right yet.")
-        for decision in replace_items:
-            component_key = str(decision.get("component_key", "") or "")
-            if not component_key:
-                continue
-            selected_food = decision.get("selected_food") or {}
-            food_name = str(selected_food.get("food_description", "") or "")
-            right_icon = _whole_food_icon_from_food(selected_food, component_key)
-            label = f"{right_icon} {decision.get('component', 'Unknown')} ({decision.get('dose_label', '')})"
-            if food_name:
-                label += f" → {food_name}"
-                amount_txt = _amount_to_match_dose(decision)
-                if amount_txt:
-                    label += f" — {amount_txt}"
-            if st.button(label, use_container_width=True, key=f"final_replace_{component_key}"):
-                st.session_state["swipe_index"] = int(decision.get("card_index", 0))
-                st.rerun()
-
-        st.markdown(f"**{LEFT_SWIPE_ICON} Kept as supplements ({len(keep_items)})**")
-        if not keep_items:
-            st.caption("Nothing swiped left yet.")
-        for decision in keep_items:
-            component_key = str(decision.get("component_key", "") or "")
-            if not component_key:
-                continue
-            label = f"{LEFT_SWIPE_ICON} {decision.get('component', 'Unknown')} ({decision.get('dose_label', '')})"
-            if st.button(label, use_container_width=True, key=f"final_keep_{component_key}"):
-                st.session_state["swipe_index"] = int(decision.get("card_index", 0))
-                st.rerun()
+        # Keep the ability to revisit any card without cluttering the tables.
+        if replace_items or keep_items:
+            with st.popover("\u270F\uFE0F Change a choice", use_container_width=True):
+                st.caption("Tap an item to reopen its card.")
+                for d in list(replace_items) + list(keep_items):
+                    component_key = str(d.get("component_key", "") or "")
+                    if not component_key:
+                        continue
+                    if d.get("decision") == "replace":
+                        icon = _whole_food_icon_from_food(d.get("selected_food"), component_key)
+                    else:
+                        icon = LEFT_SWIPE_ICON
+                    label = f"{icon} {d.get('component', 'Unknown')} ({d.get('dose_label', '')})"
+                    if st.button(label, use_container_width=True, key=f"final_reopen_{component_key}"):
+                        st.session_state["swipe_index"] = int(d.get("card_index", 0))
+                        st.rerun()
 
     # A single Ask AI chat for the whole summary, shown once below the card.
     all_components = [str(d.get("component", "") or "") for d in decisions.values() if d.get("component")]
     summary_context = {"component": ", ".join(all_components)} if all_components else {"component": ""}
     _render_rag_chat_popup(summary_context, "summary", 0)
+
+    # Athlete RDA reference guide, shown once directly below Ask AI on the results screen.
+    _render_athlete_rda_popup()
 
 
 def _render_athlete_rda_popup() -> None:
@@ -1541,7 +1563,6 @@ def _build_mobile_ui() -> None:
     _render_card()
     _render_dietary_pills()
     _render_analyze_bar()
-    _render_athlete_rda_popup()
     if st.session_state.pop("swipe_confirm_restart", False):
         _confirm_restart_dialog()
     if st.session_state.pop("swipe_open_analyze", False):
