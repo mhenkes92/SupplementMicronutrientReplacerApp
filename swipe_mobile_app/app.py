@@ -347,6 +347,50 @@ def _cached_rag_chunks() -> list[dict[str, str]]:
     return chunks
 
 
+def _answer_ask_ai_question(component_name: str, question: str) -> tuple[str | None, str]:
+    """Answer an "Ask AI" question, preferring the BlockBrain agent (which is
+    backed by the connected Examine knowledge base) and falling back to the
+    local RAG index if the live agent is unavailable or returns nothing.
+
+    Returns (answer, sources_line). answer is None only when no source at all
+    is available (neither the agent nor the local index produced a response).
+    """
+    scoped_question = f"{component_name}: {question}".strip(": ").strip()
+
+    # 1) Preferred path: the custom agent (uses its attached knowledge base).
+    try:
+        system_prompt = (
+            "You are a supplement and micronutrient research assistant for the "
+            "SuppSwipe app. Answer the user's question using your connected "
+            "knowledge base and established nutrition science. Be concise, "
+            "evidence-based, and practical. If the evidence is unclear or the "
+            "question is outside nutrition/supplementation, say so plainly. "
+            "Do not give individual medical advice; speak in general terms."
+        )
+        user_prompt = (
+            f"Micronutrient / supplement component: {component_name or 'unspecified'}\n"
+            f"Question: {question}"
+        )
+        agent_answer = bb.call_blockbrain_text(system_prompt, user_prompt)
+        if isinstance(agent_answer, str) and agent_answer.strip():
+            return agent_answer.strip(), ""
+    except Exception:
+        pass
+
+    # 2) Fallback: local research RAG index.
+    try:
+        chunks = _cached_rag_chunks()
+    except Exception:
+        chunks = []
+    if not chunks:
+        return None, ""
+    answer, sources, _meta = bb.answer_rag_question(scoped_question, chunks)
+    sources_line = ""
+    if sources:
+        sources_line = "\n\nSources: " + ", ".join(sources[:4])
+    return (answer or "No answer available."), sources_line
+
+
 def _render_rag_chat_popup(card: dict[str, Any], component_key: str, index: int) -> None:
     with st.popover("💬 Ask AI", use_container_width=True):
         st.caption("Ask AI research questions about this micronutrient in chat form.")
@@ -391,16 +435,12 @@ def _render_rag_chat_popup(card: dict[str, Any], component_key: str, index: int)
             if not question.strip():
                 st.warning("Enter a question first.")
             else:
-                with st.spinner("Searching local research..."):
-                    chunks = _cached_rag_chunks()
-                    if not chunks:
-                        st.error("RAG index is not available in this environment.")
+                with st.spinner("Asking AI research assistant..."):
+                    component_name = str(card.get("component", "") or "").strip()
+                    answer, sources_line = _answer_ask_ai_question(component_name, question.strip())
+                    if answer is None:
+                        st.error("AI research is not available in this environment.")
                     else:
-                        scoped_query = f"{card.get('component', '')}: {question.strip()}"
-                        answer, sources, _meta = bb.answer_rag_question(scoped_query, chunks)
-                        sources_line = ""
-                        if sources:
-                            sources_line = "\n\nSources: " + ", ".join(sources[:4])
                         updated_history = history + [
                             {"role": "user", "content": question.strip()},
                             {"role": "assistant", "content": (answer or "No answer available.") + sources_line},
