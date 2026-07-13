@@ -1738,58 +1738,51 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
 
     with st.container(border=True):
         st.subheader("Your results")
+        st.caption("Tap any nutrient to go back to its card and change your choice.")
 
-        # Two side-by-side tables: kept supplements (left) vs whole-food swaps (right).
+        # Two columns of tappable nutrients: kept supplements (left) vs
+        # whole-food swaps (right). Tapping one reopens that micronutrient's card.
         col_keep, col_replace = st.columns(2)
         with col_keep:
             st.markdown(f"**{LEFT_SWIPE_ICON} Kept ({len(keep_items)})**")
             if keep_items:
-                st.table(
-                    [
-                        {
-                            "Nutrient": str(d.get("component", "") or "Unknown"),
-                            "Dose": str(d.get("dose_label", "") or ""),
-                        }
-                        for d in keep_items
-                    ]
-                )
+                for d in keep_items:
+                    component_key = str(d.get("component_key", "") or "")
+                    dose = str(d.get("dose_label", "") or "")
+                    label = f"{LEFT_SWIPE_ICON} {d.get('component', 'Unknown')}"
+                    if dose:
+                        label += f" · {dose}"
+                    if st.button(
+                        label,
+                        use_container_width=True,
+                        key=f"final_keep_{component_key}",
+                    ):
+                        st.session_state["swipe_index"] = int(d.get("card_index", 0))
+                        st.rerun()
             else:
                 st.caption("Nothing swiped left.")
         with col_replace:
             st.markdown(f"**{TITLE_WHOLE_FOOD_ICON} Replaced ({len(replace_items)})**")
             if replace_items:
-                replace_rows = []
                 for d in replace_items:
+                    component_key = str(d.get("component_key", "") or "")
                     food = d.get("selected_food") or {}
                     food_name = str(food.get("food_description", "") or "")
+                    icon = _whole_food_icon_from_food(food, component_key)
                     amount_txt = _amount_to_match_dose(d)
-                    whole = food_name + (f" ({amount_txt})" if (food_name and amount_txt) else "")
-                    replace_rows.append(
-                        {
-                            "Nutrient": str(d.get("component", "") or "Unknown"),
-                            "Whole food": whole or "\u2014",
-                        }
-                    )
-                st.table(replace_rows)
-            else:
-                st.caption("Nothing swiped right.")
-
-        # Keep the ability to revisit any card without cluttering the tables.
-        if replace_items or keep_items:
-            with st.popover("\u270F\uFE0F Change a choice", use_container_width=True):
-                st.caption("Tap an item to reopen its card.")
-                for d in list(replace_items) + list(keep_items):
-                    component_key = str(d.get("component_key", "") or "")
-                    if not component_key:
-                        continue
-                    if d.get("decision") == "replace":
-                        icon = _whole_food_icon_from_food(d.get("selected_food"), component_key)
-                    else:
-                        icon = LEFT_SWIPE_ICON
-                    label = f"{icon} {d.get('component', 'Unknown')} ({d.get('dose_label', '')})"
-                    if st.button(label, use_container_width=True, key=f"final_reopen_{component_key}"):
+                    detail = food_name + (f" ({amount_txt})" if (food_name and amount_txt) else "")
+                    label = f"{icon} {d.get('component', 'Unknown')}"
+                    if detail:
+                        label += f" → {detail}"
+                    if st.button(
+                        label,
+                        use_container_width=True,
+                        key=f"final_repl_{component_key}",
+                    ):
                         st.session_state["swipe_index"] = int(d.get("card_index", 0))
                         st.rerun()
+            else:
+                st.caption("Nothing swiped right.")
 
     # A single Ask AI chat for the whole summary, shown once below the card.
     all_components = [str(d.get("component", "") or "") for d in decisions.values() if d.get("component")]
