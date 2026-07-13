@@ -1630,6 +1630,16 @@ def _render_card() -> None:
     card = cards[index]
     component_key = str(card.get("component_key", "") or "")
     foods_raw: list[dict[str, Any]] = card.get("foods", []) if isinstance(card.get("foods", []), list) else []
+    # Self-heal: if this card was built before a resolver/data fix (its stored
+    # food list is empty), re-fetch the pool live so improvements apply without
+    # re-analysing the supplement (e.g. the Vitamin E mapping fix).
+    if not foods_raw and component_key:
+        try:
+            foods_raw = list(bb._build_local_food_rows_for_component(component_key, limit=SWIPE_CARD_FOOD_POOL) or [])
+        except Exception:
+            foods_raw = []
+        if foods_raw:
+            card["foods"] = foods_raw
     selected_profile = _selected_dietary_profile()
     # Filter the deep pool by the dietary profile, then cap the visible dropdown
     # (highest concentration first) so the list stays manageable.
