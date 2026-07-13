@@ -15,3 +15,9 @@ mobile_version/_rag_diag.py
 
 # Local large model (keep local, do not push)
 assets/models/*.gguf
+
+# Editor/agent backup snapshots and runtime logs (clutter)
+**/app.backup_*.py
+**/app.py.bak_*
+**/*.log
+.title_dot_toggle
