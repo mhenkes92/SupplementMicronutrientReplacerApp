@@ -482,6 +482,85 @@ def _amount_to_match_dose(decision: dict[str, Any]) -> str:
     return f"eat ~{grams_txt}"
 
 
+# --- Micronutrient allow-list -------------------------------------------------
+# Scientifically, "micronutrients" = the 13 essential vitamins + the essential
+# minerals (needed in small amounts). Choline (vitamin-like) and the omega-3
+# essential fatty acids (EPA/DHA/ALA) are NOT strictly micronutrients, but they
+# are common supplement categories, so they are INCLUDED by default. Set
+# _STRICT_MICRONUTRIENTS_ONLY = True to let users swipe through vitamins +
+# minerals only.
+_STRICT_MICRONUTRIENTS_ONLY = False
+
+_VITAMIN_ALIASES = [
+    "vitamin a", "retinol", "retinyl", "retinal", "beta carotene", "betacarotene", "carotene",
+    "vitamin c", "ascorbic", "ascorbate",
+    "vitamin d", "cholecalciferol", "ergocalciferol",
+    "vitamin e", "tocopherol", "tocopheryl", "tocotrienol",
+    "vitamin k", "phylloquinone", "menaquinone", "phytonadione",
+    "vitamin b1", "thiamin", "thiamine",
+    "vitamin b2", "riboflavin",
+    "vitamin b3", "niacin", "niacinamide", "nicotinamide", "nicotinic",
+    "vitamin b5", "pantothenic", "pantothenate", "panthenol",
+    "vitamin b6", "pyridoxine", "pyridoxal", "pyridoxamine",
+    "vitamin b7", "biotin",
+    "vitamin b9", "folate", "folic", "folacin", "folinic", "methylfolate",
+    "vitamin b12", "cobalamin",
+    "vitamin b complex", "b-complex", "b complex",
+]
+
+_MINERAL_ALIASES = [
+    "calcium", "phosphorus", "phosphate", "magnesium", "potassium", "sodium", "chloride",
+    "iron", "ferrous", "ferric", "zinc", "copper", "cupric", "manganese",
+    "iodine", "iodide", "selenium", "selenite", "selenomethionine",
+    "molybdenum", "chromium", "fluoride", "fluorine", "cobalt", "boron", "sulfur", "sulphur",
+]
+
+# Vitamin-like / essential fatty acids: not strictly micronutrients, but common
+# supplement categories (kept unless _STRICT_MICRONUTRIENTS_ONLY is True).
+_ESSENTIAL_EXTRA_ALIASES = [
+    "choline", "inositol",
+    "omega", "epa", "dha", "fish oil", "docosahexaenoic", "eicosapentaenoic",
+    "alpha-linolenic", "alpha linolenic", "linolenic",
+]
+
+# Checked FIRST: if any of these appear in the name it is never a micronutrient
+# (covers macronutrients, label metadata and common fillers/excipients — e.g.
+# "magnesium stearate" must be dropped even though it contains "magnesium").
+_NON_MICRONUTRIENT_DENY = [
+    # macronutrients / nutrition-panel lines
+    "protein", "amino acid", "carbohydrate", "total carb", "net carb",
+    "total fat", "saturated fat", "trans fat", "monounsaturated", "polyunsaturated",
+    "dietary fiber", "dietary fibre", "fiber", "fibre", "sugar", "sugars",
+    "calorie", "calories", "energy", "kcal", "cholesterol",
+    "serving size", "servings per", "daily value", "container",
+    # fillers / excipients / additives
+    "stearate", "stearic", "gelatin", "cellulose", "microcrystalline",
+    "croscarmellose", "povidone", "benzoate", "lauryl", "polysorbate",
+    "silica", "silicon dioxide", "titanium dioxide", "maltodextrin", "dextrose",
+    "rice flour", "rice concentrate", "sucralose", "sorbitol", "xylitol",
+    "sweetener", "flavor", "flavour", "coloring", "colouring",
+]
+
+
+def _is_micronutrient(name: str) -> bool:
+    """True only for scientifically recognised micronutrients (vitamins + minerals),
+    plus choline / omega-3 unless _STRICT_MICRONUTRIENTS_ONLY is set."""
+    key = bb.normalize_lookup_key(str(name or ""))
+    if not key:
+        return False
+    if any(bad in key for bad in _NON_MICRONUTRIENT_DENY):
+        return False
+    allow = list(_VITAMIN_ALIASES) + list(_MINERAL_ALIASES)
+    if not _STRICT_MICRONUTRIENTS_ONLY:
+        allow += _ESSENTIAL_EXTRA_ALIASES
+    return any(good in key for good in allow)
+
+
+def _filter_to_micronutrients(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop anything that is not a micronutrient so users only swipe real nutrients."""
+    return [c for c in components if _is_micronutrient(str(c.get("component", "") or ""))]
+
+
 def _build_swipe_cards(components: list[dict[str, Any]], details: list[dict[str, Any]]) -> list[dict[str, Any]]:
     detail_by_component = {
         bb.normalize_lookup_key(str(d.get("component", ""))): d for d in details
@@ -1195,6 +1274,19 @@ def _run_pending_analysis() -> None:
             components = bb.parse_components(combined)
             if not components:
                 _abort("No micronutrients could be parsed from the provided input.")
+                return
+
+            # Keep only scientifically recognised micronutrients (vitamins +
+            # minerals, plus choline / omega-3 unless _STRICT_MICRONUTRIENTS_ONLY).
+            # This drops macronutrients (protein/fat/carbs/sugar/calories),
+            # fillers and label metadata so the user only swipes real nutrients.
+            components = _filter_to_micronutrients(components)
+            if not components:
+                _abort(
+                    "No micronutrients found. The label's non-nutrient lines "
+                    "(protein, fats, carbs, fillers, etc.) were skipped — try a "
+                    "clearer photo of the Supplement Facts panel."
+                )
                 return
 
             _set_progress(86, "Ranking whole-food alternatives from the USDA database…")

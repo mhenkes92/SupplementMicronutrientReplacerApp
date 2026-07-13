@@ -79,12 +79,12 @@ def _load_blockbrain_secrets() -> tuple[str, str, str]:
     agent_id is retained for backward compatibility with older configs.
     """
     _default_base = "https://agentic.theblockbrain.ai"
-    # Working Blockbrain agent for all LLM/vision calls. The previously pinned
-    # hex id (6a4bc43653952e29ba6ef1d6) now returns HTTP 500 server-side, which
-    # silently broke image OCR (text still worked via the local parser). Named
-    # agents (customAgent/researchAgent/scientificAgent) are verified working
-    # for both text and vision. Override via BLOCKBRAIN_AGENT_ID if needed.
-    _default_route_id = "customAgent"
+    # Primary route = the user's custom Blockbrain agent (created for supplement
+    # label extraction + web-grounded product research). If it errors (e.g. the
+    # HTTP 500 this id returned in the past), calls automatically fall back to
+    # the verified named agents in BLOCKBRAIN_FALLBACK_AGENTS, so the app keeps
+    # working for both text and vision. Override via BLOCKBRAIN_AGENT_ID.
+    _default_route_id = "6a4bc43653952e29ba6ef1d6"
 
     def _strip_path(base: str) -> str:
         """Return only the scheme+host, stripping any /v1/... path."""
