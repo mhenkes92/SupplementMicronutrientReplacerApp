@@ -1,0 +1,77 @@
+# Weekly refresh of the local USDA whole-food database.
+#
+# Why only USDA? It is the only *static local snapshot* the app ships
+# (blockbrain/data/usda_rankings.db). Every other external system is a LIVE API
+# that is always current and needs no refresh:
+#   - OpenFoodFacts (barcode -> product) : queried live per scan
+#   - SerpApi / DataForSEO (food pricing): queried live per request
+#   - BlockBrain agent + knowledge base  : hosted, managed in the BlockBrain console
+#
+# USDA FoodData Central publishes new Foundation/SR-Legacy releases only a couple
+# of times per year, so this job rebuilds from the pinned dataset URLs, validates
+# the result, and opens a Pull Request ONLY when the database actually changes.
+# Merging the PR redeploys the app (Streamlit Cloud tracks master). A human stays
+# in the loop so a bad upstream release can never silently break production.
+#
+# To pull a brand-new USDA release, bump DEFAULT_FOUNDATION_CSV_URL /
+# DEFAULT_SR_LEGACY_CSV_URL in mobile_version/build_usda_rankings_db.py (or pass
+# --foundation-url / --sr-legacy-url), then run this workflow manually.
+
+name: Weekly USDA data refresh
+
+on:
+  schedule:
+    # Every Monday at 06:00 UTC.
+    - cron: "0 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: usda-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: python -m pip install --upgrade pip pandas
+
+      - name: Rebuild USDA rankings DB
+        working-directory: mobile_version
+        run: >-
+          python build_usda_rankings_db.py
+          --download-latest
+          --output-db ../blockbrain/data/usda_rankings.db
+
+      - name: Validate rebuilt DB
+        run: python scripts/validate_usda_db.py blockbrain/data/usda_rankings.db
+
+      - name: Open Pull Request if the database changed
+        uses: peter-evans/create-pull-request@v6
+        with:
+          add-paths: blockbrain/data/usda_rankings.db
+          branch: chore/weekly-usda-refresh
+          delete-branch: true
+          commit-message: "chore(data): weekly USDA rankings DB refresh"
+          title: "Weekly USDA rankings DB refresh"
+          body: |
+            Automated weekly rebuild of `blockbrain/data/usda_rankings.db` from
+            USDA FoodData Central.
+
+            The rebuilt database passed `scripts/validate_usda_db.py` (table
+            schema, minimum row counts, and all app-critical nutrient ids present).
+
+            Merging this PR redeploys the app. If no meaningful data changed, no
+            PR is created.
