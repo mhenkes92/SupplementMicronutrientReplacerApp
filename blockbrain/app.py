@@ -7213,15 +7213,15 @@ def call_blockbrain_text(system_prompt: str, user_prompt: str, model: str | None
     return _blockbrain_chat(payload)
 
 
-# Default Knowledge Bot (a "cortex" company bot). Unlike an agent, a Knowledge
-# Bot can have a knowledge base attached. NOTE: this default ("SuppSwipe", id
-# ...cd) is configured as a label-EXTRACTION bot that returns JSON only, so it is
-# meant for the barcode/label pipeline, NOT conversational Q&A. For "Ask AI"
-# research chat, point BLOCKBRAIN_RESEARCH_BOT_ID at a bot whose system prompt is
-# a research assistant (attach the same knowledge base to it). Override the base
-# bot via BLOCKBRAIN_BOT_ID / BLOCKBRAIN_BOT_BASE_URL.
+# Default Knowledge Bot (a "cortex"/nexus company bot). Unlike an agent, a
+# Knowledge Bot can have a knowledge base attached. The bot is addressed by its
+# DEFINITION id (...cd) on the cortex API host (blocky.theblockbrain.ai); the
+# runtime "active bot" id (...d0, seen in the share URL) is derived server-side.
+# We talk to it via: create a conversation, then post the question to
+# /cortex/completions/v2/user-input (non-streaming) and read body.content.
+# Override via BLOCKBRAIN_BOT_ID / BLOCKBRAIN_BOT_BASE_URL.
 _DEFAULT_BLOCKBRAIN_BOT_ID = "699721de74b22e46331a67cd"
-_DEFAULT_BLOCKBRAIN_BOT_BASE_URL = "https://kanzleikraftwerk.kb.theblockbrain.ai"
+_DEFAULT_BLOCKBRAIN_BOT_BASE_URL = "https://blocky.theblockbrain.ai"
 
 
 def _load_blockbrain_bot_config() -> tuple[str, str, str]:
@@ -7270,12 +7270,14 @@ def _extract_bot_text_from_json(obj: Any) -> str:
 
 
 def call_blockbrain_bot(prompt: str, bot_id: str | None = None, timeout: float | None = None) -> str:
-    """Ask the Blockbrain Knowledge Bot (cortex company bot) a question.
+    """Ask the Blockbrain Knowledge Bot (nexus company bot) a question.
 
-    The bot answers from its attached knowledge base. Pass `bot_id` to target a
-    specific bot (e.g. a research bot for Ask AI); otherwise the configured
-    default is used. Returns assistant text, or "" on any failure (with
-    LAST_BLOCKBRAIN_ERROR set) so callers can fall back.
+    Flow: create a conversation for the bot, then post the message to
+    /cortex/completions/v2/user-input (non-streaming) and read the answer from
+    the JSON body. The bot answers from its attached knowledge base. Pass
+    `bot_id` to target a specific bot; otherwise the configured default is used.
+    Returns assistant text, or "" on any failure (with LAST_BLOCKBRAIN_ERROR set)
+    so callers can fall back.
     """
     global LAST_BLOCKBRAIN_ERROR
     LAST_BLOCKBRAIN_ERROR = ""
@@ -7291,82 +7293,69 @@ def call_blockbrain_bot(prompt: str, bot_id: str | None = None, timeout: float |
         LAST_BLOCKBRAIN_ERROR = "Blockbrain bot not configured"
         return ""
 
-    url = f"{bot_base}/cortex/completions/v2/start-company-bot"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "Accept": "text/event-stream, application/json",
     }
+    session_id = str(uuid.uuid4())
+
+    # 1) Create a conversation for this bot.
+    try:
+        rc = _http_post(
+            f"{bot_base}/cortex/active-bot/{bot_id}/convo",
+            headers=headers,
+            json={"sessionId": session_id, "isCompanyGptBot": False},
+            timeout=timeout or HTTP_TIMEOUT,
+        )
+    except Exception as exc:
+        LAST_BLOCKBRAIN_ERROR = f"Blockbrain bot convo error: {exc}"
+        return ""
+    if rc.status_code != 200:
+        LAST_BLOCKBRAIN_ERROR = f"Blockbrain bot convo HTTP {rc.status_code}: {rc.text[:200]}"
+        return ""
+    try:
+        convo_body = rc.json().get("body", {}) if rc.content else {}
+    except Exception:
+        convo_body = {}
+    convo_id = str(
+        convo_body.get("dataRoomId")
+        or convo_body.get("convoId")
+        or convo_body.get("_id")
+        or ""
+    ).strip()
+    if not convo_id:
+        LAST_BLOCKBRAIN_ERROR = "Blockbrain bot conversation id missing"
+        return ""
+
+    # 2) Post the question (non-streaming) and read body.content.
     payload = {
-        "botId": bot_id,
-        "sessionId": str(uuid.uuid4()),
+        "convoId": convo_id,
+        "sessionId": session_id,
         "content": text,
         "messageType": "user-question",
+        "enableStreaming": False,
     }
     try:
-        resp = _http_post(url, headers=headers, json=payload, timeout=timeout or HTTP_TIMEOUT, stream=True)
+        resp = _http_post(
+            f"{bot_base}/cortex/completions/v2/user-input",
+            headers=headers,
+            json=payload,
+            timeout=timeout or HTTP_TIMEOUT,
+        )
     except Exception as exc:
         LAST_BLOCKBRAIN_ERROR = f"Blockbrain bot request error: {exc}"
         return ""
     if resp.status_code != 200:
         LAST_BLOCKBRAIN_ERROR = f"Blockbrain bot HTTP {resp.status_code}: {resp.text[:200]}"
         return ""
-
-    content_type = str(resp.headers.get("Content-Type", "") or "").lower()
-
-    # Server-Sent Events stream: collect text from each `data:` JSON event.
-    if "text/event-stream" in content_type:
-        collected: list[str] = []
-        try:
-            for raw_line in resp.iter_lines(decode_unicode=True):
-                if not raw_line:
-                    continue
-                line = str(raw_line).strip()
-                if line.startswith("data:"):
-                    line = line[len("data:"):].strip()
-                if not line or line == "[DONE]":
-                    continue
-                try:
-                    event = json.loads(line)
-                except Exception:
-                    collected.append(line)
-                    continue
-                piece = _extract_bot_text_from_json(event)
-                if piece:
-                    collected.append(piece)
-        except Exception as exc:
-            LAST_BLOCKBRAIN_ERROR = f"Blockbrain bot stream error: {exc}"
-        answer = "".join(collected).strip() or " ".join(collected).strip()
-        if not answer:
-            LAST_BLOCKBRAIN_ERROR = LAST_BLOCKBRAIN_ERROR or "Blockbrain bot returned no text"
-        return answer
-
-    # Non-streaming JSON response.
     try:
         data = resp.json() if resp.content else {}
     except Exception:
-        body = str(resp.text or "").strip()
-        return body
-    answer = _extract_bot_text_from_json(data)
+        return str(resp.text or "").strip()
+    body = data.get("body", data) if isinstance(data, dict) else data
+    answer = _extract_bot_text_from_json(body)
     if answer:
         return answer
-
-    # Some variants return only identifiers; fetch the finished message once.
-    if isinstance(data, dict):
-        message_id = str(data.get("messageId") or data.get("message_id") or "").strip()
-        if message_id:
-            try:
-                msg_resp = _http_get(
-                    f"{bot_base}/cortex/message/{message_id}",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    timeout=timeout or HTTP_TIMEOUT,
-                )
-                if msg_resp.status_code == 200 and msg_resp.content:
-                    answer = _extract_bot_text_from_json(msg_resp.json())
-                    if answer:
-                        return answer
-            except Exception as exc:
-                LAST_BLOCKBRAIN_ERROR = f"Blockbrain bot message fetch error: {exc}"
     LAST_BLOCKBRAIN_ERROR = LAST_BLOCKBRAIN_ERROR or "Blockbrain bot returned no text"
     return ""
 

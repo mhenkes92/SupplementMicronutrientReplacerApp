@@ -390,28 +390,29 @@ def _answer_ask_ai_question(component_name: str, question: str) -> tuple[str | N
     """
     scoped_question = f"{component_name}: {question}".strip(": ").strip()
 
-    # 1) Preferred: the Knowledge Bot (uses the attached KB). Enabled by setting
-    #    BLOCKBRAIN_RESEARCH_BOT_ID (for Option A, set it to the same bot id and
-    #    give that bot a dual-mode system prompt that branches on [ASK]/[EXTRACT]).
+    # 1) Preferred: the Knowledge Bot (answers from the attached Examine KB). We
+    #    send an "[ASK]" mode marker so a single dual-mode bot can tell research
+    #    questions apart from label-extraction requests. Uses BLOCKBRAIN_RESEARCH_BOT_ID
+    #    if set, otherwise the default bot. The JSON guard discards any accidental
+    #    extraction-schema output so we still fall back cleanly.
+    ask_message = (
+        "[ASK]\n"
+        f"Micronutrient / supplement component: {component_name or 'unspecified'}\n"
+        f"Question: {question}\n\n"
+        "Answer concisely and evidence-based using the connected knowledge "
+        "base. General guidance only; no individual medical advice."
+    )
     research_bot_id = os.getenv("BLOCKBRAIN_RESEARCH_BOT_ID", "").strip()
-    if research_bot_id:
-        ask_message = (
-            "[ASK]\n"
-            f"Micronutrient / supplement component: {component_name or 'unspecified'}\n"
-            f"Question: {question}\n\n"
-            "Answer concisely and evidence-based using the connected knowledge "
-            "base. General guidance only; no individual medical advice."
-        )
-        try:
-            bot_answer = bb.call_blockbrain_bot(ask_message, bot_id=research_bot_id)
-            if (
-                isinstance(bot_answer, str)
-                and bot_answer.strip()
-                and not _looks_like_extraction_json(bot_answer)
-            ):
-                return bot_answer.strip(), ""
-        except Exception:
-            pass
+    try:
+        bot_answer = bb.call_blockbrain_bot(ask_message, bot_id=(research_bot_id or None))
+        if (
+            isinstance(bot_answer, str)
+            and bot_answer.strip()
+            and not _looks_like_extraction_json(bot_answer)
+        ):
+            return bot_answer.strip(), ""
+    except Exception:
+        pass
 
     # 2) Fallback: the general agent.
     try:
