@@ -1630,20 +1630,24 @@ def _render_card() -> None:
     card = cards[index]
     component_key = str(card.get("component_key", "") or "")
     foods_raw: list[dict[str, Any]] = card.get("foods", []) if isinstance(card.get("foods", []), list) else []
-    # Self-heal: if this card was built before a resolver/data fix (its stored
-    # food list is empty), re-fetch the pool live so improvements apply without
-    # re-analysing the supplement (e.g. the Vitamin E mapping fix).
-    if not foods_raw and component_key:
-        try:
-            foods_raw = list(bb._build_local_food_rows_for_component(component_key, limit=SWIPE_CARD_FOOD_POOL) or [])
-        except Exception:
-            foods_raw = []
-        if foods_raw:
-            card["foods"] = foods_raw
     selected_profile = _selected_dietary_profile()
-    # Filter the deep pool by the dietary profile, then cap the visible dropdown
-    # (highest concentration first) so the list stays manageable.
+    # Filter the (possibly deep) pool by the dietary profile, then cap the
+    # visible dropdown (highest concentration first) so the list stays manageable.
     foods = bb.apply_food_filters(foods_raw, selected_profile, use_llm_adjudication=False)[:SWIPE_CARD_DROPDOWN_MAX]
+    # Self-heal: if there is nothing to show (the stored pool was empty, OR a
+    # stale/shallow pool built by an older version got filtered away by the
+    # dietary profile), re-fetch the deep pool live and retry. This applies the
+    # resolver + deeper-pool fixes (e.g. Vitamin E) to already-built cards
+    # without re-analysing the supplement.
+    if not foods and component_key:
+        try:
+            deep_pool = list(bb._build_local_food_rows_for_component(component_key, limit=SWIPE_CARD_FOOD_POOL) or [])
+        except Exception:
+            deep_pool = []
+        if deep_pool and deep_pool != foods_raw:
+            card["foods"] = deep_pool
+            foods_raw = deep_pool
+            foods = bb.apply_food_filters(deep_pool, selected_profile, use_llm_adjudication=False)[:SWIPE_CARD_DROPDOWN_MAX]
 
     dots = []
     for i in range(len(cards)):
@@ -1690,11 +1694,18 @@ def _render_card() -> None:
                 if rda_amount_txt:
                     rda_label_txt = _format_rda_target(rda_entry)
         else:
-            st.caption(
-                "No whole-food alternatives remain after dietary filtering."
-                if foods_raw
-                else "No whole-food alternatives found for this card."
-            )
+            if foods_raw:
+                prof = selected_profile or {}
+                prof_label = str(prof.get("label", "") or "").strip()
+                if prof_label and prof_label.lower() not in ("no restriction", "none"):
+                    st.caption(
+                        f"No whole-food alternatives fit the “{prof_label}” filter. "
+                        "Switch the dietary filter below to see options."
+                    )
+                else:
+                    st.caption("No whole-food alternatives available for this card.")
+            else:
+                st.caption("No whole-food alternatives found for this card.")
 
         _render_rag_chat_popup(card, component_key, index)
 
