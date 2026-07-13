@@ -1713,15 +1713,7 @@ def _render_card() -> None:
                 else:
                     st.caption("No whole-food alternatives available for this card.")
             else:
-                # Temporary diagnostic: reveals the normalized key and a live DB
-                # probe count so we can see WHY a card is empty on the server.
-                dbg = ""
-                try:
-                    _n = len(bb._build_local_food_rows_for_component(component_key, limit=3) or [])
-                    dbg = f" · key='{component_key}' db={_n}"
-                except Exception as exc:
-                    dbg = f" · probe err {type(exc).__name__}"
-                st.caption("No whole-food alternatives found for this card." + dbg)
+                st.caption("No whole-food alternatives found for this card.")
 
         _render_rag_chat_popup(card, component_key, index)
 
