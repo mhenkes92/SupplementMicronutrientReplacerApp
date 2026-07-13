@@ -1627,6 +1627,9 @@ def _render_card() -> None:
     nonce = int(st.session_state.get("swipe_reset_nonce", 0))
     swipe_result = None
     selected_food = None
+    match_dose_txt = ""
+    rda_amount_txt = ""
+    rda_label_txt = ""
     with st.container(border=True):
         stage = st.container()  # draggable swipe card sits at the top of this card
 
@@ -1642,29 +1645,20 @@ def _render_card() -> None:
             )
             selected_food = foods[option_labels.index(selected_label)]
 
-            # Show, for the selected whole food, how much to eat to (a) match the
-            # supplement dose and (b) reach the athlete daily target.
+            # For the selected whole food, compute how much to eat to (a) match
+            # the supplement dose and (b) reach the athlete daily target. These
+            # are rendered INSIDE the swipe card (passed as props below).
             comp_name = str(card.get("component", "") or "")
-            dose_core = _portion_for_target(
+            match_dose_txt = _portion_for_target(
                 selected_food, card.get("dose_value"), str(card.get("dose_unit", "") or ""), comp_name
             )
             rda_entry = _rda_for_component(component_key)
-            hint_lines: list[str] = []
-            if dose_core:
-                hint_lines.append(f"💊 Match this dose &rarr; eat <b>{dose_core}</b>")
             if rda_entry is not None:
-                rda_core = _portion_for_target(
+                rda_amount_txt = _portion_for_target(
                     selected_food, rda_entry["athlete"], str(rda_entry["unit"]), comp_name
                 )
-                if rda_core:
-                    hint_lines.append(
-                        f"🏃 Athlete RDA ({_format_rda_target(rda_entry)}) &rarr; eat <b>{rda_core}</b>"
-                    )
-            if hint_lines:
-                st.markdown(
-                    "<div class='portion-hint'>" + "<br>".join(hint_lines) + "</div>",
-                    unsafe_allow_html=True,
-                )
+                if rda_amount_txt:
+                    rda_label_txt = _format_rda_target(rda_entry)
         else:
             st.caption(
                 "No whole-food alternatives remain after dietary filtering."
@@ -1680,13 +1674,16 @@ def _render_card() -> None:
                 name=str(card.get("component", "Unknown micronutrient")),
                 dose=str(card.get("dose_label", "Not available")),
                 food=food_label,
+                matchDose=match_dose_txt,
+                rdaAmount=rda_amount_txt,
+                rdaLabel=rda_label_txt,
                 index=index,
                 total=len(cards),
                 accent=theme["accent"],
                 ink=theme["accent2"],
                 bg=theme["bg"],
                 canReplace=selected_food is not None,
-                height=250,
+                height=340,
                 key=f"tinder_{component_key}_{index}_{nonce}",
                 default=None,
             )
