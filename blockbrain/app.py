@@ -5005,15 +5005,31 @@ PROCESSED_FOOD_HINT_KEYWORDS: set[str] = {
     "fortified", "supplement", "powder", "bar", "drink mix", "formula",  
     "infant", "baby food", "candy", "snack", "fast food", "restaurant",  
     "sauce", "gravy", "fried", "breaded", "luncheon", "sausage", "nugget",  
+    # Multi-ingredient / manufactured / branded products that slip into deeper
+    # ranking pages. Blocking them keeps dropdowns to true single-ingredient
+    # whole foods even when we widen the candidate pool for restrictive diets.
+    "burger", "soyburger", "patty", "imitation", "meatless", "veggie",
+    "lite", "low fat", "nonfat", "fat free", "reduced fat", "instant",
+    "cereal", "cornflakes", "bread", "cracker", "cookie", "cake", "pastry",
+    "pizza", "chips", "beverage", "soft drink", "shake", "meal replacement",
+    "enriched", "canned", "pre-cooked", "ready-to", "fort-", "with added",
+    "flavored", "flavoured", "seasoned", "marinated", "smoked", "cured",
 }
 
 
-def classify_food_commonness(food_description: str) -> dict[str, Any]:  
+def classify_food_commonness(food_description: str) -> dict[str, Any]:
     """Return guardrail tier for a food.
 
     tier  1 = allowed (not on the blocklist)  
     tier -1 = blocked (exotic / non-retail / heavily processed / empty)  
     """  
+    raw = str(food_description or "")  
+    # Branded products (e.g. "Vitasoy USA, Nasoya Lite Firm Tofu") are not the
+    # generic single-ingredient whole foods we want, even though USDA flags them
+    # single-ingredient. In USDA SR Legacy they carry a brand marker such as
+    # " USA" (distinct from "USDA") or a trademark symbol.
+    if " USA" in raw or "\u00ae" in raw or "\u2122" in raw:  
+        return {"tier": -1, "reason": "branded"}  
     key = normalize_lookup_key(food_description)  
     if not key:  
         return {"tier": -1, "reason": "empty"}
@@ -5281,7 +5297,7 @@ def _build_local_food_rows_for_component(component_key: str, limit: int = TOP_FO
             "AND nr.amount_per_100g IS NOT NULL "
             "AND nr.amount_per_100g > 0 "
             "ORDER BY nr.amount_per_100g DESC "
-            "LIMIT 120"
+            "LIMIT 600"
         )
         rows = conn.execute(sql, nutrient_ids).fetchall()
     except Exception:

@@ -102,6 +102,13 @@ LEFT_SWIPE_ICON = "💊"
 TITLE_WHOLE_FOOD_ICON = "🥗"
 WHOLE_FOOD_ICONS = ["🥦", "🥕", "🥚", "🍓", "🐟", "🥜", "🍠", "🥬"]
 
+# A deep candidate pool is fetched per nutrient so dietary filtering still leaves
+# real options for restrictive diets (e.g. vegan Vitamin B1, where the top foods
+# by concentration are all animal). The visible dropdown is then capped so the
+# list stays manageable for unrestricted users.
+SWIPE_CARD_FOOD_POOL = 250
+SWIPE_CARD_DROPDOWN_MAX = 40
+
 
 def _whole_food_icon(component_key: str) -> str:
     _ = component_key
@@ -679,10 +686,12 @@ def _build_swipe_cards(components: list[dict[str, Any]], details: list[dict[str,
         comp_name = str(item.get("component", "") or "").strip()
         comp_key = bb.normalize_lookup_key(comp_name)
         # Primary source: USDA single-ingredient whole foods, ranked by the
-        # amount of THIS nutrient per 100 g (highest dose on top).
+        # amount of THIS nutrient per 100 g (highest dose on top). A deep pool is
+        # kept so dietary filtering downstream still leaves options for
+        # restrictive diets (e.g. vegan B1/B12).
         foods: list[dict[str, Any]] = []
         try:
-            foods = list(bb._build_local_food_rows_for_component(comp_key) or [])
+            foods = list(bb._build_local_food_rows_for_component(comp_key, limit=SWIPE_CARD_FOOD_POOL) or [])
         except Exception:
             foods = []
         # Fallback to LLM-generated matches only if USDA has nothing.
@@ -1572,7 +1581,9 @@ def _render_card() -> None:
     component_key = str(card.get("component_key", "") or "")
     foods_raw: list[dict[str, Any]] = card.get("foods", []) if isinstance(card.get("foods", []), list) else []
     selected_profile = _selected_dietary_profile()
-    foods = bb.apply_food_filters(foods_raw, selected_profile, use_llm_adjudication=False)
+    # Filter the deep pool by the dietary profile, then cap the visible dropdown
+    # (highest concentration first) so the list stays manageable.
+    foods = bb.apply_food_filters(foods_raw, selected_profile, use_llm_adjudication=False)[:SWIPE_CARD_DROPDOWN_MAX]
 
     dots = []
     for i in range(len(cards)):
