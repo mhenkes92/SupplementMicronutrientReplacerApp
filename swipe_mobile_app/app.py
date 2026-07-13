@@ -112,6 +112,10 @@ WHOLE_FOOD_ICONS = ["🥦", "🥕", "🥚", "🍓", "🐟", "🥜", "🍠", "�
 SWIPE_CARD_FOOD_POOL = 250
 SWIPE_CARD_DROPDOWN_MAX = 40
 
+# Bumped on notable releases so we can confirm which build is actually live on
+# Streamlit Cloud (shown as a tiny stamp under the title).
+BUILD_TAG = "2026-07-13 · vitE-fix"
+
 
 def _whole_food_icon(component_key: str) -> str:
     _ = component_key
@@ -1222,6 +1226,10 @@ def _render_header() -> None:
         unsafe_allow_html=True,
     )
     st.markdown("<div class='swipe-title'>SuppSwipe</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='font-size:0.6rem;color:#c3ccd6;margin:-4px 0 6px 0;'>build {BUILD_TAG}</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _reset_swipe_state() -> None:
@@ -1705,7 +1713,15 @@ def _render_card() -> None:
                 else:
                     st.caption("No whole-food alternatives available for this card.")
             else:
-                st.caption("No whole-food alternatives found for this card.")
+                # Temporary diagnostic: reveals the normalized key and a live DB
+                # probe count so we can see WHY a card is empty on the server.
+                dbg = ""
+                try:
+                    _n = len(bb._build_local_food_rows_for_component(component_key, limit=3) or [])
+                    dbg = f" · key='{component_key}' db={_n}"
+                except Exception as exc:
+                    dbg = f" · probe err {type(exc).__name__}"
+                st.caption("No whole-food alternatives found for this card." + dbg)
 
         _render_rag_chat_popup(card, component_key, index)
 
