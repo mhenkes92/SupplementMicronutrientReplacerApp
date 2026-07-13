@@ -39,6 +39,9 @@ def _bootstrap_blockbrain_env_from_secrets() -> None:
         "BLOCKBRAIN_BASE_URL": "BLOCKBRAIN_BASE_URL",
         "BLOCKBRAIN_API_URL": "BLOCKBRAIN_API_URL",
         "BLOCKBRAIN_AGENT_ID": "BLOCKBRAIN_AGENT_ID",
+        "BLOCKBRAIN_BOT_ID": "BLOCKBRAIN_BOT_ID",
+        "BLOCKBRAIN_BOT_BASE_URL": "BLOCKBRAIN_BOT_BASE_URL",
+        "BLOCKBRAIN_RESEARCH_BOT_ID": "BLOCKBRAIN_RESEARCH_BOT_ID",
         "BLOCKBRAIN_MODEL_TEXT": "BLOCKBRAIN_MODEL_TEXT",
         "BLOCKBRAIN_MODEL_VISION": "BLOCKBRAIN_MODEL_VISION",
     }
@@ -378,13 +381,18 @@ def _answer_ask_ai_question(component_name: str, question: str) -> tuple[str | N
         f"Question: {question}"
     )
 
-    # 1) Preferred: the Knowledge Bot (uses its attached knowledge base).
-    try:
-        bot_answer = bb.call_blockbrain_bot(prompt)
-        if isinstance(bot_answer, str) and bot_answer.strip():
-            return bot_answer.strip(), ""
-    except Exception:
-        pass
+    # 1) Preferred: a dedicated research Knowledge Bot (uses the attached KB).
+    #    Only used when BLOCKBRAIN_RESEARCH_BOT_ID is configured. The default
+    #    bot is a JSON-only label-extraction bot, so we never send Ask AI
+    #    questions to it (it can't answer prose).
+    research_bot_id = os.getenv("BLOCKBRAIN_RESEARCH_BOT_ID", "").strip()
+    if research_bot_id:
+        try:
+            bot_answer = bb.call_blockbrain_bot(prompt, bot_id=research_bot_id)
+            if isinstance(bot_answer, str) and bot_answer.strip():
+                return bot_answer.strip(), ""
+        except Exception:
+            pass
 
     # 2) Fallback: the general agent.
     try:

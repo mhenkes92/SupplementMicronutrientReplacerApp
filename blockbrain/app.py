@@ -5151,6 +5151,10 @@ def _load_usda_nutrients_index() -> list[dict[str, Any]]:
 # name does not token-match the common supplement term. Omega-3 fatty acids are
 # stored in FoodData Central as "PUFA 22:6 n-3 (DHA)", "PUFA 20:5 n-3 (EPA)" and
 # "PUFA 18:3 n-3 c,c,c (ALA)", so a plain "omega-3" query would never match them.
+# Vitamin E is stored as "Vitamin E (alpha-tocopherol)" (id 1109, the only entry
+# with food rows); the bare "Vitamin E" summary ids (1158/2068) have none, and
+# label forms like "Vitamin E (as dl-alpha-tocopheryl acetate)" don't token-match
+# cleanly (parentheses stick to tokens), so we pin them here.
 _NUTRIENT_ID_OVERRIDES: dict[str, list[int]] = {
     "omega 3": [1272, 1278, 1404],           # DHA + EPA + ALA (fish + plant sources)
     "omega 3 fatty acids": [1272, 1278, 1404],
@@ -5164,6 +5168,13 @@ _NUTRIENT_ID_OVERRIDES: dict[str, list[int]] = {
     "alpha linolenic": [1404],
     "eicosapentaenoic acid": [1278],
     "docosahexaenoic acid": [1272],
+    "vitamin e": [1109],                     # alpha-tocopherol (698 food rows)
+    "tocopherol": [1109],
+    "tocopheryl": [1109],
+    "alpha tocopherol": [1109],
+    "d alpha tocopherol": [1109],
+    "dl alpha tocopherol": [1109],
+    "alpha tocopheryl": [1109],
 }
 
 
@@ -7203,9 +7214,13 @@ def call_blockbrain_text(system_prompt: str, user_prompt: str, model: str | None
 
 
 # Default Knowledge Bot (a "cortex" company bot). Unlike an agent, a Knowledge
-# Bot can have a knowledge base attached, so RAG-style questions are answered
-# from the connected KB. Override via BLOCKBRAIN_BOT_ID / BLOCKBRAIN_BOT_BASE_URL.
-_DEFAULT_BLOCKBRAIN_BOT_ID = "699721de74b22e46331a67d0"
+# Bot can have a knowledge base attached. NOTE: this default ("SuppSwipe", id
+# ...cd) is configured as a label-EXTRACTION bot that returns JSON only, so it is
+# meant for the barcode/label pipeline, NOT conversational Q&A. For "Ask AI"
+# research chat, point BLOCKBRAIN_RESEARCH_BOT_ID at a bot whose system prompt is
+# a research assistant (attach the same knowledge base to it). Override the base
+# bot via BLOCKBRAIN_BOT_ID / BLOCKBRAIN_BOT_BASE_URL.
+_DEFAULT_BLOCKBRAIN_BOT_ID = "699721de74b22e46331a67cd"
 _DEFAULT_BLOCKBRAIN_BOT_BASE_URL = "https://kanzleikraftwerk.kb.theblockbrain.ai"
 
 
@@ -7254,18 +7269,21 @@ def _extract_bot_text_from_json(obj: Any) -> str:
     return ""
 
 
-def call_blockbrain_bot(prompt: str, timeout: float | None = None) -> str:
+def call_blockbrain_bot(prompt: str, bot_id: str | None = None, timeout: float | None = None) -> str:
     """Ask the Blockbrain Knowledge Bot (cortex company bot) a question.
 
-    The bot answers from its attached knowledge base. Returns assistant text, or
-    "" on any failure (with LAST_BLOCKBRAIN_ERROR set) so callers can fall back.
+    The bot answers from its attached knowledge base. Pass `bot_id` to target a
+    specific bot (e.g. a research bot for Ask AI); otherwise the configured
+    default is used. Returns assistant text, or "" on any failure (with
+    LAST_BLOCKBRAIN_ERROR set) so callers can fall back.
     """
     global LAST_BLOCKBRAIN_ERROR
     LAST_BLOCKBRAIN_ERROR = ""
     text = str(prompt or "").strip()
     if not text:
         return ""
-    api_key, bot_base, bot_id = _load_blockbrain_bot_config()
+    api_key, bot_base, default_bot_id = _load_blockbrain_bot_config()
+    bot_id = str(bot_id or default_bot_id or "").strip()
     if not api_key:
         LAST_BLOCKBRAIN_ERROR = "Blockbrain API key not configured"
         return ""
