@@ -17,6 +17,7 @@ import sys
 import subprocess
 import time
 import unicodedata
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -7199,6 +7200,157 @@ def call_blockbrain_text(system_prompt: str, user_prompt: str, model: str | None
     if requested_model:
         payload["model"] = requested_model
     return _blockbrain_chat(payload)
+
+
+# Default Knowledge Bot (a "cortex" company bot). Unlike an agent, a Knowledge
+# Bot can have a knowledge base attached, so RAG-style questions are answered
+# from the connected KB. Override via BLOCKBRAIN_BOT_ID / BLOCKBRAIN_BOT_BASE_URL.
+_DEFAULT_BLOCKBRAIN_BOT_ID = "699721de74b22e46331a67d0"
+_DEFAULT_BLOCKBRAIN_BOT_BASE_URL = "https://kanzleikraftwerk.kb.theblockbrain.ai"
+
+
+def _load_blockbrain_bot_config() -> tuple[str, str, str]:
+    """Return (api_key, bot_base_url, bot_id) for the Knowledge Bot endpoint."""
+    api_key, _agent_base, _agent_id = _load_blockbrain_secrets()
+
+    def _get(name: str, default: str = "") -> str:
+        try:
+            import streamlit as st  # noqa: F401
+            val = st.secrets.get(name, "") or os.getenv(name, "")
+        except Exception:
+            val = os.getenv(name, "")
+        return str(val or default).strip()
+
+    bot_id = _get("BLOCKBRAIN_BOT_ID", _DEFAULT_BLOCKBRAIN_BOT_ID)
+    bot_base = _get("BLOCKBRAIN_BOT_BASE_URL", _DEFAULT_BLOCKBRAIN_BOT_BASE_URL).rstrip("/")
+    return api_key, bot_base, bot_id
+
+
+def _extract_bot_text_from_json(obj: Any) -> str:
+    """Best-effort extraction of assistant text from a bot JSON payload."""
+    if isinstance(obj, str):
+        text = obj.strip()
+        return "" if text in ("", "[DONE]") else text
+    if isinstance(obj, list):
+        return "\n".join(t for t in (_extract_bot_text_from_json(x) for x in obj) if t).strip()
+    if not isinstance(obj, dict):
+        return ""
+    # Direct textual fields first.
+    for key in ("content", "text", "answer", "message", "response", "delta", "value", "output"):
+        val = obj.get(key)
+        if isinstance(val, str) and val.strip() and val.strip() != "[DONE]":
+            return val.strip()
+        if isinstance(val, (dict, list)):
+            nested = _extract_bot_text_from_json(val)
+            if nested:
+                return nested
+    # OpenAI-style choices.
+    choices = obj.get("choices")
+    if isinstance(choices, list):
+        parts = [_extract_bot_text_from_json(c) for c in choices]
+        joined = "\n".join(p for p in parts if p).strip()
+        if joined:
+            return joined
+    return ""
+
+
+def call_blockbrain_bot(prompt: str, timeout: float | None = None) -> str:
+    """Ask the Blockbrain Knowledge Bot (cortex company bot) a question.
+
+    The bot answers from its attached knowledge base. Returns assistant text, or
+    "" on any failure (with LAST_BLOCKBRAIN_ERROR set) so callers can fall back.
+    """
+    global LAST_BLOCKBRAIN_ERROR
+    LAST_BLOCKBRAIN_ERROR = ""
+    text = str(prompt or "").strip()
+    if not text:
+        return ""
+    api_key, bot_base, bot_id = _load_blockbrain_bot_config()
+    if not api_key:
+        LAST_BLOCKBRAIN_ERROR = "Blockbrain API key not configured"
+        return ""
+    if not (bot_base and bot_id):
+        LAST_BLOCKBRAIN_ERROR = "Blockbrain bot not configured"
+        return ""
+
+    url = f"{bot_base}/cortex/completions/v2/start-company-bot"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream, application/json",
+    }
+    payload = {
+        "botId": bot_id,
+        "sessionId": str(uuid.uuid4()),
+        "content": text,
+        "messageType": "user-question",
+    }
+    try:
+        resp = _http_post(url, headers=headers, json=payload, timeout=timeout or HTTP_TIMEOUT, stream=True)
+    except Exception as exc:
+        LAST_BLOCKBRAIN_ERROR = f"Blockbrain bot request error: {exc}"
+        return ""
+    if resp.status_code != 200:
+        LAST_BLOCKBRAIN_ERROR = f"Blockbrain bot HTTP {resp.status_code}: {resp.text[:200]}"
+        return ""
+
+    content_type = str(resp.headers.get("Content-Type", "") or "").lower()
+
+    # Server-Sent Events stream: collect text from each `data:` JSON event.
+    if "text/event-stream" in content_type:
+        collected: list[str] = []
+        try:
+            for raw_line in resp.iter_lines(decode_unicode=True):
+                if not raw_line:
+                    continue
+                line = str(raw_line).strip()
+                if line.startswith("data:"):
+                    line = line[len("data:"):].strip()
+                if not line or line == "[DONE]":
+                    continue
+                try:
+                    event = json.loads(line)
+                except Exception:
+                    collected.append(line)
+                    continue
+                piece = _extract_bot_text_from_json(event)
+                if piece:
+                    collected.append(piece)
+        except Exception as exc:
+            LAST_BLOCKBRAIN_ERROR = f"Blockbrain bot stream error: {exc}"
+        answer = "".join(collected).strip() or " ".join(collected).strip()
+        if not answer:
+            LAST_BLOCKBRAIN_ERROR = LAST_BLOCKBRAIN_ERROR or "Blockbrain bot returned no text"
+        return answer
+
+    # Non-streaming JSON response.
+    try:
+        data = resp.json() if resp.content else {}
+    except Exception:
+        body = str(resp.text or "").strip()
+        return body
+    answer = _extract_bot_text_from_json(data)
+    if answer:
+        return answer
+
+    # Some variants return only identifiers; fetch the finished message once.
+    if isinstance(data, dict):
+        message_id = str(data.get("messageId") or data.get("message_id") or "").strip()
+        if message_id:
+            try:
+                msg_resp = _http_get(
+                    f"{bot_base}/cortex/message/{message_id}",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    timeout=timeout or HTTP_TIMEOUT,
+                )
+                if msg_resp.status_code == 200 and msg_resp.content:
+                    answer = _extract_bot_text_from_json(msg_resp.json())
+                    if answer:
+                        return answer
+            except Exception as exc:
+                LAST_BLOCKBRAIN_ERROR = f"Blockbrain bot message fetch error: {exc}"
+    LAST_BLOCKBRAIN_ERROR = LAST_BLOCKBRAIN_ERROR or "Blockbrain bot returned no text"
+    return ""
 
 
 def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:

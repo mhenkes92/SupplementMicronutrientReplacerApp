@@ -355,24 +355,46 @@ def _cached_rag_chunks() -> list[dict[str, str]]:
 
 
 def _answer_ask_ai_question(component_name: str, question: str) -> tuple[str | None, str]:
-    """Answer an "Ask AI" question, preferring the BlockBrain agent (which is
-    backed by the connected Examine knowledge base) and falling back to the
-    local RAG index if the live agent is unavailable or returns nothing.
+    """Answer an "Ask AI" question.
 
-    Returns (answer, sources_line). answer is None only when no source at all
-    is available (neither the agent nor the local index produced a response).
+    Order of preference:
+      1) the Blockbrain Knowledge Bot (a cortex bot with the Examine knowledge
+         base attached — only bots, not agents, can hold a knowledge base);
+      2) the Blockbrain agent (general nutrition reasoning);
+      3) the local RAG index.
+
+    Returns (answer, sources_line). answer is None only when nothing at all is
+    available (no bot, no agent, and no local index produced a response).
     """
     scoped_question = f"{component_name}: {question}".strip(": ").strip()
+    prompt = (
+        "You are a supplement and micronutrient research assistant for the "
+        "SuppSwipe app. Answer using your connected knowledge base and "
+        "established nutrition science. Be concise, evidence-based, and "
+        "practical. If the evidence is unclear or the question is outside "
+        "nutrition/supplementation, say so plainly. Do not give individual "
+        "medical advice; speak in general terms.\n\n"
+        f"Micronutrient / supplement component: {component_name or 'unspecified'}\n"
+        f"Question: {question}"
+    )
 
-    # 1) Preferred path: the custom agent (uses its attached knowledge base).
+    # 1) Preferred: the Knowledge Bot (uses its attached knowledge base).
+    try:
+        bot_answer = bb.call_blockbrain_bot(prompt)
+        if isinstance(bot_answer, str) and bot_answer.strip():
+            return bot_answer.strip(), ""
+    except Exception:
+        pass
+
+    # 2) Fallback: the general agent.
     try:
         system_prompt = (
             "You are a supplement and micronutrient research assistant for the "
-            "SuppSwipe app. Answer the user's question using your connected "
-            "knowledge base and established nutrition science. Be concise, "
-            "evidence-based, and practical. If the evidence is unclear or the "
-            "question is outside nutrition/supplementation, say so plainly. "
-            "Do not give individual medical advice; speak in general terms."
+            "SuppSwipe app. Answer the user's question using established "
+            "nutrition science. Be concise, evidence-based, and practical. If "
+            "the evidence is unclear or the question is outside "
+            "nutrition/supplementation, say so plainly. Do not give individual "
+            "medical advice; speak in general terms."
         )
         user_prompt = (
             f"Micronutrient / supplement component: {component_name or 'unspecified'}\n"
@@ -384,7 +406,7 @@ def _answer_ask_ai_question(component_name: str, question: str) -> tuple[str | N
     except Exception:
         pass
 
-    # 2) Fallback: local research RAG index.
+    # 3) Fallback: local research RAG index.
     try:
         chunks = _cached_rag_chunks()
     except Exception:
