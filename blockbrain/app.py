@@ -5062,6 +5062,37 @@ def filter_and_rank_common_foods(
 
 
 @functools.lru_cache(maxsize=1)
+def _usda_nutrient_rankings_counts() -> dict[int, int]:
+    """Return {nutrient_id: number of usable food-ranking rows}.
+
+    Some USDA nutrients (e.g. the short "Vitamin E" summary entries) carry no
+    food rows at all, while the descriptive variant ("Vitamin E
+    (alpha-tocopherol)") holds every real whole-food record. Knowing which
+    nutrient ids actually have data lets the resolver prefer them.
+    """
+    conn = try_open_usda_db()
+    if conn is None:
+        return {}
+    try:
+        rows = conn.execute(
+            "SELECT nutrient_id, COUNT(*) FROM nutrient_rankings "
+            "WHERE amount_per_100g IS NOT NULL AND amount_per_100g > 0 "
+            "GROUP BY nutrient_id"
+        ).fetchall()
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+    out: dict[int, int] = {}
+    for row in rows:
+        try:
+            out[int(row[0])] = int(row[1])
+        except Exception:
+            continue
+    return out
+
+
+@functools.lru_cache(maxsize=1)
 def _load_usda_nutrients_index() -> list[dict[str, Any]]:
     conn = try_open_usda_db()
     if conn is None:
@@ -5106,7 +5137,8 @@ def _resolve_local_nutrient_candidates(component_key: str, max_ids: int = 3) -> 
 
     target_compact = re.sub(r"[^a-z0-9]+", "", target)
     target_tokens = {t for t in target.split() if len(t) >= 2}
-    ranked: list[tuple[tuple[int, int, int], dict[str, Any]]] = []
+    row_counts = _usda_nutrient_rankings_counts()
+    ranked: list[tuple[tuple[int, int, int, int], dict[str, Any]]] = []
     for nutrient in _load_usda_nutrients_index():
         nkey = str(nutrient.get("key", "") or "")
         ncompact = str(nutrient.get("compact", "") or "")
@@ -5114,9 +5146,14 @@ def _resolve_local_nutrient_candidates(component_key: str, max_ids: int = 3) -> 
         overlap = len(target_tokens & ntokens)
         direct = int(target in nkey or nkey in target)
         compact_match = int(target_compact and ncompact and (target_compact in ncompact or ncompact in target_compact))
-        score = (direct + compact_match + min(overlap, 4), overlap, -len(nkey))
-        if score[0] <= 0:
+        relevance = direct + compact_match + min(overlap, 4)
+        if relevance <= 0:
             continue
+        # Prefer nutrients that actually carry food-ranking rows: USDA summary
+        # entries (e.g. "Vitamin E") often have none, while the descriptive
+        # variant ("Vitamin E (alpha-tocopherol)") holds all the real foods.
+        has_data = 1 if row_counts.get(int(nutrient.get("id", 0) or 0), 0) > 0 else 0
+        score = (relevance, has_data, overlap, -len(nkey))
         ranked.append((score, nutrient))
 
     ranked.sort(key=lambda item: item[0], reverse=True)
