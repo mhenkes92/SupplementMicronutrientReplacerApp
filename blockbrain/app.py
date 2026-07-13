@@ -5130,10 +5130,56 @@ def _load_usda_nutrients_index() -> list[dict[str, Any]]:
     return out
 
 
+# Curated component-key -> USDA nutrient id overrides for nutrients whose USDA
+# name does not token-match the common supplement term. Omega-3 fatty acids are
+# stored in FoodData Central as "PUFA 22:6 n-3 (DHA)", "PUFA 20:5 n-3 (EPA)" and
+# "PUFA 18:3 n-3 c,c,c (ALA)", so a plain "omega-3" query would never match them.
+_NUTRIENT_ID_OVERRIDES: dict[str, list[int]] = {
+    "omega 3": [1272, 1278, 1404],           # DHA + EPA + ALA (fish + plant sources)
+    "omega 3 fatty acids": [1272, 1278, 1404],
+    "omega 3 fatty acid": [1272, 1278, 1404],
+    "n 3 fatty acids": [1272, 1278, 1404],
+    "fish oil": [1272, 1278],                # EPA + DHA
+    "epa": [1278],
+    "dha": [1272],
+    "epa dha": [1272, 1278],
+    "alpha linolenic acid": [1404],
+    "alpha linolenic": [1404],
+    "eicosapentaenoic acid": [1278],
+    "docosahexaenoic acid": [1272],
+}
+
+
+def _nutrient_id_override_for(target: str) -> list[int]:
+    """Return curated USDA nutrient ids for a component key, or [] if none.
+
+    Short keys (epa/dha) require an exact match to avoid false positives; longer
+    keys also match as substrings so "omega 3 (as fish oil)" still resolves.
+    Hyphens are treated as spaces so "omega-3" and "omega 3" both match.
+    """
+    t = re.sub(r"\s+", " ", normalize_lookup_key(target).replace("-", " ")).strip()
+    if not t:
+        return []
+    for ov_key, ids in _NUTRIENT_ID_OVERRIDES.items():
+        norm_key = re.sub(r"\s+", " ", ov_key.replace("-", " ")).strip()
+        if t == norm_key:
+            return ids
+        if len(norm_key) >= 5 and (norm_key in t or t in norm_key):
+            return ids
+    return []
+
+
 def _resolve_local_nutrient_candidates(component_key: str, max_ids: int = 3) -> list[dict[str, Any]]:
     target = normalize_lookup_key(component_key)
     if not target:
         return []
+
+    override_ids = _nutrient_id_override_for(target)
+    if override_ids:
+        by_id = {int(n.get("id", 0) or 0): n for n in _load_usda_nutrients_index()}
+        picked = [by_id[i] for i in override_ids if i in by_id]
+        if picked:
+            return picked[:max_ids]
 
     target_compact = re.sub(r"[^a-z0-9]+", "", target)
     target_tokens = {t for t in target.split() if len(t) >= 2}
@@ -5170,14 +5216,57 @@ def _resolve_local_nutrient_candidates(component_key: str, max_ids: int = 3) -> 
     return out
 
 
+# Curated single-ingredient whole-food sources for micronutrients that USDA
+# FoodData Central measures but has essentially no populated per-food rows for
+# (chromium). Amounts are approximate representative values from the NIH Office
+# of Dietary Supplements chromium fact sheet, expressed per 100 g. Used only as
+# a last resort when the USDA rankings return nothing, so the user still sees
+# valid, diet-filterable whole foods instead of an empty card.
+_CURATED_NUTRIENT_FOOD_FALLBACKS: dict[str, list[dict[str, Any]]] = {
+    "chromium": [
+        {"food_description": "Broccoli, raw", "food_category": "Vegetables", "amount_per_100g": 14.0, "unit": "mcg"},
+        {"food_description": "Green beans, raw", "food_category": "Vegetables", "amount_per_100g": 2.5, "unit": "mcg"},
+        {"food_description": "Peas, green, raw", "food_category": "Vegetables", "amount_per_100g": 1.6, "unit": "mcg"},
+        {"food_description": "Tomatoes, red, ripe, raw", "food_category": "Vegetables", "amount_per_100g": 0.9, "unit": "mcg"},
+        {"food_description": "Apple, with skin, raw", "food_category": "Fruits", "amount_per_100g": 0.8, "unit": "mcg"},
+        {"food_description": "Banana, raw", "food_category": "Fruits", "amount_per_100g": 0.85, "unit": "mcg"},
+    ],
+}
+
+
+def _curated_food_fallback(component_key: str, limit: int) -> list[dict[str, Any]]:
+    """Return curated whole-food rows for nutrients with no usable USDA data."""
+    key = normalize_lookup_key(component_key)
+    rows: list[dict[str, Any]] = []
+    for needle, foods in _CURATED_NUTRIENT_FOOD_FALLBACKS.items():
+        if needle in key:
+            rows = foods
+            break
+    if not rows:
+        return []
+    out: list[dict[str, Any]] = []
+    for idx, food in enumerate(rows[: max(1, int(limit))], start=1):
+        out.append(
+            {
+                "rank": idx,
+                "food_description": str(food.get("food_description", "")),
+                "food_category": str(food.get("food_category", "Whole food")),
+                "amount_per_100g": float(food.get("amount_per_100g", 0.0) or 0.0),
+                "unit": _normalize_component_unit_token(str(food.get("unit", "") or "")),
+                "source_db": "NIH ODS reference",
+            }
+        )
+    return out
+
+
 def _build_local_food_rows_for_component(component_key: str, limit: int = TOP_FOODS_PER_COMPONENT) -> list[dict[str, Any]]:
     nutrient_candidates = _resolve_local_nutrient_candidates(component_key, max_ids=3)
     if not nutrient_candidates:
-        return []
+        return _curated_food_fallback(component_key, limit)
 
     nutrient_ids = [int(x.get("id", 0) or 0) for x in nutrient_candidates if int(x.get("id", 0) or 0) > 0]
     if not nutrient_ids:
-        return []
+        return _curated_food_fallback(component_key, limit)
 
     conn = try_open_usda_db()
     if conn is None:
@@ -5232,6 +5321,8 @@ def _build_local_food_rows_for_component(component_key: str, limit: int = TOP_FO
         )
 
     foods = filter_and_rank_common_foods(foods, limit)
+    if not foods:
+        return _curated_food_fallback(component_key, limit)
     return foods[:limit]
 
 

@@ -481,6 +481,27 @@ def _amount_to_match_dose(decision: dict[str, Any]) -> str:
     "~2 eggs" when one is available), or "" when it can't be computed.
     """
     food = decision.get("selected_food") or {}
+    core = _portion_for_target(
+        food,
+        decision.get("dose_value"),
+        str(decision.get("dose_unit", "") or ""),
+        str(decision.get("component", "") or ""),
+    )
+    return f"eat {core}" if core else ""
+
+
+def _portion_for_target(
+    food: dict[str, Any],
+    target_value: Any,
+    target_unit: str,
+    component: str,
+) -> str:
+    """How much of `food` supplies `target_value target_unit` of the nutrient.
+
+    Returns a short label like "~85 g (~2 eggs)" or "" when it can't be computed.
+    Units of the target and the food need not match — both are normalised to mg
+    internally by bb.grams_needed_to_match_dose.
+    """
     if not isinstance(food, dict):
         return ""
     try:
@@ -489,12 +510,9 @@ def _amount_to_match_dose(decision: dict[str, Any]) -> str:
         amount_per_100g = 0.0
     unit = str(food.get("unit", "") or "")
     food_name = str(food.get("food_description", "") or "")
-    dose_value = decision.get("dose_value")
-    dose_unit = str(decision.get("dose_unit", "") or "")
-    component = str(decision.get("component", "") or "")
 
     try:
-        grams = bb.grams_needed_to_match_dose(dose_value, dose_unit, amount_per_100g, unit, component)
+        grams = bb.grams_needed_to_match_dose(target_value, target_unit, amount_per_100g, unit, component)
     except Exception:
         grams = None
     if grams is None or grams <= 0:
@@ -518,8 +536,64 @@ def _amount_to_match_dose(decision: dict[str, Any]) -> str:
         portion = ""
 
     if portion:
-        return f"eat ~{grams_txt} ({portion})"
-    return f"eat ~{grams_txt}"
+        return f"~{grams_txt} ({portion})"
+    return f"~{grams_txt}"
+
+
+# --- Daily micronutrient targets ---------------------------------------------
+# One authoritative table used by both the per-card portion hint and the final
+# "Athlete RDA guide". "rda" = general adult RDA/AI (NIH ODS); "athlete" = a
+# representative daily target for active people (ISSN 2017; ACSM/AND/DC 2016),
+# raised where training increases needs or sweat losses. Units are chosen so
+# they normalise cleanly against USDA food units for the portion math. General
+# guidance only — not individualised medical advice.
+_MICRONUTRIENT_RDA: list[dict[str, Any]] = [
+    # B-vitamins listed B12 -> B1 so "vitamin b1" never prefix-matches "b12".
+    {"display": "Vitamin B12", "unit": "mcg", "rda": 2.4, "athlete": 4.0, "match": ["vitamin b12", "cobalamin"]},
+    {"display": "Vitamin B9 (Folate)", "unit": "mcg", "rda": 400, "athlete": 600, "match": ["vitamin b9", "folate", "folic", "folacin", "methylfolate"]},
+    {"display": "Vitamin B7 (Biotin)", "unit": "mcg", "rda": 30, "athlete": 30, "match": ["vitamin b7", "biotin"]},
+    {"display": "Vitamin B6", "unit": "mg", "rda": 1.3, "athlete": 2.0, "match": ["vitamin b6", "pyridox"]},
+    {"display": "Vitamin B5 (Pantothenic)", "unit": "mg", "rda": 5, "athlete": 7, "match": ["vitamin b5", "pantothen", "panthenol"]},
+    {"display": "Vitamin B3 (Niacin)", "unit": "mg", "rda": 16, "athlete": 20, "match": ["vitamin b3", "niacin", "nicotinamide", "nicotinic"]},
+    {"display": "Vitamin B2 (Riboflavin)", "unit": "mg", "rda": 1.3, "athlete": 2.0, "match": ["vitamin b2", "riboflavin"]},
+    {"display": "Vitamin B1 (Thiamin)", "unit": "mg", "rda": 1.2, "athlete": 2.0, "match": ["vitamin b1", "thiamin"]},
+    {"display": "Vitamin A", "unit": "mcg", "rda": 900, "athlete": 1000, "match": ["vitamin a", "retinol", "retinyl", "beta carotene", "betacarotene", "carotene"]},
+    {"display": "Vitamin C", "unit": "mg", "rda": 90, "athlete": 200, "match": ["vitamin c", "ascorb"]},
+    {"display": "Vitamin D", "unit": "mcg", "rda": 15, "athlete": 25, "match": ["vitamin d", "cholecalciferol", "ergocalciferol"]},
+    {"display": "Vitamin E", "unit": "mg", "rda": 15, "athlete": 20, "match": ["vitamin e", "tocopherol", "tocopheryl", "tocotrienol"]},
+    {"display": "Vitamin K", "unit": "mcg", "rda": 120, "athlete": 120, "match": ["vitamin k", "phylloquinone", "menaquinone", "phytonadione"]},
+    {"display": "Calcium", "unit": "mg", "rda": 1000, "athlete": 1300, "match": ["calcium"]},
+    {"display": "Phosphorus", "unit": "mg", "rda": 700, "athlete": 1000, "match": ["phosphorus", "phosphate"]},
+    {"display": "Magnesium", "unit": "mg", "rda": 400, "athlete": 500, "match": ["magnesium"]},
+    {"display": "Potassium", "unit": "mg", "rda": 3400, "athlete": 3500, "match": ["potassium"]},
+    {"display": "Sodium", "unit": "mg", "rda": 1500, "athlete": 2300, "match": ["sodium"]},
+    {"display": "Chloride", "unit": "mg", "rda": 2300, "athlete": 2300, "match": ["chloride"]},
+    {"display": "Iron", "unit": "mg", "rda": 8, "athlete": 18, "match": ["iron", "ferrous", "ferric"]},
+    {"display": "Zinc", "unit": "mg", "rda": 11, "athlete": 15, "match": ["zinc"]},
+    {"display": "Copper", "unit": "mg", "rda": 0.9, "athlete": 1.2, "match": ["copper", "cupric"]},
+    {"display": "Manganese", "unit": "mg", "rda": 2.3, "athlete": 2.3, "match": ["manganese"]},
+    {"display": "Iodine", "unit": "mcg", "rda": 150, "athlete": 150, "match": ["iodine", "iodide"]},
+    {"display": "Selenium", "unit": "mcg", "rda": 55, "athlete": 70, "match": ["selenium", "selenite", "selenomethionine"]},
+    {"display": "Molybdenum", "unit": "mcg", "rda": 45, "athlete": 45, "match": ["molybdenum"]},
+    {"display": "Chromium", "unit": "mcg", "rda": 35, "athlete": 35, "match": ["chromium"]},
+    {"display": "Fluoride", "unit": "mg", "rda": 4, "athlete": 4, "match": ["fluoride", "fluorine"]},
+    {"display": "Choline", "unit": "mg", "rda": 550, "athlete": 550, "match": ["choline"]},
+    {"display": "Omega-3 (EPA+DHA)", "unit": "g", "rda": 0.25, "athlete": 2.0, "match": ["omega", "epa", "dha", "fish oil", "linolenic", "docosahexaenoic", "eicosapentaenoic"]},
+]
+
+
+def _rda_for_component(component_key: str) -> dict[str, Any] | None:
+    key = bb.normalize_lookup_key(component_key)
+    if not key:
+        return None
+    for entry in _MICRONUTRIENT_RDA:
+        if any(m in key for m in entry["match"]):
+            return entry
+    return None
+
+
+def _format_rda_target(entry: dict[str, Any]) -> str:
+    return f"{bb.format_float(float(entry['athlete']))} {entry['unit']}"
 
 
 # --- Micronutrient allow-list -------------------------------------------------
@@ -939,6 +1013,16 @@ def _render_header() -> None:
                 color: #4c6076;
                 margin-top: 0.6rem;
                 margin-bottom: 0.35rem;
+            }
+            .portion-hint {
+                margin: 0.15rem 0 0.35rem 0;
+                padding: 0.5rem 0.7rem;
+                border-radius: 12px;
+                background: #f1f7f2;
+                border: 1px solid #cfe6d5;
+                color: #234a32;
+                font-size: 0.85rem;
+                line-height: 1.5;
             }
             .action-legend {
                 text-align: center;
@@ -1516,6 +1600,30 @@ def _render_card() -> None:
                 label_visibility="collapsed",
             )
             selected_food = foods[option_labels.index(selected_label)]
+
+            # Show, for the selected whole food, how much to eat to (a) match the
+            # supplement dose and (b) reach the athlete daily target.
+            comp_name = str(card.get("component", "") or "")
+            dose_core = _portion_for_target(
+                selected_food, card.get("dose_value"), str(card.get("dose_unit", "") or ""), comp_name
+            )
+            rda_entry = _rda_for_component(component_key)
+            hint_lines: list[str] = []
+            if dose_core:
+                hint_lines.append(f"💊 Match this dose &rarr; eat <b>{dose_core}</b>")
+            if rda_entry is not None:
+                rda_core = _portion_for_target(
+                    selected_food, rda_entry["athlete"], str(rda_entry["unit"]), comp_name
+                )
+                if rda_core:
+                    hint_lines.append(
+                        f"🏃 Athlete RDA ({_format_rda_target(rda_entry)}) &rarr; eat <b>{rda_core}</b>"
+                    )
+            if hint_lines:
+                st.markdown(
+                    "<div class='portion-hint'>" + "<br>".join(hint_lines) + "</div>",
+                    unsafe_allow_html=True,
+                )
         else:
             st.caption(
                 "No whole-food alternatives remain after dietary filtering."
@@ -1644,41 +1752,27 @@ def _render_athlete_rda_popup() -> None:
     """
     with st.popover("\U0001F3C3 Athlete RDA guide", use_container_width=True):
         st.caption(
-            "Approximate daily micronutrient targets for athletes. "
-            "Sources: ISSN, ACSM/AND/DC, NIH ODS. General guidance only — "
-            "consult a sports dietitian for personalised advice."
+            "Approximate daily targets for every micronutrient the app tracks. "
+            "Adult RDA/AI from NIH ODS; athlete targets raised per ISSN and "
+            "ACSM/AND/DC where training increases needs or sweat losses. General "
+            "guidance only — consult a sports dietitian for personalised advice."
         )
-        # (Nutrient, Unit, Sedentary adult RDA, Endurance athlete, Strength athlete)
-        rda_rows = [
-            ("Vitamin D", "IU", 600, 1500, 1500),
-            ("Magnesium", "mg", 320, 500, 450),
-            ("Iron (men)", "mg", 8, 15, 10),
-            ("Iron (women)", "mg", 18, 25, 20),
-            ("Zinc", "mg", 8, 12, 15),
-            ("Vitamin B12", "mcg", 2.4, 4.0, 4.0),
-            ("Calcium", "mg", 1000, 1300, 1200),
-            ("Vitamin C", "mg", 90, 200, 150),
-            ("Vitamin B6", "mg", 1.3, 2.0, 2.0),
-            ("Folate", "mcg", 400, 600, 500),
-            ("Potassium", "mg", 2600, 3500, 3000),
-            ("Omega-3 (EPA+DHA)", "g", 0.25, 2.0, 1.5),
-        ]
         st.table(
             [
                 {
-                    "Nutrient": r[0],
-                    "Unit": r[1],
-                    "Sedentary": r[2],
-                    "Endurance": r[3],
-                    "Strength": r[4],
+                    "Nutrient": str(entry["display"]),
+                    "Unit": str(entry["unit"]),
+                    "Adult RDA": bb.format_float(float(entry["rda"])),
+                    "Athlete": bb.format_float(float(entry["athlete"])),
                 }
-                for r in rda_rows
+                for entry in _MICRONUTRIENT_RDA
             ]
         )
         st.caption(
             "\U0001F4A1 Athletes training >10 h/week, in low-sunlight regions, or on "
             "plant-based diets are most at risk of Vitamin D, Iron, B12, Zinc and "
-            "Omega-3 deficiencies."
+            "Omega-3 deficiencies. Iron RDA shown is the general adult value "
+            "(menstruating women need ~18 mg; men ~8 mg)."
         )
 
 
