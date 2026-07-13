@@ -964,7 +964,7 @@ def _render_header() -> None:
         """,
         unsafe_allow_html=True,
     )
-    st.markdown("<div class='swipe-title'>SuppSwipe</div>", unsafe_allow_html=True)
+    st.markdown("<div class='swipe-title'>SuppSwipe <span style='color:#22c55e;'>&#9679;</span></div>", unsafe_allow_html=True)
 
 
 def _reset_swipe_state() -> None:
