@@ -483,14 +483,9 @@ def _amount_to_match_dose(decision: dict[str, Any]) -> str:
 
 
 # --- Micronutrient allow-list -------------------------------------------------
-# Scientifically, "micronutrients" = the 13 essential vitamins + the essential
-# minerals (needed in small amounts). Choline (vitamin-like) and the omega-3
-# essential fatty acids (EPA/DHA/ALA) are NOT strictly micronutrients, but they
-# are common supplement categories, so they are INCLUDED by default. Set
-# _STRICT_MICRONUTRIENTS_ONLY = True to let users swipe through vitamins +
-# minerals only.
-_STRICT_MICRONUTRIENTS_ONLY = False
-
+# Only scientifically recognised nutrients become swipe cards: the 13 essential
+# vitamins + the essential minerals, plus choline and the omega-3 essential
+# fatty acids (EPA/DHA/ALA) which are common, legitimate supplement categories.
 _VITAMIN_ALIASES = [
     "vitamin a", "retinol", "retinyl", "retinal", "beta carotene", "betacarotene", "carotene",
     "vitamin c", "ascorbic", "ascorbate",
@@ -515,8 +510,8 @@ _MINERAL_ALIASES = [
     "molybdenum", "chromium", "fluoride", "fluorine", "cobalt", "boron", "sulfur", "sulphur",
 ]
 
-# Vitamin-like / essential fatty acids: not strictly micronutrients, but common
-# supplement categories (kept unless _STRICT_MICRONUTRIENTS_ONLY is True).
+# Vitamin-like nutrient + essential fatty acids (choline, omega-3): common,
+# legitimate supplement categories — always included.
 _ESSENTIAL_EXTRA_ALIASES = [
     "choline", "inositol",
     "omega", "epa", "dha", "fish oil", "docosahexaenoic", "eicosapentaenoic",
@@ -542,18 +537,18 @@ _NON_MICRONUTRIENT_DENY = [
 ]
 
 
+_MICRONUTRIENT_ALIASES = _VITAMIN_ALIASES + _MINERAL_ALIASES + _ESSENTIAL_EXTRA_ALIASES
+
+
 def _is_micronutrient(name: str) -> bool:
-    """True only for scientifically recognised micronutrients (vitamins + minerals),
-    plus choline / omega-3 unless _STRICT_MICRONUTRIENTS_ONLY is set."""
+    """True for scientifically recognised nutrients (vitamins, minerals, choline,
+    omega-3); False for macronutrients, fillers and label metadata."""
     key = bb.normalize_lookup_key(str(name or ""))
     if not key:
         return False
     if any(bad in key for bad in _NON_MICRONUTRIENT_DENY):
         return False
-    allow = list(_VITAMIN_ALIASES) + list(_MINERAL_ALIASES)
-    if not _STRICT_MICRONUTRIENTS_ONLY:
-        allow += _ESSENTIAL_EXTRA_ALIASES
-    return any(good in key for good in allow)
+    return any(good in key for good in _MICRONUTRIENT_ALIASES)
 
 
 def _filter_to_micronutrients(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
