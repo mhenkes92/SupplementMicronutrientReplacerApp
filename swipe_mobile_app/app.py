@@ -1485,6 +1485,54 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
     _render_rag_chat_popup(summary_context, "summary", 0)
 
 
+def _render_athlete_rda_popup() -> None:
+    """Static reference: approximate daily micronutrient targets for athletes.
+
+    Values are approximate consensus figures from ISSN (Nutrient Timing, 2017),
+    ACSM/AND/DC Nutrition and Athletic Performance (2016/2021), and NIH Office
+    of Dietary Supplements RDA fact sheets. General guidance only — shown as a
+    popover so it works with the app's no-scroll layout.
+    """
+    with st.popover("\U0001F3C3 Athlete RDA guide", use_container_width=True):
+        st.caption(
+            "Approximate daily micronutrient targets for athletes. "
+            "Sources: ISSN, ACSM/AND/DC, NIH ODS. General guidance only — "
+            "consult a sports dietitian for personalised advice."
+        )
+        # (Nutrient, Unit, Sedentary adult RDA, Endurance athlete, Strength athlete)
+        rda_rows = [
+            ("Vitamin D", "IU", 600, 1500, 1500),
+            ("Magnesium", "mg", 320, 500, 450),
+            ("Iron (men)", "mg", 8, 15, 10),
+            ("Iron (women)", "mg", 18, 25, 20),
+            ("Zinc", "mg", 8, 12, 15),
+            ("Vitamin B12", "mcg", 2.4, 4.0, 4.0),
+            ("Calcium", "mg", 1000, 1300, 1200),
+            ("Vitamin C", "mg", 90, 200, 150),
+            ("Vitamin B6", "mg", 1.3, 2.0, 2.0),
+            ("Folate", "mcg", 400, 600, 500),
+            ("Potassium", "mg", 2600, 3500, 3000),
+            ("Omega-3 (EPA+DHA)", "g", 0.25, 2.0, 1.5),
+        ]
+        st.table(
+            [
+                {
+                    "Nutrient": r[0],
+                    "Unit": r[1],
+                    "Sedentary": r[2],
+                    "Endurance": r[3],
+                    "Strength": r[4],
+                }
+                for r in rda_rows
+            ]
+        )
+        st.caption(
+            "\U0001F4A1 Athletes training >10 h/week, in low-sunlight regions, or on "
+            "plant-based diets are most at risk of Vitamin D, Iron, B12, Zinc and "
+            "Omega-3 deficiencies."
+        )
+
+
 def _build_mobile_ui() -> None:
     _init_state()
     _render_header()
@@ -1493,6 +1541,7 @@ def _build_mobile_ui() -> None:
     _render_card()
     _render_dietary_pills()
     _render_analyze_bar()
+    _render_athlete_rda_popup()
     if st.session_state.pop("swipe_confirm_restart", False):
         _confirm_restart_dialog()
     if st.session_state.pop("swipe_open_analyze", False):
