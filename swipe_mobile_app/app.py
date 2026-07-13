@@ -357,12 +357,31 @@ def _cached_rag_chunks() -> list[dict[str, str]]:
     return chunks
 
 
+def _looks_like_extraction_json(text: str) -> bool:
+    """True if the text looks like the bot's label-extraction JSON output.
+
+    Guards Ask AI against a bot whose dual-mode system prompt isn't set up yet
+    (or mis-fires): an extraction JSON blob is not a usable chat answer, so we
+    discard it and fall back to the agent / local RAG.
+    """
+    low = str(text or "").strip().lower()
+    if not low:
+        return False
+    return (
+        '"micronutrients"' in low
+        or '"identified_via"' in low
+        or ('"product_name"' in low and low.lstrip().startswith(("{", "```")))
+    )
+
+
 def _answer_ask_ai_question(component_name: str, question: str) -> tuple[str | None, str]:
     """Answer an "Ask AI" question.
 
     Order of preference:
       1) the Blockbrain Knowledge Bot (a cortex bot with the Examine knowledge
-         base attached — only bots, not agents, can hold a knowledge base);
+         base attached — only bots, not agents, can hold a knowledge base). We
+         send an "[ASK]" mode marker so a single dual-mode bot can tell research
+         questions apart from label-extraction requests;
       2) the Blockbrain agent (general nutrition reasoning);
       3) the local RAG index.
 
@@ -370,26 +389,26 @@ def _answer_ask_ai_question(component_name: str, question: str) -> tuple[str | N
     available (no bot, no agent, and no local index produced a response).
     """
     scoped_question = f"{component_name}: {question}".strip(": ").strip()
-    prompt = (
-        "You are a supplement and micronutrient research assistant for the "
-        "SuppSwipe app. Answer using your connected knowledge base and "
-        "established nutrition science. Be concise, evidence-based, and "
-        "practical. If the evidence is unclear or the question is outside "
-        "nutrition/supplementation, say so plainly. Do not give individual "
-        "medical advice; speak in general terms.\n\n"
-        f"Micronutrient / supplement component: {component_name or 'unspecified'}\n"
-        f"Question: {question}"
-    )
 
-    # 1) Preferred: a dedicated research Knowledge Bot (uses the attached KB).
-    #    Only used when BLOCKBRAIN_RESEARCH_BOT_ID is configured. The default
-    #    bot is a JSON-only label-extraction bot, so we never send Ask AI
-    #    questions to it (it can't answer prose).
+    # 1) Preferred: the Knowledge Bot (uses the attached KB). Enabled by setting
+    #    BLOCKBRAIN_RESEARCH_BOT_ID (for Option A, set it to the same bot id and
+    #    give that bot a dual-mode system prompt that branches on [ASK]/[EXTRACT]).
     research_bot_id = os.getenv("BLOCKBRAIN_RESEARCH_BOT_ID", "").strip()
     if research_bot_id:
+        ask_message = (
+            "[ASK]\n"
+            f"Micronutrient / supplement component: {component_name or 'unspecified'}\n"
+            f"Question: {question}\n\n"
+            "Answer concisely and evidence-based using the connected knowledge "
+            "base. General guidance only; no individual medical advice."
+        )
         try:
-            bot_answer = bb.call_blockbrain_bot(prompt, bot_id=research_bot_id)
-            if isinstance(bot_answer, str) and bot_answer.strip():
+            bot_answer = bb.call_blockbrain_bot(ask_message, bot_id=research_bot_id)
+            if (
+                isinstance(bot_answer, str)
+                and bot_answer.strip()
+                and not _looks_like_extraction_json(bot_answer)
+            ):
                 return bot_answer.strip(), ""
         except Exception:
             pass
