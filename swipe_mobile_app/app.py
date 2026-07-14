@@ -1727,6 +1727,24 @@ def _render_card() -> None:
             else:
                 st.caption("No whole-food alternatives found for this card.")
 
+        # Portion guidance (💊 match-this-dose and 🏃 Athlete-RDA) is rendered
+        # natively here rather than inside the swipe iframe. A freshly mounted
+        # custom component could otherwise show these blank on the very first
+        # card; native rendering makes them appear identically on every card.
+        portion_rows: list[str] = []
+        if match_dose_txt:
+            portion_rows.append(f"💊 Match this dose &rarr; eat <b>{match_dose_txt}</b>")
+        if rda_amount_txt:
+            rda_suffix = f" ({rda_label_txt})" if rda_label_txt else ""
+            portion_rows.append(f"🏃 Athlete RDA{rda_suffix} &rarr; eat <b>{rda_amount_txt}</b>")
+        if portion_rows:
+            st.markdown(
+                "<div class='portion-hint'>"
+                + "".join(f"<div>{row}</div>" for row in portion_rows)
+                + "</div>",
+                unsafe_allow_html=True,
+            )
+
         _render_rag_chat_popup(card, component_key, index)
 
         food_label = str((selected_food or {}).get("food_description", "") or "").strip()
@@ -1735,9 +1753,6 @@ def _render_card() -> None:
                 name=str(card.get("component", "Unknown micronutrient")),
                 dose=str(card.get("dose_label", "Not available")),
                 food=food_label,
-                matchDose=match_dose_txt,
-                rdaAmount=rda_amount_txt,
-                rdaLabel=rda_label_txt,
                 index=index,
                 total=len(cards),
                 accent=theme["accent"],
@@ -1770,16 +1785,6 @@ def _render_card() -> None:
         }
         st.session_state["swipe_decisions"] = decisions
         st.session_state["swipe_index"] = index + 1
-        st.rerun()
-
-    # The very first custom-component (tinder_swipe) iframe to mount in a session
-    # can drop its initial render args, so the portion / Athlete-RDA section on
-    # the first card renders blank while every later card (which reuses the now
-    # "warm" iframe) shows it. Re-run once, right after that first mount, so the
-    # swipe card re-renders with its props reliably applied.
-    warm_key = f"swipe_card_warmed_{nonce}"
-    if not st.session_state.get(warm_key, False):
-        st.session_state[warm_key] = True
         st.rerun()
 
 
