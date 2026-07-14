@@ -1772,6 +1772,16 @@ def _render_card() -> None:
         st.session_state["swipe_index"] = index + 1
         st.rerun()
 
+    # The very first custom-component (tinder_swipe) iframe to mount in a session
+    # can drop its initial render args, so the portion / Athlete-RDA section on
+    # the first card renders blank while every later card (which reuses the now
+    # "warm" iframe) shows it. Re-run once, right after that first mount, so the
+    # swipe card re-renders with its props reliably applied.
+    warm_key = f"swipe_card_warmed_{nonce}"
+    if not st.session_state.get(warm_key, False):
+        st.session_state[warm_key] = True
+        st.rerun()
+
 
 def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[str, Any]]) -> None:
     replace_items = [d for d in decisions.values() if d.get("decision") == "replace"]
