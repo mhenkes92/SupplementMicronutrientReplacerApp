@@ -884,7 +884,7 @@ def _render_header() -> None:
             }
             .block-container {
                 max-width: 440px;
-                padding-top: 3rem;
+                padding-top: 0.8rem;
                 padding-bottom: 0.6rem;
             }
             /* Dietary filter: horizontally scrollable pills (not a dropdown). */
@@ -1225,11 +1225,6 @@ def _render_header() -> None:
         """,
         unsafe_allow_html=True,
     )
-    st.markdown("<div class='swipe-title'>SuppSwipe</div>", unsafe_allow_html=True)
-    st.markdown(
-        f"<div style='font-size:0.6rem;color:#c3ccd6;margin:-4px 0 6px 0;'>build {BUILD_TAG}</div>",
-        unsafe_allow_html=True,
-    )
 
 
 def _reset_swipe_state() -> None:
@@ -1318,19 +1313,36 @@ def _research_product_from_label_text(label_text: str) -> str:
     return ""
 
 
+def _on_diet_profile_change() -> None:
+    """Persist the dietary filter into a plain (non-widget) session key.
+
+    Streamlit clears a widget's keyed state whenever that widget isn't rendered
+    on a run. A swipe calls st.rerun() before the dietary pills render, so the
+    radio's own key was being garbage-collected and the filter reset to "No
+    restriction". Mirroring the choice into `swipe_diet_profile_id` (never used
+    as a widget key) keeps it across swipes.
+    """
+    st.session_state["swipe_diet_profile_id"] = str(
+        st.session_state.get("swipe_diet_radio", "none") or "none"
+    )
+
+
 def _render_dietary_pills() -> None:
     ordered_ids, profile_by_id = _dietary_profile_lookup()
     if not ordered_ids:
         return
     selected_id = bb.normalize_lookup_key(str(st.session_state.get("swipe_diet_profile_id", "none") or "none"))
     if selected_id not in profile_by_id:
-        st.session_state["swipe_diet_profile_id"] = "none" if "none" in profile_by_id else ordered_ids[0]
+        selected_id = "none" if "none" in profile_by_id else ordered_ids[0]
+        st.session_state["swipe_diet_profile_id"] = selected_id
 
     st.markdown("<div class='diet-strip-label'>Dietary filter</div>", unsafe_allow_html=True)
     st.radio(
         "Dietary filter",
         options=ordered_ids,
-        key="swipe_diet_profile_id",
+        index=ordered_ids.index(selected_id),
+        key="swipe_diet_radio",
+        on_change=_on_diet_profile_change,
         horizontal=True,
         label_visibility="collapsed",
         format_func=lambda pid: str(profile_by_id.get(pid, {}).get("label", pid)).strip() or pid,
