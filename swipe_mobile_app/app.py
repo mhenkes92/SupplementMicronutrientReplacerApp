@@ -116,6 +116,17 @@ SWIPE_CARD_DROPDOWN_MAX = 40
 # Streamlit Cloud (shown as a tiny stamp under the title).
 BUILD_TAG = "2026-07-13 · vitE-fix"
 
+# Shared formatting contract appended to LLM prompts whose reply is rendered with
+# st.markdown / st.write on a narrow mobile screen, so answers come back as clean,
+# consistent Markdown instead of run-on text or code blocks.
+_MARKDOWN_STYLE = (
+    " Format the reply as clean GitHub-flavored Markdown for a narrow mobile screen: "
+    "use short '- ' bullet points (each on its own line), '**bold**' for headings and labels "
+    "(never ALL-CAPS headings or a plain 'Meal 1:' prefix), and a blank line between sections. "
+    "Do not wrap the answer in a code block, keep it concise, and add no intro, preamble or "
+    "sign-off — reply with the content only."
+)
+
 
 def _whole_food_icon(component_key: str) -> str:
     _ = component_key
@@ -405,6 +416,7 @@ def _answer_ask_ai_question(component_name: str, question: str) -> tuple[str | N
         f"Question: {question}\n\n"
         "Answer concisely and evidence-based using the connected knowledge "
         "base. General guidance only; no individual medical advice."
+        + _MARKDOWN_STYLE
     )
     research_bot_id = os.getenv("BLOCKBRAIN_RESEARCH_BOT_ID", "").strip()
     try:
@@ -427,6 +439,7 @@ def _answer_ask_ai_question(component_name: str, question: str) -> tuple[str | N
             "the evidence is unclear or the question is outside "
             "nutrition/supplementation, say so plainly. Do not give individual "
             "medical advice; speak in general terms."
+            + _MARKDOWN_STYLE
         )
         user_prompt = (
             f"Micronutrient / supplement component: {component_name or 'unspecified'}\n"
@@ -836,8 +849,9 @@ def _generate_meal_plan(replace_items: list[dict[str, Any]], diet_label: str, nu
         f"Design exactly {n} {meal_word} that TOGETHER incorporate ALL of the given whole foods "
         "at roughly the daily amounts provided (spread the foods across the meals so every food is "
         "used at least once). Use common German-supermarket ingredients, keep it budget-friendly and "
-        "realistic, and give each meal a short title followed by a few short bullet points. General "
-        "guidance only; no medical advice."
+        "realistic, and give each meal a short **bold** title followed by a few short bullet points. "
+        "General guidance only; no medical advice."
+        + _MARKDOWN_STYLE
     )
     user_prompt = (
         "Whole foods to include, with the daily amount to aim for:\n"
@@ -873,6 +887,7 @@ def _generate_whole_food_benefits(replace_items: list[dict[str, Any]]) -> str:
         "structure: a bold heading '<Nutrient> \u2192 <Food>', then '\ud83d\udc8a Pill alone:' with one short line, then "
         "'\ud83e\udd57 Whole food also gives:' with 3-5 short bullets. Be concise and evidence-based. General "
         "guidance only; no individual medical advice."
+        + _MARKDOWN_STYLE
     )
     user_prompt = "Pairings:\n" + "\n".join(lines) + "\n\nWrite the comparison now."
     try:
