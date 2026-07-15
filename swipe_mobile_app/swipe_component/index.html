@@ -86,6 +86,8 @@
   .hint { position: relative; z-index: 2; text-align: center; margin-top: 12px; font-size: .78rem; color: #64748b; }
   .hint b.k { color: #b91c1c; }
   .hint b.r { color: #047857; }
+  .warn { position: relative; z-index: 2; margin-top: 6px; padding: 5px 9px; border-radius: 8px; background: rgba(239,68,68,0.10); border: 1px solid rgba(239,68,68,0.30); color: #9b1c1c; font-size: .72rem; font-weight: 700; line-height: 1.3; }
+  .bio { position: relative; z-index: 2; margin-top: 8px; padding: 6px 9px; border-radius: 10px; background: rgba(59,130,246,0.09); border: 1px solid rgba(59,130,246,0.22); color: #24425f; font-size: .74rem; line-height: 1.35; }
 </style>
 </head>
 <body>
@@ -144,11 +146,14 @@
         ' &rarr; eat <b>' + esc(args.rdaAmount) + '</b></span>';
     }
     var portionHtml = portionRows ? '<div class="portion">' + portionRows + '</div>' : '';
+    var warnHtml = args.warn ? '<div class="warn">' + esc(args.warn) + '</div>' : '';
+    var bioHtml = args.bioNote ? '<div class="bio">💡 ' + esc(args.bioNote) + '</div>' : '';
     card.innerHTML =
       '<div class="row"><span class="count">Card ' + idx + ' / ' + total + '</span></div>' +
+      warnHtml +
       '<div class="name">' + esc(args.name || "Micronutrient") + '</div>' +
       '<div class="dose">Dose: <b>' + esc(args.dose || "n/a") + '</b></div>' +
-      '<div class="foodwrap"><div class="foodlbl">Whole-food replacement</div><div class="food">' + foodTxt + '</div>' + portionHtml + '</div>' +
+      '<div class="foodwrap"><div class="foodlbl">Whole-food replacement</div><div class="food">' + foodTxt + '</div>' + portionHtml + bioHtml + '</div>' +
       '<div class="hint">' + (canReplace
         ? 'Swipe <b class="k">◀ left = keep pill</b> · <b class="r">replace = whole food ▶</b>'
         : '<b class="k">◀ Swipe left to keep</b> · no whole-food match to replace') + '</div>';

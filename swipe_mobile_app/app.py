@@ -849,6 +849,36 @@ def _generate_meal_plan(replace_items: list[dict[str, Any]], diet_label: str) ->
         return ""
 
 
+def _generate_whole_food_benefits(replace_items: list[dict[str, Any]]) -> str:
+    """Contrast the isolated pill nutrient vs. the fuller benefits of the chosen whole food."""
+    if not replace_items:
+        return ""
+    lines = []
+    for d in replace_items:
+        nutrient = str(d.get("component", "") or "")
+        food = str((d.get("selected_food") or {}).get("food_description", "") or "")
+        if nutrient and food:
+            lines.append(f"- Isolated pill nutrient: {nutrient}  |  Whole food chosen instead: {food}")
+    if not lines:
+        return ""
+    system_prompt = (
+        "You are a nutrition educator for the SuppSwipe app. For each pairing the user gives "
+        "(an isolated supplement micronutrient vs. the whole food they chose to replace it with), "
+        "contrast two things: (1) what the ISOLATED pill nutrient does on its own, and (2) the fuller "
+        "set of health benefits and extra nutrients/compounds they ALSO gain by eating that whole food "
+        "instead (co-nutrients, fibre, healthy fats, phytochemicals/antioxidants, protein, satiety, gut "
+        "health, etc.). Make the added value of the whole food obvious. For each item use this compact "
+        "structure: a bold heading '<Nutrient> \u2192 <Food>', then '\ud83d\udc8a Pill alone:' with one short line, then "
+        "'\ud83e\udd57 Whole food also gives:' with 3-5 short bullets. Be concise and evidence-based. General "
+        "guidance only; no individual medical advice."
+    )
+    user_prompt = "Pairings:\n" + "\n".join(lines) + "\n\nWrite the comparison now."
+    try:
+        return str(bb.call_blockbrain_text(system_prompt, user_prompt) or "").strip()
+    except Exception:
+        return ""
+
+
 def _supplement_search_links(keep_items: list[dict[str, Any]]) -> tuple[str, dict[str, str]]:
     import urllib.parse
 
@@ -1043,6 +1073,28 @@ def _render_final_actions(
                 use_container_width=True,
                 key="swipe_share_dl",
             )
+
+    with st.popover("🌱 Pill vs whole-food benefits", use_container_width=True):
+        st.caption(
+            "See how much MORE you get by eating the whole food instead of just the isolated pill."
+        )
+        if not replace_items:
+            st.info("Swipe right on at least one nutrient to compare benefits.")
+        else:
+            if st.button(
+                "Show benefit comparison",
+                type="primary",
+                use_container_width=True,
+                key="swipe_gen_benefits",
+            ):
+                with st.spinner("Gathering whole-food benefits…"):
+                    st.session_state["swipe_wf_benefits"] = _generate_whole_food_benefits(replace_items)
+                st.rerun()
+            benefits = str(st.session_state.get("swipe_wf_benefits", "") or "")
+            if benefits:
+                st.markdown(benefits)
+            elif "swipe_wf_benefits" in st.session_state:
+                st.warning("Couldn't fetch the comparison right now — please try again.")
 
 
 # --- Micronutrient allow-list -------------------------------------------------
@@ -2095,11 +2147,11 @@ def _render_card() -> None:
     rda_amount_txt = ""
     rda_label_txt = ""
     with st.container(border=True):
+        # Computed here but shown INSIDE the swipe card (passed as `warn` below),
+        # so only the dropdown / Ask AI / dietary filter sit below the card.
         deficiency_flag = _deficiency_flag(
             component_key, card.get("dose_value"), str(card.get("dose_unit", "") or "")
         )
-        if deficiency_flag:
-            st.markdown(f"<div class='deficiency-flag'>{deficiency_flag}</div>", unsafe_allow_html=True)
         stage = st.container()  # draggable swipe card sits at the top of this card
 
         # --- On-card controls ---
@@ -2142,14 +2194,10 @@ def _render_card() -> None:
             else:
                 st.caption("No whole-food alternatives found for this card.")
 
-        # Portion guidance (💊 match-this-dose and 🏃 Athlete-RDA) is passed into
-        # the swipe card so it renders INSIDE the card (see swipe_component).
-
-        if selected_food is not None:
-            st.markdown(
-                f"<div class='bioavail-note'>💡 {_bioavailability_note(component_key)}</div>",
-                unsafe_allow_html=True,
-            )
+        # Portion guidance, the bioavailability tip and the deficiency warning all
+        # render INSIDE the swipe card (passed as props below). Only the dropdown,
+        # Ask AI and dietary filter stay below the card.
+        bio_note = _bioavailability_note(component_key) if selected_food is not None else ""
 
         _render_rag_chat_popup(card, component_key, index)
 
@@ -2162,13 +2210,15 @@ def _render_card() -> None:
                 matchDose=match_dose_txt,
                 rdaAmount=rda_amount_txt,
                 rdaLabel=rda_label_txt,
+                warn=deficiency_flag,
+                bioNote=bio_note,
                 index=index,
                 total=len(cards),
                 accent=theme["accent"],
                 ink=theme["accent2"],
                 bg=theme["bg"],
                 canReplace=selected_food is not None,
-                height=340,
+                height=400,
                 key=f"tinder_{component_key}_{index}_{nonce}",
                 default=None,
             )
