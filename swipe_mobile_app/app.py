@@ -817,9 +817,10 @@ def _basket_cost_summary(replace_items: list[dict[str, Any]]) -> tuple[float, li
     return total, rows, unknown
 
 
-def _generate_meal_plan(replace_items: list[dict[str, Any]], diet_label: str) -> str:
+def _generate_meal_plan(replace_items: list[dict[str, Any]], diet_label: str, num_meals: int = 3) -> str:
     if not replace_items:
         return ""
+    n = max(1, min(3, int(num_meals or 3)))
     lines = []
     for d in replace_items:
         food = str((d.get("selected_food") or {}).get("food_description", "") or "")
@@ -829,19 +830,20 @@ def _generate_meal_plan(replace_items: list[dict[str, Any]], diet_label: str) ->
     diet_clause = ""
     if diet_label and diet_label.strip().lower() not in ("no restriction", "none", ""):
         diet_clause = f" Every meal must fit a {diet_label} diet."
+    meal_word = "meal" if n == 1 else "meals"
     system_prompt = (
         "You are a practical sports nutritionist and recipe writer for the SuppSwipe app. "
-        "Given a set of whole foods and the daily amount of each the user wants to eat, design a "
-        "simple, appetising 1-day meal plan (Breakfast, Lunch, Dinner, Snack) that works those foods "
-        "and amounts in as naturally as possible. Use common German-supermarket ingredients, keep it "
-        "budget-friendly and realistic, and use short bullet points per meal. General guidance only; "
-        "no medical advice."
+        f"Design exactly {n} {meal_word} that TOGETHER incorporate ALL of the given whole foods "
+        "at roughly the daily amounts provided (spread the foods across the meals so every food is "
+        "used at least once). Use common German-supermarket ingredients, keep it budget-friendly and "
+        "realistic, and give each meal a short title followed by a few short bullet points. General "
+        "guidance only; no medical advice."
     )
     user_prompt = (
         "Whole foods to include, with the daily amount to aim for:\n"
         + "\n".join(lines)
         + diet_clause
-        + "\n\nWrite the 1-day meal plan now."
+        + f"\n\nWrite exactly {n} {meal_word} now."
     )
     try:
         return str(bb.call_blockbrain_text(system_prompt, user_prompt) or "").strip()
@@ -1018,19 +1020,29 @@ def _render_final_actions(
     row1 = st.columns(2)
     with row1[0]:
         with st.popover("🍽️ Meal plan", use_container_width=True):
-            st.caption("Turn your whole-food swaps into a simple 1-day meal plan.")
+            st.caption("Turn your whole-food swaps into meals that use all of them.")
             if not replace_items:
                 st.info("Swipe right on at least one nutrient to build a meal plan.")
             else:
-                if st.button("Generate meal plan", type="primary", use_container_width=True, key="swipe_gen_meal"):
-                    with st.spinner("Cooking up a meal plan…"):
-                        st.session_state["swipe_meal_plan"] = _generate_meal_plan(replace_items, diet_label)
+                num_meals = st.radio(
+                    "How many meals?",
+                    options=[1, 2, 3],
+                    index=2,
+                    horizontal=True,
+                    key="swipe_meal_count",
+                    format_func=lambda m: f"{m} meal" if m == 1 else f"{m} meals",
+                )
+                if st.button("Generate meals", type="primary", use_container_width=True, key="swipe_gen_meal"):
+                    with st.spinner("Cooking up your meals…"):
+                        st.session_state["swipe_meal_plan"] = _generate_meal_plan(
+                            replace_items, diet_label, int(num_meals)
+                        )
                     st.rerun()
                 meal_plan = str(st.session_state.get("swipe_meal_plan", "") or "")
                 if meal_plan:
                     st.markdown(meal_plan)
                 elif "swipe_meal_plan" in st.session_state:
-                    st.warning("Couldn't generate a meal plan right now — please try again.")
+                    st.warning("Couldn't generate meals right now — please try again.")
     with row1[1]:
         with st.popover("🛒 Grocery cost", use_container_width=True):
             st.caption("Rough daily cost of your swaps at German discounters (REWE/ALDI/Lidl average).")

@@ -5205,10 +5205,157 @@ def _nutrient_id_override_for(target: str) -> list[int]:
     return []
 
 
+# Alternate / chemical ingredient names -> the standard micronutrient name that
+# USDA FoodData Central actually indexes, so odd-but-valid label terms (e.g.
+# "pyridoxine HCl" for B6, "cyanocobalamin" for B12, "ferrous fumarate" for iron)
+# still resolve to whole-food rows. Keys are normalised (lowercase, hyphens as
+# spaces); only names that don't already token-match USDA are listed, and values
+# are chosen because they DO match a populated USDA nutrient.
+_NUTRIENT_SYNONYMS: dict[str, str] = {
+    # Vitamin B6
+    "pyridoxine": "vitamin b6",
+    "pyridoxine hydrochloride": "vitamin b6",
+    "pyridoxine hcl": "vitamin b6",
+    "pyridoxal": "vitamin b6",
+    "pyridoxal 5 phosphate": "vitamin b6",
+    "pyridoxamine": "vitamin b6",
+    "p5p": "vitamin b6",
+    # Vitamin B12
+    "cobalamin": "vitamin b12",
+    "cyanocobalamin": "vitamin b12",
+    "methylcobalamin": "vitamin b12",
+    "hydroxocobalamin": "vitamin b12",
+    "adenosylcobalamin": "vitamin b12",
+    # Vitamin B9 (folate)
+    "folic acid": "folate",
+    "folacin": "folate",
+    "methylfolate": "folate",
+    "l methylfolate": "folate",
+    "5 mthf": "folate",
+    "folinic acid": "folate",
+    # Vitamin B3 (niacin) - nicotinamide / nicotinic acid don't match "niacin"
+    "nicotinamide": "niacin",
+    "nicotinic acid": "niacin",
+    # Vitamin B5
+    "pantothenate": "pantothenic acid",
+    "calcium pantothenate": "pantothenic acid",
+    "panthenol": "pantothenic acid",
+    "dexpanthenol": "pantothenic acid",
+    # Vitamin A
+    "retinol": "vitamin a",
+    "retinyl": "vitamin a",
+    "retinyl palmitate": "vitamin a",
+    "retinyl acetate": "vitamin a",
+    "retinal": "vitamin a",
+    "beta carotene": "vitamin a",
+    "betacarotene": "vitamin a",
+    # Vitamin C
+    "ascorbic acid": "vitamin c",
+    "l ascorbic acid": "vitamin c",
+    "ascorbate": "vitamin c",
+    "sodium ascorbate": "vitamin c",
+    "calcium ascorbate": "vitamin c",
+    # Vitamin D
+    "cholecalciferol": "vitamin d",
+    "ergocalciferol": "vitamin d",
+    "vitamin d3": "vitamin d",
+    "vitamin d2": "vitamin d",
+    # Vitamin E
+    "tocopherol": "vitamin e",
+    "tocopheryl": "vitamin e",
+    "alpha tocopherol": "vitamin e",
+    "d alpha tocopherol": "vitamin e",
+    "dl alpha tocopherol": "vitamin e",
+    "tocopheryl acetate": "vitamin e",
+    "tocotrienol": "vitamin e",
+    # Vitamin K
+    "phylloquinone": "vitamin k",
+    "phytonadione": "vitamin k",
+    "menaquinone": "vitamin k",
+    "menaquinone 7": "vitamin k",
+    "mk 7": "vitamin k",
+    "vitamin k1": "vitamin k",
+    "vitamin k2": "vitamin k",
+    # Iron
+    "ferrous": "iron",
+    "ferrous sulfate": "iron",
+    "ferrous fumarate": "iron",
+    "ferrous gluconate": "iron",
+    "ferrous bisglycinate": "iron",
+    "ferric": "iron",
+    "iron bisglycinate": "iron",
+    # Copper
+    "cupric": "copper",
+    "copper gluconate": "copper",
+    "copper sulfate": "copper",
+    # Iodine
+    "iodide": "iodine",
+    "potassium iodide": "iodine",
+    # Selenium
+    "selenite": "selenium",
+    "sodium selenite": "selenium",
+    "selenomethionine": "selenium",
+    "l selenomethionine": "selenium",
+}
+
+# Longer keys first so multi-word forms (e.g. "ferrous fumarate") win over "ferrous".
+_SORTED_NUTRIENT_SYNONYM_KEYS: list[str] = sorted(_NUTRIENT_SYNONYMS, key=len, reverse=True)
+
+
+def _canonicalize_nutrient_name(normalized_target: str) -> str:
+    """Map an alternate/chemical nutrient name to the standard USDA name (deterministic)."""
+    t = re.sub(r"\s+", " ", str(normalized_target or "").replace("-", " ")).strip()
+    if not t:
+        return normalized_target
+    for syn in _SORTED_NUTRIENT_SYNONYM_KEYS:
+        if re.search(r"\b" + re.escape(syn) + r"\b", t):
+            return _NUTRIENT_SYNONYMS[syn]
+    return normalized_target
+
+
+# Cache AI canonicalisations (successes and misses) so the fallback LLM call
+# fires at most once per unusual name, never on every card rerun / self-heal.
+_AI_CANON_CACHE: dict[str, str] = {}
+
+
+def _ai_canonicalize_nutrient_name(component_key: str) -> str:
+    """Last-resort: ask the LLM to map an unusual nutrient name to its standard name.
+
+    Only used when the deterministic map + token match both find nothing. Result
+    (including empty misses) is cached to avoid repeat calls.
+    """
+    key = normalize_lookup_key(component_key)
+    if not key:
+        return ""
+    if key in _AI_CANON_CACHE:
+        return _AI_CANON_CACHE[key]
+    result = ""
+    try:
+        system_prompt = (
+            "You map an unusual or chemical supplement-ingredient name to the single standard "
+            "micronutrient it provides, using the plain vitamin/mineral name a food-composition "
+            "database (USDA FoodData Central) would use. Reply with ONLY that standard name and "
+            "nothing else (e.g. 'pyridoxine hydrochloride' -> 'Vitamin B6'; 'cyanocobalamin' -> "
+            "'Vitamin B12'; 'ferrous fumarate' -> 'Iron'; 'menaquinone-7' -> 'Vitamin K'). If it "
+            "is not a recognised vitamin or mineral, reply with exactly NONE."
+        )
+        user_prompt = f"Ingredient: {component_key}\nStandard micronutrient name:"
+        reply = str(call_blockbrain_text(system_prompt, user_prompt) or "").strip()
+        if reply and reply.upper() != "NONE" and len(reply) <= 40:
+            result = reply
+    except Exception:
+        result = ""
+    _AI_CANON_CACHE[key] = result
+    return result
+
+
 def _resolve_local_nutrient_candidates(component_key: str, max_ids: int = 3) -> list[dict[str, Any]]:
     target = normalize_lookup_key(component_key)
     if not target:
         return []
+    # Translate alternate/chemical names (pyridoxine -> vitamin b6, etc.) so odd
+    # but valid label terms still hit the USDA nutrient rankings.
+    target = _canonicalize_nutrient_name(target)
 
     override_ids = _nutrient_id_override_for(target)
     if override_ids:
@@ -5298,7 +5445,15 @@ def _curated_food_fallback(component_key: str, limit: int) -> list[dict[str, Any
 def _build_local_food_rows_for_component(component_key: str, limit: int = TOP_FOODS_PER_COMPONENT) -> list[dict[str, Any]]:
     nutrient_candidates = _resolve_local_nutrient_candidates(component_key, max_ids=3)
     if not nutrient_candidates:
-        return _curated_food_fallback(component_key, limit)
+        curated = _curated_food_fallback(component_key, limit)
+        if curated:
+            return curated
+        # Last-resort: let the LLM translate a truly unusual name, then retry once.
+        ai_name = _ai_canonicalize_nutrient_name(component_key)
+        if ai_name:
+            nutrient_candidates = _resolve_local_nutrient_candidates(ai_name, max_ids=3)
+        if not nutrient_candidates:
+            return _curated_food_fallback(ai_name, limit) if ai_name else []
 
     nutrient_ids = [int(x.get("id", 0) or 0) for x in nutrient_candidates if int(x.get("id", 0) or 0) > 0]
     if not nutrient_ids:
