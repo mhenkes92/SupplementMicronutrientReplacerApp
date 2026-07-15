@@ -2142,22 +2142,19 @@ def _render_card() -> None:
             else:
                 st.caption("No whole-food alternatives found for this card.")
 
-        # Portion guidance (💊 match-this-dose and 🏃 Athlete-RDA) is rendered
-        # natively here rather than inside the swipe iframe. A freshly mounted
-        # custom component could otherwise show these blank on the very first
-        # card; native rendering makes them appear identically on every card.
-        portion_rows: list[str] = []
-        if match_dose_txt:
-            portion_rows.append(f"💊 Match this dose &rarr; eat <b>{match_dose_txt}</b>")
-        if rda_amount_txt:
-            rda_suffix = f" ({rda_label_txt})" if rda_label_txt else ""
-            portion_rows.append(f"🏃 Athlete RDA{rda_suffix} &rarr; eat <b>{rda_amount_txt}</b>")
-        if portion_rows:
-            st.markdown(
-                "<div class='portion-hint'>"
-                + "".join(f"<div>{row}</div>" for row in portion_rows)
-                + "</div>",
-                unsafe_allow_html=True,
+        # Portion guidance (💊 match-this-dose and 🏃 Athlete-RDA) is passed into
+        # the swipe card so it renders INSIDE the card (see swipe_component).
+        # Diagnostic (first card only): if that section would be empty even
+        # though a food is selected, surface WHY so we can pinpoint the
+        # persistent first-card blank. Remove once resolved.
+        if index == 0 and selected_food is not None and not (match_dose_txt or rda_amount_txt):
+            _dbg_rda = _rda_for_component(component_key)
+            st.caption(
+                "⚙️ first-card debug — "
+                f"dose={card.get('dose_value')} {card.get('dose_unit','')}, "
+                f"rda_match={'yes' if _dbg_rda else 'no'}, "
+                f"food_unit={(selected_food or {}).get('unit')}, "
+                f"food_amt/100g={(selected_food or {}).get('amount_per_100g')}"
             )
 
         if selected_food is not None:
@@ -2174,6 +2171,9 @@ def _render_card() -> None:
                 name=str(card.get("component", "Unknown micronutrient")),
                 dose=str(card.get("dose_label", "Not available")),
                 food=food_label,
+                matchDose=match_dose_txt,
+                rdaAmount=rda_amount_txt,
+                rdaLabel=rda_label_txt,
                 index=index,
                 total=len(cards),
                 accent=theme["accent"],
