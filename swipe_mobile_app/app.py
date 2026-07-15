@@ -657,6 +657,394 @@ def _format_rda_target(entry: dict[str, Any]) -> str:
     return f"{bb.format_float(float(entry['athlete']))} {entry['unit']}"
 
 
+# --- Deficiency risk, bioavailability, pricing, meal plan, share, history -----
+# Lightweight feature helpers layered on top of the swipe flow. Anything that
+# calls the LLM is wrapped in try/except and degrades to a curated fallback so a
+# flaky network never breaks the results screen.
+
+# Nutrients most commonly under-consumed by active people (see the Athlete RDA
+# guide caption): flagged even when the kept pill dose looks adequate.
+_HIGH_RISK_NUTRIENTS = ["vitamin d", "iron", "vitamin b12", "cobalamin", "zinc", "omega", "epa", "dha"]
+
+
+def _dose_vs_athlete_ratio(component_key: str, dose_value: Any, dose_unit: str) -> float | None:
+    """Kept pill dose as a fraction of the athlete daily target (1.0 == meets it)."""
+    entry = _rda_for_component(component_key)
+    if entry is None or dose_value is None:
+        return None
+    try:
+        supp_factor = bb.unit_to_mg(str(dose_unit or ""))
+        if supp_factor is None and bb.normalize_lookup_key(str(dose_unit or "")) in {"iu", "ui", "ie"}:
+            supp_factor = bb._iu_unit_to_mg_for_component(component_key)
+        target_factor = bb.unit_to_mg(str(entry["unit"]))
+        if supp_factor is None or target_factor is None:
+            return None
+        target_mg = float(entry["athlete"]) * target_factor
+        if target_mg <= 0:
+            return None
+        return (float(dose_value) * supp_factor) / target_mg
+    except Exception:
+        return None
+
+
+def _deficiency_flag(component_key: str, dose_value: Any, dose_unit: str) -> str:
+    """Short warning when the kept pill is well below the athlete target and/or the
+    nutrient is one athletes commonly fall short on. "" when nothing to flag."""
+    key = bb.normalize_lookup_key(component_key)
+    high_risk = any(h in key for h in _HIGH_RISK_NUTRIENTS)
+    ratio = _dose_vs_athlete_ratio(component_key, dose_value, dose_unit)
+    if ratio is not None and ratio < 0.5:
+        pct = max(1, int(round(ratio * 100)))
+        tail = " — commonly under-consumed, prioritise it" if high_risk else ""
+        return f"⚠️ This pill covers only ~{pct}% of the athlete daily target{tail}."
+    if high_risk:
+        return "⚠️ Athletes commonly fall short on this one — worth prioritising."
+    return ""
+
+
+# Why the whole food generally beats the isolated pill (one concise, curated line
+# per nutrient; generic fallback otherwise). General guidance only.
+_BIOAVAILABILITY_NOTES: list[tuple[str, str]] = [
+    ("vitamin a", "Food gives beta-carotene, which the body converts only as needed — safer than pre-formed retinol pills."),
+    ("beta carotene", "Food gives beta-carotene, which the body converts only as needed — safer than pre-formed retinol pills."),
+    ("vitamin c", "Whole foods pair vitamin C with bioflavonoids that support its absorption and antioxidant action."),
+    ("vitamin d", "Food and sunlight deliver vitamin D alongside cofactors (magnesium, K2) needed to actually use it."),
+    ("vitamin e", "Food vitamin E is the full tocopherol/tocotrienol family, not just the single alpha form in most pills."),
+    ("vitamin k", "Greens supply K1 with fat and fibre that aid uptake; fermented foods add well-absorbed K2."),
+    ("folate", "Natural food folate is better balanced than high-dose folic acid, which can mask a B12 deficiency."),
+    ("vitamin b12", "Animal foods carry B12 bound to protein with the cofactors that aid its absorption."),
+    ("cobalamin", "Animal foods carry B12 bound to protein with the cofactors that aid its absorption."),
+    ("iron", "Heme iron from food is far better absorbed than iron salts — and much gentler on the gut."),
+    ("calcium", "Food calcium arrives with vitamin D, K2 and magnesium that direct it into bone."),
+    ("magnesium", "Food magnesium comes bound to fibre and other minerals, so it's better tolerated than high-dose salts."),
+    ("zinc", "Food zinc is balanced with copper; isolated zinc pills can deplete copper over time."),
+    ("selenium", "One or two Brazil nuts cover selenium — food keeps you clear of the narrow toxic threshold of pills."),
+    ("potassium", "Food potassium is well-absorbed and unrestricted, unlike dose-capped supplements."),
+    ("omega", "Whole fish delivers EPA+DHA with protein and vitamin D, and is less oxidised than old capsules."),
+    ("choline", "Eggs and liver supply choline with phospholipids and other B-vitamins that work together."),
+]
+
+
+def _bioavailability_note(component_key: str) -> str:
+    key = bb.normalize_lookup_key(component_key)
+    for needle, note in _BIOAVAILABILITY_NOTES:
+        if needle in key:
+            return note
+    return (
+        "Whole foods deliver this nutrient with natural cofactors and a food matrix "
+        "that generally improve absorption versus an isolated pill."
+    )
+
+
+# Approximate German discounter prices (REWE/ALDI/Lidl average, €/kg, 2024). Used
+# only for a rough basket estimate — clearly labelled as approximate in the UI.
+_GERMAN_FOOD_PRICE_PER_KG: list[tuple[list[str], float]] = [
+    (["salmon", "lachs"], 22.0),
+    (["sardine", "mackerel", "makrele", "anchovy", "hering", "herring"], 12.0),
+    (["tuna", "thunfisch"], 15.0),
+    (["fish", "seafood", "fisch"], 18.0),
+    (["liver", "leber"], 9.0),
+    (["beef", "rind"], 14.0),
+    (["pork", "schwein"], 9.0),
+    (["chicken", "poultry", "huhn", "hähnchen"], 8.0),
+    (["egg", "eier"], 4.0),
+    (["cheese", "käse"], 10.0),
+    (["yogurt", "joghurt", "milk", "milch", "quark"], 1.6),
+    (["almond", "mandel"], 14.0),
+    (["walnut", "walnuss"], 13.0),
+    (["hazelnut", "hasel"], 14.0),
+    (["cashew"], 15.0),
+    (["peanut", "erdnuss"], 6.0),
+    (["seed", "samen", "kerne", "sunflower", "pumpkin", "chia", "flax", "lein"], 8.0),
+    (["nut", "nuss"], 12.0),
+    (["spinach", "spinat"], 5.0),
+    (["kale", "grünkohl"], 4.0),
+    (["broccoli", "brokkoli"], 3.5),
+    (["cabbage", "kohl", "lettuce", "salat", "chard", "mangold", "greens"], 3.0),
+    (["carrot", "möhre", "karotte"], 1.5),
+    (["sweet potato", "süßkartoffel"], 3.0),
+    (["potato", "kartoffel"], 1.2),
+    (["bean", "bohne", "lentil", "linse", "chickpea", "kichererbse", "legume"], 3.0),
+    (["tofu", "soy", "soja"], 6.0),
+    (["berry", "beere", "strawberry", "erdbeere", "blueberry", "heidelbeere"], 8.0),
+    (["orange", "apple", "apfel", "banana", "banane", "fruit", "obst"], 2.5),
+    (["mushroom", "pilz", "champignon"], 8.0),
+    (["oat", "hafer", "rice", "reis", "grain", "getreide", "bread", "brot"], 2.0),
+]
+
+
+def _estimate_food_price_eur(food_name: str, grams: float | None) -> float | None:
+    if grams is None or grams <= 0:
+        return None
+    key = bb.normalize_lookup_key(food_name)
+    for needles, price_per_kg in _GERMAN_FOOD_PRICE_PER_KG:
+        if any(n in key for n in needles):
+            return (grams / 1000.0) * price_per_kg
+    return None
+
+
+def _grams_to_match_dose(decision: dict[str, Any]) -> float | None:
+    food = decision.get("selected_food") or {}
+    try:
+        amount_per_100g = float(food.get("amount_per_100g", 0.0) or 0.0)
+    except Exception:
+        amount_per_100g = 0.0
+    try:
+        return bb.grams_needed_to_match_dose(
+            decision.get("dose_value"),
+            str(decision.get("dose_unit", "") or ""),
+            amount_per_100g,
+            str(food.get("unit", "") or ""),
+            str(decision.get("component", "") or ""),
+        )
+    except Exception:
+        return None
+
+
+def _basket_cost_summary(replace_items: list[dict[str, Any]]) -> tuple[float, list[tuple[str, float]], list[str]]:
+    rows: list[tuple[str, float]] = []
+    unknown: list[str] = []
+    total = 0.0
+    for d in replace_items:
+        name = str((d.get("selected_food") or {}).get("food_description", "") or "")
+        grams = _grams_to_match_dose(d)
+        cost = _estimate_food_price_eur(name, grams)
+        if cost is not None and cost > 0:
+            rows.append((name, cost))
+            total += cost
+        elif name:
+            unknown.append(name)
+    return total, rows, unknown
+
+
+def _generate_meal_plan(replace_items: list[dict[str, Any]], diet_label: str) -> str:
+    if not replace_items:
+        return ""
+    lines = []
+    for d in replace_items:
+        food = str((d.get("selected_food") or {}).get("food_description", "") or "")
+        amount = _amount_to_match_dose(d)
+        nutrient = str(d.get("component", "") or "")
+        lines.append(f"- {food} ({amount}) for {nutrient}")
+    diet_clause = ""
+    if diet_label and diet_label.strip().lower() not in ("no restriction", "none", ""):
+        diet_clause = f" Every meal must fit a {diet_label} diet."
+    system_prompt = (
+        "You are a practical sports nutritionist and recipe writer for the SuppSwipe app. "
+        "Given a set of whole foods and the daily amount of each the user wants to eat, design a "
+        "simple, appetising 1-day meal plan (Breakfast, Lunch, Dinner, Snack) that works those foods "
+        "and amounts in as naturally as possible. Use common German-supermarket ingredients, keep it "
+        "budget-friendly and realistic, and use short bullet points per meal. General guidance only; "
+        "no medical advice."
+    )
+    user_prompt = (
+        "Whole foods to include, with the daily amount to aim for:\n"
+        + "\n".join(lines)
+        + diet_clause
+        + "\n\nWrite the 1-day meal plan now."
+    )
+    try:
+        return str(bb.call_blockbrain_text(system_prompt, user_prompt) or "").strip()
+    except Exception:
+        return ""
+
+
+def _supplement_search_links(keep_items: list[dict[str, Any]]) -> tuple[str, dict[str, str]]:
+    import urllib.parse
+
+    names = [str(d.get("component", "") or "").strip() for d in keep_items if d.get("component")]
+    names = list(dict.fromkeys([n for n in names if n]))
+    if not names:
+        return "", {}
+    query = " ".join(names)
+    enc = urllib.parse.quote_plus(query + " Kombipräparat Multivitamin")
+    links = {
+        "Compare prices on idealo.de": f"https://www.idealo.de/preisvergleich/MainSearchProductCategory.html?q={enc}",
+        "Search on Amazon.de": f"https://www.amazon.de/s?k={enc}",
+        "Google Shopping": f"https://www.google.com/search?tbm=shop&q={enc}",
+    }
+    return query, links
+
+
+def _build_share_text(
+    keep_items: list[dict[str, Any]],
+    replace_items: list[dict[str, Any]],
+    meal_plan: str,
+) -> str:
+    out = ["SuppSwipe — my results", ""]
+    out.append(f"🥗 Replaced with whole foods ({len(replace_items)}):")
+    if replace_items:
+        for d in replace_items:
+            food = str((d.get("selected_food") or {}).get("food_description", "") or "")
+            out.append(f"  • {d.get('component', '')}: {food} ({_amount_to_match_dose(d)})")
+    else:
+        out.append("  • (none)")
+    out.append("")
+    out.append(f"💊 Kept as a supplement ({len(keep_items)}):")
+    if keep_items:
+        for d in keep_items:
+            out.append(f"  • {d.get('component', '')} {d.get('dose_label', '')}".rstrip())
+    else:
+        out.append("  • (none)")
+    if meal_plan.strip():
+        out += ["", "🍽️ Meal plan:", meal_plan.strip()]
+    out += ["", "Made with SuppSwipe — ditch the pill, eat the real thing."]
+    return "\n".join(out)
+
+
+# --- Scan history (best-effort, stored per device) ---------------------------
+_HISTORY_PATH = Path.home() / ".suppswipe_scan_history.json"
+
+
+def _load_scan_history() -> list[dict[str, Any]]:
+    if "suppswipe_scan_history" in st.session_state:
+        return st.session_state["suppswipe_scan_history"]
+    history: list[dict[str, Any]] = []
+    try:
+        if _HISTORY_PATH.exists():
+            import json
+
+            loaded = json.loads(_HISTORY_PATH.read_text(encoding="utf-8"))
+            if isinstance(loaded, list):
+                history = loaded
+    except Exception:
+        history = []
+    st.session_state["suppswipe_scan_history"] = history
+    return history
+
+
+def _save_scan_history(history: list[dict[str, Any]]) -> None:
+    st.session_state["suppswipe_scan_history"] = history
+    try:
+        import json
+
+        _HISTORY_PATH.write_text(json.dumps(history[-30:], ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _record_scan_to_history(decisions: dict[str, dict[str, Any]], diet_label: str) -> None:
+    if not decisions:
+        return
+    sig = str(st.session_state.get("swipe_last_auto_signature", "") or "")
+    if sig and sig == str(st.session_state.get("swipe_history_recorded_sig", "") or ""):
+        return
+    import time
+
+    entry = {
+        "ts": time.strftime("%Y-%m-%d %H:%M"),
+        "diet": diet_label,
+        "kept": [
+            {"component": str(d.get("component", "") or ""), "dose": str(d.get("dose_label", "") or "")}
+            for d in decisions.values()
+            if d.get("decision") == "keep"
+        ],
+        "replaced": [
+            {
+                "component": str(d.get("component", "") or ""),
+                "food": str((d.get("selected_food") or {}).get("food_description", "") or ""),
+                "amount": _amount_to_match_dose(d),
+            }
+            for d in decisions.values()
+            if d.get("decision") == "replace"
+        ],
+    }
+    history = _load_scan_history()
+    history.append(entry)
+    _save_scan_history(history)
+    st.session_state["swipe_history_recorded_sig"] = sig
+
+
+def _render_scan_history_popover() -> None:
+    history = _load_scan_history()
+    if not history:
+        return
+    with st.popover(f"🕘 Recent scans ({len(history)})", use_container_width=True):
+        st.caption("Your past scans on this device — newest first.")
+        for entry in reversed(history[-15:]):
+            ts = str(entry.get("ts", "") or "")
+            diet = str(entry.get("diet", "") or "")
+            kept = entry.get("kept", []) or []
+            replaced = entry.get("replaced", []) or []
+            head = f"**{ts}** · {len(replaced)} swapped / {len(kept)} kept"
+            if diet and diet.lower() not in ("no restriction", "none"):
+                head += f" · {diet}"
+            st.markdown(head)
+            for r in replaced:
+                st.markdown(f"- 🥗 {r.get('component', '')} → {r.get('food', '')} ({r.get('amount', '')})")
+            for k in kept:
+                st.markdown(f"- 💊 {k.get('component', '')} {k.get('dose', '')}".rstrip())
+            st.divider()
+        if st.button("Clear history", use_container_width=True, key="swipe_clear_history"):
+            _save_scan_history([])
+            st.rerun()
+
+
+def _render_final_actions(
+    keep_items: list[dict[str, Any]],
+    replace_items: list[dict[str, Any]],
+    diet_label: str,
+) -> None:
+    row1 = st.columns(2)
+    with row1[0]:
+        with st.popover("🍽️ Meal plan", use_container_width=True):
+            st.caption("Turn your whole-food swaps into a simple 1-day meal plan.")
+            if not replace_items:
+                st.info("Swipe right on at least one nutrient to build a meal plan.")
+            else:
+                if st.button("Generate meal plan", type="primary", use_container_width=True, key="swipe_gen_meal"):
+                    with st.spinner("Cooking up a meal plan…"):
+                        st.session_state["swipe_meal_plan"] = _generate_meal_plan(replace_items, diet_label)
+                    st.rerun()
+                meal_plan = str(st.session_state.get("swipe_meal_plan", "") or "")
+                if meal_plan:
+                    st.markdown(meal_plan)
+                elif "swipe_meal_plan" in st.session_state:
+                    st.warning("Couldn't generate a meal plan right now — please try again.")
+    with row1[1]:
+        with st.popover("🛒 Grocery cost", use_container_width=True):
+            st.caption("Rough daily cost of your swaps at German discounters (REWE/ALDI/Lidl average).")
+            total, rows, unknown = _basket_cost_summary(replace_items)
+            if not rows and not unknown:
+                st.info("No whole-food swaps to price yet.")
+            else:
+                for name, cost in rows:
+                    st.markdown(f"- {name}: ~€{cost:.2f}/day")
+                if total > 0:
+                    st.markdown(f"**≈ €{total:.2f}/day · €{total * 7:.2f}/week**")
+                if unknown:
+                    st.caption("No estimate for: " + ", ".join(unknown))
+                st.caption("Approximate 2024 discounter prices — actual prices vary by shop and season.")
+    row2 = st.columns(2)
+    with row2[0]:
+        with st.popover("💊 Cheapest combo", use_container_width=True):
+            st.caption("Find one all-in-one product covering the pills you kept.")
+            if not keep_items:
+                st.info("You didn't keep any supplements — nothing to buy!")
+            else:
+                _query, links = _supplement_search_links(keep_items)
+                covers = ", ".join(dict.fromkeys(str(d.get("component", "") or "") for d in keep_items if d.get("component")))
+                st.markdown(f"**Covers:** {covers}")
+                for label, url in links.items():
+                    st.markdown(f"- [{label}]({url})")
+                st.caption("Links open a live search so you can compare real products and prices. Not medical or purchase advice.")
+    with row2[1]:
+        with st.popover("📤 Share", use_container_width=True):
+            st.caption("Copy or download your results.")
+            share_text = _build_share_text(
+                keep_items, replace_items, str(st.session_state.get("swipe_meal_plan", "") or "")
+            )
+            st.code(share_text)
+            st.download_button(
+                "Download as text",
+                data=share_text,
+                file_name="suppswipe_results.txt",
+                mime="text/plain",
+                use_container_width=True,
+                key="swipe_share_dl",
+            )
+
+
 # --- Micronutrient allow-list -------------------------------------------------
 # Only scientifically recognised nutrients become swipe cards: the 13 essential
 # vitamins + the essential minerals, plus choline and the omega-3 essential
@@ -1086,6 +1474,27 @@ def _render_header() -> None:
                 color: #234a32;
                 font-size: 0.85rem;
                 line-height: 1.5;
+            }
+            .deficiency-flag {
+                margin: 0 0 0.45rem 0;
+                padding: 0.4rem 0.6rem;
+                border-radius: 10px;
+                background: #fff5f5;
+                border: 1px solid #f3c0c0;
+                color: #9b1c1c;
+                font-size: 0.78rem;
+                font-weight: 700;
+                line-height: 1.35;
+            }
+            .bioavail-note {
+                margin: 0.1rem 0 0.35rem 0;
+                padding: 0.45rem 0.6rem;
+                border-radius: 10px;
+                background: #f3f8ff;
+                border: 1px solid #cfe0f2;
+                color: #24425f;
+                font-size: 0.8rem;
+                line-height: 1.45;
             }
             .action-legend {
                 text-align: center;
@@ -1606,6 +2015,7 @@ def _render_analyze_bar() -> None:
         else:
             st.session_state["swipe_open_analyze"] = True
         st.rerun()
+    _render_scan_history_popover()
 
 
 def _render_card() -> None:
@@ -1685,6 +2095,11 @@ def _render_card() -> None:
     rda_amount_txt = ""
     rda_label_txt = ""
     with st.container(border=True):
+        deficiency_flag = _deficiency_flag(
+            component_key, card.get("dose_value"), str(card.get("dose_unit", "") or "")
+        )
+        if deficiency_flag:
+            st.markdown(f"<div class='deficiency-flag'>{deficiency_flag}</div>", unsafe_allow_html=True)
         stage = st.container()  # draggable swipe card sits at the top of this card
 
         # --- On-card controls ---
@@ -1742,6 +2157,12 @@ def _render_card() -> None:
                 "<div class='portion-hint'>"
                 + "".join(f"<div>{row}</div>" for row in portion_rows)
                 + "</div>",
+                unsafe_allow_html=True,
+            )
+
+        if selected_food is not None:
+            st.markdown(
+                f"<div class='bioavail-note'>💡 {_bioavailability_note(component_key)}</div>",
                 unsafe_allow_html=True,
             )
 
@@ -1839,6 +2260,13 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
                         st.rerun()
             else:
                 st.caption("Nothing swiped right.")
+
+    # Record this completed scan to the on-device history (once per analysis).
+    diet_label = str((_selected_dietary_profile() or {}).get("label", "") or "")
+    _record_scan_to_history(decisions, diet_label)
+
+    # Action row: meal plan, German grocery cost, all-in-one supplement finder, share.
+    _render_final_actions(keep_items, replace_items, diet_label)
 
     # A single Ask AI chat for the whole summary, shown once below the card.
     all_components = [str(d.get("component", "") or "") for d in decisions.values() if d.get("component")]
