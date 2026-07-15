@@ -793,6 +793,14 @@ def grams_needed_to_match_dose(
         if supp_unit_key in {"iu", "ui", "ie"}:
             supp_factor = _iu_unit_to_mg_for_component(component_name)
     food_factor = unit_to_mg(nutrient_unit or "")
+    if food_factor is None:
+        # USDA stores fat-soluble vitamins (A, D, E) in IU, so the FOOD side can
+        # also be measured in IU — convert it with the same component-based
+        # factor used for the supplement dose above (otherwise the whole portion
+        # calc silently returns None and the card shows no portion at all).
+        food_unit_key = normalize_lookup_key(str(nutrient_unit or ""))
+        if food_unit_key in {"iu", "ui", "ie"}:
+            food_factor = _iu_unit_to_mg_for_component(component_name)
     if supp_factor is None or food_factor is None:
         return None
 

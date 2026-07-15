@@ -2144,18 +2144,6 @@ def _render_card() -> None:
 
         # Portion guidance (💊 match-this-dose and 🏃 Athlete-RDA) is passed into
         # the swipe card so it renders INSIDE the card (see swipe_component).
-        # Diagnostic (first card only): if that section would be empty even
-        # though a food is selected, surface WHY so we can pinpoint the
-        # persistent first-card blank. Remove once resolved.
-        if index == 0 and selected_food is not None and not (match_dose_txt or rda_amount_txt):
-            _dbg_rda = _rda_for_component(component_key)
-            st.caption(
-                "⚙️ first-card debug — "
-                f"dose={card.get('dose_value')} {card.get('dose_unit','')}, "
-                f"rda_match={'yes' if _dbg_rda else 'no'}, "
-                f"food_unit={(selected_food or {}).get('unit')}, "
-                f"food_amt/100g={(selected_food or {}).get('amount_per_100g')}"
-            )
 
         if selected_food is not None:
             st.markdown(
