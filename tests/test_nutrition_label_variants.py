@@ -295,3 +295,29 @@ def test_mandatory_german_warning_sentence_is_not_a_column_header():
     )
     assert bb._label_daily_dose_column(text) is None
     assert _parsed(text) == [("vitamin c", 80.0, "mg")]
+
+
+# --- OCR unit / spelling slips and misattributed doses -------------------------
+
+@pytest.mark.parametrize(
+    "old, new, key, dose",
+    [
+        ("Vitamin B12 2,5 µg", "Vitamin B12 2,5 pg", "vitamin b12", "2.5 mcg"),  # OCR µ -> p
+        ("Vitamin B12 2,5 µg", "Vitamin B12 2,5 µ g", "vitamin b12", "2.5 mcg"),
+        ("Jod 150 µg", "Jod 150 pg", "iodine", "150 mcg"),
+        ("Jod 150 µg", "Iod 150 µg", "iodine", "150 mcg"),
+    ],
+)
+def test_ocr_slips_keep_the_card_and_its_dose(sw, old, new, key, dose):
+    doses = _doses(sw, LABEL_B.replace(old, new))
+    assert len(doses) == 17 and doses[key] == dose
+
+
+def test_unreadable_unit_never_borrows_another_lines_dose():
+    # The generic parser pairs "Vitamin B12 2,5 ??" with Biotin's "50 µg" on the
+    # next line; that line was already read as biotin, so the row is dropped
+    # rather than shown with a wrong dose.
+    rows = bb.parse_components(LABEL_B.replace("Vitamin B12 2,5 µg", "Vitamin B12 2,5 qq"))
+    assert not [r for r in rows if bb.canonical_nutrient_key(r["component"]) == "vitamin b12"]
+    biotin = [r for r in rows if bb.canonical_nutrient_key(r["component"]) == "biotin"]
+    assert [(r["dose_value"], r["dose_unit"]) for r in biotin] == [(50.0, "mcg")]

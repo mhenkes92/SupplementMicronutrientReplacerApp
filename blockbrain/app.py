@@ -5414,7 +5414,7 @@ _NUTRIENT_LEXICON: dict[str, dict[str, Any]] = {
     "manganese": {"display": "manganese", "unit": "mg", "usda": ((1101, 1.0),), "aliases": ["manganese", "mangan"]},
     "iodine": {
         "display": "iodine", "unit": "mcg", "usda": ((1100, 1.0),),
-        "aliases": ["iodine", "jod", "iodide", "iodid", "jodid", "potassium iodide", "potassium iodate",
+        "aliases": ["iodine", "jod", "iod", "iodide", "iodid", "jodid", "potassium iodide", "potassium iodate",
                     "kalium iodid", "kalium jodid", "kalium iodat", "kalium jodat", "sodium iodide"],
     },
     "selenium": {
@@ -5511,6 +5511,7 @@ def _fold_label_text(text: str) -> str:
     # "800 ?g" becomes the unknown unit "xg" instead of 800 g.
     t = re.sub(r"(?<=[\d\s])[^\x00-\x7f]+(?=g(?![a-z]))", "x", t)
     t = t.encode("ascii", "ignore").decode("ascii")
+    t = re.sub(r"(\d)\s*u\s+g(?![a-z])", r"\1 ug", t)  # OCR: "2,5 µ g"
     t = re.sub(r"\bb\s*-?\s*l2\b", "b12", t)  # OCR: "Bl2"
     t = _VITAMIN_GLUED_RE.sub("vitamin ", t)
     t = re.sub(r"\bvit(?:amine?|main|arnin|amln)?\b\.?", "vitamin", t)
@@ -9482,10 +9483,13 @@ def _score_component_rows(rows: list[dict[str, Any]]) -> float:
 
 _LABEL_DOSE_RE = re.compile(
     r"(?<![a-z0-9.,])(?P<num>\d+(?:[.,]\d+)*)\s*"
-    r"(?P<unit>mcg|meg|mcq|ug|mg|rng|g|iu|i\.\s?e\.?|ie|ui)(?![a-z0-9])"
+    r"(?P<unit>mcg|meg|mcq|ug|pg|mg|rng|g|iu|i\.\s?e\.?|ie|ui)(?![a-z0-9])"
     r"(?:\s*(?P<basis>dfe|rae|re|ne|alpha\s*te|a\s*te|te)(?![a-z0-9]))?"
 )
-_LABEL_DOSE_UNITS: dict[str, str] = {"mcg": "mcg", "meg": "mcg", "mcq": "mcg", "ug": "mcg", "mg": "mg", "rng": "mg", "g": "g"}
+# "pg" is the usual OCR misread of "µg" (picograms never appear on supplement labels).
+_LABEL_DOSE_UNITS: dict[str, str] = {
+    "mcg": "mcg", "meg": "mcg", "mcq": "mcg", "ug": "mcg", "pg": "mcg", "mg": "mg", "rng": "mg", "g": "g",
+}
 _LABEL_DOSE_BASES: dict[str, str] = {"dfe": "DFE", "rae": "RAE", "re": "RE", "ne": "NE"}
 _LABEL_FORM_PREFIX_RE = re.compile(r"^(?:as|from|als|aus|in form of|in the form of|source|quelle)\b[\s:]*")
 # A preceding "as"/"als" makes a nutrient name a form of the previous one:
@@ -9863,6 +9867,23 @@ def _generic_row_named_in(component: str, folded_text: str, text_keys: set[str])
     return bool(key) and _name_fuzzily_in(_legacy_row_name_words(component), folded_text)
 
 
+def _dose_number_in(value: Any, folded_text: str) -> bool:
+    """True when a dose value (or the same amount in mg <-> µg) is written in
+    folded_text, in any decimal notation ("1,4" / "1.4", "1.000" / "1000")."""
+    try:
+        target = float(value)
+    except Exception:
+        return True  # no dose to check
+    if target <= 0:
+        return True
+    numbers = {_parse_float(n) for n in re.findall(r"\d+(?:[.,]\d+)*", folded_text)}
+    return any(
+        n is not None and abs(n - target * scale) <= 1e-6 * max(1.0, target * scale)
+        for n in numbers
+        for scale in (1.0, 1000.0, 0.001)
+    )
+
+
 def _lexicon_keys_in(folded_text: str) -> set[str]:
     return {_NUTRIENT_ALIAS_INDEX[re.sub(r"\s+", " ", m.group(0))][0] for m in _NUTRIENT_ALIAS_RE.finditer(folded_text)}
 
@@ -9896,11 +9917,12 @@ def _reconcile_label_line_rows(rows: list[dict[str, Any]], input_text: str) -> l
     the line parser left unread (by any lexicon name, its literal name, or —
     allowing OCR typos such as "Magnesiurn" — fuzzily). That drops the
     "potassium 150 mcg" taken from "Iodine (as potassium iodide) 150 mcg" and
-    the "vitamin b9" read from a truncated "Vitamin B" / "Vitamin B-12". A dose
-    equal to another line's dose is NOT a reason to drop a row (B2 and B6 are
-    both 1.4 mg on many labels; "Coenzyme Q10 100 mg" next to "Vitamin C 100
-    mg"). With no label lines read at all, only the "vitamin <code>" phantoms
-    are dropped.
+    the "vitamin b9" read from a truncated "Vitamin B" / "Vitamin B-12". Its
+    dose must also be written in that unread text (not taken from a line
+    already read); a dose that merely EQUALS another line's dose is fine (B2
+    and B6 are both 1.4 mg on many labels; "Coenzyme Q10 100 mg" next to
+    "Vitamin C 100 mg"). With no label lines read at all, only the "vitamin
+    <code>" / "omega <n>" phantoms are dropped.
     """
     folded_text = _fold_label_text(input_text)
     rows = _rename_salt_cation_rows(rows, folded_text)
@@ -9913,6 +9935,10 @@ def _reconcile_label_line_rows(rows: list[dict[str, Any]], input_text: str) -> l
         row for row in rows
         if canonical_nutrient_key(str(row.get("component", "") or "")) not in covered
         and _generic_row_named_in(str(row.get("component", "") or ""), unclaimed, unclaimed_keys)
+        # Its dose must be written in the unread text too: a dose taken from a
+        # line the label-line parser read belongs to that line's nutrient
+        # (a "Vitamin B12 2,5 [unreadable unit]" row must not get Biotin's 50).
+        and _dose_number_in(row.get("dose_value"), unclaimed)
     ]
     return [dict(r) for r in line_rows] + kept
 
