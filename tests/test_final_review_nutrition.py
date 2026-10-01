@@ -219,3 +219,65 @@ def test_reviewer_defaults_are_no_longer_impractical_foods(sw, profiles, text, d
     foods = _shown(sw, card, profiles[diet])
     food = foods[sw._default_food_index(foods, card, profiles[diet])]
     assert banned not in food["food_description"].lower(), food
+
+
+# --- F7 / UXJ-F8: pregnancy mode and fish / shellfish -------------------------------
+
+_PREGNANCY_TEXT = "Vitamin B12 2,5 µg\nZink 10 mg\nOmega-3 1000 mg\nNiacin 50 mg\nSelen 55 µg\nKupfer 1 mg"
+
+
+@pytest.mark.parametrize("name", [
+    "Fish, tuna, fresh, bluefin, raw", "Fish, roughy, orange, raw", "Fish, swordfish, raw",
+    "Fish, shark, mixed species, raw", "Fish, mackerel, king, raw", "Fish, tilefish, raw",
+])
+def test_high_mercury_fish_are_recognised(sw, name):
+    assert sw._is_high_mercury_fish({"food_description": name})
+
+
+@pytest.mark.parametrize("name", [
+    "Crustaceans, crab, alaska king, raw", "Fish, mackerel, Atlantic, raw", "Fish, tuna, fresh, yellowfin, raw",
+    "Fish, salmon, Atlantic, wild, raw",
+])
+def test_everyday_fish_are_not_high_mercury(sw, name):
+    assert not sw._is_high_mercury_fish({"food_description": name})
+
+
+def test_pregnancy_hides_high_mercury_fish_and_demotes_shellfish_roe_and_tuna(sw):
+    for card in _cards(sw, _PREGNANCY_TEXT):
+        pregnant_foods = sw._card_food_options(card["foods"], None, True)
+        assert not any(sw._is_high_mercury_fish(f) or sw._is_organ_meat(f) for f in pregnant_foods), card["component"]
+        food = pregnant_foods[sw._default_food_index(pregnant_foods, card, None, pregnant=True)]
+        assert not sw._pregnancy_caution_food(food), (card["component"], food["food_description"])
+    # Not pregnant: the same cards still default to oysters / tuna where those rank first.
+    b12 = next(c for c in _cards(sw, _PREGNANCY_TEXT) if c["nutrient_key"] == "vitamin b12")
+    foods = sw._card_food_options(b12["foods"], None, False)
+    assert any(sw._is_high_mercury_fish(f) for f in foods)
+    assert sw._pregnancy_caution_food(foods[sw._default_food_index(foods, b12, None, pregnant=False)])
+
+
+def test_pregnancy_notes_for_shellfish_roe_and_tuna(sw):
+    assert "well cooked" in sw._pregnancy_food_note({"food_description": "Mollusks, oyster, eastern, wild, raw"})
+    assert "well cooked" in sw._pregnancy_food_note({"food_description": "Fish, roe, mixed species, raw"})
+    assert "twice a week" in sw._pregnancy_food_note({"food_description": "Fish, tuna, fresh, yellowfin, raw"})
+    assert sw._pregnancy_food_note({"food_description": "Fish, herring, Atlantic, raw"}) == ""
+    oyster = {"component": "zinc", "selected_food": {"food_description": "Mollusks, oyster, eastern, wild, raw",
+              "food_category": "Finfish and Shellfish Products", "amount_per_100g": 39.3, "unit": "mg"},
+              "dose_value": 10, "dose_unit": "mg"}
+    assert any("well cooked" in w for w in sw._pregnancy_food_warnings([oyster], pregnant=True))
+    assert sw._pregnancy_food_warnings([oyster], pregnant=False) == []
+
+
+def test_pregnancy_meal_plan_never_asks_for_liver_or_swordfish(sw):
+    liver = {"component": "vitamin b12", "selected_food": {"food_description": "Beef, variety meats and by-products, liver, raw",
+             "food_category": "Beef Products", "amount_per_100g": 59.3, "unit": "mcg"}, "dose_value": 2.5, "dose_unit": "mcg"}
+    sword = {"component": "selenium", "selected_food": {"food_description": "Fish, swordfish, raw",
+             "food_category": "Finfish and Shellfish Products", "amount_per_100g": 48.1, "unit": "mcg"},
+             "dose_value": 55, "dose_unit": "mcg"}
+    _sys, user, _key = sw._meal_plan_prompts([liver, sword], "No restriction", 3, pregnant=True)
+    assert "pregnancy-safe food rich in Vitamin B12 instead of" in user
+    assert "pregnancy-safe food rich in Selenium instead of" in user
+    assert "per week" not in user  # no organ-meat portion
+    _sys, user, _key = sw._meal_plan_prompts([liver, sword], "No restriction", 3, pregnant=False)
+    assert "pregnancy-safe" not in user and "per week" in user
+    warnings = sw._pregnancy_food_warnings([liver, sword], pregnant=True)
+    assert len(warnings) == 2 and all("isn't advised in pregnancy" in w for w in warnings)

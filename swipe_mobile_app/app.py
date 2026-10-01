@@ -1427,6 +1427,7 @@ def _selected_food_warning(food: dict[str, Any] | None, dose_value: Any, dose_un
 # choice; the whole ranked list stays in the dropdown:
 #   1. no food whose portion breaks a co-nutrient upper limit (liver vitamin A,
 #      Brazil-nut selenium, ...) or seaweed of unknown iodine content;
+#   1a. in pregnancy mode, no raw shellfish, roe or tuna (_pregnancy_caution_food);
 #   1b. no food the card's Replace soft-block refuses (vegan / vegetarian B12:
 #      a B12-fortified food first; see _replace_block_reason);
 #   2. no organ meat (liver, kidney, heart, giblets) when a non-organ food can
@@ -1455,10 +1456,16 @@ def _is_uv_mushroom(food: dict[str, Any] | None) -> bool:
     return bool(_MUSHROOM_RE.search(name) and _UV_TREATED_RE.search(name))
 
 
-def _default_food_index(foods: list[dict[str, Any]], card: dict[str, Any], profile: dict[str, Any] | None = None) -> int:
-    """Index (into `foods`, the ranked dropdown) of the food pre-selected on the card."""
+def _default_food_index(
+    foods: list[dict[str, Any]], card: dict[str, Any], profile: dict[str, Any] | None = None, pregnant: bool | None = None
+) -> int:
+    """Index (into `foods`, the ranked dropdown) of the food pre-selected on the
+    card. `pregnant` (default: the pregnancy toggle) demotes raw shellfish, roe
+    and tuna (see _pregnancy_caution_food)."""
     if not foods:
         return 0
+    if pregnant is None:
+        pregnant = _pregnancy_mode()
     component = str(card.get("component", "") or card.get("component_key", "") or "")
     key = str(card.get("nutrient_key", "") or "") or bb.canonical_nutrient_key(component)
     dose_value, dose_unit, form = card.get("dose_value"), str(card.get("dose_unit", "") or ""), str(card.get("form", "") or "")
@@ -1489,6 +1496,8 @@ def _default_food_index(foods: list[dict[str, Any]], card: dict[str, Any], profi
             "fortified": (_is_b12_fortified_food(food) if key == "vitamin b12" else bool(food.get("fortified"))) and not plant,
             # Plant-based B12 / vegan iodine: a food Replace would refuse is never the default.
             "blocked": bool(_replace_block_reason(card, food, profile)),
+            # Pregnancy: oysters / clams / mussels, roe and tuna are no daily default.
+            "pregnancy": bool(pregnant) and _pregnancy_caution_food(food),
         })
     # The best portion a non-organ whole food offers: an organ meat is only the
     # default when it is strictly more practical than every other food.
@@ -1505,6 +1514,7 @@ def _default_food_index(foods: list[dict[str, Any]], card: dict[str, Any], profi
         f = facts[i]
         return (
             int(f["unsafe"]),
+            int(f["pregnancy"]),
             int(f["blocked"]),
             int(f["organ"] and best_non_organ is not None and best_non_organ <= f["practical"]),
             int(f["mushroom"] and (common_fish or (best_d3 is not None and best_d3 <= f["practical"]))),
@@ -1838,6 +1848,17 @@ _ORGAN_MEAT_RE = re.compile(
     r"sweetbreads?|giblets|brains?|tripe|spleen|lungs?|pancreas|thymus|offal|chitterlings|foie gras|pate|pâté)\b"
 )
 _ORGAN_FALSE_FRIEND_RE = re.compile(r"\b(?:beans?|palm|artichokes?|celery|lettuce|romaine|cabbage)\b")
+# High-mercury fish, never offered in pregnancy (BfR / FDA): swordfish, shark,
+# king mackerel, marlin, tilefish, orange roughy, bigeye and bluefin tuna.
+_HIGH_MERCURY_FISH_RE = re.compile(
+    r"\b(?:swordfish|shark|marlin|tilefish|roughy|bigeye|bluefin)\b|\bmackerel,? king\b|\bking mackerel\b",
+    re.IGNORECASE,
+)
+# Offered in pregnancy, but never the daily default and only well cooked:
+# oysters, clams and mussels (USDA rows are "raw"), fish roe, and tuna (at most
+# twice a week).
+_PREGNANCY_COOKED_ONLY_RE = re.compile(r"\b(?:oysters?|clams?|mussels?|scallops?|roe|caviar)\b", re.IGNORECASE)
+_TUNA_RE = re.compile(r"\btuna\b", re.IGNORECASE)
 _PLANT_CATEGORY_WORDS = ("legume", "vegetable", "fruit", "nut and seed", "cereal", "spice", "beverage")
 
 # Nutrients usually kept as a supplement in pregnancy (folic acid, iodine,
@@ -1886,14 +1907,35 @@ def _is_organ_meat(food: dict[str, Any] | None) -> bool:
     return not _ORGAN_FALSE_FRIEND_RE.search(desc)
 
 
+def _is_high_mercury_fish(food: dict[str, Any] | None) -> bool:
+    return isinstance(food, dict) and bool(_HIGH_MERCURY_FISH_RE.search(str(food.get("food_description", "") or "")))
+
+
+def _pregnancy_caution_food(food: dict[str, Any] | None) -> bool:
+    """Shellfish, roe or tuna: fine in pregnancy only cooked / now and then."""
+    name = str((food or {}).get("food_description", "") or "") if isinstance(food, dict) else ""
+    return bool(_PREGNANCY_COOKED_ONLY_RE.search(name) or _TUNA_RE.search(name))
+
+
+def _pregnancy_food_note(food: dict[str, Any] | None) -> str:
+    """The card's pregnancy note for the selected food ("" when none applies)."""
+    name = str((food or {}).get("food_description", "") or "") if isinstance(food, dict) else ""
+    if _TUNA_RE.search(name):
+        return "🤰 In pregnancy eat tuna at most twice a week, not daily."
+    if _PREGNANCY_COOKED_ONLY_RE.search(name):
+        return "🤰 In pregnancy eat shellfish and fish roe only well cooked — never raw."
+    return ""
+
+
 def _card_food_options(
     foods: list[dict[str, Any]], profile: dict[str, Any] | None, pregnant: bool | None = None
 ) -> list[dict[str, Any]]:
     """The card's dropdown: the pool filtered by the dietary profile, without
-    organ meats in pregnancy mode, capped to SWIPE_CARD_DROPDOWN_MAX."""
+    organ meats and high-mercury fish in pregnancy mode, capped to
+    SWIPE_CARD_DROPDOWN_MAX."""
     options = bb.apply_food_filters(foods, profile, use_llm_adjudication=False)
     if _pregnancy_mode() if pregnant is None else pregnant:
-        options = [food for food in options if not _is_organ_meat(food)]
+        options = [food for food in options if not _is_organ_meat(food) and not _is_high_mercury_fish(food)]
     return options[:SWIPE_CARD_DROPDOWN_MAX]
 
 
@@ -1910,16 +1952,25 @@ def _medication_note(component_key: str) -> str:
     return _MEDICATION_NOTES.get(bb.canonical_nutrient_key(component_key), "")
 
 
+def _not_advised_in_pregnancy(food: dict[str, Any] | None) -> bool:
+    """Organ meats and high-mercury fish (hidden from the cards in pregnancy)."""
+    return _is_organ_meat(food) or _is_high_mercury_fish(food)
+
+
 def _pregnancy_food_warnings(items: list[dict[str, Any]], pregnant: bool | None = None) -> list[str]:
-    """Results-screen notes for organ meats picked before pregnancy mode was on."""
+    """Results-screen notes in pregnancy mode: organ meats and high-mercury
+    fish picked before it was on, and the cooked-only / twice-a-week notes."""
     if not (_pregnancy_mode() if pregnant is None else pregnant):
         return []
-    return [
-        f"🤰 {_nutrient_title(d.get('component'))}: {_food_name(d.get('selected_food'))} isn't advised in "
-        "pregnancy — tap it to pick another food."
-        for d in items
-        if _is_organ_meat(d.get("selected_food"))
-    ]
+    out = []
+    for d in items:
+        food = d.get("selected_food")
+        title = _nutrient_title(d.get("component"))
+        if _not_advised_in_pregnancy(food):
+            out.append(f"🤰 {title}: {_food_name(food)} isn't advised in pregnancy — tap it to pick another food.")
+        elif _pregnancy_food_note(food):
+            out.append(f"{title}: {_pregnancy_food_note(food)}")
+    return out
 
 
 def _card_extra_info(
@@ -2327,8 +2378,13 @@ def _meal_plan_prompts(
     lines = []
     for d in replace_items:
         food = _food_name(d.get("selected_food"))
-        amount = _meal_plan_amount(d)
         nutrient = _nutrient_title(d.get("component"))
+        if pregnant and _not_advised_in_pregnancy(d.get("selected_food")):
+            # Picked before pregnancy mode was on (the results flag it): never
+            # put liver or swordfish into a pregnancy meal plan.
+            lines.append(f"- a pregnancy-safe food rich in {nutrient} instead of {food} (not advised in pregnancy)")
+            continue
+        amount = _meal_plan_amount(d)
         lines.append(f"- {food} ({amount}) for {nutrient}")
     diet_clause = ""
     if diet_label and diet_label.strip().lower() not in ("no restriction", "none", ""):
@@ -4180,6 +4236,10 @@ def _render_card() -> None:
             )
             if food_warning:
                 warn_text = f"{warn_text} {food_warning}".strip()
+            if _pregnancy_mode():
+                pregnancy_food = _pregnancy_food_note(selected_food)
+                if pregnancy_food:
+                    warn_text = f"{warn_text} {pregnancy_food}".strip()
             rda_entry = _rda_for_component(component_key)
             if rda_entry is not None:
                 # The target is a food amount (e.g. folate in DFE), so it is
