@@ -30,8 +30,8 @@ def _offline(monkeypatch):
         ("vitamin d", 150, "mcg", "", "for vitamin D (100 mcg/day, EFSA & NIH)"),
         ("vitamin a", 12000, "iu", "retinyl palmitate", "12000 IU (3600 mcg) is above the safe upper limit for vitamin A (3000 mcg/day"),
         ("vitamin a", 3500, "mcg", "", "for vitamin A (3000 mcg/day"),
-        ("vitamin e", 1000, "iu", "d alpha tocopherol", "1000 IU (670 mg) is above the safe upper limit for vitamin E (300 mg/day, EFSA)"),
-        ("vitamin e", 1000, "iu", "dl alpha tocopheryl acetate", "1000 IU (450 mg)"),
+        ("vitamin e", 1000, "iu", "d alpha tocopherol", "1000 IU (~670 mg alpha-TE) is above the safe upper limit for vitamin E (300 mg/day, EFSA)"),
+        ("vitamin e", 1000, "iu", "dl alpha tocopheryl acetate", "1000 IU (~670 mg alpha-TE)"),
         ("vitamin c", 2500, "mg", "", "for vitamin C (2000 mg/day, NIH)"),
         ("niacin", 50, "mg", "nicotinic acid", "for niacin as nicotinic acid (10 mg/day, EFSA — the form that causes flushing)"),
         ("niacin", 500, "mg", "niacinamide", "for niacin (35 mg/day, NIH, from supplements)"),
@@ -89,12 +89,14 @@ def test_high_dose_beta_carotene_gets_the_smoker_note(sw):
 
 
 def test_over_ul_warning_replaces_the_low_dose_flag(sw):
-    # A low zinc dose (< 50% of the 10 mg EU NRV) gets the neutral low-dose note.
-    assert "Low dose" in sw._card_warning_text("zinc", 3, "mg")
+    # A low zinc dose (< 50% of the 10 mg EU NRV) gets the neutral low-dose
+    # note, in the blue info line (final review F13), never next to a UL warning.
+    assert "Low dose" in sw._card_extra_info("zinc", 3, "mg")
+    assert "Low dose" not in sw._card_warning_text("zinc", 3, "mg")
     over = sw._card_warning_text("zinc", 50, "mg")
-    assert "safe upper limit" in over and "Low dose" not in over
+    assert "safe upper limit" in over and "Low dose" not in over + sw._card_extra_info("zinc", 50, "mg")
     over_d = sw._card_warning_text("vitamin d3", 10000, "iu")
-    assert "safe upper limit" in over_d and "Low dose" not in over_d
+    assert "safe upper limit" in over_d and "Low dose" not in over_d + sw._card_extra_info("vitamin d3", 10000, "iu")
 
 
 def test_results_screen_lists_kept_pills_above_the_limit(sw):

@@ -245,3 +245,45 @@ def test_tool_calls_prefer_the_research_agent(monkeypatch):
     assert "/agents/researchAgent/" in calls[-1]
     bb._blockbrain_chat({"messages": []})  # the fast agent stays sticky for normal calls
     assert "/agents/fastSuppSwipe/" in calls[-1]
+
+
+def test_configured_agent_is_retried_after_its_cooldown(monkeypatch):
+    # Final review (LLM security) F8: one transient 500 from the configured
+    # fast agent used to move every later call to a fallback for the whole
+    # process lifetime (the last working endpoint was always tried first).
+    monkeypatch.setenv("BLOCKBRAIN_AGENT_ID", "fastSuppSwipe")
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(bb.time, "monotonic", lambda: clock["now"])
+    fast_down = {"value": True}
+
+    def responder(url, n):
+        if "/fastSuppSwipe/" in url and fast_down["value"]:
+            return FakeResponse(status_code=500)
+        return FakeResponse(events=[{"type": "text-delta", "delta": "ok"}])
+
+    calls = _install(monkeypatch, responder)
+    assert bb._blockbrain_chat({"messages": []}) == "ok"
+    assert "/fastSuppSwipe/" in calls[0] and "/fastSuppSwipe/" not in calls[-1]
+    # Within the cooldown the fallback that answered is used directly.
+    calls.clear()
+    assert bb._blockbrain_chat({"messages": []}) == "ok"
+    assert "/fastSuppSwipe/" not in calls[0]
+    # The fast agent recovers; 2 h later (past the 600 s cooldown) it is first again.
+    fast_down["value"] = False
+    clock["now"] += 2 * 3600
+    calls.clear()
+    assert bb._blockbrain_chat({"messages": []}) == "ok"
+    assert calls == ["https://blockbrain.test/v2/api/agents/fastSuppSwipe/stream"]
+
+
+def test_order_puts_the_configured_agent_first_unless_cooling():
+    eps = ["b/v2/api/agents/fast/stream", "b/v1/api/agents/fast/stream",
+           "b/v2/api/agents/customAgent/stream", "b/v1/api/agents/customAgent/stream"]
+    bb._LAST_GOOD_STREAM_URL["b"] = eps[2]
+    assert bb._order_stream_endpoints("b", eps, eps[:2]) == [eps[0], eps[1], eps[2], eps[3]]
+    bb._LAST_GOOD_STREAM_URL["b"] = eps[1]  # v1 of the configured agent answered last
+    assert bb._order_stream_endpoints("b", eps, eps[:2])[:2] == [eps[1], eps[0]]
+    bb._STREAM_ENDPOINT_COOLDOWN[eps[0]] = float("inf")
+    bb._STREAM_ENDPOINT_COOLDOWN[eps[1]] = float("inf")
+    bb._LAST_GOOD_STREAM_URL["b"] = eps[2]
+    assert bb._order_stream_endpoints("b", eps, eps[:2]) == [eps[2], eps[3], eps[0], eps[1]]

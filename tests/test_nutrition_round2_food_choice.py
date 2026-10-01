@@ -87,7 +87,9 @@ def test_organ_meat_is_the_default_only_when_strictly_more_practical(sw):
 
 
 def test_default_prefers_a_practical_portion(sw):
-    card = {"component": "magnesium", "nutrient_key": "magnesium", "dose_value": 400, "dose_unit": "mg", "form": ""}
+    # 340 mg: ~68 g of pumpkin seeds (within the ~70 g/day nuts-and-seeds
+    # maximum, final review F4) beats ~430 g of raw spinach ("a lot of food").
+    card = {"component": "magnesium", "nutrient_key": "magnesium", "dose_value": 340, "dose_unit": "mg", "form": ""}
     big = {"food_description": "Spinach, raw", "food_category": "Vegetables and Vegetable Products", "amount_per_100g": 79.0, "unit": "mg"}
     seeds = {"food_description": "Seeds, pumpkin seeds (pepitas), raw", "food_category": "Nut and Seed Products", "amount_per_100g": 499.7, "unit": "mg"}
     assert sw._default_food_index([big, seeds], card) == 1
@@ -237,7 +239,8 @@ def test_fortified_food_portion_beyond_a_realistic_daily_amount_is_not_practical
     yeast = next(f for f in foods if "yeast" in f["food_description"].lower())
     drink = next(f for f in foods if "soy drink" in f["food_description"].lower())
     assert yeast.get("fortified") and drink.get("fortified")
-    assert sw._portion_for_target(yeast, 2.5, "mcg", "vitamin b12") == "~25 g"
+    assert sw._portion_for_target(yeast, 2.5, "mcg", "vitamin b12", note=False) == "~25 g"
+    assert sw._portion_for_target(yeast, 2.5, "mcg", "vitamin b12") == f"~25 g {sw._FORTIFIED_B12_NOTE}"
     assert sw._portion_for_target(yeast, 25, "mcg", "vitamin b12").startswith("not practical from food alone")
     assert sw._portion_for_target(drink, 2.5, "mcg", "vitamin b12").startswith("a lot of food")
     assert sw._portion_for_target(drink, 4, "mcg", "vitamin b12").startswith("not practical from food alone")
@@ -264,9 +267,11 @@ def test_plant_based_b12_warning_points_to_fortified_foods(sw, profiles):
 @pytest.mark.parametrize("month, shown", [(10, True), (12, True), (1, True), (3, True), (4, False), (7, False), (9, False)])
 def test_vitamin_d_winter_note(sw, month, shown):
     today = datetime.date(2026, month, 15)
-    warn = sw._card_warning_text("vitamin d3", 20, "mcg", "", None, today=today)
-    assert ("October–March the sun in Germany is too weak" in warn) is shown
-    assert "October–March" not in sw._card_warning_text("vitamin c", 80, "mg", "", None, today=today)
+    # A neutral note: in the blue info line, not the red warning box (final review F13).
+    info = sw._card_extra_info("vitamin d3", 20, "mcg", "", None, pregnant=False, today=today)
+    assert ("October–March the sun in Germany is too weak" in info) is shown
+    assert "October–March" not in sw._card_warning_text("vitamin d3", 20, "mcg", "", None, today=today)
+    assert "October–March" not in sw._card_extra_info("vitamin c", 80, "mg", "", None, pregnant=False, today=today)
 
 
 # --- Diet-aware notes -------------------------------------------------------------------

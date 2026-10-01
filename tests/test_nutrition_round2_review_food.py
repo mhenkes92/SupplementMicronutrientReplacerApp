@@ -52,7 +52,7 @@ def _yeast(sw) -> dict:
 
 @pytest.mark.parametrize("target, grams", [(4.0, "40 g"), (6.0, "60 g"), (2.9, "29 g")])
 def test_portion_past_own_daily_maximum_reads_in_grams(sw, target, grams):
-    text = sw._portion_for_target(_yeast(sw), target, "mcg", "vitamin b12")
+    text = sw._portion_for_target(_yeast(sw), target, "mcg", "vitamin b12", note=False)
     if target <= 3.0:
         assert text == f"~{grams}"
     else:
@@ -94,15 +94,17 @@ def _merged_shape_b12_list(sw, profile, extra=()) -> list[dict]:
 
 
 @pytest.mark.parametrize("diet", ["vegan", "vegetarian"])
-def test_usda_soy_milk_counts_as_fortified_and_is_preselected(sw, profiles, diet):
+def test_usda_soy_milk_counts_as_fortified_but_its_us_level_is_never_offered(sw, profiles, diet):
+    # Final review F2: USDA's soy milk carries US fortification (1.33 µg/100 g);
+    # German B12-fortified drinks have ~0.38 µg/100 ml and Bio ones none, so the
+    # row is dropped and a curated EU-level food that Replace accepts is the default.
     profile = profiles[diet]
     extra = (_USDA_EGG_YOLK,) if diet == "vegetarian" else ()
     foods = _merged_shape_b12_list(sw, profile, extra)
     assert sw._replace_block_reason(_B12_CARD, _USDA_SOY_MILK, profile) == ""
-    # 6 µg: ~450 g soy milk beats 60 g of flakes (past their ~30 g/day) and,
-    # on a vegetarian card, ~308 g of egg yolks that Replace would refuse.
+    assert _USDA_SOY_MILK not in foods
     default = foods[sw._default_food_index(foods, _B12_CARD, profile)]
-    assert default is _USDA_SOY_MILK
+    assert default.get("fortified") and "fortified" in sw._food_label(default)
     assert sw._replace_block_reason(_B12_CARD, default, profile) == ""
     if diet == "vegetarian":
         assert sw._replace_block_reason(_B12_CARD, _USDA_EGG_YOLK, profile)
@@ -209,8 +211,16 @@ def test_seaweed_is_the_default_only_when_nothing_else_is_listed(sw):
     assert sw._default_food_index([_WAKAME], card) == 0
 
 
-@pytest.mark.parametrize("diet", ["none", "pescatarian", "vegetarian", "vegan"])
-@pytest.mark.parametrize("text", ["Eisen 14 mg", "Vitamin B2 1.4 mg", "Kalium 500 mg", "Omega-3 1000 mg"])
+@pytest.mark.parametrize(
+    "diet, text",
+    [
+        (diet, text)
+        for diet in ("none", "pescatarian", "vegetarian", "vegan")
+        for text in ("Eisen 14 mg", "Vitamin B2 1.4 mg", "Kalium 500 mg", "Omega-3 1000 mg")
+        # Vegan omega-3 lists no food at all (final review F1: no plant EPA/DHA).
+        if not (diet == "vegan" and text.startswith("Omega"))
+    ],
+)
 def test_default_food_is_not_seaweed_when_another_food_exists(sw, profiles, diet, text):
     food, _card_, foods = _default(sw, text, profiles[diet])
     assert len(foods) > 1

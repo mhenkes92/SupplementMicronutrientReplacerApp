@@ -168,4 +168,33 @@ def test_dialog_flags_are_cleared_by_their_close_handlers(sw, monkeypatch):
     monkeypatch.setattr(sw.st, "session_state", state)
     sw._close_analyze_dialog()
     sw._close_restart_dialog()
-    assert state == {}
+    assert not state.get("swipe_open_analyze") and not state.get("swipe_confirm_restart")
+
+
+@pytest.mark.parametrize("desc,icon", [
+    ("Turnip greens, raw", "🥬"),
+    ("Beet greens, raw", "🥬"),
+    ("Amaranth leaves, raw", "🥬"),
+    ("Nuts, coconut meat, raw", "🥥"),
+    ("Beets, raw", "🥕"),
+    ("Beef, ground, 85% lean meat / 15% fat, raw", "🥩"),
+])
+def test_food_icon_greens_and_coconut(sw, desc, icon):
+    assert sw._whole_food_icon_from_food({"food_description": desc}) == icon
+
+
+def test_bonus_skips_every_nutrient_the_food_covers(sw):
+    both = sw._food_bonus(MACKEREL, 124, exclude=["vitamin d", "vitamin b12"])
+    assert "Vitamin B12" not in dict(both) and "Vitamin D" not in dict(both)
+
+
+def test_plan_context_lists_doses_and_choices(sw):
+    replaced = {"component": "vitamin c", "dose_label": "80 mg", "dose_value": 80, "dose_unit": "mg",
+                "selected_food": {"food_description": "Kiwifruit, green, raw", "amount_per_100g": 92.7, "unit": "mg"}}
+    kept = {"component": "vitamin d3", "dose_label": "20 mcg"}
+    nodose = {"component": "biotin", "dose_label": "Dose not found"}
+    text = sw._plan_context_text([replaced], [kept, nodose])
+    assert "Vitamin C 80 mg -> food: Kiwi" in text
+    assert "Vitamin D3 20 mcg -> kept as a supplement" in text
+    assert "Biotin -> kept as a supplement" in text and "Dose not found" not in text
+    assert sw._card_ask_ai_suggestions(nodose)[0] == "How much Biotin do I need?"

@@ -25,10 +25,13 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 import requests
+import requests.adapters
+import urllib3
+import urllib3.connection
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from PIL import Image, ImageFilter, ImageOps
@@ -54,8 +57,72 @@ _HTTP_SESSION.headers.update({
 
 
 def _http_get(url: str, **kwargs) -> requests.Response:
+    """GET via the shared session, or via `session=` (e.g. _PUBLIC_FETCH_SESSION)."""
     kwargs.setdefault("timeout", HTTP_TIMEOUT)
-    return _HTTP_SESSION.get(url, **kwargs)
+    session = kwargs.pop("session", None) or _HTTP_SESSION
+    return session.get(url, **kwargs)
+
+
+# -- Fetching user-supplied URLs: public addresses only, checked on connect --
+# _is_public_http_url vets the host's addresses before a request, but the
+# connection does its own DNS lookup, so a rebinding host (public answer,
+# then 127.0.0.1) could slip through. These connections check the address
+# they actually reached, right after the TCP connect and before TLS or any
+# request byte is sent. (Through a configured proxy the peer is the proxy,
+# which resolves the target itself; nothing to check there.)
+class NonPublicAddressError(OSError):
+    """A user-supplied URL's connection reached a non-public address."""
+
+
+def _assert_public_peer(sock: Any) -> None:
+    try:
+        ip = ipaddress.ip_address(str(sock.getpeername()[0]).split("%", 1)[0])
+    except Exception as exc:
+        raise NonPublicAddressError("could not verify the connected address") from exc
+    if not ip.is_global or ip.is_multicast:
+        try:
+            sock.close()
+        finally:
+            raise NonPublicAddressError(f"refusing a connection to the non-public address {ip}")
+
+
+class _PublicPeerMixin:
+    def _new_conn(self):  # type: ignore[no-untyped-def]
+        sock = super()._new_conn()  # type: ignore[misc]
+        if not (getattr(self, "_tunnel_host", None) or getattr(self, "proxy", None)):
+            _assert_public_peer(sock)
+        return sock
+
+
+class _PublicHTTPConnection(_PublicPeerMixin, urllib3.connection.HTTPConnection):
+    pass
+
+
+class _PublicHTTPSConnection(_PublicPeerMixin, urllib3.connection.HTTPSConnection):
+    pass
+
+
+class _PublicHTTPConnectionPool(urllib3.HTTPConnectionPool):
+    ConnectionCls = _PublicHTTPConnection
+
+
+class _PublicHTTPSConnectionPool(urllib3.HTTPSConnectionPool):
+    ConnectionCls = _PublicHTTPSConnection
+
+
+class _PublicOnlyAdapter(requests.adapters.HTTPAdapter):
+    def init_poolmanager(self, *args: Any, **kwargs: Any) -> None:
+        super().init_poolmanager(*args, **kwargs)
+        self.poolmanager.pool_classes_by_scheme = {
+            "http": _PublicHTTPConnectionPool,
+            "https": _PublicHTTPSConnectionPool,
+        }
+
+
+_PUBLIC_FETCH_SESSION = requests.Session()
+_PUBLIC_FETCH_SESSION.cookies.set_policy(http.cookiejar.DefaultCookiePolicy(allowed_domains=[]))
+_PUBLIC_FETCH_SESSION.mount("http://", _PublicOnlyAdapter())
+_PUBLIC_FETCH_SESSION.mount("https://", _PublicOnlyAdapter())
 
 
 def _http_post(url: str, **kwargs) -> requests.Response:
@@ -6945,6 +7012,20 @@ _NUTRIENT_FOOD_EXCLUSIONS: dict[str, re.Pattern[str]] = {
     ),
 }
 
+# Food categories that never count as an EPA / DHA source: plants make no
+# long-chain omega-3 (only ALA). USDA lists a few plant rows anyway - a DHA
+# value on "Quinoa, uncooked" (an artefact) and small EPA amounts in raw
+# seaweed (~240 g of wakame a day for a 450 mg capsule, with an unknown and
+# possibly excessive iodine load). Algal oil is the plant EPA+DHA source, and
+# it is a supplement, not a whole food.
+_PLANT_FOOD_CATEGORY_RE = re.compile(
+    r"\b(?:legumes?|vegetables?|cereals?|grains?|pasta|fruits?|nuts?|seeds?|spices?|herbs?|beverages?|baked)\b",
+    re.IGNORECASE,
+)
+_NUTRIENT_FOOD_CATEGORY_EXCLUSIONS: dict[str, re.Pattern[str]] = {
+    key: _PLANT_FOOD_CATEGORY_RE for key in ("omega 3", "fish oil", "epa", "dha")
+}
+
 # B12-fortified plant foods, listed with the B12 foods (marked "fortified";
 # the swipe app offers them on vegan / vegetarian cards only): on those diets
 # whole foods cannot supply B12 (DGE), fortified foods can. Amounts are typical EU fortification levels per 100 g / 100 ml
@@ -7113,9 +7194,12 @@ def _lexicon_food_rows(key: str, limit: int) -> tuple[dict[str, Any], ...]:
 
     per_food: dict[str, dict[str, Any]] = {}
     excluded = _NUTRIENT_FOOD_EXCLUSIONS.get(key)
+    excluded_category = _NUTRIENT_FOOD_CATEGORY_EXCLUSIONS.get(key)
     for nid, desc, category, amount in _query_usda_food_amounts(list(factors)):
         fkey = normalize_lookup_key(desc)
         if not fkey or (excluded is not None and excluded.search(desc)):
+            continue
+        if excluded_category is not None and excluded_category.search(str(category or "")):
             continue
         entry = per_food.setdefault(fkey, {"desc": desc, "category": category, "by_id": {}})
         # Keep the highest value if the DB repeats a food for the same nutrient.
@@ -8927,12 +9011,22 @@ def _typed_delta_piece(event: Any) -> str | None:
     return None
 
 
-def _order_stream_endpoints(base_url: str, endpoints: list[str]) -> list[str]:
+def _order_stream_endpoints(base_url: str, endpoints: list[str], primary: Any = ()) -> list[str]:
+    """Try order: the configured (`primary`) agent's endpoints that are not
+    cooling down (the one that last answered first), then the last endpoint
+    that answered, then the other healthy ones, then the cooling ones. So one
+    transient error of the operator's chosen agent moves calls to a fallback
+    only for its cooldown, not for the rest of the process lifetime."""
     now = time.monotonic()
     with _STREAM_HEALTH_LOCK:
         preferred = _LAST_GOOD_STREAM_URL.get(base_url, "")
         cooling = {url for url, until in _STREAM_ENDPOINT_COOLDOWN.items() if until > now}
-    head = [preferred] if preferred in endpoints and preferred not in cooling else []
+    primary_set = set(primary or ())
+    head = [url for url in endpoints if url in primary_set and url not in cooling]
+    if preferred in head:
+        head = [preferred] + [url for url in head if url != preferred]
+    elif preferred in endpoints and preferred not in cooling:
+        head.append(preferred)
     healthy = [url for url in endpoints if url not in head and url not in cooling]
     cold = [url for url in endpoints if url not in head and url in cooling]
     return head + healthy + cold
@@ -9151,8 +9245,9 @@ def _blockbrain_chat(
     # Primary transport: Blockbrain agent stream endpoint (SSE), preferring v2.
     # Include fallback agents so a single dead/500 agent cannot break the app
     # (the previously pinned agent started returning HTTP 500 and silently killed
-    # image OCR). Ordered, de-duplicated: last working endpoint first, then the
-    # configured agent, then fallbacks; recently failed endpoints go last.
+    # image OCR). Ordered, de-duplicated: the configured agent first (unless it
+    # is cooling down after a failure), then the last working endpoint, then
+    # fallbacks; recently failed endpoints go last.
     agent_order: list[str] = []
     primary_agents = [agent_id]
     if allow_tools:
@@ -9168,12 +9263,14 @@ def _blockbrain_chat(
     for _a in agent_order:
         stream_endpoints.append(f"{base_url}/v2/api/agents/{_a}/stream")
         stream_endpoints.append(f"{base_url}/v1/api/agents/{_a}/stream")
+    configured = {str(_a or "").strip() for _a in primary_agents}
+    primary_endpoints = [url for url in stream_endpoints if url.split("/api/agents/", 1)[1].split("/", 1)[0] in configured]
     join_mode = _stream_join_mode()
     last_error = ""
     # Tool calls remember their own last working endpoint, so a fast agent that
     # answered a meal plan never displaces the research agent for web lookups.
     sticky_key = base_url + ("|tools" if allow_tools else "")
-    for stream_url in _order_stream_endpoints(sticky_key, stream_endpoints):
+    for stream_url in _order_stream_endpoints(sticky_key, stream_endpoints, primary_endpoints):
         if time.monotonic() - started > budget:
             last_error = (last_error + " | " if last_error else "") + f"gave up after {int(budget)}s budget"
             break
@@ -10265,8 +10362,11 @@ def extract_image_text_with_blockbrain(image_bytes: bytes, model: str | None = N
 
 # Uploads larger than this are refused before decoding (a tiny PNG can declare
 # enormous dimensions and decode to gigabytes — a decompression bomb that would
-# take down the shared Streamlit container). 60 MP covers 50 MP phone photos.
+# take down the shared Streamlit container). 60 MP covers 50 MP phone photos
+# (JPEG, decoded at reduced scale); PNG / WebP decode at full size, so 16 MP
+# (screenshots and exported label photos are far below it).
 VISION_MAX_INPUT_PIXELS = 60_000_000
+VISION_MAX_INPUT_PIXELS_NON_JPEG = 16_000_000
 VISION_FAST_SIDE = 1400
 VISION_DETAIL_SIDE = BLOCKBRAIN_VISION_MAX_SIDE
 
@@ -10280,10 +10380,15 @@ def _load_upright_image(image_bytes: bytes, max_side: int) -> "Image.Image | Non
     try:
         image = Image.open(io.BytesIO(image_bytes))
         width, height = image.size
-        if width * height > VISION_MAX_INPUT_PIXELS:
-            logger.warning("refusing %dx%d image (over %d px)", width, height, VISION_MAX_INPUT_PIXELS)
+        is_jpeg = str(image.format or "").upper() == "JPEG"
+        # Only JPEG decodes at reduced scale (draft): a PNG / WebP is decoded
+        # at full size (a 190 kB 7740x7740 PNG took ~0.5 GB), so it gets a
+        # much lower limit.
+        limit = VISION_MAX_INPUT_PIXELS if is_jpeg else min(VISION_MAX_INPUT_PIXELS, VISION_MAX_INPUT_PIXELS_NON_JPEG)
+        if width * height > limit:
+            logger.warning("refusing %dx%d image (over %d px)", width, height, limit)
             return None
-        if str(image.format or "").upper() == "JPEG":
+        if is_jpeg:
             image.draft("RGB", (max_side, max_side))
         image = ImageOps.exif_transpose(image).convert("RGB")
         image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
@@ -10543,6 +10648,9 @@ def validate_parsed_components(rows: list[dict[str, Any]]) -> tuple[list[dict[st
 
 _PAGE_FETCH_MAX_BYTES = 2_000_000
 _PAGE_FETCH_MAX_REDIRECTS = 4
+# Wall-clock cap for one page fetch (all redirect hops and the body): the
+# per-read timeout alone let a slow-drip server hold a session for ages.
+_PAGE_FETCH_DEADLINE_S = 20.0
 
 
 def _is_public_http_url(url: str) -> bool:
@@ -10577,19 +10685,25 @@ def _is_public_http_url(url: str) -> bool:
 def _safe_public_get(
     url: str, headers: dict[str, str] | None = None, timeout: Any = None
 ) -> tuple[int, dict[str, str], str] | None:
-    """GET a user-supplied URL: public hosts only, redirects re-checked hop by
-    hop, body capped at _PAGE_FETCH_MAX_BYTES. Returns (status, headers, text),
-    or None when the URL (or a redirect target) is refused."""
+    """GET a user-supplied URL: public hosts only (vetted before the request
+    and again on the connected address, see _PublicOnlyAdapter), redirects
+    re-checked hop by hop, body capped at _PAGE_FETCH_MAX_BYTES, everything
+    within _PAGE_FETCH_DEADLINE_S. Returns (status, headers, text), or None
+    when the URL (or a redirect target) is refused or the deadline passes."""
     current = str(url or "").strip()
+    deadline = time.monotonic() + _PAGE_FETCH_DEADLINE_S
     for _hop in range(_PAGE_FETCH_MAX_REDIRECTS + 1):
-        if not _is_public_http_url(current):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not _is_public_http_url(current):
             return None
+        connect_timeout = min(float(BLOCKBRAIN_CONNECT_TIMEOUT_S), remaining)
         response = _http_get(
             current,
             headers=headers,
-            timeout=timeout or (BLOCKBRAIN_CONNECT_TIMEOUT_S, 30),
+            timeout=timeout or (connect_timeout, min(30.0, remaining)),
             allow_redirects=False,
             stream=True,
+            session=_PUBLIC_FETCH_SESSION,
         )
         if response.is_redirect or response.status_code in {301, 302, 303, 307, 308}:
             location = str(response.headers.get("Location", "") or "")
@@ -10598,12 +10712,26 @@ def _safe_public_get(
                 return None
             current = requests.compat.urljoin(current, location)
             continue
+        # A watchdog closes the response at the deadline, which also ends a
+        # read that is blocked on a slow-drip server.
+        watchdog = threading.Timer(max(0.0, deadline - time.monotonic()), response.close)
+        watchdog.daemon = True
+        watchdog.start()
         body = b""
-        for chunk in response.iter_content(chunk_size=65536):
-            body += chunk
-            if len(body) > _PAGE_FETCH_MAX_BYTES:
-                break
-        response.close()
+        try:
+            for chunk in response.iter_content(chunk_size=16384):
+                body += chunk
+                if len(body) > _PAGE_FETCH_MAX_BYTES or time.monotonic() > deadline:
+                    break
+        except Exception:
+            if time.monotonic() >= deadline:
+                return None
+            raise
+        finally:
+            watchdog.cancel()
+            response.close()
+        if time.monotonic() > deadline and len(body) <= _PAGE_FETCH_MAX_BYTES:
+            return None  # cut off by the deadline: an incomplete page
         encoding = str(getattr(response, "encoding", "") or "utf-8")
         try:
             text = body[:_PAGE_FETCH_MAX_BYTES].decode(encoding, errors="replace")
@@ -10681,7 +10809,10 @@ def extract_supplement_text_from_page_text_local(page_text: str) -> str:
     return "\n".join(unique)
 
 
-def extract_supplement_text_from_url(url: str) -> str:
+def extract_supplement_text_from_url(url: str, llm_allowed: Callable[[], bool] | None = None) -> str:
+    """Supplement-facts text from a product page: the local parser first, else
+    the text LLM. `llm_allowed` (e.g. the app's per-session quota) is asked
+    right before the LLM call; False skips it."""
     global LAST_URL_PARSE_REASON
     global LAST_TEXT_PROVIDER
     LAST_URL_PARSE_REASON = ""
@@ -10718,7 +10849,11 @@ def extract_supplement_text_from_url(url: str) -> str:
         f"{prompt_source}\n"
         "PAGE_TEXT>>>"
     )
-    llm_text = call_text_llm(system_prompt, user_prompt)
+    if llm_allowed is not None and not llm_allowed():
+        LAST_URL_PARSE_REASON = "AI quota used up; LLM extraction skipped."
+        llm_text = ""
+    else:
+        llm_text = call_text_llm(system_prompt, user_prompt)
 
     if llm_text:
         if passes_extraction_gate(llm_text):
@@ -11580,6 +11715,29 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
                     line[a["names_end"]:b["start"]].strip() not in ("", ",") for a, b in zip(group, group[1:])
                 )
                 group_doses = _label_group_doses(group, outside, line, title_joiner) if outside else None
+                # A title over a dose-first list ("Magnesium + Zink: 300 mg
+                # Magnesium, 10 mg Zink"): the dose right before a later name
+                # that repeats a title name is that name's, so the title takes
+                # no dose and claims only its names; each later name then gets
+                # the dose written before it (_dose_before).
+                if (
+                    group_doses is not None
+                    and k + 1 < len(items)
+                    and items[k + 1]["key"] in {member["key"] for member in group}
+                    and _LABEL_DOSE_BEFORE_NAME_GAP_RE.match(line[outside[-1].end():items[k + 1]["start"]])
+                ):
+                    for member in group:
+                        if _NUTRIENT_LEXICON.get(member["key"], {}).get("umbrella"):
+                            continue
+                        form_end = member["end"] if member is not group[-1] else member["names_end"]
+                        row = _label_row(line, depths, member, None, form_end, _lead(member) if member is group[0] else "")
+                        if row is not None:
+                            row["label_line"] = label_line
+                            line_rows.append(row)
+                    _claim(group[0]["start"], group[-1]["names_end"])
+                    prev_end = group[-1]["names_end"]
+                    i = k + 1
+                    continue
                 if group_doses is not None:
                     for member, dose in zip(group, group_doses):
                         if _NUTRIENT_LEXICON.get(member["key"], {}).get("umbrella"):

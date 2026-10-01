@@ -149,6 +149,8 @@
   var animEnd = 0;      // fly-out animation end; new props wait for it
   var pendingArgs = null;
   var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Mouse / trackpad users get the arrow-key hint; touch screens don't need it.
+  var finePointer = window.matchMedia && window.matchMedia("(pointer: fine)").matches;
 
   function send(type, extra) {
     var msg = { isStreamlitMessage: true, type: type };
@@ -231,7 +233,7 @@
       '<div class="foodrow">' + foodIcon + '<div class="food">' + foodTxt + '</div></div>' + portionHtml + '</div>' +
       bioHtml +
       '<div class="hint">' + (canReplace
-        ? 'Swipe <b>◀ keep the pill</b> · <b>eat the food ▶</b>'
+        ? 'Swipe <b>◀ keep the pill</b> · <b>eat the food ▶</b>' + (finePointer ? ' (or ← →)' : '')
         : 'No whole-food match for this one — keep the pill or go back') +
         (editing ? '<br>Editing from your results — your choice takes you straight back.' : '') + '</div>';
     card.setAttribute("aria-label",

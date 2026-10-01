@@ -63,9 +63,11 @@ def test_large_totals_are_flagged(sw):
     assert lines[0][1].startswith("🍽️ Your swaps add about 1,300 g of food")
     assert ("warning", "⚠️ This is a lot of food — consider keeping some supplements.") in lines
 
-    by_kcal = [_swap("magnesium", "Nuts, brazilnuts, raw", 100.0, 200)]  # 200 g Brazil nuts ~ 1,240 kcal
+    # 330 g of oats ~ 1,250 kcal (200 g of Brazil nuts would now be past their
+    # ~70 g/day maximum and not counted at all, final review F4).
+    by_kcal = [_swap("magnesium", "Oats, whole grain, rolled, old fashioned", 100.0, 330)]
     totals = sw._swap_totals(by_kcal)
-    assert totals["grams"] == pytest.approx(200) and totals["kcal"] > 1200 and totals["too_much"] is True
+    assert totals["grams"] == pytest.approx(330) and totals["kcal"] > 1200 and totals["too_much"] is True
 
     ok = [_swap("magnesium", "Broccoli, raw", 10.0, 50)]  # 500 g, 170 kcal
     assert sw._swap_totals(ok)["too_much"] is False
