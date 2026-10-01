@@ -156,3 +156,52 @@ def test_report_never_logs_personal_text_from_the_label_line(sw, monkeypatch, ca
     for personal in ("Mustermann", "1990", "0171", "Niereninsuffizienz"):
         assert personal not in message
     assert json.loads(message.split(": ", 1)[1])["label_line"] == "Vitamin D3 20 µg"
+
+
+# --- F6: image and camera size limits ------------------------------------------------------------
+
+def _png(width: int, height: int) -> bytes:
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("1", (width, height)).save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+def _jpeg(width: int, height: int) -> bytes:
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), "white").save(buf, format="JPEG", quality=30)
+    return buf.getvalue()
+
+
+def test_large_png_is_refused_before_decoding(monkeypatch):
+    big = _png(4100, 4100)  # 16.8 MP, a few kB
+    assert len(big) < 200_000
+    assert bb.build_vision_image_variants(big) == []
+    assert bb.build_vision_image_variants(_png(1200, 900))  # a normal screenshot still works
+
+
+def test_large_jpeg_is_still_accepted():
+    assert bb.build_vision_image_variants(_jpeg(5000, 4000))  # 20 MP JPEG (draft decode)
+
+
+def test_camera_data_url_is_capped(sw):
+    import base64
+
+    small = "data:image/jpeg;base64," + base64.b64encode(b"\xff\xd8 jpeg").decode()
+    assert sw._decode_camera_image({"image": small}) == b"\xff\xd8 jpeg"
+    huge = "data:image/jpeg;base64," + "A" * (sw._CAMERA_MAX_DATA_URL_CHARS + 1)
+    assert sw._decode_camera_image({"image": huge}) == b""
+
+
+def test_streamlit_config_caps_websocket_messages():
+    from pathlib import Path
+
+    config = (Path(__file__).resolve().parent.parent / ".streamlit" / "config.toml").read_text(encoding="utf-8")
+    assert "maxMessageSize = 25" in config

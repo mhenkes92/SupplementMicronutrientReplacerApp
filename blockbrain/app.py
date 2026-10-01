@@ -10273,8 +10273,11 @@ def extract_image_text_with_blockbrain(image_bytes: bytes, model: str | None = N
 
 # Uploads larger than this are refused before decoding (a tiny PNG can declare
 # enormous dimensions and decode to gigabytes — a decompression bomb that would
-# take down the shared Streamlit container). 60 MP covers 50 MP phone photos.
+# take down the shared Streamlit container). 60 MP covers 50 MP phone photos
+# (JPEG, decoded at reduced scale); PNG / WebP decode at full size, so 16 MP
+# (screenshots and exported label photos are far below it).
 VISION_MAX_INPUT_PIXELS = 60_000_000
+VISION_MAX_INPUT_PIXELS_NON_JPEG = 16_000_000
 VISION_FAST_SIDE = 1400
 VISION_DETAIL_SIDE = BLOCKBRAIN_VISION_MAX_SIDE
 
@@ -10288,10 +10291,15 @@ def _load_upright_image(image_bytes: bytes, max_side: int) -> "Image.Image | Non
     try:
         image = Image.open(io.BytesIO(image_bytes))
         width, height = image.size
-        if width * height > VISION_MAX_INPUT_PIXELS:
-            logger.warning("refusing %dx%d image (over %d px)", width, height, VISION_MAX_INPUT_PIXELS)
+        is_jpeg = str(image.format or "").upper() == "JPEG"
+        # Only JPEG decodes at reduced scale (draft): a PNG / WebP is decoded
+        # at full size (a 190 kB 7740x7740 PNG took ~0.5 GB), so it gets a
+        # much lower limit.
+        limit = VISION_MAX_INPUT_PIXELS if is_jpeg else min(VISION_MAX_INPUT_PIXELS, VISION_MAX_INPUT_PIXELS_NON_JPEG)
+        if width * height > limit:
+            logger.warning("refusing %dx%d image (over %d px)", width, height, limit)
             return None
-        if str(image.format or "").upper() == "JPEG":
+        if is_jpeg:
             image.draft("RGB", (max_side, max_side))
         image = ImageOps.exif_transpose(image).convert("RGB")
         image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)

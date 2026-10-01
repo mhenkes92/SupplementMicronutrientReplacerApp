@@ -96,12 +96,17 @@ except Exception:
     _back_camera = None
 
 
+# The upload limit (server.maxUploadSize, 10 MB) does not apply to a component
+# value, so the camera's data URL gets the same cap (10 MB of base64-decoded image).
+_CAMERA_MAX_DATA_URL_CHARS = 14_000_000
+
+
 def _decode_camera_image(value: Any) -> bytes:
     """Decode the {'image': dataURL} value from the camera component into JPEG bytes."""
     if not isinstance(value, dict):
         return b""
     data_url = str(value.get("image", "") or "")
-    if "," not in data_url:
+    if "," not in data_url or len(data_url) > _CAMERA_MAX_DATA_URL_CHARS:
         return b""
     try:
         import base64 as _b64
