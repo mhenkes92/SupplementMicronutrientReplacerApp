@@ -113,4 +113,8 @@ def test_results_flag_an_organ_meat_picked_before_pregnancy_mode(sw):
     ]
     assert sw._pregnancy_food_warnings(items, pregnant=False) == []
     warnings = sw._pregnancy_food_warnings(items, pregnant=True)
-    assert warnings == ["🤰 Vitamin B12: Lamb liver isn't advised in pregnancy — tap it to pick another food."]
+    # Clams stay allowed, with the cooked-only note (final review F7).
+    assert warnings == [
+        "🤰 Vitamin B12: Lamb liver isn't advised in pregnancy — tap it to pick another food.",
+        "Zinc: 🤰 In pregnancy eat shellfish and fish roe only well cooked — never raw.",
+    ]
