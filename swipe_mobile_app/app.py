@@ -766,6 +766,14 @@ _PORTION_LARGE_G = 400.0
 _PORTION_IMPRACTICAL_G = 1000.0
 
 
+def _food_max_daily_g(food: dict[str, Any] | None) -> float:
+    """A food's own realistic daily maximum in grams ("max_daily_g"), or 0."""
+    try:
+        return float((food or {}).get("max_daily_g") or 0.0) if isinstance(food, dict) else 0.0
+    except Exception:
+        return 0.0
+
+
 def _portion_practicality(grams: float | None, food: dict[str, Any] | None = None) -> str:
     """"ok" | "large" (400-1000 g/day) | "impractical" (> 1 kg/day) for a daily food amount.
 
@@ -776,10 +784,7 @@ def _portion_practicality(grams: float | None, food: dict[str, Any] | None = Non
         value = float(grams) if grams is not None else 0.0
     except Exception:
         value = 0.0
-    try:
-        own_max = float((food or {}).get("max_daily_g") or 0.0) if isinstance(food, dict) else 0.0
-    except Exception:
-        own_max = 0.0
+    own_max = _food_max_daily_g(food)
     if value > _PORTION_IMPRACTICAL_G or (own_max > 0 and value > own_max):
         return "impractical"
     if value >= _PORTION_LARGE_G:
@@ -808,8 +813,9 @@ def _portion_for_target(
     """How much of `food` supplies `target_value target_unit` of the nutrient.
 
     Returns a short label like "~85 g (~2 eggs)", "<1 g", "a lot of food (~450
-    g/day)" or "not practical from food alone (~23.5 kg/day)", or "" when it
-    can't be computed. Units of the target and the food need not match — both
+    g/day)", "not practical from food alone (~23.5 kg/day)" or, past a food's
+    own realistic daily amount, "not practical from food alone (~40 g/day;
+    realistic max ~30 g/day)", or "" when it can't be computed. Units of the target and the food need not match — both
     are normalised by bb.grams_needed_to_match_dose; `form` (the label's "(as
     ...)" text) selects the IU / folic-acid conversions for a PILL dose.
     With `note`, a UV-treated mushroom on a vitamin D card says that only
@@ -850,7 +856,11 @@ def _portion_core_for_target(
 
     practicality = _portion_practicality(grams, food)
     if practicality == "impractical":
-        return f"not practical from food alone (~{bb.format_float(grams / 1000.0, 1)} kg/day)"
+        if grams > _PORTION_IMPRACTICAL_G:
+            return f"not practical from food alone (~{bb.format_float(grams / 1000.0, 1)} kg/day)"
+        # Past the food's own realistic daily amount (~30 g of yeast flakes):
+        # grams, never "~0 kg/day".
+        return f"not practical from food alone (~{_format_grams(grams)}/day; realistic max ~{_format_grams(_food_max_daily_g(food))}/day)"
     if practicality == "large":
         return f"a lot of food (~{bb.format_float(grams, 0)} g/day)"
 
