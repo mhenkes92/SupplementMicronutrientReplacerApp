@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -2733,12 +2734,16 @@ def _sync_scan_history_with_browser() -> None:
     clear_scan = bool(st.session_state.pop("_suppswipe_scan_clear", False))
     if clear_scan:
         st.session_state.pop("_suppswipe_scan_snapshot", None)
+    token = st.session_state.get("_suppswipe_history_token")
+    if not token:
+        token = st.session_state["_suppswipe_history_token"] = uuid.uuid4().hex
     try:
         stored = _history_store(
             save=pending,
             clear=clear,
             saveScan=_saved_scan_args(st.session_state),
             clearScan=clear_scan,
+            session=token,  # the iframe sends the stored data once per session
             key="suppswipe_history_store",
             default=None,
         )
@@ -2829,8 +2834,12 @@ def _excluded_swaps_caption(excluded: list[dict[str, Any]], diet_label: str) -> 
     """Note which flagged swaps (no longer fitting the filter) are left out."""
     if not excluded:
         return
-    names = ", ".join(dict.fromkeys(str(d.get("component", "") or "") for d in excluded if d.get("component")))
+    names = ", ".join(dict.fromkeys(_nutrient_title(d.get("component")) for d in excluded if d.get("component")))
     st.caption(f"Not included until you choose another food: {names} (doesn't fit {diet_label}).")
+
+
+def _on_meal_count_change() -> None:
+    st.session_state["swipe_meal_count_choice"] = int(st.session_state.get("swipe_meal_count", 3) or 3)
 
 
 def _render_final_actions(
@@ -2852,12 +2861,16 @@ def _render_final_actions(
         if not replace_items:
             st.info("Swipe right on at least one nutrient to build a meal plan.")
         else:
+            # Mirrored into a plain key (see _on_diet_profile_change): the radio
+            # isn't rendered while a card is open, so Streamlit drops its state.
+            chosen_meals = int(st.session_state.get("swipe_meal_count_choice", 3) or 3)
             num_meals = st.radio(
                 "How many meals?",
                 options=[1, 2, 3],
-                index=2,
+                index=[1, 2, 3].index(chosen_meals) if chosen_meals in (1, 2, 3) else 2,
                 horizontal=True,
                 key="swipe_meal_count",
+                on_change=_on_meal_count_change,
                 format_func=lambda m: f"{m} meal" if m == 1 else f"{m} meals",
             )
             _sys, _usr, plan_key = _meal_plan_prompts(replace_items, diet_label, int(num_meals))
@@ -3637,7 +3650,9 @@ def _render_dietary_pills() -> None:
         )
     st.toggle(
         "🤰 Pregnant or breastfeeding",
-        value=_pregnancy_mode(),
+        # As with the chips: no value while the key has state (set by Resume),
+        # which would log a default-vs-state warning.
+        value=False if "swipe_pregnant_toggle" in st.session_state else _pregnancy_mode(),
         key="swipe_pregnant_toggle",
         on_change=_on_pregnancy_change,
         help=(
@@ -3706,6 +3721,7 @@ def _run_pending_analysis() -> None:
             progress_bar.empty()
             progress_text.empty()
             st.error(message)
+            _request_scroll_top()  # the error is at the top; the Analyze button far below
 
         _set_progress(6, "Preparing AI analysis…")
         text_parts: list[str] = []
@@ -3825,7 +3841,28 @@ def _run_pending_analysis() -> None:
         st.session_state["swipe_pending_request"] = None
         st.session_state["swipe_analysis_kicked"] = False
         st.session_state["swipe_progress_pct"] = 0
+        _request_scroll_top()  # the first card renders at the top
         st.rerun()
+
+
+def _request_scroll_top() -> None:
+    """Show the top of the page on the next render (a scan started, finished
+    or failed): the card or the error renders at the top, while the buttons
+    that start a scan sit far below on a phone."""
+    st.session_state["_suppswipe_scroll_top"] = True
+
+
+def _scroll_to_top() -> None:
+    """Scroll Streamlit's main container (and the window) to the top once."""
+    nonce = int(st.session_state.get("_suppswipe_scroll_nonce", 0) or 0) + 1
+    st.session_state["_suppswipe_scroll_nonce"] = nonce
+    components.html(
+        "<script>/* scroll %d */(function(){try{var d=window.parent.document;"
+        "['[data-testid=stMain]','[data-testid=stAppViewContainer]','section.main'].forEach(function(s){"
+        "var el=d.querySelector(s);if(el){el.scrollTo({top:0});}});window.parent.scrollTo(0,0);}catch(e){}})();</script>"
+        % nonce,
+        height=0,
+    )
 
 
 def _stage_analysis_from_inputs(
@@ -3847,10 +3884,24 @@ def _stage_analysis_from_inputs(
     st.session_state["swipe_progress_pct"] = 1
     st.session_state["swipe_analysis_kicked"] = False
     st.session_state["swipe_is_analyzing"] = True
+    _request_scroll_top()
     return True
 
 
-@st.dialog("Analyze my supplement")
+# The dialogs stay open across reruns until they are answered or dismissed:
+# their session flag is cleared by the dialog's own buttons and by on_dismiss,
+# not by the run that opens them. A stray extra rerun (e.g. a component iframe
+# re-sending its value) would otherwise close a one-shot dialog right after
+# "Start over" opened it.
+def _close_analyze_dialog() -> None:
+    st.session_state["swipe_open_analyze"] = False
+
+
+def _close_restart_dialog() -> None:
+    st.session_state["swipe_confirm_restart"] = False
+
+
+@st.dialog("Analyze my supplement", on_dismiss=_close_analyze_dialog)
 def _analyze_dialog() -> None:
     nonce = int(st.session_state.get("swipe_reset_nonce", 0))
     precheck_error = _blockbrain_ready_error()
@@ -3909,13 +3960,15 @@ def _analyze_dialog() -> None:
 
     if not precheck_error and _stage_analysis_from_inputs(upload_bytes, camera_bytes, manual_text, camera_barcode):
         # Close the dialog and let the main app run the analysis immediately.
+        _close_analyze_dialog()
         st.rerun(scope="app")
 
     if st.button("Cancel", width="stretch", key=f"dlg_cancel_{nonce}"):
+        _close_analyze_dialog()
         st.rerun()
 
 
-@st.dialog("Start over?")
+@st.dialog("Start over?", on_dismiss=_close_restart_dialog)
 def _confirm_restart_dialog() -> None:
     st.write(
         "You've already started swiping. Analyzing a new supplement will clear your "
@@ -3924,10 +3977,11 @@ def _confirm_restart_dialog() -> None:
     col_cancel, col_ok = st.columns(2)
     with col_cancel:
         if st.button("Cancel", width="stretch", key="swipe_restart_cancel"):
+            _close_restart_dialog()
             st.rerun()
     with col_ok:
         if st.button("Start over", type="primary", width="stretch", key="swipe_restart_confirm"):
-            _reset_swipe_state()
+            _reset_swipe_state()  # also clears swipe_confirm_restart
             _forget_saved_scan()
             st.session_state["swipe_open_analyze"] = True
             st.rerun()
@@ -3958,8 +4012,9 @@ def _render_privacy_popover() -> None:
             "Don't include personal details.\n"
             "- Barcode numbers are looked up in public product databases and web search "
             "(Open Food Facts, UPCitemdb, DuckDuckGo). Pasted links are fetched by the app's server.\n"
-            "- Your scan history and the scan you're working on are stored only in this browser "
-            "(so you can resume after a refresh); *Clear history* or *Start over* deletes them.\n"
+            "- Your scan history and the scan you're working on (with your dietary filter and pregnancy "
+            "setting) are stored only in this browser, so you can resume after a refresh; *Clear history* "
+            "deletes both, *Start over* deletes the scan in progress.\n"
             "- There are no accounts. Label text and generated answers may be kept in the server's "
             "memory for a few hours so repeat requests are faster.\n"
             "- The app runs on Streamlit Community Cloud, which has its own privacy notice.\n\n"
@@ -4222,6 +4277,8 @@ def _scan_snapshot(state: Any, now: float | None = None) -> dict[str, Any] | Non
         "text": text,
         "decisions": decisions,
         "diet": str(state.get("swipe_diet_profile_id", "none") or "none"),
+        # Kept on this device like the rest of the snapshot (never logged).
+        "pregnant": bool(state.get("swipe_pregnant", False)),
         "index": max(0, min(len(cards), index)),
         "total": len(cards),
         "label_source": dict(state.get("swipe_label_source") or {}),
@@ -4297,6 +4354,9 @@ def _restore_scan(state: Any, saved: dict[str, Any]) -> bool:
     state["swipe_edit_return"] = False
     state["swipe_diet_profile_id"] = diet
     state["swipe_diet_pills"] = diet  # keep the filter chips in step
+    pregnant = bool(saved.get("pregnant", False))
+    state["swipe_pregnant"] = pregnant
+    state["swipe_pregnant_toggle"] = pregnant  # and the toggle
     state["swipe_last_auto_signature"] = sig
     if saved.get("recorded"):
         state["swipe_history_recorded_sig"] = sig  # already in the scan history
@@ -4743,10 +4803,12 @@ def _build_mobile_ui() -> None:
     _render_card()
     _render_dietary_pills()
     _render_analyze_bar()
-    if st.session_state.pop("swipe_confirm_restart", False):
+    if st.session_state.get("swipe_confirm_restart", False):
         _confirm_restart_dialog()
-    if st.session_state.pop("swipe_open_analyze", False):
+    elif st.session_state.get("swipe_open_analyze", False):
         _analyze_dialog()
+    if st.session_state.pop("_suppswipe_scroll_top", False):
+        _scroll_to_top()
     try:
         show_debug = str(st.query_params.get("debug", "") or "") == "1"
     except Exception:

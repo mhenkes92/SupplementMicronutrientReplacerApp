@@ -365,3 +365,124 @@ def test_resume_keeps_the_diet_filter_chip(page):
 def test_build_tag_in_about_popover(page):
     page.get_by_role("button", name="🔒 About & privacy").click()
     page.get_by_text("Build ", exact=False).first.wait_for(timeout=5000)
+
+
+# --- Final review (UX journey) ----------------------------------------------------------
+
+
+def _small_page(browser, server, width: int = 320, height: int = 640):
+    ctx = browser.new_context(viewport={"width": width, "height": height}, is_mobile=True, has_touch=True)
+    pg = ctx.new_page()
+    pg.goto(server, wait_until="networkidle")
+    return ctx, pg
+
+
+def test_start_over_always_opens_the_analyze_dialog(page):
+    # UXJ-F1: a stray rerun (the history iframe re-sending its value) used to
+    # close the one-shot dialog in about 1 of 6 tries.
+    dialog = page.get_by_role("dialog")
+    for attempt in range(10):
+        if dialog.count():
+            dialog.get_by_role("button", name="Cancel").click()
+            settle(page)
+        start_sample(page)
+        name = card_name(page)
+        card(page).locator("#btnKeep").click()
+        wait_name_change(page, name)
+        settle(page)
+        page.get_by_role("button", name="Analyze my Supplement").click()
+        page.get_by_role("button", name="Start over").click()
+        page.wait_for_timeout(2000)
+        settle(page)
+        assert dialog.count() == 1, f"attempt {attempt}: no dialog after Start over"
+        assert dialog.get_by_text("Analyze my supplement").count() == 1
+    # Cancel closes it, and it stays closed on the next run.
+    dialog.get_by_role("button", name="Cancel").click()
+    settle(page, 1.5)
+    assert dialog.count() == 0
+    page.get_by_role("button", name="Try it with a sample label").wait_for(timeout=10000)
+
+
+def test_small_phone_sees_the_first_card_after_the_sample_button(browser, server):
+    # UXJ-F2: the page kept the scroll position of the (far down) button.
+    ctx, pg = _small_page(browser, server)
+    try:
+        button = pg.get_by_role("button", name="Try it with a sample label")
+        button.scroll_into_view_if_needed()
+        assert pg.evaluate("document.querySelector('[data-testid=stMain]').scrollTop") > 0
+        button.click()
+        card(pg).locator("#card .name").wait_for(timeout=60000)
+        settle(pg, 1.5)
+        box = pg.locator(CARD).bounding_box()
+        assert box is not None and box["y"] >= -1, box
+        shot(pg, "ux_small_phone_first_card")
+    finally:
+        ctx.close()
+
+
+def test_small_phone_sees_an_analysis_error(browser, server):
+    ctx, pg = _small_page(browser, server)
+    try:
+        button = pg.get_by_role("button", name="Analyze my Supplement")
+        button.scroll_into_view_if_needed()
+        button.click()
+        dialog = pg.get_by_role("dialog")
+        dialog.get_by_text("🔗 URL / Text").click()
+        settle(pg)
+        dialog.locator("textarea").fill("Hello, this text names no nutrient at all")
+        dialog.get_by_role("button", name="Analyze").click()
+        alert = pg.locator('[data-testid="stAlert"]', has_text="No micronutrients")
+        alert.first.wait_for(timeout=30000)
+        settle(pg, 1.5)
+        box = alert.first.bounding_box()
+        assert box is not None and 0 <= box["y"] < 640, box
+    finally:
+        ctx.close()
+
+
+def test_resume_keeps_the_pregnancy_toggle(page):
+    # UXJ-F4
+    start_sample(page)
+    page.get_by_text("Pregnant or breastfeeding").click()
+    settle(page)
+    name = card_name(page)
+    card(page).locator("#btnKeep").click()
+    wait_name_change(page, name)
+    settle(page, 1.2)
+    page.reload(wait_until="networkidle")
+    page.get_by_role("button", name="Resume your last scan").click(timeout=20000)
+    card(page).locator("#card .name").wait_for(timeout=20000)
+    settle(page)
+    toggle = page.locator("label", has_text="Pregnant or breastfeeding").locator("input")
+    assert toggle.is_checked()
+
+
+def test_low_dose_note_is_info_not_a_warning(page):
+    # UXJ-F3: card 5 of the sample label is magnesium 56 mg (15% NRV).
+    start_sample(page)
+    for _ in range(4):
+        name = card_name(page)
+        card(page).locator("#btnKeep").click()
+        wait_name_change(page, name)
+    settle(page)
+    assert "magnesium" in card_name(page).lower()
+    assert card(page).locator("#card .bio").inner_text().count("Low dose: about 15%") == 1
+    assert card(page).locator("#card .warn").count() == 0 or "Low dose" not in card(page).locator("#card .warn").inner_text()
+
+
+def test_meal_count_survives_editing_a_card(page):
+    # UXJ-F6: replace the first card so the results offer meals.
+    start_sample(page)
+    name = card_name(page)
+    card(page).locator("#btnRepl").click()
+    wait_name_change(page, name)
+    finish_all_cards(page)
+    page.get_by_text("1 meal", exact=True).click()
+    settle(page)
+    page.locator('[data-testid="stButton"] button', has_text="Selenium").first.click()
+    card(page).locator("#card .name").wait_for(timeout=20000)
+    settle(page)
+    card(page).locator("#btnBack").click()
+    results_heading(page).wait_for(timeout=20000)
+    settle(page)
+    assert page.get_by_role("radio", name="1 meal").is_checked()
