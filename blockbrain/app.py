@@ -6945,6 +6945,20 @@ _NUTRIENT_FOOD_EXCLUSIONS: dict[str, re.Pattern[str]] = {
     ),
 }
 
+# Food categories that never count as an EPA / DHA source: plants make no
+# long-chain omega-3 (only ALA). USDA lists a few plant rows anyway - a DHA
+# value on "Quinoa, uncooked" (an artefact) and small EPA amounts in raw
+# seaweed (~240 g of wakame a day for a 450 mg capsule, with an unknown and
+# possibly excessive iodine load). Algal oil is the plant EPA+DHA source, and
+# it is a supplement, not a whole food.
+_PLANT_FOOD_CATEGORY_RE = re.compile(
+    r"\b(?:legumes?|vegetables?|cereals?|grains?|pasta|fruits?|nuts?|seeds?|spices?|herbs?|beverages?|baked)\b",
+    re.IGNORECASE,
+)
+_NUTRIENT_FOOD_CATEGORY_EXCLUSIONS: dict[str, re.Pattern[str]] = {
+    key: _PLANT_FOOD_CATEGORY_RE for key in ("omega 3", "fish oil", "epa", "dha")
+}
+
 # B12-fortified plant foods, listed with the B12 foods (marked "fortified";
 # the swipe app offers them on vegan / vegetarian cards only): on those diets
 # whole foods cannot supply B12 (DGE), fortified foods can. Amounts are typical EU fortification levels per 100 g / 100 ml
@@ -7113,9 +7127,12 @@ def _lexicon_food_rows(key: str, limit: int) -> tuple[dict[str, Any], ...]:
 
     per_food: dict[str, dict[str, Any]] = {}
     excluded = _NUTRIENT_FOOD_EXCLUSIONS.get(key)
+    excluded_category = _NUTRIENT_FOOD_CATEGORY_EXCLUSIONS.get(key)
     for nid, desc, category, amount in _query_usda_food_amounts(list(factors)):
         fkey = normalize_lookup_key(desc)
         if not fkey or (excluded is not None and excluded.search(desc)):
+            continue
+        if excluded_category is not None and excluded_category.search(str(category or "")):
             continue
         entry = per_food.setdefault(fkey, {"desc": desc, "category": category, "by_id": {}})
         # Keep the highest value if the DB repeats a food for the same nutrient.

@@ -890,13 +890,18 @@ def _portion_for_target(
     UV-treated ones count.
     """
     core = _portion_core_for_target(food, target_value, target_unit, component, form)
-    if note and core and not core.startswith("not practical") and _is_uv_mushroom(food) \
-            and bb.canonical_nutrient_key(component) == "vitamin d":
-        core += f" {_UV_MUSHROOM_NOTE}"
+    if note and core and not core.startswith("not practical"):
+        key = bb.canonical_nutrient_key(component)
+        if _is_uv_mushroom(food) and key == "vitamin d":
+            core += f" {_UV_MUSHROOM_NOTE}"
+        elif key == "vitamin b12" and _is_b12_fortified_food(food):
+            core += f" {_FORTIFIED_B12_NOTE}"
     return core
 
 
 _UV_MUSHROOM_NOTE = "(only UV-treated mushrooms — regular mushrooms contain almost no vitamin D)"
+# EU-organic (Bio) foods may not be fortified, so a "soy drink" alone is no B12 source.
+_FORTIFIED_B12_NOTE = "(B12-fortified only — check the label; Bio/organic products contain no added B12)"
 
 
 def _portion_core_for_target(
@@ -1459,6 +1464,10 @@ _PLANT_FOOD_CATEGORY_RE = re.compile(
     re.IGNORECASE,
 )
 _B12_FORTIFIED_MIN_MCG_PER_100G = 0.35
+# Long-chain omega-3 cards (EPA / DHA, as fish or algal oil): no plant food
+# supplies them (blockbrain drops plant rows from these pools), so on a vegan
+# diet only algal oil - a supplement - does.
+_OMEGA3_LONG_CHAIN_KEYS = frozenset({"omega 3", "fish oil", "epa", "dha"})
 
 
 def _is_b12_fortified_food(food: dict[str, Any] | None) -> bool:
@@ -1477,14 +1486,24 @@ def _is_b12_fortified_food(food: dict[str, Any] | None) -> bool:
     return mcg is not None and mcg >= _B12_FORTIFIED_MIN_MCG_PER_100G
 
 
+def _is_us_fortified_b12_row(food: dict[str, Any] | None) -> bool:
+    """A USDA plant food whose B12 is US fortification (soy milk 1.33 µg/100 g,
+    fortified cereals): German B12-fortified plant drinks carry ~0.38 µg/100 ml
+    and EU-organic (Bio) ones none, so sizing a portion on the US value would
+    under-supply B12 3-fold. The curated EU-level foods stand in for them."""
+    return isinstance(food, dict) and not food.get("fortified") and _is_b12_fortified_food(food)
+
+
 def _with_fortified_options(foods: list[dict[str, Any]], card: dict[str, Any], profile: dict[str, Any] | None) -> list[dict[str, Any]]:
     """The card's dropdown plus, on vegan / vegetarian B12 cards, the
-    B12-fortified foods (yeast flakes, plant drinks), ranked in by amount."""
+    B12-fortified foods at EU fortification levels (yeast flakes, plant
+    drinks), ranked in by amount; US-fortified USDA rows are dropped."""
     if not _plant_based_diet(profile):
         return foods
     extra = bb.fortified_food_options(str(card.get("nutrient_key", "") or card.get("component", "") or ""))
     if not extra:
         return foods
+    foods = [f for f in foods if not _is_us_fortified_b12_row(f)]
     names = {str(f.get("food_description", "")) for f in foods}
     merged = list(foods) + [f for f in extra if f["food_description"] not in names]
     merged.sort(key=lambda f: float(f.get("amount_per_100g", 0) or 0), reverse=True)
@@ -1494,14 +1513,17 @@ def _with_fortified_options(foods: list[dict[str, Any]], card: dict[str, Any], p
 def _replace_block_reason(card: dict[str, Any], food: dict[str, Any] | None, profile: dict[str, Any] | None) -> str:
     """Why "replace with food" is soft-blocked on this card ("" when it is not):
     vegan / vegetarian B12 unless a B12-fortified food is picked (a curated
-    one or any plant food with B12, see _is_b12_fortified_food), and vegan
-    iodine (no reliable plant source; iodised salt is not a food portion)."""
+    one or any plant food with B12, see _is_b12_fortified_food), vegan
+    iodine (no reliable plant source; iodised salt is not a food portion) and
+    vegan EPA / DHA (only algal oil, itself a supplement, supplies them)."""
     diet = _plant_based_diet(profile)
     key = str(card.get("nutrient_key", "") or "") or bb.canonical_nutrient_key(str(card.get("component", "") or ""))
     if diet and key == "vitamin b12" and not _is_b12_fortified_food(food):
         return f"On a {diet} diet only a B12-fortified food can replace a B12 pill."
     if diet == "vegan" and key == "iodine":
         return "On a vegan diet no food replaces an iodine pill reliably."
+    if diet == "vegan" and key in _OMEGA3_LONG_CHAIN_KEYS:
+        return "On a vegan diet only algal oil supplies EPA+DHA — no whole food replaces this pill."
     return ""
 
 
@@ -1657,8 +1679,9 @@ def _plant_based_diet(profile: dict[str, Any] | None) -> str:
 
 def _diet_specific_warning(component_key: str, profile: dict[str, Any] | None) -> str:
     """Diet-specific advice that overrides "replace with food" (vegan /
-    vegetarian B12, vegan iodine); Replace is soft-blocked for these cards
-    (see _replace_block_reason)."""
+    vegetarian B12, vegan iodine, vegan / vegetarian EPA+DHA); Replace is
+    soft-blocked for these cards except vegetarian EPA+DHA, where eggs are a
+    (small) real source (see _replace_block_reason)."""
     diet = _plant_based_diet(profile)
     key = bb.canonical_nutrient_key(component_key)
     if diet and key == "vitamin b12":
@@ -1671,6 +1694,17 @@ def _diet_specific_warning(component_key: str, profile: dict[str, Any] | None) -
         return (
             "⚠️ On a vegan diet no food supplies iodine reliably — keeping the supplement is recommended. "
             "Cook with iodised salt (Jodsalz); seaweed iodine is erratic and can be far too high."
+        )
+    if diet == "vegan" and key in _OMEGA3_LONG_CHAIN_KEYS:
+        return (
+            "⚠️ On a vegan diet no whole food supplies EPA+DHA — algal oil is the only plant source, so "
+            "keeping it is recommended. Flax, chia, hemp and walnuts give ALA, of which the body converts "
+            "only a few percent."
+        )
+    if diet == "vegetarian" and key in _OMEGA3_LONG_CHAIN_KEYS:
+        return (
+            "⚠️ On a vegetarian diet only eggs give a little DHA, far from a capsule's dose — algal oil is "
+            "the practical EPA+DHA source, so keeping it is recommended."
         )
     return ""
 
@@ -1743,9 +1777,15 @@ _ORGAN_FALSE_FRIEND_RE = re.compile(r"\b(?:beans?|palm|artichokes?|celery|lettuc
 _PLANT_CATEGORY_WORDS = ("legume", "vegetable", "fruit", "nut and seed", "cereal", "spice", "beverage")
 
 # Nutrients usually kept as a supplement in pregnancy (folic acid, iodine,
-# vitamin D, iron; B12 too on a vegan / vegetarian diet).
+# vitamin D, iron; B12 and DHA too on a vegan / vegetarian diet).
 _PREGNANCY_SUPPLEMENT_KEYS = {"folate", "iodine", "vitamin d", "iron"}
 _PREGNANCY_NOTE = "🤰 Usually advised to keep as a supplement in pregnancy — check with your doctor or midwife."
+# German guidance (DGE / Netzwerk Gesund ins Leben): ~200 mg DHA a day in
+# pregnancy and while breastfeeding; without oily fish, from a supplement.
+_PREGNANCY_DHA_NOTE = (
+    "🤰 In pregnancy and while breastfeeding about 200 mg DHA a day is advised — without oily fish, "
+    "keep the (algal-oil) supplement. Check with your doctor or midwife."
+)
 _PREGNANCY_MEAL_RULES = (
     " The user is pregnant or breastfeeding, so follow pregnancy food-safety rules: no liver or "
     "liver products (pâté, liver sausage) and no other organ meats, no raw or undercooked meat, fish "
@@ -1797,6 +1837,8 @@ def _pregnancy_note(component_key: str, profile: dict[str, Any] | None = None) -
     key = bb.canonical_nutrient_key(component_key)
     if key in _PREGNANCY_SUPPLEMENT_KEYS or (key == "vitamin b12" and _plant_based_diet(profile)):
         return _PREGNANCY_NOTE
+    if key in _OMEGA3_LONG_CHAIN_KEYS and _plant_based_diet(profile):
+        return _PREGNANCY_DHA_NOTE
     return ""
 
 
@@ -2812,12 +2854,14 @@ def _merge_duplicate_components(components: list[dict[str, Any]]) -> list[dict[s
 
 def _whole_food_pool(component: str) -> list[dict[str, Any]]:
     """The ranked USDA whole-food pool of a card. B12-fortified foods are left
-    out here; _with_fortified_options offers them on vegan / vegetarian cards."""
+    out here; _with_fortified_options offers them on vegan / vegetarian cards
+    (USDA's US-fortified plant drinks never: see _is_us_fortified_b12_row)."""
     try:
         pool = list(bb._build_local_food_rows_for_component(component, limit=SWIPE_CARD_FOOD_POOL) or [])
     except Exception:
         return []
-    return [food for food in pool if not food.get("fortified")]
+    b12 = bb.canonical_nutrient_key(component) == "vitamin b12"
+    return [food for food in pool if not food.get("fortified") and not (b12 and _is_us_fortified_b12_row(food))]
 
 
 def _build_swipe_cards(components: list[dict[str, Any]], details: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -237,7 +237,8 @@ def test_fortified_food_portion_beyond_a_realistic_daily_amount_is_not_practical
     yeast = next(f for f in foods if "yeast" in f["food_description"].lower())
     drink = next(f for f in foods if "soy drink" in f["food_description"].lower())
     assert yeast.get("fortified") and drink.get("fortified")
-    assert sw._portion_for_target(yeast, 2.5, "mcg", "vitamin b12") == "~25 g"
+    assert sw._portion_for_target(yeast, 2.5, "mcg", "vitamin b12", note=False) == "~25 g"
+    assert sw._portion_for_target(yeast, 2.5, "mcg", "vitamin b12") == f"~25 g {sw._FORTIFIED_B12_NOTE}"
     assert sw._portion_for_target(yeast, 25, "mcg", "vitamin b12").startswith("not practical from food alone")
     assert sw._portion_for_target(drink, 2.5, "mcg", "vitamin b12").startswith("a lot of food")
     assert sw._portion_for_target(drink, 4, "mcg", "vitamin b12").startswith("not practical from food alone")
