@@ -1137,19 +1137,29 @@ def _food_portion_grams(
     return grams if grams and grams > 0 else None
 
 
-def _card_portion_grams(food: dict[str, Any] | None, dose_value: Any, dose_unit: str, component: str, form: str = "") -> float | None:
-    """The largest daily amount of `food` the card suggests that someone could
-    actually eat: the portion for the pill dose or the one for the athlete daily
-    target (the card shows both), leaving out a portion the card already calls
-    "not practical from food alone" (> 1 kg/day). None if there is none."""
+def _card_portions(food: dict[str, Any] | None, dose_value: Any, dose_unit: str, component: str, form: str = "") -> list[float]:
+    """The daily amounts of `food` the card shows: for the pill dose and for
+    the athlete daily target."""
     grams = [g for g in (_food_portion_grams(food, dose_value, dose_unit, component, form),) if g]
     entry = _rda_for_component(component)
     if entry is not None:
         athlete = _food_portion_grams(food, entry["athlete"], str(entry["unit"]), str(entry["display"]))
         if athlete:
             grams.append(athlete)
-    edible = [g for g in grams if _portion_practicality(g, food) != "impractical"]
+    return grams
+
+
+def _card_portion_grams(food: dict[str, Any] | None, dose_value: Any, dose_unit: str, component: str, form: str = "") -> float | None:
+    """The largest of the card's portions that someone could actually eat,
+    leaving out one the card already calls "not practical from food alone".
+    None if there is none."""
+    edible = [g for g in _card_portions(food, dose_value, dose_unit, component, form) if _portion_practicality(g, food) != "impractical"]
     return max(edible) if edible else None
+
+
+def _all_portion_grams(food: dict[str, Any] | None, dose_value: Any, dose_unit: str, component: str, form: str = "") -> float | None:
+    """The largest of the card's portions, a "not practical" one included."""
+    return max(_card_portions(food, dose_value, dose_unit, component, form), default=None)
 
 
 def _is_liver(food: dict[str, Any] | None) -> bool:
@@ -1209,17 +1219,6 @@ def _co_nutrient_excesses(food: dict[str, Any] | None, grams: float | None, comp
         if preformed and preformed * grams / 100.0 > float(entry["limit"]):
             out.append(("vitamin a", preformed * grams / 100.0, entry))
     return out
-
-
-def _all_portion_grams(food: dict[str, Any] | None, dose_value: Any, dose_unit: str, component: str, form: str = "") -> float | None:
-    """Like _card_portion_grams, but including a "not practical" portion."""
-    grams = [g for g in (_food_portion_grams(food, dose_value, dose_unit, component, form),) if g]
-    entry = _rda_for_component(component)
-    if entry is not None:
-        athlete = _food_portion_grams(food, entry["athlete"], str(entry["unit"]), str(entry["display"]))
-        if athlete:
-            grams.append(athlete)
-    return max(grams) if grams else None
 
 
 def _food_exceeds_a_limit(food: dict[str, Any] | None, grams: float | None, component: str, liver_grams: float | None = None) -> bool:
@@ -1301,13 +1300,11 @@ def _default_food_index(foods: list[dict[str, Any]], card: dict[str, Any], profi
     for food in foods:
         name, category = _food_name_and_category(food)
         grams = _target_grams(food)
-        checked = _card_portion_grams(food, dose_value, dose_unit, component, form)
-        if checked is None and grams is not None and _portion_practicality(grams, food) != "impractical":
-            checked = grams
+        portions = _card_portions(food, dose_value, dose_unit, component, form) or ([grams] if grams else [])
+        # Co-nutrient limits on the portions someone could eat; liver vitamin A on all of them.
+        edible = [g for g in portions if _portion_practicality(g, food) != "impractical"]
         facts.append({
-            "unsafe": _food_exceeds_a_limit(
-                food, checked, component, _all_portion_grams(food, dose_value, dose_unit, component, form) or grams
-            ),
+            "unsafe": _food_exceeds_a_limit(food, max(edible, default=None), component, max(portions, default=None)),
             "organ": bb.food_is_organ_meat(name, category),
             "practical": _PRACTICALITY_RANK.get(_portion_practicality(grams, food), 3) if grams else 3,
             "d3": key == "vitamin d" and bool(_EVERYDAY_VITAMIN_D3_RE.search(name)) and not _MUSHROOM_RE.search(name),
