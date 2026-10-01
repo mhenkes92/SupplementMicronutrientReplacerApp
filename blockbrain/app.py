@@ -9592,7 +9592,9 @@ def parse_label_nutrient_lines(text: str) -> list[dict[str, Any]]:
 
 
 def _legacy_row_name_pattern(component: str) -> re.Pattern[str] | None:
-    words = [w for w in _fold_label_text(component).split() if not _LABEL_DOSE_RE.fullmatch(w) and not re.fullmatch(r"[\d.,%]+|mg|mcg|ug|iu|g", w)]
+    """Whole-word regex for a generic row's name in folded label text, without
+    the dose words some rows carry ("magnesium 400 mg" -> "magnesium")."""
+    words = [w for w in _fold_label_text(component).split() if not re.fullmatch(r"[\d.,%]*(?:mg|mcg|ug|iu|g)?", w)]
     if not words:
         return None
     return re.compile(r"(?<![a-z0-9])" + r"\s+".join(re.escape(w) for w in words) + r"(?![a-z0-9])")
