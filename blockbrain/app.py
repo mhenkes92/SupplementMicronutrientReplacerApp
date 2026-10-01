@@ -5518,9 +5518,41 @@ _VITAMIN_FOREIGN_WORD_RE = re.compile(r"\bvitamin(?:a|as|e|es)\b(?=\s*[a-k](?:\s
 _VITAMIN_LETTER_GLUED_DOSE_RE = re.compile(
     r"\b(vitamin\s*[ace])(\d+(?:[.,]\d+)*)(?=\s*(?:mcg|mg|ug|g|iu|ie|i\.\s?e|ui)(?![a-z]))"
 )
+# The lower bound must stand on its own: in "Vitamin D3 - 1000 I.E.",
+# "Vitamin B12 - 1000 µg", "Coenzym Q10 - 100 mg", "MK-7 - 200 µg" or
+# "Omega-3 - 1000 mg" the digit before the dash is the nutrient's own code
+# (see _dose_range_lower_is_code), never a dose.
 _LABEL_DOSE_RANGE_RE = re.compile(
-    r"(?<![\d.,])(\d+(?:[.,]\d+)*)\s*-\s*(\d+(?:[.,]\d+)*)(?=\s*(?:mcg|meg|mg|ug|pg|g|iu|ie|i\.\s?e|ui)(?![a-z]))"
+    r"(?<![a-z\d.,])(\d+(?:[.,]\d+)*)\s*-\s*(\d+(?:[.,]\d+)*)(?=\s*(?:mcg|meg|mg|ug|pg|g|iu|ie|i\.\s?e|ui)(?![a-z]))"
 )
+# Text right before a dose range's lower bound that makes that number a code:
+# a hyphen-glued code ("MK-7", "Omega-3", "Co-Q10"), a spaced "Omega 3" /
+# "Q 10" / "MK 7", or a vitamin letter that takes numeric codes ("B 12",
+# "D 3", "K 2"; checked against the code numbers in _dose_range_lower_is_code).
+_DOSE_RANGE_CODE_LEAD_RE = re.compile(r"(?:[a-z]-|\b(?:omega|q|mk|coq|menachinon|menaquinone))\s*$")
+_DOSE_RANGE_VITAMIN_LETTER_RE = re.compile(r"\b([bdk])\s*$")
+_DOSE_RANGE_VITAMIN_CODES: dict[str, frozenset[str]] = {
+    "b": frozenset(str(n) for n in range(1, 13)),
+    "d": frozenset({"2", "3"}),
+    "k": frozenset({"1", "2"}),
+}
+
+
+def _dose_range_lower_is_code(before: str, low: str) -> bool:
+    """True when `low`, the number before the dash of an apparent dose range,
+    is the code of the nutrient written right before it ("Omega-3 - 1000 mg",
+    "MK-7 - 200 µg", "B 12 - 1000 µg"). `before` is the text before `low`."""
+    pre = str(before or "")[-24:].lower()
+    if re.search(r"[a-z\d.,]$", pre) or _DOSE_RANGE_CODE_LEAD_RE.search(pre):
+        return True
+    letter = _DOSE_RANGE_VITAMIN_LETTER_RE.search(pre)
+    return bool(letter and low in _DOSE_RANGE_VITAMIN_CODES[letter.group(1)])
+
+
+def _label_dose_range_sub(match: re.Match[str]) -> str:
+    if _dose_range_lower_is_code(match.string[: match.start()], match.group(1)):
+        return match.group(0)
+    return f"{match.group(1)} to {match.group(2)}"
 # German salt compounds written as one word ("Magnesiumcitrat", "Kaliumiodid").
 _GERMAN_SALT_COMPOUND_RE = re.compile(
     r"\b(magnesium|zink|zinc|calcium|kalzium|kalium|natrium|eisen|kupfer|mangan|chrom|selen)"
@@ -5564,7 +5596,7 @@ def _fold_label_text(text: str) -> str:
     t = _OMEGA_BLEND_RE.sub("omega 369 blend", t)
     # A dose range ("Vitamin C 100-200 mg", "Magnesium 200–400 mg") keeps both
     # numbers: "100 to 200 mg" (the hyphen alone would be dropped below).
-    t = _LABEL_DOSE_RANGE_RE.sub(r"\1 to \2", t)
+    t = _LABEL_DOSE_RANGE_RE.sub(_label_dose_range_sub, t)
     # Joiners of product titles ("Vitamin D3/K2", "Calcium & D3"): " + ".
     t = re.sub(r"(?<=[a-z0-9])\s*/\s*(?=[a-z])|(?<=[a-z])\s*/\s*(?=[0-9])|\s*&\s*", " + ", t)
     t = re.sub(r"\s*\+\s*", " + ", t)
@@ -6570,9 +6602,16 @@ def _has_structured_table_cues(text: str) -> bool:
 
 
 _RAW_DOSE_RANGE_RE = re.compile(
-    r"(?<![\d.,])(\d+(?:[.,]\d+)*)\s*[-\u2013\u2014]\s*\d+(?:[.,]\d+)*(?=\s*(?:mcg|mg|µg|μg|ug|g|iu|i\.\s?e\.?|ie)(?![a-z]))",
+    r"(?<![A-Za-z\d.,])(\d+(?:[.,]\d+)*)\s*[-\u2013\u2014]\s*\d+(?:[.,]\d+)*(?=\s*(?:mcg|mg|µg|μg|ug|g|iu|i\.\s?e\.?|ie)(?![a-z]))",
     re.I,
 )
+
+
+def _raw_dose_range_sub(match: re.Match[str]) -> str:
+    # "Vitamin D3 - 1000 I.E.", "Omega-3 - 1000 mg": a code, not a range.
+    if _dose_range_lower_is_code(match.string[: match.start()], match.group(1)):
+        return match.group(0)
+    return match.group(1)
 
 
 def _prepare_text_for_structured_parsing(input_text: str) -> str:
@@ -6581,7 +6620,7 @@ def _prepare_text_for_structured_parsing(input_text: str) -> str:
         return ""
     # A dose range ("Vitamin C 100-200 mg"): the generic parsers read the lower
     # bound, like the label-line parser (which also keeps the upper bound).
-    text = _RAW_DOSE_RANGE_RE.sub(r"\1", text)
+    text = _RAW_DOSE_RANGE_RE.sub(_raw_dose_range_sub, text)
     if not _has_structured_table_cues(text):
         return text
 
@@ -10129,7 +10168,10 @@ def _label_row(
         row["dose_unit"] = _label_dose_unit(chosen.group("unit"))
         # "Vitamin C 100-200 mg" (folded "100 to 200 mg"): the lower bound is the
         # dose the portions are sized to; the upper bound is kept for the limits.
-        low = re.search(r"(\d+(?:[.,]\d+)*)\s+(?:to|bis)\s+$", line[max(0, chosen.start() - 24):chosen.start()])
+        window = line[max(0, chosen.start() - 48):chosen.start()]
+        low = re.search(r"(?<![a-z\d.,])(\d+(?:[.,]\d+)*)\s+(?:to|bis)\s+$", window)
+        if low and _dose_range_lower_is_code(window[: low.start()], low.group(1)):
+            low = None  # "Vitamin D3 bis 1000 I.E.", "Omega 3 bis 1000 mg"
         low_value = _parse_float(low.group(1)) if low else None
         if low_value is not None and 0 < low_value < value:
             row["dose_value"] = float(low_value)
