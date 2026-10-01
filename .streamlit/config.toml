@@ -1,0 +1,18 @@
+# Streamlit reads this file from the directory `streamlit run` is started in,
+# which on Streamlit Community Cloud is the repository root (the old
+# mobile_version/.streamlit/config.toml was never applied to the live app).
+
+[server]
+headless = true
+# Label photos are well under 10 MB; this also stops oversized uploads before
+# they reach the image decoder.
+maxUploadSize = 10
+
+[browser]
+gatherUsageStats = false
+
+[client]
+# Show only the error type to visitors, never stack traces with file paths.
+showErrorDetails = "type"
+# Hide developer-only toolbar items (e.g. "Deploy") from visitors.
+toolbarMode = "minimal"

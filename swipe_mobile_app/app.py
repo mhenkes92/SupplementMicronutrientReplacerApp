@@ -2383,6 +2383,28 @@ def _render_analyze_bar() -> None:
             st.session_state["swipe_open_analyze"] = True
         st.rerun()
     _render_scan_history_popover()
+    _render_privacy_popover()
+
+
+def _render_privacy_popover() -> None:
+    """Plain-language notice of what the app does with a visitor's input."""
+    with st.popover("🔒 About & privacy", use_container_width=True):
+        st.markdown(
+            "**SuppSwipe** gives general nutrition information — it is not medical advice. "
+            "Talk to a doctor or pharmacist before stopping a supplement you were prescribed, "
+            "or if you are pregnant, ill or take medication.\n\n"
+            "**What happens to your input**\n"
+            "- Label photos, pasted text or links and *Ask AI* questions are sent to "
+            "[Blockbrain](https://theblockbrain.ai), the AI service that reads labels and writes answers. "
+            "Don't include personal details.\n"
+            "- Barcode numbers are looked up in public product databases and web search "
+            "(Open Food Facts, UPCitemdb, DuckDuckGo). Pasted links are fetched by the app's server.\n"
+            "- Your scan history is stored only in this browser; *Clear history* deletes it.\n"
+            "- There are no accounts. Label text and generated answers may be kept in the server's "
+            "memory for a few hours so repeat requests are faster.\n"
+            "- The app runs on Streamlit Community Cloud, which has its own privacy notice.\n\n"
+            "**Sources:** food data from USDA FoodData Central; upper limits from EFSA and NIH ODS."
+        )
 
 
 def _render_label_source_notice() -> None:

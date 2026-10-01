@@ -4,6 +4,7 @@ import difflib
 import functools
 import hashlib
 import html
+import http.cookiejar
 import io
 import ipaddress
 import json
@@ -42,6 +43,10 @@ except Exception:
 
 # -- Shared HTTP session -------------------------------------------------
 _HTTP_SESSION = requests.Session()
+# One Session serves every visitor of the app, so it must never store cookies:
+# otherwise a site visited for one user would receive that user's cookies on
+# another user's request.
+_HTTP_SESSION.cookies.set_policy(http.cookiejar.DefaultCookiePolicy(allowed_domains=[]))
 _HTTP_SESSION.headers.update({
     "User-Agent": "Mozilla/5.0 (compatible; SuppSwap/1.0; +https://example.local)",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
