@@ -140,9 +140,10 @@ def test_research_returns_source_url_and_uses_tools(sw, monkeypatch):
     assert sw._research_product_from_label_text("Brand X") == ("", "")
 
 
-def _photo(w=4000, h=3000):
+def _photo(w=4000, h=3000, color="white"):
+    # Distinct colours per test: the OCR cache is keyed by image bytes.
     buf = io.BytesIO()
-    Image.new("RGB", (w, h), "white").save(buf, format="JPEG")
+    Image.new("RGB", (w, h), color).save(buf, format="JPEG")
     return buf.getvalue()
 
 
@@ -168,7 +169,7 @@ def test_ocr_tries_detail_variant_when_small_read_is_weak(sw, monkeypatch):
         return "blurry" if side == 1400 else "Supplement Facts\nVitamin C 90 mg\nZinc 11 mg"
 
     monkeypatch.setattr(bb, "extract_image_text_with_blockbrain", fake_ocr)
-    text, route = sw._extract_image_text_best_effort(_photo(3999, 2999))
+    text, route = sw._extract_image_text_best_effort(_photo(color="lightyellow"))
     assert sizes == [1400, 2000]
     assert "detail_jpeg" in route and "Vitamin C" in text
 
