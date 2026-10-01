@@ -10244,7 +10244,8 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
         depths = _bracket_depths(line)
         names = [
             m for m in _NUTRIENT_ALIAS_RE.finditer(line)
-            if depths[m.start()] == 0 and not _LABEL_FORM_LEAD_RE.search(line[: m.start()])
+            # (search with pos/endpos: no quadratic re-scan of the line prefix)
+            if depths[m.start()] == 0 and not _LABEL_FORM_LEAD_RE.search(line, max(0, m.start() - 16), m.start())
         ]
         if not names:
             unclaimed.append(line)
@@ -10311,8 +10312,11 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
             elif inside:
                 chosen = inside[0]
             else:
+                # Only the text since the previous name can hold it (a dose
+                # further back belongs to, or is cut off by, that name).
+                window_start = max(prev_end, items[i - 1]["names_end"] if i > 0 else 0)
                 before = [
-                    d for d in _LABEL_DOSE_RE.finditer(line, prev_end, item["start"])
+                    d for d in _LABEL_DOSE_RE.finditer(line, window_start, item["start"])
                     if depths[d.start()] == 0 and d.start() not in used_doses
                 ]
                 if before:
