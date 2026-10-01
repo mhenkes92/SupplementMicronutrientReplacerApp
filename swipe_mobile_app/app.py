@@ -206,6 +206,7 @@ def _init_state() -> None:
         "swipe_components": [],
         "swipe_rag_chats": {},
         "swipe_diet_profile_id": "none",
+        "swipe_pregnant": False,
         "swipe_reset_nonce": 0,
         "swipe_is_analyzing": False,
         "swipe_pending_request": None,
@@ -1338,17 +1339,115 @@ def _card_warning_text(
     return " ".join(parts)
 
 
+# --- Pregnancy & medication guardrails ----------------------------------------
+# "🤰 Pregnant or breastfeeding" (a toggle next to the dietary filter, kept in
+# swipe_pregnant like the diet filter) hides organ meats from the food options,
+# marks the nutrients usually kept as a supplement in pregnancy and adds
+# food-safety rules to the meal plan. Medication notes show on every relevant
+# card. Short, general lines only — the card points to the doctor / midwife.
+
+# Organ words, matched whole on the USDA name. Plant foods that share a word
+# (kidney beans, hearts of palm, artichoke hearts) are excluded by category and
+# by the false-friend words below.
+_ORGAN_MEAT_RE = re.compile(
+    r"\b(?:liver|livers|liverwurst|leberwurst|braunschweiger|kidneys?|hearts?|gizzards?|tongues?|"
+    r"sweetbreads?|giblets|brains?|tripe|spleen|lungs?|pancreas|thymus|offal|chitterlings|foie gras|pate|pâté)\b"
+)
+_ORGAN_FALSE_FRIEND_RE = re.compile(r"\b(?:beans?|palm|artichokes?|celery|lettuce|romaine|cabbage)\b")
+_PLANT_CATEGORY_WORDS = ("legume", "vegetable", "fruit", "nut and seed", "cereal", "spice", "beverage")
+
+# Nutrients usually kept as a supplement in pregnancy (folic acid, iodine,
+# vitamin D, iron; B12 too on a vegan / vegetarian diet).
+_PREGNANCY_SUPPLEMENT_KEYS = {"folate", "iodine", "vitamin d", "iron"}
+_PREGNANCY_NOTE = "🤰 Usually advised to keep as a supplement in pregnancy — check with your doctor or midwife."
+_PREGNANCY_MEAL_RULES = (
+    " The user is pregnant or breastfeeding, so follow pregnancy food-safety rules: no liver or "
+    "liver products (pâté, liver sausage) and no other organ meats, no raw or undercooked meat, fish "
+    "or eggs (no sushi, tartare, runny eggs), no unpasteurised (raw-milk) soft cheese, and no "
+    "high-mercury fish (swordfish, shark, king mackerel, bigeye tuna; tuna at most twice a week)."
+)
+_MEDICATION_NOTES: dict[str, str] = {
+    "vitamin k": "💊 On blood thinners like warfarin or phenprocoumon (Marcumar)? Keep your vitamin K intake steady and ask your doctor before changing it.",
+    "vitamin k2": "💊 On blood thinners like warfarin or phenprocoumon (Marcumar)? Keep your vitamin K intake steady and ask your doctor before changing it.",
+    "potassium": "💊 Kidney disease or certain blood-pressure drugs (e.g. ACE inhibitors, potassium-sparing diuretics)? Ask your doctor before adding potassium.",
+    "iodine": "💊 Thyroid condition? Ask your doctor before changing your iodine intake.",
+}
+
+
+def _pregnancy_mode() -> bool:
+    """True while the "Pregnant or breastfeeding" toggle is on."""
+    try:
+        return bool(st.session_state.get("swipe_pregnant", False))
+    except Exception:
+        return False
+
+
+def _is_organ_meat(food: dict[str, Any] | None) -> bool:
+    """True for liver, kidney, heart and other organ meats (incl. liver products
+    and fish-liver oil); False for plant foods such as kidney beans."""
+    if not isinstance(food, dict):
+        return False
+    desc = str(food.get("food_description", "") or "").lower()
+    if not _ORGAN_MEAT_RE.search(desc):
+        return False
+    category = str(food.get("food_category", "") or "").lower()
+    if any(word in category for word in _PLANT_CATEGORY_WORDS):
+        return False
+    return not _ORGAN_FALSE_FRIEND_RE.search(desc)
+
+
+def _card_food_options(
+    foods: list[dict[str, Any]], profile: dict[str, Any] | None, pregnant: bool | None = None
+) -> list[dict[str, Any]]:
+    """The card's dropdown: the pool filtered by the dietary profile, without
+    organ meats in pregnancy mode, capped to SWIPE_CARD_DROPDOWN_MAX."""
+    options = bb.apply_food_filters(foods, profile, use_llm_adjudication=False)
+    if _pregnancy_mode() if pregnant is None else pregnant:
+        options = [food for food in options if not _is_organ_meat(food)]
+    return options[:SWIPE_CARD_DROPDOWN_MAX]
+
+
+def _pregnancy_note(component_key: str, profile: dict[str, Any] | None = None) -> str:
+    key = bb.canonical_nutrient_key(component_key)
+    if key in _PREGNANCY_SUPPLEMENT_KEYS or (key == "vitamin b12" and _plant_based_diet(profile)):
+        return _PREGNANCY_NOTE
+    return ""
+
+
+def _medication_note(component_key: str) -> str:
+    return _MEDICATION_NOTES.get(bb.canonical_nutrient_key(component_key), "")
+
+
+def _pregnancy_food_warnings(items: list[dict[str, Any]], pregnant: bool | None = None) -> list[str]:
+    """Results-screen notes for organ meats picked before pregnancy mode was on."""
+    if not (_pregnancy_mode() if pregnant is None else pregnant):
+        return []
+    return [
+        f"🤰 {_nutrient_title(d.get('component'))}: {_food_name(d.get('selected_food'))} isn't advised in "
+        "pregnancy — tap it to pick another food."
+        for d in items
+        if _is_organ_meat(d.get("selected_food"))
+    ]
+
+
 def _card_extra_info(
     component_key: str,
     dose_value: Any,
     dose_unit: str,
     form: str = "",
     profile: dict[str, Any] | None = None,
+    pregnant: bool | None = None,
 ) -> str:
-    """Extra neutral lines appended to the card's info (after the curated
-    _bioavailability_note): the "often low in athletes" remark."""
-    del profile
-    lines = [_athlete_info_note(component_key, dose_value, dose_unit, form)]
+    """Extra lines appended to the card's info (after the curated
+    _bioavailability_note): the "often low in athletes" remark, the pregnancy
+    note (pregnancy mode only) and the medication note."""
+    if pregnant is None:
+        pregnant = _pregnancy_mode()
+    lines = [
+        _athlete_info_note(component_key, dose_value, dose_unit, form),
+        _pregnancy_note(component_key, profile) if pregnant else "",
+        _medication_note(component_key),
+    ]
     return " ".join(line for line in lines if line)
 
 
@@ -1573,10 +1672,13 @@ def _basket_cost_summary(replace_items: list[dict[str, Any]]) -> tuple[float, li
 
 
 def _meal_plan_prompts(
-    replace_items: list[dict[str, Any]], diet_label: str, num_meals: int = 3
+    replace_items: list[dict[str, Any]], diet_label: str, num_meals: int = 3, pregnant: bool | None = None
 ) -> tuple[str, str, str]:
-    """(system_prompt, user_prompt, cache_key) for the meal-plan generation."""
+    """(system_prompt, user_prompt, cache_key) for the meal-plan generation.
+    `pregnant` (default: the pregnancy toggle) adds pregnancy food-safety rules."""
     n = max(1, min(3, int(num_meals or 3)))
+    if pregnant is None:
+        pregnant = _pregnancy_mode()
     lines = []
     for d in replace_items:
         food = _food_name(d.get("selected_food"))
@@ -1599,6 +1701,7 @@ def _meal_plan_prompts(
         "because of vitamin A, at most 2 Brazil nuts per day because of selenium), use a sensible "
         "amount instead and add one short note that a supplement may be the practical choice for that "
         "nutrient. General guidance only; no medical advice."
+        + (_PREGNANCY_MEAL_RULES if pregnant else "")
         + _MARKDOWN_STYLE
     )
     user_prompt = (
@@ -2622,14 +2725,17 @@ def _render_header() -> None:
 
 
 def _reset_swipe_state() -> None:
-    """Clear swipe session state, but keep the chosen dietary filter."""
+    """Clear swipe session state, but keep the chosen dietary filter and the
+    pregnancy toggle."""
     saved_diet = st.session_state.get("swipe_diet_profile_id", "none")
+    saved_pregnant = bool(st.session_state.get("swipe_pregnant", False))
     next_nonce = int(st.session_state.get("swipe_reset_nonce", 0)) + 1
     for key in [k for k in list(st.session_state.keys()) if k.startswith("swipe_")]:
         st.session_state.pop(key, None)
     st.session_state["swipe_reset_nonce"] = next_nonce
     _init_state()
     st.session_state["swipe_diet_profile_id"] = saved_diet
+    st.session_state["swipe_pregnant"] = saved_pregnant
 
 
 def _selected_session_in_progress() -> bool:
@@ -2744,6 +2850,11 @@ def _on_diet_profile_change() -> None:
     )
 
 
+def _on_pregnancy_change() -> None:
+    """Mirror the pregnancy toggle into `swipe_pregnant` (see _on_diet_profile_change)."""
+    st.session_state["swipe_pregnant"] = bool(st.session_state.get("swipe_pregnant_toggle", False))
+
+
 def _render_dietary_pills() -> None:
     ordered_ids, profile_by_id = _dietary_profile_lookup()
     if not ordered_ids:
@@ -2778,6 +2889,16 @@ def _render_dietary_pills() -> None:
             label_visibility="collapsed",
             format_func=label_for,
         )
+    st.toggle(
+        "🤰 Pregnant or breastfeeding",
+        value=_pregnancy_mode(),
+        key="swipe_pregnant_toggle",
+        on_change=_on_pregnancy_change,
+        help=(
+            "Hides liver and other organ meats, marks nutrients usually kept as a supplement "
+            "in pregnancy and adds food-safety rules to the meal plan."
+        ),
+    )
 
 
 def _run_pending_analysis() -> None:
@@ -3186,7 +3307,7 @@ def _render_card() -> None:
     selected_profile = _selected_dietary_profile()
     # Filter the (possibly deep) pool by the dietary profile, then cap the
     # visible dropdown (highest concentration first) so the list stays manageable.
-    foods = bb.apply_food_filters(foods_raw, selected_profile, use_llm_adjudication=False)[:SWIPE_CARD_DROPDOWN_MAX]
+    foods = _card_food_options(foods_raw, selected_profile)
     # Self-heal: if there is nothing to show (the stored pool was empty, OR a
     # stale/shallow pool built by an older version got filtered away by the
     # dietary profile), re-fetch the deep pool live and retry. This applies the
@@ -3200,7 +3321,7 @@ def _render_card() -> None:
         if deep_pool and deep_pool != foods_raw:
             card["foods"] = deep_pool
             foods_raw = deep_pool
-            foods = bb.apply_food_filters(deep_pool, selected_profile, use_llm_adjudication=False)[:SWIPE_CARD_DROPDOWN_MAX]
+            foods = _card_food_options(deep_pool, selected_profile)
 
     dots = []
     for i in range(len(cards)):
@@ -3404,7 +3525,7 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
                     ):
                         st.session_state["swipe_index"] = int(d.get("card_index", 0))
                         st.rerun()
-                for warning in _final_food_warnings(replace_items):
+                for warning in _final_food_warnings(replace_items) + _pregnancy_food_warnings(replace_items):
                     st.caption(warning)
             else:
                 st.caption("Nothing swiped right.")
