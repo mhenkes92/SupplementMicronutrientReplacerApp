@@ -136,6 +136,10 @@ def test_magnesium_citrate_compound_weight_loses_to_elemental_magnesium(sw, text
 
 def test_bracketed_davon_dose_is_the_mineral(sw):
     assert _cards(sw, "Zinkbisglycinat 50 mg (davon Zink 10 mg = 100% NRV)") == [("zinc", "10 mg")]
+    assert _cards(sw, "Magnesiumcitrat 1500 mg (davon 240 mg elementar)") == [("magnesium", "240 mg")]
+    # Only for that mineral: another nutrient's bracket never lends its dose.
+    assert _cards(sw, "Vitamin B12 (davon Magnesium 240 mg) 1,5 µg 100%") == [("vitamin b12", "1.5 mcg")]
+    assert _cards(sw, "Zink (davon Magnesium 240 mg) 10 mg 100%") == [("zinc", "10 mg")]
 
 
 @pytest.mark.parametrize(
@@ -241,6 +245,14 @@ def test_b_complex_alone_becomes_dose_less_b_vitamin_cards(sw):
     assert {dose for _name, dose in cards} == {"Dose not found"}
     built = sw._build_swipe_cards(sw._filter_to_micronutrients(bb.parse_components("B-Complex 50 mg")), [])
     assert all(card["foods"] for card in built)
+
+
+def test_b_complex_with_a_dosed_b_vitamin_keeps_the_label_rows(sw):
+    cards = _cards(sw, "Jod 150 µg 100%\nB-Komplex 1,5 µg 100%\nBiotin 50 µg\nNiacin")
+    assert ("biotin", "50 mcg") in cards and ("niacin", "Dose not found") in cards
+    assert not any(name in ("vitamin b1", "vitamin b complex") for name, _dose in cards)
+    # The dose is never the umbrella's: B12 takes the one written before it.
+    assert _cards(sw, "B-Komplex\nVitamin B12 500 µg") == [("vitamin b12", "500 mcg")]
 
 
 def test_b_complex_umbrella_is_never_a_card(sw):

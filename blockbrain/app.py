@@ -10052,11 +10052,18 @@ def _label_candidate_doses(line: str, depths: list[int], start: int, end: int) -
     return outside, inside
 
 
-def _label_elemental_bracket_dose(line: str, depths: list[int], inside: list[re.Match[str]]) -> re.Match[str] | None:
-    """A bracketed "(davon Zink 10 mg = 100% NRV)" dose: the mineral itself."""
+def _label_elemental_bracket_dose(line: str, inside: list[re.Match[str]], key: str) -> re.Match[str] | None:
+    """A bracketed "(davon Zink 10 mg = 100% NRV)" dose of mineral `key`: the
+    mineral itself. The bracket must name that mineral (or no nutrient at all:
+    "Magnesiumcitrat 1500 mg (davon 240 mg elementar)")."""
+    if key not in _LABEL_MINERAL_KEYS:
+        return None
     for d in inside:
         open_pos = max(line.rfind("(", 0, d.start()), line.rfind("[", 0, d.start()))
-        if open_pos >= 0 and _LABEL_ELEMENTAL_RE.search(line[open_pos:d.start()]):
+        if open_pos < 0 or not _LABEL_ELEMENTAL_RE.search(line[open_pos:d.start()]):
+            continue
+        named = _lexicon_keys_in(line[open_pos:d.start()])
+        if not named or named == {key}:
             return d
     return None
 
@@ -10311,7 +10318,7 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
                 i += 1  # "Vitamin-B-Komplex": never a row of its own (see _reconcile_label_line_rows)
                 continue
             outside, inside = _label_candidate_doses(line, depths, item["names_end"], item["end"])
-            chosen = _label_elemental_bracket_dose(line, depths, inside)
+            chosen = _label_elemental_bracket_dose(line, inside, item["key"])
             if chosen is not None:
                 item["elemental"] = True
             elif outside:
@@ -10501,12 +10508,7 @@ def _reconcile_label_line_rows(rows: list[dict[str, Any]], input_text: str) -> l
     rows = _rename_salt_cation_rows(rows, folded_text)
     umbrellas = _named_umbrella_members(folded_text)
     member_keys = {key for _name, key in umbrellas}
-    rows = [
-        r for r in rows
-        if not _is_umbrella_key(canonical_nutrient_key(str(r.get("component", "") or "")))
-        # The generic pipeline's own dose-less expansion of "B-Komplex".
-        and not (r.get("dose_value") is None and canonical_nutrient_key(str(r.get("component", "") or "")) in member_keys)
-    ]
+    rows = [r for r in rows if not _is_umbrella_key(canonical_nutrient_key(str(r.get("component", "") or "")))]
     line_rows, unclaimed = _scan_label_nutrient_lines(input_text)
     if not line_rows:
         kept = [r for r in rows if _vitamin_code_named_in(str(r.get("component", "") or ""), folded_text) is not False]
@@ -10523,10 +10525,14 @@ def _reconcile_label_line_rows(rows: list[dict[str, Any]], input_text: str) -> l
             and _dose_number_in(row.get("dose_value"), unclaimed)
         ]
     out = [dict(r) for r in line_rows] + [_with_lexicon_card_name(r) for r in kept]
-    # A label naming only "Vitamin-B-Komplex" (no B vitamin of its own): one
-    # dose-less card per B vitamin, as the umbrella has no foods or dose itself.
-    present = {canonical_nutrient_key(str(r.get("component", "") or "")) for r in out}
-    if umbrellas and not (member_keys & present):
+    # A label naming "Vitamin-B-Komplex" without the dose of any B vitamin: one
+    # dose-less card per B vitamin (replacing the generic pipeline's own partial
+    # dose-less expansion), as the umbrella has no foods or dose itself.
+    def _key(r: dict[str, Any]) -> str:
+        return str(r.get("nutrient_key", "") or "") or canonical_nutrient_key(str(r.get("component", "") or ""))
+
+    if umbrellas and not any(r.get("dose_value") is not None and _key(r) in member_keys for r in out):
+        out = [r for r in out if _key(r) not in member_keys]
         out += [{"component": name, "dose_value": None, "dose_unit": "", "nutrient_key": key} for name, key in umbrellas]
     return out
 
