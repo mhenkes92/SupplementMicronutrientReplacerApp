@@ -38,7 +38,8 @@ def _card(sw, text: str) -> dict:
 
 def _shown(sw, card: dict, profile: dict | None = None) -> list[dict]:
     """The dropdown as _render_card builds it."""
-    return bb.apply_food_filters(card["foods"], profile, use_llm_adjudication=False)[: sw.SWIPE_CARD_DROPDOWN_MAX]
+    foods = bb.apply_food_filters(card["foods"], profile, use_llm_adjudication=False)[: sw.SWIPE_CARD_DROPDOWN_MAX]
+    return sw._with_fortified_options(foods, card, profile)
 
 
 def _default(sw, text: str, profile: dict | None = None) -> tuple[dict, dict, list[dict]]:
@@ -201,8 +202,8 @@ def test_algae_are_never_a_b12_source():
     pool = bb._build_local_food_rows_for_component("vitamin b12", limit=250)
     assert not [f for f in pool if bb._NUTRIENT_FOOD_EXCLUSIONS["vitamin b12"].search(f["food_description"])]
     assert bb.food_nutrient_amount("Seaweed, Canadian Cultivated EMI-TSUNOMATA, dry", "vitamin b12") is None
-    # Algae still count for other nutrients.
-    assert bb.food_nutrient_amount("Seaweed, Canadian Cultivated EMI-TSUNOMATA, dry", "iron")
+    # Only the B12 list excludes them (algae iron, iodine, ... are real).
+    assert set(bb._NUTRIENT_FOOD_EXCLUSIONS) == {"vitamin b12"}
 
 
 def test_b12_list_has_fortified_options_flagged(sw, profiles):
@@ -210,8 +211,12 @@ def test_b12_list_has_fortified_options_flagged(sw, profiles):
         foods = _shown(sw, _card(sw, "Vitamin B12 2.5 mcg"), profiles[diet])
         fortified = [f for f in foods if f.get("fortified")]
         assert len(fortified) == 3, diet
-        assert all("fortified" in f["food_description"].lower() for f in fortified)
+        # The name says so up front (short display names keep it).
+        assert all(f["food_description"].startswith("B12-fortified ") for f in fortified)
         assert not any("seaweed" in f["food_description"].lower() for f in foods)
+    # Omnivores get whole foods only.
+    assert not [f for f in _shown(sw, _card(sw, "Vitamin B12 2.5 mcg"), profiles["none"]) if f.get("fortified")]
+    assert not [f for f in _card(sw, "Vitamin B12 2.5 mcg")["foods"] if f.get("fortified")]
 
 
 def test_plant_based_b12_defaults_to_a_fortified_food_and_only_it_can_replace(sw, profiles):
@@ -231,6 +236,7 @@ def test_fortified_food_portion_beyond_a_realistic_daily_amount_is_not_practical
     foods = _shown(sw, _card(sw, "Vitamin B12 2.5 mcg"), profiles["vegan"])
     yeast = next(f for f in foods if "yeast" in f["food_description"].lower())
     drink = next(f for f in foods if "soy drink" in f["food_description"].lower())
+    assert yeast.get("fortified") and drink.get("fortified")
     assert sw._portion_for_target(yeast, 2.5, "mcg", "vitamin b12") == "~25 g"
     assert sw._portion_for_target(yeast, 25, "mcg", "vitamin b12").startswith("not practical from food alone")
     assert sw._portion_for_target(drink, 2.5, "mcg", "vitamin b12").startswith("a lot of food")

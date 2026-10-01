@@ -1338,6 +1338,20 @@ def _default_food_index(foods: list[dict[str, Any]], card: dict[str, Any], profi
     return min(range(len(foods)), key=_rank)
 
 
+def _with_fortified_options(foods: list[dict[str, Any]], card: dict[str, Any], profile: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The card's dropdown plus, on vegan / vegetarian B12 cards, the
+    B12-fortified foods (yeast flakes, plant drinks), ranked in by amount."""
+    if not _plant_based_diet(profile):
+        return foods
+    extra = bb.fortified_food_options(str(card.get("nutrient_key", "") or card.get("component", "") or ""))
+    if not extra:
+        return foods
+    names = {str(f.get("food_description", "")) for f in foods}
+    merged = list(foods) + [f for f in extra if f["food_description"] not in names]
+    merged.sort(key=lambda f: float(f.get("amount_per_100g", 0) or 0), reverse=True)
+    return merged[:SWIPE_CARD_DROPDOWN_MAX]
+
+
 def _replace_block_reason(card: dict[str, Any], food: dict[str, Any] | None, profile: dict[str, Any] | None) -> str:
     """Why "replace with food" is soft-blocked on this card ("" when it is not):
     vegan / vegetarian B12 unless a B12-fortified food is picked, and vegan
@@ -2228,6 +2242,16 @@ def _merge_duplicate_components(components: list[dict[str, Any]]) -> list[dict[s
     return [merged[key] for key in order]
 
 
+def _whole_food_pool(component: str) -> list[dict[str, Any]]:
+    """The ranked USDA whole-food pool of a card. B12-fortified foods are left
+    out here; _with_fortified_options offers them on vegan / vegetarian cards."""
+    try:
+        pool = list(bb._build_local_food_rows_for_component(component, limit=SWIPE_CARD_FOOD_POOL) or [])
+    except Exception:
+        return []
+    return [food for food in pool if not food.get("fortified")]
+
+
 def _build_swipe_cards(components: list[dict[str, Any]], details: list[dict[str, Any]]) -> list[dict[str, Any]]:
     detail_by_component = {
         bb.normalize_lookup_key(str(d.get("component", ""))): d for d in details
@@ -2240,11 +2264,7 @@ def _build_swipe_cards(components: list[dict[str, Any]], details: list[dict[str,
         # amount of THIS nutrient per 100 g (highest dose on top, one unit per
         # list). A deep pool is kept so dietary filtering downstream still
         # leaves options for restrictive diets (e.g. vegan B1/B12).
-        foods: list[dict[str, Any]] = []
-        try:
-            foods = list(bb._build_local_food_rows_for_component(comp_name, limit=SWIPE_CARD_FOOD_POOL) or [])
-        except Exception:
-            foods = []
+        foods = _whole_food_pool(comp_name)
         # Fallback to LLM-generated matches only if USDA has nothing.
         if not foods:
             detail = detail_by_component.get(comp_key, {})
@@ -3250,14 +3270,13 @@ def _render_card() -> None:
     # resolver + deeper-pool fixes (e.g. Vitamin E) to already-built cards
     # without re-analysing the supplement.
     if not foods and component_key:
-        try:
-            deep_pool = list(bb._build_local_food_rows_for_component(component_key, limit=SWIPE_CARD_FOOD_POOL) or [])
-        except Exception:
-            deep_pool = []
+        deep_pool = _whole_food_pool(component_key)
         if deep_pool and deep_pool != foods_raw:
             card["foods"] = deep_pool
             foods_raw = deep_pool
             foods = bb.apply_food_filters(deep_pool, selected_profile, use_llm_adjudication=False)[:SWIPE_CARD_DROPDOWN_MAX]
+    # Vegan / vegetarian B12: the fortified foods are the reliable option.
+    foods = _with_fortified_options(foods, card, selected_profile)
 
     dots = []
     for i in range(len(cards)):
