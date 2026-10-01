@@ -103,7 +103,7 @@ def test_results_screen_lists_kept_pills_above_the_limit(sw):
         {"component": "vitamin c", "dose_value": 80.0, "dose_unit": "mg", "form": ""},
     ]
     warnings = sw._final_upper_limit_warnings(kept)
-    assert len(warnings) == 1 and warnings[0].startswith("vitamin b6: ⚠️ 50 mg is above")
+    assert len(warnings) == 1 and warnings[0].startswith("Vitamin B6: ⚠️ 50 mg is above")
 
 
 # --- Portions ------------------------------------------------------------------
@@ -271,7 +271,7 @@ def test_liver_portion_above_vitamin_a_limit_is_flagged(sw):
     nuts = {"food_description": "Nuts, almonds", "amount_per_100g": 25.63, "unit": "mg"}
     assert sw._selected_food_warning(nuts, 15, "mg", "vitamin e") == ""
     replaced = [{"component": "folate", "dose_value": 680.0, "dose_unit": "mcg", "form": "DFE; 400 mcg folic acid", "selected_food": duck}]
-    assert sw._final_food_warnings(replaced)[0].startswith("folate: ⚠️ ~92 g of this liver")
+    assert sw._final_food_warnings(replaced)[0].startswith("Folate: ⚠️ ~92 g of this liver")
 
 
 def test_food_nutrient_amount_lookup():

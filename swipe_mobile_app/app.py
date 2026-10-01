@@ -690,7 +690,7 @@ def _render_rag_chat_popup(card: dict[str, Any], component_key: str, index: int)
                 st.warning("Enter a question first.")
             else:
                 with st.spinner("Asking AI research assistant..."):
-                    component_name = str(card.get("component", "") or "").strip()
+                    component_name = str(card.get("display", "") or "") or _nutrient_title(card.get("component"))
                     stream_box = st.empty()
                     answer, sources_line = _answer_ask_ai_question(
                         component_name,
@@ -733,6 +733,39 @@ def _food_name(food: dict[str, Any] | None) -> str:
         return bb.food_display_name(full) or full
     except Exception:
         return full
+
+
+# Card names for nutrients the lexicon spells as abbreviations or merged rows.
+_NUTRIENT_TITLE_OVERRIDES = {
+    "omega-3 (epa+dha)": "Omega-3 (EPA+DHA)",
+    "epa": "EPA",
+    "dha": "DHA",
+}
+
+
+def _nutrient_title(name: Any) -> str:
+    """Display name of a nutrient for cards, results, share text, history and
+    prompts: the lexicon's card name, capitalised ("folsäure" -> "Folic acid",
+    "vitamin d3" -> "Vitamin D3", "jod" -> "Iodine"). Unknown names are kept
+    as written, only the first letter is raised. Idempotent."""
+    raw = str(name or "").strip()
+    if not raw:
+        return ""
+    override = _NUTRIENT_TITLE_OVERRIDES.get(raw.lower())
+    if override:
+        return override
+    try:
+        display = bb.nutrient_display_name(raw) or raw
+    except Exception:
+        display = raw
+    override = _NUTRIENT_TITLE_OVERRIDES.get(display.lower())
+    if override:
+        return override
+    if display != display.lower():
+        return display[:1].upper() + display[1:]  # unknown name, already cased
+    display = re.sub(r"\bvitamin ([a-z]\d{0,2})\b", lambda m: "Vitamin " + m.group(1).upper(), display)
+    display = re.sub(r"\b(epa|dha|ala)\b", lambda m: m.group(1).upper(), display)
+    return display[:1].upper() + display[1:]
 
 
 def _food_label(food: dict[str, Any]) -> str:
@@ -1128,7 +1161,7 @@ def _final_food_warnings(items: list[dict[str, Any]]) -> list[str]:
             str(d.get("component", "") or ""), str(d.get("form", "") or ""),
         )
         if warning:
-            out.append(f"{d.get('component', '')}: {warning}")
+            out.append(f"{_nutrient_title(d.get('component'))}: {warning}")
     return out
 
 
@@ -1143,7 +1176,7 @@ def _final_upper_limit_warnings(items: list[dict[str, Any]]) -> list[str]:
             str(d.get("form", "") or ""),
         )
         if warning:
-            out.append(f"{d.get('component', '')}: {warning}")
+            out.append(f"{_nutrient_title(d.get('component'))}: {warning}")
     return out
 
 
@@ -1466,7 +1499,7 @@ def _meal_plan_prompts(
     for d in replace_items:
         food = _food_name(d.get("selected_food"))
         amount = _amount_to_match_dose(d)
-        nutrient = str(d.get("component", "") or "")
+        nutrient = _nutrient_title(d.get("component"))
         lines.append(f"- {food} ({amount}) for {nutrient}")
     diet_clause = ""
     if diet_label and diet_label.strip().lower() not in ("no restriction", "none", ""):
@@ -1533,7 +1566,7 @@ def _prefetch_meal_plan(replace_items: list[dict[str, Any]], diet_label: str, nu
 def _benefits_prompts(replace_items: list[dict[str, Any]]) -> tuple[str, str, str] | None:
     lines = []
     for d in replace_items:
-        nutrient = str(d.get("component", "") or "")
+        nutrient = _nutrient_title(d.get("component"))
         food = _food_name(d.get("selected_food"))
         if nutrient and food:
             lines.append(f"- Isolated pill nutrient: {nutrient}  |  Whole food chosen instead: {food}")
@@ -1573,7 +1606,7 @@ def _generate_whole_food_benefits(replace_items: list[dict[str, Any]], placehold
 def _supplement_search_links(keep_items: list[dict[str, Any]]) -> tuple[str, dict[str, str]]:
     import urllib.parse
 
-    names = [str(d.get("component", "") or "").strip() for d in keep_items if d.get("component")]
+    names = [_nutrient_title(d.get("component")) for d in keep_items if d.get("component")]
     names = list(dict.fromkeys([n for n in names if n]))
     if not names:
         return "", {}
@@ -1597,14 +1630,14 @@ def _build_share_text(
     if replace_items:
         for d in replace_items:
             food = _food_name(d.get("selected_food"))
-            out.append(f"  • {d.get('component', '')}: {food} ({_amount_to_match_dose(d)})")
+            out.append(f"  • {_nutrient_title(d.get('component'))}: {food} ({_amount_to_match_dose(d)})")
     else:
         out.append("  • (none)")
     out.append("")
     out.append(f"💊 Kept as a supplement ({len(keep_items)}):")
     if keep_items:
         for d in keep_items:
-            out.append(f"  • {d.get('component', '')} {d.get('dose_label', '')}".rstrip())
+            out.append(f"  • {_nutrient_title(d.get('component'))} {d.get('dose_label', '')}".rstrip())
     else:
         out.append("  • (none)")
     if meal_plan.strip():
@@ -1681,13 +1714,13 @@ def _record_scan_to_history(decisions: dict[str, dict[str, Any]], diet_label: st
         "ts": time.strftime("%Y-%m-%d %H:%M"),
         "diet": diet_label,
         "kept": [
-            {"component": str(d.get("component", "") or ""), "dose": str(d.get("dose_label", "") or "")}
+            {"component": _nutrient_title(d.get("component")), "dose": str(d.get("dose_label", "") or "")}
             for d in decisions.values()
             if d.get("decision") == "keep"
         ],
         "replaced": [
             {
-                "component": str(d.get("component", "") or ""),
+                "component": _nutrient_title(d.get("component")),
                 "food": _food_name(d.get("selected_food")),
                 "amount": _amount_to_match_dose(d),
             }
@@ -1717,9 +1750,9 @@ def _render_scan_history_popover() -> None:
                 head += f" · {diet}"
             st.markdown(head)
             for r in replaced:
-                st.markdown(f"- 🥗 {r.get('component', '')} → {r.get('food', '')} ({r.get('amount', '')})")
+                st.markdown(f"- 🥗 {_nutrient_title(r.get('component'))} → {r.get('food', '')} ({r.get('amount', '')})")
             for k in kept:
-                st.markdown(f"- 💊 {k.get('component', '')} {k.get('dose', '')}".rstrip())
+                st.markdown(f"- 💊 {_nutrient_title(k.get('component'))} {k.get('dose', '')}".rstrip())
             st.divider()
         if st.button("Clear history", use_container_width=True, key="swipe_clear_history"):
             st.session_state["suppswipe_scan_history"] = []
@@ -1797,7 +1830,7 @@ def _render_final_actions(
                 st.info("You didn't keep any supplements — nothing to buy!")
             else:
                 _query, links = _supplement_search_links(keep_items)
-                covers = ", ".join(dict.fromkeys(str(d.get("component", "") or "") for d in keep_items if d.get("component")))
+                covers = ", ".join(dict.fromkeys(_nutrient_title(d.get("component")) for d in keep_items if d.get("component")))
                 st.markdown(f"**Covers:** {covers}")
                 for label, url in links.items():
                     st.markdown(f"- [{label}]({url})")
@@ -3176,7 +3209,7 @@ def _render_card() -> None:
         food_label = _food_name(selected_food)
         with stage:
             swipe_result = tinder_swipe(
-                name=str(card.get("component", "Unknown micronutrient")),
+                name=_nutrient_title(card.get("component")) or "Unknown micronutrient",
                 dose=str(card.get("dose_label", "Not available")),
                 food=food_label,
                 matchDose=match_dose_txt,
@@ -3248,7 +3281,7 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
                 for d in keep_items:
                     component_key = str(d.get("component_key", "") or "")
                     dose = str(d.get("dose_label", "") or "")
-                    label = f"{LEFT_SWIPE_ICON} {d.get('component', 'Unknown')}"
+                    label = f"{LEFT_SWIPE_ICON} {_nutrient_title(d.get('component')) or 'Unknown'}"
                     if dose:
                         label += f" · {dose}"
                     if st.button(
@@ -3273,7 +3306,7 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
                     icon = _whole_food_icon_from_food(food, component_key)
                     amount_txt = _amount_to_match_dose(d)
                     detail = food_name + (f" ({amount_txt})" if (food_name and amount_txt) else "")
-                    label = f"{icon} {d.get('component', 'Unknown')}"
+                    label = f"{icon} {_nutrient_title(d.get('component')) or 'Unknown'}"
                     if detail:
                         label += f" → {detail}"
                     if st.button(
@@ -3300,8 +3333,8 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
     _render_final_actions(keep_items, replace_items, diet_label)
 
     # A single Ask AI chat for the whole summary, shown once below the card.
-    all_components = [str(d.get("component", "") or "") for d in decisions.values() if d.get("component")]
-    summary_context = {"component": ", ".join(all_components)} if all_components else {"component": ""}
+    all_components = [_nutrient_title(d.get("component")) for d in decisions.values() if d.get("component")]
+    summary_context = {"component": ", ".join(all_components), "display": ", ".join(all_components)}
     _render_rag_chat_popup(summary_context, "summary", 0)
 
     # Athlete RDA reference guide, shown once directly below Ask AI on the results screen.
