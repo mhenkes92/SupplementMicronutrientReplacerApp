@@ -10244,6 +10244,12 @@ def _label_row(
     return row
 
 
+@functools.lru_cache(maxsize=256)
+def _line_has_percent(line: str) -> bool:
+    # Cached: every row of a long line shares its label_line (no re-scan per row).
+    return re.search(r"\d\s*%", line) is not None
+
+
 def label_row_preference(row: dict[str, Any]) -> tuple[int, int, int]:
     """How authoritative a label row is, for choosing between rows of the same
     nutrient: a nutrient-table line (with %NRV / %DV) beats a product title or
@@ -10251,7 +10257,7 @@ def label_row_preference(row: dict[str, Any]) -> tuple[int, int, int]:
     mineral's own dose, and a row naming a chemical form beats one without."""
     line = str(row.get("label_line", "") or "")
     return (
-        1 if re.search(r"\d\s*%", line) else 0,
+        1 if _line_has_percent(line) else 0,
         0 if row.get("compound_weight") else 1,
         1 if str(row.get("form", "") or "").strip() else 0,
     )
@@ -10331,7 +10337,8 @@ def _label_group_doses(
     if not doses:
         return assigned
     units = [_label_dose_unit(d.group("unit")) for d in doses]
-    if len(doses) == 1 and _LABEL_EACH_RE.search(line[:doses[0].start()]):
+    # (a short window before the dose: no re-scan of a long line's prefix)
+    if len(doses) == 1 and _LABEL_EACH_RE.search(line, max(0, doses[0].start() - 24), doses[0].start()):
         return [doses[0] if _label_unit_plausible(k, units[0]) else None for k in keys]
     if len(doses) >= len(items) and all(_label_unit_plausible(k, u) for k, u in zip(keys, units)):
         return list(doses[: len(items)])
@@ -10353,6 +10360,7 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
         line = _fold_label_text(_label_clean_raw_line(raw_line))
         if not line:
             continue
+        label_line = raw_line.strip()  # one string shared by the line's rows
         depths = _bracket_depths(line)
         names = [
             m for m in _NUTRIENT_ALIAS_RE.finditer(line)
@@ -10404,7 +10412,7 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
                         form_end = member["end"] if member is not group[-1] else group[-1]["end"]
                         row = _label_row(line, depths, member, dose, form_end, _lead(member) if member is group[0] else "")
                         if row is not None:
-                            row["label_line"] = raw_line.strip()
+                            row["label_line"] = label_line
                             line_rows.append(row)
                     _claim(group[0]["start"], group[-1]["end"])
                     prev_end = group[-1]["end"]
@@ -10460,7 +10468,7 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
             if row is not None:
                 # Verbatim OCR repeats, titles and translations are collapsed
                 # by _drop_repeated_label_doses (keeping the table line).
-                row["label_line"] = raw_line.strip()
+                row["label_line"] = label_line
                 line_rows.append(row)
             i += 1
         rows.extend(line_rows)
