@@ -2312,6 +2312,13 @@ def _prefetch_meal_plan(replace_items: list[dict[str, Any]], diet_label: str, nu
     system_prompt, user_prompt, key = _meal_plan_prompts(replace_items, diet_label, num_meals)
     if llm_cache.get(key) is not None or llm_cache.inflight(key) is not None:
         return
+    # Once per plan and session: a failed prefetch is not retried by itself (the
+    # live view's re-run would otherwise start it again and again); "Generate my
+    # meals" retries on request.
+    tried = st.session_state.setdefault("_suppswipe_prefetched", [])
+    if key in tried:
+        return
+    tried.append(key)
     if not _consume_llm_quota("generate"):
         return
     model = _generation_model() or None

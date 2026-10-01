@@ -85,6 +85,31 @@ def test_prefetch_is_reused_by_generate(sw, monkeypatch):
     assert len(calls) == 1  # waited for the background job instead of a 2nd call
 
 
+def test_failed_prefetch_is_not_retried_by_itself(sw, monkeypatch):
+    monkeypatch.setenv("BLOCKBRAIN_API_KEY", "k")
+    sw.st.session_state.pop("_suppswipe_prefetched", None)
+    calls = []
+
+    def failing_text(*a, **k):
+        calls.append(1)
+        return ""
+
+    monkeypatch.setattr(bb, "call_blockbrain_text", failing_text)
+    items = [dict(REPLACE[0], dose_value=123)]  # a plan no other test prefetched
+    sw._prefetch_meal_plan(items, "", 3)
+    _sys, _usr, key = sw._meal_plan_prompts(items, "", 3)
+    for _ in range(100):
+        if sw.llm_cache.inflight(key) is None:
+            break
+        time.sleep(0.01)
+    sw._prefetch_meal_plan(items, "", 3)  # e.g. the live view's re-run after the failure
+    time.sleep(0.05)
+    assert len(calls) == 1
+    # "Generate my meals" still retries on request.
+    monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: "Plan")
+    assert sw._generate_meal_plan(items, "", 3, placeholder=Box()) == "Plan"
+
+
 def test_prefetch_can_be_disabled(sw, monkeypatch):
     monkeypatch.setenv("SUPPSWIPE_PREFETCH_MEALS", "0")
     monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: pytest.fail("should not run"))
