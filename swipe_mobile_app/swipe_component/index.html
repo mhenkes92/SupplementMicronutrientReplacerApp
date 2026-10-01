@@ -161,13 +161,19 @@
     var total = parseInt(args.total || 1, 10);
     var foodTxt = args.food ? esc(args.food) : "Pick a food below";
     var portionRows = "";
+    // "eat" only before an actual amount ("~85 g"), not before verdicts such as
+    // "not practical from food alone (~2.3 kg/day)" or "a lot of food (...)".
+    function portion(txt) {
+      var t = String(txt || "");
+      return (/^[~<\d]/.test(t) ? "eat " : "") + "<b>" + esc(t) + "</b>";
+    }
     if (args.matchDose) {
-      portionRows += '<span class="pl">💊 Match this dose &rarr; eat <b>' + esc(args.matchDose) + '</b></span>';
+      portionRows += '<span class="pl">💊 Match this dose &rarr; ' + portion(args.matchDose) + '</span>';
     }
     if (args.rdaAmount) {
       portionRows += '<span class="pl">🏃 Athlete daily target' +
         (args.rdaLabel ? ' (' + esc(args.rdaLabel) + ')' : '') +
-        ' &rarr; eat <b>' + esc(args.rdaAmount) + '</b></span>';
+        ' &rarr; ' + portion(args.rdaAmount) + '</span>';
     }
     var portionHtml = portionRows ? '<div class="portion">' + portionRows + '</div>' : '';
     var warnHtml = args.warn ? '<div class="warn" role="note">' + esc(args.warn) + '</div>' : '';
@@ -185,7 +191,7 @@
     card.setAttribute("aria-label",
       "Card " + idx + " of " + total + ": " + (args.name || "Micronutrient") + ", dose " + (args.dose || "not available") +
       (args.food ? ". Whole-food replacement: " + args.food : "") +
-      (args.matchDose ? ". To match the dose eat " + args.matchDose : "") +
+      (args.matchDose ? ". To match the dose: " + args.matchDose : "") +
       (args.warn ? ". Warning: " + args.warn : ""));
 
     btnRepl.disabled = !canReplace;
