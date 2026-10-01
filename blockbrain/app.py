@@ -9460,8 +9460,28 @@ _LABEL_FORM_PREFIX_RE = re.compile(r"^(?:as|from|als|aus|in form of|in the form 
 # A preceding "as"/"als" makes a nutrient name a form of the previous one:
 # "Vitamin A as beta-carotene 900 mcg" is ONE vitamin A row.
 _LABEL_FORM_LEAD_RE = re.compile(r"\b(?:as|from|als|aus)\s*$")
-# Multi-column German labels ("pro Kapsel | pro Tagesdosis"): the last dose column is the daily dose.
-_LABEL_DAILY_COLUMN_RE = re.compile(r"\b(?:tagesdosis|tagesportion|daily dose|per day|pro tag)\b")
+# Multi-column tables ("pro Kapsel | pro empfohlener Tagesverzehrmenge (2
+# Kapseln)", "je Kapsel je Verzehrempfehlung", "pro 100 g | pro Portion"): the
+# header's column descriptors, in order, say which dose column is the daily
+# dose (see _label_daily_dose_column). Only "pro/je/per <descriptor>" counts,
+# so the mandatory "Die angegebene empfohlene tägliche Verzehrmenge darf nicht
+# überschritten werden" sentence is never mistaken for a column header.
+_LABEL_COLUMN_DAY_WORDS = (
+    r"tagesdosis|tagesportion|tagesverzehrmenge|tagesverzehrempfehlung|verzehrempfehlung|"
+    r"tagliche[nr]?\s+verzehrmenge|verzehrmenge|tagesration|daily\s+(?:dose|serving|intake|portion|amount)"
+)
+_LABEL_COLUMN_UNIT_WORDS = (
+    r"(?:1\s+)?(?:kapsel|kapseln|weichkapsel|tablette|tabletten|kautablette|lutschtablette|brausetablette|"
+    r"tablet|capsule|softgel|portion|serving|riegel|beutel|stick|sachet|messloffel|scoop|tropfen|drop|"
+    r"dragee|ampulle|trinkampulle|gummi|gummy)"
+)
+_LABEL_COLUMN_RE = re.compile(
+    r"\b(?:pro|je|per)\s+(?:(?:empfohlene[nrm]?|recommended)\s+)?"
+    r"(?:(?P<day>" + _LABEL_COLUMN_DAY_WORDS + r"|day|tag)|(?P<hundred>100\s*(?:g|ml))|(?P<unit>"
+    + _LABEL_COLUMN_UNIT_WORDS + r"))(?![a-z])"
+)
+# In a header line that has a "pro ..." descriptor, a bare "Tagesdosis" is a column too.
+_LABEL_BARE_DAY_COLUMN_RE = re.compile(r"\b(?:" + _LABEL_COLUMN_DAY_WORDS + r")(?![a-z])")
 # Words between the name and the dose that are table layout, not a form.
 _LABEL_FILLER_WORDS: frozenset[str] = frozenset({
     "total", "per", "serving", "pro", "je", "davon", "of", "which", "amount", "content", "gehalt", "as", "from",
@@ -9544,12 +9564,47 @@ def _label_segment_forms(segment: str, chosen: re.Match[str]) -> list[str]:
     return [f for f in forms if f]
 
 
+def _label_column_kinds(line: str) -> list[str]:
+    """Column descriptors ("day" / "hundred" / "unit") of one folded line, in order."""
+    spans = [(m.start(), m.end(), str(m.lastgroup)) for m in _LABEL_COLUMN_RE.finditer(line)]
+    if not spans:
+        return []
+    spans += [
+        (m.start(), m.end(), "day") for m in _LABEL_BARE_DAY_COLUMN_RE.finditer(line)
+        if not any(s <= m.start() < e for s, e, _k in spans)
+    ]
+    return [kind for _s, _e, kind in sorted(spans)]
+
+
+def _label_daily_dose_column(text: str) -> int | None:
+    """0-based index of the daily-dose column of a multi-column nutrient table,
+    or None to read the first dose column.
+
+    The header names the columns in order: the per-day column ("pro Tagesdosis",
+    "pro empfohlener Tagesverzehrmenge", "je Verzehrempfehlung", "per daily
+    serving") is the daily dose; without one, a per-portion column beats a
+    "pro 100 g" column. The first line naming two different kinds of column is
+    the header; otherwise the descriptors of all lines in reading order (a
+    header split over two OCR lines)."""
+    per_line = [kinds for kinds in (_label_column_kinds(_fold_label_text(raw)) for raw in str(text or "").splitlines()) if kinds]
+    header = next((kinds for kinds in per_line if len(set(kinds)) >= 2), None)
+    if header is None:
+        header = [kind for kinds in per_line for kind in kinds]
+    if len(header) < 2:
+        return None
+    if "day" in header:
+        return header.index("day")
+    if "hundred" in header and "unit" in header:
+        return header.index("unit")
+    return None
+
+
 def _parse_label_segment(
     line: str,
     depths: list[int],
     name: re.Match[str],
     end: int,
-    prefer_last_column: bool,
+    daily_column: int | None,
 ) -> dict[str, Any] | None:
     """One nutrient row from line[name.start():end], or None if no dose follows."""
     start = name.end()
@@ -9557,8 +9612,11 @@ def _parse_label_segment(
     outside = [d for d, inside in doses if not inside]
     if outside:
         chosen = outside[0]
-        if prefer_last_column and len(outside) > 1 and len({_label_dose_unit(d.group("unit")) for d in outside}) == 1:
-            chosen = outside[-1]
+        # Multi-column row ("Vitamin C 40 mg 80 mg 100%"): the daily-dose column.
+        first_unit = _label_dose_unit(chosen.group("unit"))
+        columns = [d for d in outside if _label_dose_unit(d.group("unit")) == first_unit]
+        if daily_column and len(columns) > 1:
+            chosen = columns[min(daily_column, len(columns) - 1)]
     elif doses:
         chosen = doses[0][0]  # "Vitamin D3 (25 µg)"
     else:
@@ -9645,7 +9703,7 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
     rows: list[dict[str, Any]] = []
     unclaimed: list[str] = []
     seen: set[tuple[str, float, str, str]] = set()
-    prefer_last_column = bool(_LABEL_DAILY_COLUMN_RE.search(_fold_label_text(text)))
+    daily_column = _label_daily_dose_column(text)
     for raw_line in str(text or "").splitlines():
         line = _fold_label_text(raw_line)
         if not line:
@@ -9673,7 +9731,7 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
             ):
                 j += 1
             end = names[j].start() if j < len(names) else len(line)
-            row = _parse_label_segment(line, depths, name, end, prefer_last_column)
+            row = _parse_label_segment(line, depths, name, end, daily_column)
             if row is None:
                 leftover.append(line[name.start():end])
             else:

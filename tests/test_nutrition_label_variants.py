@@ -238,3 +238,60 @@ def test_vitamin_a_title_plus_two_form_lines_sums_only_the_table_forms(sw):
         "Vitamin A (as beta-carotene) 450 mcg 50%"
     )
     assert _doses(sw, text) == {"vitamin a": "900 mcg"}
+
+
+# --- Multi-column tables: the daily-dose column ------------------------------
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (   # standard NemV wording
+            "Nährwerte pro Kapsel pro empfohlener Tagesverzehrmenge (2 Kapseln) %NRV*\n"
+            "Vitamin C 40 mg 80 mg 100%\nZink 5 mg 10 mg 100%\nVitamin D3 10 µg 20 µg 400%",
+            {"vitamin c": "80 mg", "zinc": "10 mg", "vitamin d": "20 mcg"},
+        ),
+        (
+            "Inhaltsstoffe je Kapsel je Verzehrempfehlung (2 Kapseln)\nMagnesium 150 mg 300 mg 80%\nVitamin B6 0,7 mg 1,4 mg",
+            {"magnesium": "300 mg", "vitamin b6": "1.4 mg"},
+        ),
+        (
+            "Nährwerte pro Kapsel pro empfohlener täglicher Verzehrmenge (2 Kapseln)\nVitamin C 40 mg 80 mg",
+            {"vitamin c": "80 mg"},
+        ),
+        (   # per 100 g first, then per portion: the portion is the dose
+            "Nährwerte pro 100 g pro Portion (5 g)\nMagnesium 6000 mg 300 mg",
+            {"magnesium": "300 mg"},
+        ),
+        (   # per-day column first
+            "Nährwerte pro Tagesdosis (2 Kapseln) pro Kapsel %NRV\nVitamin C 80 mg 40 mg 100%\nZink 10 mg 5 mg 100%",
+            {"vitamin c": "80 mg", "zinc": "10 mg"},
+        ),
+        (   # bare column word next to a "pro ..." column
+            "Nährwerte | pro Kapsel | Tagesdosis (2 Kapseln) | %NRV\nVitamin C 40 mg 80 mg 100%",
+            {"vitamin c": "80 mg"},
+        ),
+        (   # header split over OCR lines
+            "Nährwerte\npro Kapsel\npro Tagesdosis\nVitamin C 40 mg 80 mg 100%",
+            {"vitamin c": "80 mg"},
+        ),
+        (
+            "Nährwerte pro Kapsel pro Tagesdosis\nVitamin D3 10 µg (400 I.E.) 20 µg (800 I.E.) 400%",
+            {"vitamin d": "20 mcg"},
+        ),
+        (
+            "Amount per serving | per daily serving\nVitamin C 250 mg 500 mg",
+            {"vitamin c": "500 mg"},
+        ),
+    ],
+)
+def test_multi_column_tables_take_the_daily_dose_column(sw, text, expected):
+    assert _doses(sw, text) == expected
+
+
+def test_mandatory_german_warning_sentence_is_not_a_column_header():
+    text = (
+        "Nährwertangaben pro Kapsel\nVitamin C 80 mg 100%\n"
+        "Die angegebene empfohlene tägliche Verzehrmenge darf nicht überschritten werden."
+    )
+    assert bb._label_daily_dose_column(text) is None
+    assert _parsed(text) == [("vitamin c", 80.0, "mg")]
