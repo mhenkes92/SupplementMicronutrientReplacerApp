@@ -144,6 +144,46 @@ def test_omnivore_b12_default_is_a_whole_food_not_a_fortified_plant_food(sw, pro
     assert "tuna" in foods[sw._default_food_index(foods, _B12_CARD, profiles["none"])]["food_description"]
 
 
+# --- R1-VITD-TARGET-DEVIATION: a common fish always beats a UV mushroom ----------
+
+@pytest.mark.parametrize("diet", ["none", "pescatarian", "halal friendly"])
+@pytest.mark.parametrize("text", ["Vitamin D3 25 µg", "Vitamin D3 50 µg", "Vitamin D3 125 µg", "Vitamin D3 5000 IE", "Vitamin D3 10000 IE"])
+def test_vitamin_d_default_is_never_a_mushroom_when_a_common_fish_is_listed(sw, profiles, diet, text):
+    food, _card_, foods = _default(sw, text, profiles[diet])
+    assert any(sw._EVERYDAY_VITAMIN_D3_FISH_RE.search(f["food_description"]) for f in foods)
+    assert not sw._MUSHROOM_RE.search(food["food_description"]), food
+    assert food["food_description"].startswith("Fish,")
+    # The UV mushrooms stay in the dropdown, labelled.
+    assert any(sw._is_uv_mushroom(f) for f in foods)
+
+
+def test_common_fish_beats_a_more_practical_uv_mushroom(sw):
+    card = {"component": "vitamin d3", "nutrient_key": "vitamin d", "dose_value": 125.0, "dose_unit": "mcg", "form": ""}
+    mushroom = {"food_description": "Mushrooms, brown, italian, or crimini, exposed to ultraviolet light, raw",
+                "food_category": "Vegetables and Vegetable Products", "amount_per_100g": 31.9, "unit": "mcg"}
+    trout = {"food_description": "Fish, trout, rainbow, farmed, raw", "food_category": "Finfish and Shellfish Products",
+             "amount_per_100g": 15.9, "unit": "mcg"}
+    # ~786 g of trout ("a lot of food") still beats ~392 g of UV mushrooms ...
+    assert sw._default_food_index([mushroom, trout], card) == 1
+    # ... but not a fish whose portion breaks another upper limit (~776 g of
+    # mackerel: ~340 µg selenium).
+    mackerel = {"food_description": "Fish, mackerel, Atlantic, raw", "food_category": "Finfish and Shellfish Products",
+                "amount_per_100g": 16.1, "unit": "mcg"}
+    assert sw._food_exceeds_a_limit(mackerel, 776.0, "vitamin d3")
+    assert sw._default_food_index([mushroom, mackerel], card) == 0
+
+
+def test_vegetarian_keeps_the_mushroom_when_eggs_are_not_as_practical(sw):
+    # Documented reading of "never a UV mushroom when an egg is available": an
+    # egg only wins at an equally practical, safe portion (not ~27 yolks a day).
+    card = {"component": "vitamin d3", "nutrient_key": "vitamin d", "dose_value": 25.0, "dose_unit": "mcg", "form": ""}
+    mushroom = {"food_description": "Mushrooms, brown, italian, or crimini, exposed to ultraviolet light, raw",
+                "food_category": "Vegetables and Vegetable Products", "amount_per_100g": 31.9, "unit": "mcg"}
+    egg = {"food_description": "Egg, whole, raw, fresh", "food_category": "Dairy and Egg Products",
+           "amount_per_100g": 2.0, "unit": "mcg"}
+    assert sw._default_food_index([mushroom, egg], card) == 0
+
+
 # --- R1-SEAWEED-IODINE: seaweed of unknown iodine is warned about and demoted ----
 
 _WAKAME = {"food_description": "Seaweed, wakame, raw", "food_category": "Vegetables and Vegetable Products",

@@ -1295,7 +1295,8 @@ def _selected_food_warning(food: dict[str, Any] | None, dose_value: Any, dose_un
 #   2. no organ meat (liver, kidney, heart, giblets) when a non-organ food can
 #      supply the dose at a practical portion;
 #   3. on vitamin D cards, no mushroom (vitamin D2; UV-treated ones only) when
-#      a vitamin D3 food (fish, eggs) offers an equally practical portion;
+#      a common fish is listed (salmon, herring, mackerel, sardines, trout) or
+#      another vitamin D3 food (fish, eggs) offers an equally practical portion;
 #   4. a whole food before a B12-fortified one (curated, or a plant food with
 #      B12: _is_b12_fortified_food), unless the diet is vegan / vegetarian
 #      (then the fortified foods are the reliable B12 source);
@@ -1304,6 +1305,7 @@ def _selected_food_warning(food: dict[str, Any] | None, dose_value: Any, dose_un
 #      mackerel, sardines, trout, eggs);
 #   7. then the ranking order (most nutrient per 100 g first).
 _EVERYDAY_VITAMIN_D3_RE = re.compile(r"\b(?:salmon|herring|mackerel|sardines?|trout|eggs?)\b", re.IGNORECASE)
+_EVERYDAY_VITAMIN_D3_FISH_RE = re.compile(r"\b(?:salmon|herring|mackerel|sardines?|trout)\b", re.IGNORECASE)
 # Any fish (USDA "Fish, ...") or egg supplies vitamin D3.
 _VITAMIN_D3_SOURCE_RE = re.compile(r"^\s*fish\b|\b(?:salmon|herring|mackerel|sardines?|trout|eggs?)\b", re.IGNORECASE)
 _MUSHROOM_RE = re.compile(r"\bmushrooms?\b", re.IGNORECASE)
@@ -1346,6 +1348,7 @@ def _default_food_index(foods: list[dict[str, Any]], card: dict[str, Any], profi
             "d3": key == "vitamin d" and bool(_EVERYDAY_VITAMIN_D3_RE.search(name)) and not _MUSHROOM_RE.search(name),
             "d3_source": key == "vitamin d" and bool(_VITAMIN_D3_SOURCE_RE.search(name)) and not _MUSHROOM_RE.search(name),
             "mushroom": key == "vitamin d" and bool(_MUSHROOM_RE.search(name)),
+            "common_fish": key == "vitamin d" and bool(_EVERYDAY_VITAMIN_D3_FISH_RE.search(name)) and not _MUSHROOM_RE.search(name),
             "fortified": (_is_b12_fortified_food(food) if key == "vitamin b12" else bool(food.get("fortified"))) and not plant,
             # Plant-based B12 / vegan iodine: a food Replace would refuse is never the default.
             "blocked": bool(_replace_block_reason(card, food, profile)),
@@ -1354,9 +1357,12 @@ def _default_food_index(foods: list[dict[str, Any]], card: dict[str, Any], profi
     # default when it is strictly more practical than every other food.
     best_non_organ = min((f["practical"] for f in facts if not f["organ"] and not f["unsafe"] and not f["fortified"]), default=None)
     d3_available = any(f["d3"] for f in facts)
-    # A mushroom gives way to a D3 food whose portion is as practical (25 egg
-    # yolks a day do not beat ~80 g of UV-treated mushrooms).
+    # A mushroom gives way to a common fish (salmon, herring, mackerel,
+    # sardines, trout) whatever its portion, and to any other D3 food (eggs,
+    # other fish) whose portion is as practical (25 egg yolks a day do not
+    # beat ~80 g of UV-treated mushrooms on a vegetarian card).
     best_d3 = min((f["practical"] for f in facts if f["d3_source"] and not f["unsafe"]), default=None)
+    common_fish = any(f["common_fish"] and not f["unsafe"] for f in facts)
 
     def _rank(i: int) -> tuple[int, ...]:
         f = facts[i]
@@ -1364,7 +1370,7 @@ def _default_food_index(foods: list[dict[str, Any]], card: dict[str, Any], profi
             int(f["unsafe"]),
             int(f["blocked"]),
             int(f["organ"] and best_non_organ is not None and best_non_organ <= f["practical"]),
-            int(f["mushroom"] and best_d3 is not None and best_d3 <= f["practical"]),
+            int(f["mushroom"] and (common_fish or (best_d3 is not None and best_d3 <= f["practical"]))),
             int(f["fortified"]),
             f["practical"],
             int(d3_available and not f["d3"]),
