@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+import blockbrain.app as bb
+
 PRICES_CSV = Path(__file__).resolve().parent.parent / "blockbrain" / "data" / "german_food_prices.csv"
 
 
@@ -49,6 +51,18 @@ def _per_kg(sw, food: str) -> float | None:
         ("Spinach, raw", 2, 9),
         ("Bananas, raw", 1, 2.5),
         ("Mango, Ataulfo, peeled, raw", 2, 6),
+        # review PR-1: the wrong word used to win; plus top-40 foods that were unpriced
+        ("Salsify, (vegetable oyster), raw", 4, 12),          # was oyster EUR 45/kg
+        ("Custard-apple, (bullock's-heart), raw", 6, 15),     # was offal "heart" EUR 7/kg
+        ("Squash, spaghetti, peeled, seeded, raw", 1.5, 5),   # was pasta "spaghetti" EUR 1.80/kg
+        ("Peanut butter, smooth style, without salt", 4, 9),  # was butter EUR 9/kg
+        ("Beef, variety meats and by-products, heart, raw", 4, 10),  # was beef EUR 16/kg
+        ("Nuts, almond butter, plain, without salt added", 12, 30),
+        ("Seeds, sesame butter, tahini, type of kernels unspecified", 6, 15),
+        ("Borage, raw", 10, 30),
+        ("Mollusks, abalone, mixed species, raw", 50, 150),
+        ("Arrowroot, raw", 8, 25),
+        ("Fish, flatfish (flounder and sole species), raw", 15, 30),
     ],
 )
 def test_common_top_foods_are_priced_realistically(sw, food, low, high):
@@ -80,6 +94,20 @@ def test_common_top_foods_are_priced_realistically(sw, food, low, high):
         ("Pineapple, raw", "pineapple"),
         ("Eggs, Grade A, Large, egg yolk", "egg yolk"),
         ("Kiwifruit, ZESPRI SunGold, raw", "sungold"),
+        # a word only inside a parenthetical synonym never beats the head word
+        ("Salsify, (vegetable oyster), raw", "salsify"),
+        ("Custard-apple, (bullock's-heart), raw", "custard-apple"),
+        ("Sugar-apples, (sweetsop), raw", "sugar-apple"),
+        ("Cabbage, chinese (pak-choi), raw", "cabbage chinese pak-choi"),
+        ("Squash, spaghetti, peeled, seeded, raw", "spaghetti squash"),
+        ("Squash, winter, spaghetti, raw", "spaghetti squash"),
+        ("Peanut butter, smooth style, without salt", "peanut butter"),
+        ("Beef, variety meats and by-products, heart, raw", "beef heart"),
+        ("Pork, fresh, variety meats and by-products, kidneys, raw", "pork kidney"),
+        ("Peas, green, split, mature seeds, raw", "split pea"),
+        ("Mushrooms, enoki, raw", "enoki"),
+        ("Beans, adzuki, mature seeds, raw", "adzuki"),
+        ("Apples, raw, with skin", "apple"),
     ],
 )
 def test_specific_whole_word_match(sw, food, expected_phrase):
@@ -88,7 +116,7 @@ def test_specific_whole_word_match(sw, food, expected_phrase):
 
 
 def test_unpriced_and_invalid_inputs(sw):
-    assert sw._german_price_per_kg("Mollusks, abalone, mixed species, raw") is None
+    assert sw._german_price_per_kg("Fireweed, leaves, raw") is None
     assert sw._german_price_per_kg("") is None
     assert sw._estimate_food_price_eur("Bananas, raw", None) is None
     assert sw._estimate_food_price_eur("Bananas, raw", 0) is None
@@ -108,14 +136,14 @@ def _swap(food: str, amount_per_100g: float, unit: str, component: str, dose: fl
 def test_basket_excludes_portions_over_one_kilo(sw):
     bananas = _swap("Bananas, raw", 0.34, "MG", "Magnesium", 80, "mg")       # ~23.5 kg/day
     almonds = _swap("Nuts, almonds", 270.0, "MG", "Magnesium", 100, "mg")    # ~37 g/day
-    abalone = _swap("Mollusks, abalone, mixed species, raw", 48.0, "MG", "Magnesium", 100, "mg")
-    basket = sw._basket_cost_breakdown([bananas, almonds, abalone])
+    fireweed = _swap("Fireweed, leaves, raw", 150.0, "MG", "Magnesium", 100, "mg")  # unpriced
+    basket = sw._basket_cost_breakdown([bananas, almonds, fireweed])
     assert [name for name, _ in basket["impractical"]] == ["Bananas"]
     assert basket["impractical"][0][1] > 20000
     assert [name for name, _ in basket["rows"]] == ["Almonds"]
     assert basket["total"] == pytest.approx(basket["rows"][0][1])
     assert basket["total"] < 1.0
-    assert basket["unknown"] == ["Abalone"]
+    assert basket["unknown"] == [bb.food_display_name("Fireweed, leaves, raw")]
     # Backwards-compatible 3-tuple summary.
     total, rows, unknown = sw._basket_cost_summary([bananas, almonds])
     assert total == pytest.approx(basket["total"]) and len(rows) == 1 and unknown == []
@@ -129,3 +157,17 @@ def test_price_table_documents_source_and_date():
         assert float(row["eur_per_kg"]) > 0, row
         assert row["source"].strip() and row["as_of"] == "2025", row
         assert row["match"].strip(), row
+
+
+def test_every_guard_passing_top_food_is_priced(sw):
+    """Every food a card can show first for the common nutrients has a price."""
+    nutrients = ["Vitamin A", "Vitamin C", "Vitamin D3", "Vitamin E", "Vitamin K", "Thiamin", "Riboflavin",
+                 "Niacin", "Vitamin B6", "Folate", "Vitamin B12", "Iron", "Zinc", "Magnesium", "Calcium",
+                 "Iodine", "Selenium"]
+    unpriced = set()
+    for nutrient in nutrients:
+        card = sw._build_swipe_cards([{"component": nutrient, "dose_value": 1, "dose_unit": "mg"}], [])[0]
+        for food in bb.apply_food_filters(card["foods"], None)[:40]:
+            if sw._german_price_per_kg(food["food_description"]) is None:
+                unpriced.add(food["food_description"])
+    assert not unpriced, sorted(unpriced)

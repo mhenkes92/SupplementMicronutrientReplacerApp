@@ -965,22 +965,30 @@ def _german_price_per_kg(food_name: str) -> tuple[float, str] | None:
 
     Words match whole (simple plurals), so "Goat" is not "oat" and butternut
     squash is not "nut". The most specific row wins: more matched words first,
-    then a match in the food's head (first two USDA segments, so "Fish,
-    roughy, orange" is fish, not oranges), then file order.
+    then where the match is - the food's head (first two USDA segments, so
+    "Fish, roughy, orange" is fish, not oranges), a later segment, and last a
+    word found only inside a parenthetical synonym ("Salsify, (vegetable
+    oyster)", "Custard-apple, (bullock's-heart)") - then file order, which
+    lists specific rows before generic ones.
     """
-    segments = [bb.normalize_lookup_key(s) for s in str(food_name or "").split(",")]
+    segments = [bb.normalize_lookup_key(s) for s in bb._split_usda_segments(str(food_name or ""))]
     segments = [s for s in segments if s]
     if not segments:
         return None
+    outside = [re.sub(r"\([^)]*\)?", " ", seg) for seg in segments]
     key = " ".join(segments)
+
+    def _tier(rx: Any) -> int:
+        first = next((i for i, text in enumerate(outside) if rx.search(text)), None)
+        if first is None:
+            return 0  # only inside a parenthetical synonym
+        return 2 if first <= 1 else 1
+
     best: tuple[tuple[int, int, int], float, str] | None = None
     for order, (regexes, price, phrase) in enumerate(_german_food_prices()):
         if not all(rx.search(key) for rx in regexes):
             continue
-        first_seg = min(
-            next((i for i, seg in enumerate(segments) if rx.search(seg)), len(segments)) for rx in regexes
-        )
-        score = (len(regexes), 1 if first_seg <= 1 else 0, -order)
+        score = (len(regexes), max(_tier(rx) for rx in regexes), -order)
         if best is None or score > best[0]:
             best = (score, price, phrase)
     return (best[1], best[2]) if best else None
