@@ -5,12 +5,14 @@ import functools
 import hashlib
 import html
 import io
+import ipaddress
 import json
 import logging
 import math
 import os
 import re
 import shutil
+import socket
 import sqlite3
 import statistics
 import sys
@@ -8766,22 +8768,96 @@ def validate_parsed_components(rows: list[dict[str, Any]]) -> tuple[list[dict[st
     return accepted, result
 
 
+_PAGE_FETCH_MAX_BYTES = 2_000_000
+_PAGE_FETCH_MAX_REDIRECTS = 4
+
+
+def _is_public_http_url(url: str) -> bool:
+    """True only for http(s) URLs whose host resolves exclusively to public IPs.
+
+    User-pasted product URLs are fetched server-side, so without this check a
+    visitor could make the app request internal addresses (cloud metadata at
+    169.254.169.254, localhost services, private networks)."""
+    try:
+        parsed = urlparse(str(url or "").strip())
+    except Exception:
+        return False
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        infos = socket.getaddrinfo(parsed.hostname, port, proto=socket.IPPROTO_TCP)
+    except Exception:
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0].split("%", 1)[0])
+        except ValueError:
+            return False
+        if not ip.is_global or ip.is_multicast:
+            return False
+    return True
+
+
+def _safe_public_get(
+    url: str, headers: dict[str, str] | None = None, timeout: Any = None
+) -> tuple[int, dict[str, str], str] | None:
+    """GET a user-supplied URL: public hosts only, redirects re-checked hop by
+    hop, body capped at _PAGE_FETCH_MAX_BYTES. Returns (status, headers, text),
+    or None when the URL (or a redirect target) is refused."""
+    current = str(url or "").strip()
+    for _hop in range(_PAGE_FETCH_MAX_REDIRECTS + 1):
+        if not _is_public_http_url(current):
+            return None
+        response = _http_get(
+            current,
+            headers=headers,
+            timeout=timeout or (BLOCKBRAIN_CONNECT_TIMEOUT_S, 30),
+            allow_redirects=False,
+            stream=True,
+        )
+        if response.is_redirect or response.status_code in {301, 302, 303, 307, 308}:
+            location = str(response.headers.get("Location", "") or "")
+            response.close()
+            if not location:
+                return None
+            current = requests.compat.urljoin(current, location)
+            continue
+        body = b""
+        for chunk in response.iter_content(chunk_size=65536):
+            body += chunk
+            if len(body) > _PAGE_FETCH_MAX_BYTES:
+                break
+        response.close()
+        encoding = str(getattr(response, "encoding", "") or "utf-8")
+        try:
+            text = body[:_PAGE_FETCH_MAX_BYTES].decode(encoding, errors="replace")
+        except LookupError:
+            text = body[:_PAGE_FETCH_MAX_BYTES].decode("utf-8", errors="replace")
+        return int(response.status_code), {str(k).lower(): str(v) for k, v in dict(response.headers or {}).items()}, text
+    return None
+
+
 def fetch_clean_page_text(url: str) -> str:
     try:
-        response = _http_get(
+        response = _safe_public_get(
             url,
-            timeout=HTTP_TIMEOUT,
             headers={
                 "User-Agent": "Mozilla/5.0 (compatible; SuppSwap/1.0; +https://example.local)",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             },
         )
-        if response.status_code != 200:
+        if response is None:
             return ""
-        content_type = str(response.headers.get("Content-Type", "") or "").lower()
+        status_code, resp_headers, page_html = response
+        if status_code != 200:
+            return ""
+        content_type = str(resp_headers.get("content-type", "") or "").lower()
         if "html" not in content_type and "xml" not in content_type and "text" not in content_type:
             return ""
-        soup = BeautifulSoup(response.text, "html.parser")
+        soup = BeautifulSoup(page_html, "html.parser")
         for tag in soup(["script", "style", "noscript"]):
             tag.extract()
         text = " ".join(soup.get_text(separator=" ").split())
