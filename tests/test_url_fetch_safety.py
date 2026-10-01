@@ -193,3 +193,47 @@ def test_page_fetch_uses_the_guarded_session(monkeypatch):
     assert seen["session"] is bb._PUBLIC_FETCH_SESSION and seen["allow_redirects"] is False
     adapter = bb._PUBLIC_FETCH_SESSION.get_adapter("https://shop.test/")
     assert isinstance(adapter, bb._PublicOnlyAdapter)
+
+
+def test_deadline_stops_a_real_slow_drip_server(monkeypatch):
+    """Sign-off SEC-F9: a server that drips a few bytes at a time (no
+    Content-Length) must not hold the fetch past its deadline."""
+    import threading
+    import time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    import requests
+
+    stop = threading.Event()
+
+    class Drip(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            try:
+                while not stop.is_set():
+                    self.wfile.write(b"<p>drip</p>\n")
+                    self.wfile.flush()
+                    time.sleep(0.3)
+            except OSError:
+                pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Drip)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    # The drip server is local: skip only the public-address checks.
+    monkeypatch.setattr(bb, "_is_public_http_url", lambda url: True)
+    monkeypatch.setattr(bb, "_PUBLIC_FETCH_SESSION", requests.Session())
+    monkeypatch.setattr(bb, "_PAGE_FETCH_DEADLINE_S", 1.5)
+    try:
+        started = time.monotonic()
+        result = bb._safe_public_get(f"http://127.0.0.1:{server.server_address[1]}/")
+        elapsed = time.monotonic() - started
+    finally:
+        stop.set()
+        server.shutdown()
+    assert result is None
+    assert elapsed < 4.0, elapsed

@@ -332,7 +332,9 @@ def test_impractical_yeast_flakes_are_not_counted_in_the_totals_or_priced(sw):
     assert lines == [("caption", f"Not counted, not practical from food: {sw._food_name(yeast)} (~250 g/day).")]
     basket = sw._basket_cost_breakdown([decision])
     assert basket["rows"] == [] and [name for name, _g in basket["impractical"]] == [sw._food_name(yeast)]
-    assert sw._meal_plan_amount(decision) == sw._MEAL_PLAN_NORMAL_PORTION
+    # Sign-off NUT-F11: the meal plan asks for the card's realistic amount, not 150 g.
+    assert sw._meal_plan_amount(decision) == sw._meal_plan_normal_portion(yeast)
+    assert "about 30 g" in sw._meal_plan_amount(decision)
 
 
 def test_the_same_food_under_two_usda_names_counts_once(sw):
@@ -348,7 +350,9 @@ def test_the_same_food_under_two_usda_names_counts_once(sw):
 
 # --- F12: foods German shops don't sell in that form -------------------------------------
 
-@pytest.mark.parametrize("text, banned", [("Kalium 500 mg", "hearts of palm"), ("Vitamin C 80 mg", "acerola")])
+@pytest.mark.parametrize("text, banned", [
+    ("Kalium 500 mg", "hearts of palm"), ("Vitamin C 80 mg", "acerola"), ("Calcium 800 mg", "grape leaves"),
+])
 @pytest.mark.parametrize("diet", ["none", "vegan"])
 def test_raw_palm_hearts_and_fresh_acerola_are_not_the_default(sw, profiles, text, banned, diet):
     [card] = _cards(sw, text)

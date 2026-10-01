@@ -1630,7 +1630,10 @@ _EVERYDAY_VITAMIN_D3_FISH_RE = re.compile(r"\b(?:salmon|herring|mackerel|sardine
 # Any fish (USDA "Fish, ...") or egg supplies vitamin D3.
 _VITAMIN_D3_SOURCE_RE = re.compile(r"^\s*fish\b|\b(?:salmon|herring|mackerel|sardines?|trout|eggs?)\b", re.IGNORECASE)
 _MUSHROOM_RE = re.compile(r"\bmushrooms?\b", re.IGNORECASE)
-_NOT_SOLD_FRESH_IN_DE_RE = re.compile(r"^\s*(?:hearts of palm|palm hearts?),?\s*raw\b|^\s*acerola\b.*\braw\b", re.IGNORECASE)
+_NOT_SOLD_FRESH_IN_DE_RE = re.compile(
+    r"^\s*(?:hearts of palm|palm hearts?),?\s*raw\b|^\s*acerola\b.*\braw\b|^\s*grape leaves,?\s*raw\b",
+    re.IGNORECASE,
+)
 _UV_TREATED_RE = re.compile(r"\b(?:ultraviolet|uv)\b", re.IGNORECASE)
 _PRACTICALITY_RANK = {"ok": 0, "large": 1, "impractical": 2}
 
@@ -2595,6 +2598,15 @@ def _render_swap_totals(replace_items: list[dict[str, Any]]) -> None:
 # (the plan must not ask for 1.5 kg of spinach), and the once-a-week limit for
 # organ meats (vitamin A, see _liver_vitamin_a_warning).
 _MEAL_PLAN_NORMAL_PORTION = "a normal portion (about 150 g); the full dose isn't practical from food"
+
+
+def _meal_plan_normal_portion(food: dict[str, Any] | None) -> str:
+    """"A normal portion", capped at the food's own realistic daily amount
+    (~30 g of yeast flakes, 15 g of chia) when it has one."""
+    own_max = _food_max_daily_g(food)
+    if 0 < own_max < 150:
+        return f"a normal portion (about {_format_grams(own_max)}); the full dose isn't practical from food"
+    return _MEAL_PLAN_NORMAL_PORTION
 _MEAL_PLAN_ORGAN_PORTION = "at most one small portion (~50 g) per week"
 
 
@@ -2611,9 +2623,9 @@ def _meal_plan_amount(decision: dict[str, Any]) -> str:
     if target_grams is not None:
         if target_grams and _portion_practicality(target_grams, food) == "ok":
             return f"eat ~{_format_grams(target_grams)} (the daily target; the full dose would pass the safe upper limit)"
-        return _MEAL_PLAN_NORMAL_PORTION
+        return _meal_plan_normal_portion(food)
     if _portion_practicality(_grams_to_match_dose(decision), food) in ("large", "impractical"):
-        return _MEAL_PLAN_NORMAL_PORTION
+        return _meal_plan_normal_portion(food)
     return _amount_to_match_dose(decision)
 
 

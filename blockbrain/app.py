@@ -10682,6 +10682,45 @@ def _is_public_http_url(url: str) -> bool:
     return True
 
 
+def _response_socket(response: Any) -> Any:
+    """The socket under a streamed requests response, or None."""
+    raw = getattr(response, "raw", None)
+    conn = getattr(raw, "_connection", None)
+    sock = getattr(conn, "sock", None)
+    if sock is not None:
+        return sock
+    fp = getattr(getattr(raw, "_fp", None), "fp", None)
+    return getattr(getattr(fp, "raw", None), "_sock", None)
+
+
+def _abort_response(response: Any) -> None:
+    sock = _response_socket(response)
+    if sock is not None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+    try:
+        response.close()
+    except Exception:
+        pass
+
+
+def _iter_body(response: Any, chunk_size: int = 16384):
+    """Body chunks as they arrive: one recv per chunk (urllib3 2's read1), so
+    the caller's deadline check runs between drips instead of after 16 KB."""
+    raw = getattr(response, "raw", None)
+    read1 = getattr(raw, "read1", None)
+    if read1 is None:
+        yield from response.iter_content(chunk_size=chunk_size)
+        return
+    while True:
+        chunk = read1(chunk_size, decode_content=True)
+        if not chunk:
+            return
+        yield chunk
+
+
 def _safe_public_get(
     url: str, headers: dict[str, str] | None = None, timeout: Any = None
 ) -> tuple[int, dict[str, str], str] | None:
@@ -10712,14 +10751,14 @@ def _safe_public_get(
                 return None
             current = requests.compat.urljoin(current, location)
             continue
-        # A watchdog closes the response at the deadline, which also ends a
-        # read that is blocked on a slow-drip server.
-        watchdog = threading.Timer(max(0.0, deadline - time.monotonic()), response.close)
+        # A watchdog shuts the socket down at the deadline: that wakes a read
+        # blocked on a slow-drip server (closing the response alone does not).
+        watchdog = threading.Timer(max(0.0, deadline - time.monotonic()), _abort_response, args=(response,))
         watchdog.daemon = True
         watchdog.start()
         body = b""
         try:
-            for chunk in response.iter_content(chunk_size=16384):
+            for chunk in _iter_body(response):
                 body += chunk
                 if len(body) > _PAGE_FETCH_MAX_BYTES or time.monotonic() > deadline:
                     break
