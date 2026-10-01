@@ -6985,6 +6985,28 @@ def food_nutrient_amount(food_description: str, nutrient: str) -> float | None:
     return _lexicon_food_amount_index(key).get(normalize_lookup_key(food_description))
 
 
+# USDA energy: 1008 "Energy" (kcal), else the Atwater specific / general kcal
+# values that some Foundation Foods carry instead.
+_USDA_ENERGY_KCAL_IDS = (1008, 2048, 2047)
+
+
+@functools.lru_cache(maxsize=1)
+def _usda_energy_kcal_index() -> dict[str, float]:
+    priority = {nid: i for i, nid in enumerate(_USDA_ENERGY_KCAL_IDS)}
+    best: dict[str, tuple[int, float]] = {}
+    for nid, desc, _category, amount in _query_usda_food_amounts(list(_USDA_ENERGY_KCAL_IDS)):
+        fkey = normalize_lookup_key(desc)
+        rank = priority.get(nid, len(priority))
+        if fkey and (fkey not in best or rank < best[fkey][0]):
+            best[fkey] = (rank, amount)
+    return {fkey: amount for fkey, (_rank, amount) in best.items()}
+
+
+def food_energy_kcal_per_100g(food_description: str) -> float | None:
+    """Energy of a USDA food in kcal per 100 g (read-only, cached), or None."""
+    return _usda_energy_kcal_index().get(normalize_lookup_key(food_description))
+
+
 def _build_local_food_rows_for_component(component_key: str, limit: int = TOP_FOODS_PER_COMPONENT) -> list[dict[str, Any]]:
     """Whole foods ranked by THIS nutrient per 100 g (highest first), one unit."""
     key = canonical_nutrient_key(component_key)

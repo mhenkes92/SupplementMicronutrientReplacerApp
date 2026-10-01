@@ -1671,6 +1671,110 @@ def _basket_cost_summary(replace_items: list[dict[str, Any]]) -> tuple[float, li
     return breakdown["total"], breakdown["rows"], breakdown["unknown"]
 
 
+# Daily totals of the swaps on the results screen. Above either limit the swaps
+# are a lot of food on top of a normal diet, so the screen suggests keeping
+# some supplements.
+_SWAP_TOTAL_MAX_G = 1000.0
+_SWAP_TOTAL_MAX_KCAL = 1200.0
+
+
+def _swap_totals(replace_items: list[dict[str, Any]]) -> dict[str, Any]:
+    """How much food the whole-food swaps add per day.
+
+    Uses the match-dose grams of each replaced item; a food chosen for several
+    nutrients counts once, at its largest amount. Energy is USDA kcal per 100 g
+    (bb.food_energy_kcal_per_100g). Items whose amount is impractical (> 1 kg a
+    day, see _portion_practicality) are listed separately and not summed.
+
+    Returns {"grams", "kcal", "foods": [(name, grams, kcal or None)],
+    "no_energy": [name], "impractical": [(name, grams)], "too_much": bool}.
+    """
+    by_food: dict[str, tuple[str, float, str]] = {}
+    impractical: dict[str, tuple[str, float]] = {}
+    for d in replace_items:
+        food = d.get("selected_food") or {}
+        usda_name = str(food.get("food_description", "") or "").strip()
+        grams = _grams_to_match_dose(d)
+        if not usda_name or grams is None or grams <= 0:
+            continue
+        key = bb.normalize_lookup_key(usda_name)
+        name = _food_name(food) or usda_name
+        if _portion_practicality(grams) == "impractical":
+            if key not in impractical or grams > impractical[key][1]:
+                impractical[key] = (name, grams)
+            continue
+        if key not in by_food or grams > by_food[key][1]:
+            by_food[key] = (name, grams, usda_name)
+
+    foods: list[tuple[str, float, float | None]] = []
+    no_energy: list[str] = []
+    total_g = total_kcal = 0.0
+    for name, grams, usda_name in by_food.values():
+        try:
+            kcal_100g = bb.food_energy_kcal_per_100g(usda_name)
+        except Exception:
+            kcal_100g = None
+        kcal = grams * float(kcal_100g) / 100.0 if kcal_100g is not None else None
+        foods.append((name, grams, kcal))
+        total_g += grams
+        if kcal is None:
+            no_energy.append(name)
+        else:
+            total_kcal += kcal
+    return {
+        "grams": total_g,
+        "kcal": total_kcal,
+        "foods": foods,
+        "no_energy": no_energy,
+        "impractical": list(impractical.values()),
+        "too_much": total_g > _SWAP_TOTAL_MAX_G or total_kcal > _SWAP_TOTAL_MAX_KCAL,
+    }
+
+
+def _round_total(value: float) -> str:
+    """"1,250" / "85" — whole numbers, to the nearest 10 from 100 up."""
+    rounded = round(value, -1) if value >= 100 else round(value)
+    return f"{int(rounded):,}"
+
+
+def _swap_totals_lines(replace_items: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """(kind, text) lines for the results screen: "total", "warning", "caption"."""
+    totals = _swap_totals(replace_items)
+    lines: list[tuple[str, str]] = []
+    if totals["foods"]:
+        grams_txt = _round_total(totals["grams"])
+        if len(totals["no_energy"]) == len(totals["foods"]):
+            lines.append(("total", f"🍽️ Your swaps add about {grams_txt} g of food a day."))
+        else:
+            lines.append(
+                ("total", f"🍽️ Your swaps add about {grams_txt} g of food and ~{_round_total(totals['kcal'])} kcal a day.")
+            )
+            if totals["no_energy"]:
+                lines.append(("caption", "kcal without " + ", ".join(totals["no_energy"]) + " (no USDA energy value)."))
+        if totals["too_much"]:
+            lines.append(("warning", "⚠️ This is a lot of food — consider keeping some supplements."))
+    if totals["impractical"]:
+        lines.append(
+            (
+                "caption",
+                "Not counted, not practical from food: "
+                + ", ".join(f"{name} (~{bb.format_float(grams / 1000.0, 1)} kg/day)" for name, grams in totals["impractical"])
+                + ".",
+            )
+        )
+    return lines
+
+
+def _render_swap_totals(replace_items: list[dict[str, Any]]) -> None:
+    for kind, text in _swap_totals_lines(replace_items):
+        if kind == "total":
+            st.markdown(f"**{text}**")
+        elif kind == "warning":
+            st.warning(text)
+        else:
+            st.caption(text)
+
+
 def _meal_plan_prompts(
     replace_items: list[dict[str, Any]], diet_label: str, num_meals: int = 3, pregnant: bool | None = None
 ) -> tuple[str, str, str]:
@@ -3529,6 +3633,8 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
                     st.caption(warning)
             else:
                 st.caption("Nothing swiped right.")
+        # Daily food amount and energy of the swaps.
+        _render_swap_totals(replace_items)
 
     # Record this completed scan to the on-device history (once per analysis).
     diet_label = str((_selected_dietary_profile() or {}).get("label", "") or "")
