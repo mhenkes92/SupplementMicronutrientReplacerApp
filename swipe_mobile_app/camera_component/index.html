@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SuppSwipe camera</title>
 <style>
   html, body { margin: 0; padding: 0; background: transparent; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
   #wrap { width: 100%; }
@@ -68,6 +69,15 @@
   var HEIGHT = 450;
   var stream = null;
   var lastDataUrl = "";
+  var lastBarcode = "";
+  // Native barcode reading (Chrome/Android, some desktop browsers). Where it is
+  // missing the photo is still read by the vision model, so this is optional.
+  var detector = null;
+  try {
+    if ("BarcodeDetector" in window) {
+      detector = new window.BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e"] });
+    }
+  } catch (e) { detector = null; }
 
   function send(type, extra) {
     var msg = { isStreamlitMessage: true, type: type };
@@ -79,6 +89,7 @@
 
   async function startCamera() {
     errEl.textContent = "";
+    errEl.style.color = "";
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
@@ -87,7 +98,20 @@
       video.srcObject = stream;
       await video.play().catch(function () {});
     } catch (e) {
-      errEl.textContent = "Camera unavailable: " + (e && e.message ? e.message : e) + ". Use the File / Gallery tab instead.";
+      var name = e && e.name ? e.name : "";
+      var msg;
+      if (name === "NotAllowedError" || name === "SecurityError") {
+        msg = "Camera access is blocked. Allow the camera for this site in your browser settings, or use the File / Gallery tab.";
+      } else if (name === "NotFoundError" || name === "OverconstrainedError") {
+        msg = "No camera was found on this device. Use the File / Gallery tab instead.";
+      } else if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        msg = "This browser can't open the camera here. Use the File / Gallery tab instead.";
+      } else {
+        msg = "The camera couldn't start (it may be in use by another app). Use the File / Gallery tab instead.";
+      }
+      errEl.textContent = msg;
+      liveBtns.style.display = "none";
+      video.style.display = "none";
     }
     setHeight(HEIGHT);
   }
@@ -120,7 +144,18 @@
     canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
     lastDataUrl = canvas.toDataURL("image/jpeg", 0.72);
     preview.src = lastDataUrl;
+    lastBarcode = "";
+    errEl.textContent = "";
     showPreview();
+    if (detector) {
+      detector.detect(canvas).then(function (codes) {
+        if (codes && codes.length && codes[0].rawValue) {
+          lastBarcode = String(codes[0].rawValue);
+          errEl.style.color = "#047857";
+          errEl.textContent = "Barcode " + lastBarcode + " found — tap Use photo to look it up.";
+        }
+      }).catch(function () {});
+    }
   });
 
   document.getElementById("retake").addEventListener("click", function () {
@@ -140,7 +175,7 @@
     stopCamera();
     // Defer the (large) value post one frame so the processing UI paints first.
     requestAnimationFrame(function () {
-      setTimeout(function () { setValue({ image: lastDataUrl, id: Date.now() }); }, 0);
+      setTimeout(function () { setValue({ image: lastDataUrl, barcode: lastBarcode, id: Date.now() }); }, 0);
     });
   });
 

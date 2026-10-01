@@ -1720,6 +1720,67 @@ def _normalize_barcode_digits(value: str) -> str:
     return ""
 
 
+def gtin_is_valid(digits: str) -> bool:
+    """True for an EAN-8 / UPC-A (12) / EAN-13 / GTIN-14 with a correct GS1
+    check digit. Rejects phone numbers, PZNs, lot numbers and OCR noise that
+    merely have the right length."""
+    digits = str(digits or "")
+    if not digits.isdigit() or len(digits) not in (8, 12, 13, 14):
+        return False
+    body, check = digits[:-1], int(digits[-1])
+    total = sum(int(d) * (3 if i % 2 == 0 else 1) for i, d in enumerate(reversed(body)))
+    return (10 - total % 10) % 10 == check
+
+
+def extract_valid_gtins(text: str) -> list[str]:
+    """Barcode numbers in free text (OCR, pasted input), longest first; digits
+    may be grouped by spaces or hyphens. Numbers labelled as PZN (German
+    pharmacy code), phone/fax or lot/batch numbers are ignored."""
+    found: list[str] = []
+    for match in re.finditer(r"\d[\d \-]{6,20}\d", str(text or "")):
+        before = text[max(0, match.start() - 14): match.start()].lower()
+        if re.search(r"(pzn|tel|fax|phone|lot|ch\.-?b|charge|batch)\W*$", before):
+            continue
+        digits = re.sub(r"\D", "", match.group(0))
+        if gtin_is_valid(digits) and digits not in found:
+            found.append(digits)
+    found.sort(key=len, reverse=True)
+    return found
+
+
+# Barcode lookups run while the user waits: keep each external call short.
+BARCODE_HTTP_TIMEOUT = (5, 10)
+
+
+def _off_supplement_nutrient(nutriments: dict[str, Any], base_key: str, data_per: str) -> tuple[float | None, str]:
+    """Per-serving amount and unit of one OpenFoodFacts nutriment.
+
+    OpenFoodFacts stores <n>, <n>_100g and <n>_serving in the BASE unit (grams),
+    while <n>_value/<n>_unit are what the contributor typed for the basis given
+    in nutrition_data_per. For a supplement only the per-serving amount is a
+    dose ("per 100 g of tablets" is not), so: use the typed value when the data
+    is per serving, else convert <n>_serving from grams to the typed unit.
+    """
+    def _num(raw: Any) -> float | None:
+        try:
+            val = float(str(raw).replace(",", "."))
+        except Exception:
+            return None
+        return val if val > 0 else None
+
+    typed_unit = _normalize_component_unit_token(str(nutriments.get(f"{base_key}_unit", "") or ""))
+    if str(data_per or "").strip().lower() == "serving":
+        typed_value = _num(nutriments.get(f"{base_key}_value"))
+        if typed_value is not None and typed_unit:
+            return typed_value, typed_unit
+    grams = _num(nutriments.get(f"{base_key}_serving"))
+    if grams is None:
+        return None, ""
+    factors = {"g": 1.0, "mg": 1e3, "mcg": 1e6}
+    unit = typed_unit if typed_unit in factors else ("mcg" if grams < 1e-3 else "mg")
+    return grams * factors[unit], unit
+
+
 def detect_barcode_from_image(image_bytes: bytes) -> tuple[str, str]:
     """Return (barcode, method). method is one of: pyzbar, none."""
     if not image_bytes:
@@ -1763,7 +1824,7 @@ def _lookup_secondary_barcode_identity(barcode: str) -> tuple[str, str, str, str
     try:
         resp = _http_get(
             upcitemdb_url,
-            timeout=HTTP_TIMEOUT,
+            timeout=BARCODE_HTTP_TIMEOUT,
             headers={
                 "User-Agent": "Mozilla/5.0 (compatible; SuppSwap/1.0; +https://example.local)",
                 "Accept": "application/json",
@@ -2029,10 +2090,13 @@ def _lookup_ean_micronutrients_from_web(barcode: str, product_name: str = "") ->
     )
 
 
-def extract_supplement_text_from_barcode(barcode: str) -> tuple[str, str, str, str]:
+def extract_supplement_text_from_barcode(barcode: str, web_fallback: bool = False) -> tuple[str, str, str, str]:
     """
     Resolve product text from barcode using OpenFoodFacts.
     Returns (text, provider, reason, product_url).
+
+    web_fallback=True additionally scrapes web search results and runs vision
+    on product images (slow: up to dozens of calls) - off for the live app.
     """
     normalized_barcode = _normalize_barcode_digits(barcode)
     if not normalized_barcode:
@@ -2044,7 +2108,7 @@ def extract_supplement_text_from_barcode(barcode: str) -> tuple[str, str, str, s
     try:
         response = _http_get(
             api_url,
-            timeout=HTTP_TIMEOUT,
+            timeout=BARCODE_HTTP_TIMEOUT,
             headers={
                 "User-Agent": "Mozilla/5.0 (compatible; SuppSwap/1.0; +https://example.local)",
                 "Accept": "application/json",
@@ -2112,23 +2176,10 @@ def extract_supplement_text_from_barcode(barcode: str) -> tuple[str, str, str, s
             ("zinc", "Zinc"),
         ]
 
+        data_per = str(product.get("nutrition_data_per", "") or "")
+
         def _pick_nutriment_value(base_key: str) -> tuple[float | None, str]:
-            candidates = [base_key, f"{base_key}_serving", f"{base_key}_100g"]
-            for cand in candidates:
-                raw_val = nutriments.get(cand)
-                try:
-                    val = float(str(raw_val).replace(",", "."))
-                except Exception:
-                    continue
-                if val <= 0:
-                    continue
-                unit = str(
-                    nutriments.get(f"{cand}_unit", "")
-                    or nutriments.get(f"{base_key}_unit", "")
-                    or ""
-                ).strip()
-                return val, unit
-            return None, ""
+            return _off_supplement_nutrient(nutriments, base_key, data_per)
 
         lines: list[str] = []
         used_page_table_fallback = False
@@ -2143,11 +2194,11 @@ def extract_supplement_text_from_barcode(barcode: str) -> tuple[str, str, str, s
             unit_out = _normalize_component_unit_token(unit)
             lines.append(f"{label} {format_float(value)} {unit_out}".strip())
 
-        # Deterministic trusted-web fallback for micronutrients before macro fallbacks.
-        if not lines:
-            web_fallback = _lookup_ean_micronutrients_from_web(normalized_barcode, name)
-            if web_fallback[0]:
-                return web_fallback
+        # Optional trusted-web fallback for micronutrients before macro fallbacks.
+        if not lines and web_fallback:
+            web_result = _lookup_ean_micronutrients_from_web(normalized_barcode, name)
+            if web_result[0]:
+                return web_result
 
         # Fallback for products that expose only macro-style nutriments in OFF.
         if not lines:

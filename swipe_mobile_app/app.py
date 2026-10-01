@@ -2510,11 +2510,18 @@ def _selected_session_in_progress() -> bool:
 
 
 def _extract_ean_from_text(text: str) -> str:
-    for chunk in re.findall(r"\d[\d\s\-]{6,18}\d", str(text or "")):
-        digits = re.sub(r"\D", "", chunk)
-        if 8 <= len(digits) <= 14:
-            return digits
-    return ""
+    """First barcode number in the text with a valid GS1 check digit (PZNs,
+    phone and lot numbers are ignored)."""
+    found = bb.extract_valid_gtins(str(text or ""))
+    return found[0] if found else ""
+
+
+def _camera_barcode(value: Any) -> str:
+    """Barcode the camera component decoded in the browser, if it is valid."""
+    if not isinstance(value, dict):
+        return ""
+    digits = re.sub(r"\D", "", str(value.get("barcode", "") or ""))
+    return digits if bb.gtin_is_valid(digits) else ""
 
 
 def _research_barcode_label(barcode: str) -> str:
@@ -2530,7 +2537,7 @@ def _research_barcode_label(barcode: str) -> str:
     reliably from the product name.
     """
     barcode = re.sub(r"\D", "", str(barcode or ""))
-    if not (8 <= len(barcode) <= 14):
+    if not bb.gtin_is_valid(barcode):
         return ""
     try:
         text, _name, _provider, _reason = bb.extract_supplement_text_from_barcode(barcode)
@@ -2706,6 +2713,16 @@ def _run_pending_analysis() -> None:
         label_source: dict[str, str] = {"kind": "input", "url": ""}
 
         with st.spinner("Extracting and parsing supplement info…"):
+            # A barcode the phone decoded in the browser is looked up first; if
+            # the product database has its nutrients, the photo isn't OCR'd.
+            camera_barcode = str(req.get("camera_barcode", "") or "")
+            if camera_barcode:
+                _set_progress(20, f"Looking up barcode {camera_barcode}…")
+                researched = _research_barcode_label(camera_barcode)
+                if researched and bb.extraction_gate_report(researched).get("passed"):
+                    text_parts.append(researched)
+                    label_source = {"kind": "barcode_db", "url": f"https://world.openfoodfacts.org/product/{camera_barcode}"}
+                    req["camera_bytes"] = b""
             for label, key, pct in (("uploaded image", "upload_bytes", 26), ("camera image", "camera_bytes", 42)):
                 img = req.get(key)
                 if isinstance(img, (bytes, bytearray)) and img:
@@ -2738,7 +2755,12 @@ def _run_pending_analysis() -> None:
             manual = str(req.get("manual", "") or "").strip()
             if manual:
                 digits = re.sub(r"\D", "", manual)
-                if re.fullmatch(r"[\d\s\-]{8,18}", manual) and 8 <= len(digits) <= 14:
+                if re.fullmatch(r"[\d\s\-]{8,18}", manual) and 8 <= len(digits) <= 14 and not bb.gtin_is_valid(digits):
+                    st.warning(
+                        "That number isn't a valid EAN/UPC barcode (its check digit doesn't match). "
+                        "Please re-type it, or snap a photo of the label instead."
+                    )
+                elif re.fullmatch(r"[\d\s\-]{8,18}", manual) and 8 <= len(digits) <= 14:
                     _set_progress(56, "Researching barcode…")
                     researched = _research_barcode_label(manual)
                     if researched:
@@ -2805,7 +2827,9 @@ def _run_pending_analysis() -> None:
         st.rerun()
 
 
-def _stage_analysis_from_inputs(upload_bytes: bytes, camera_bytes: bytes, manual_text: str) -> bool:
+def _stage_analysis_from_inputs(
+    upload_bytes: bytes, camera_bytes: bytes, manual_text: str, camera_barcode: str = ""
+) -> bool:
     """Stage a pending analysis if new input is present. Returns True if staged."""
     if not (upload_bytes or camera_bytes or manual_text):
         return False
@@ -2816,6 +2840,7 @@ def _stage_analysis_from_inputs(upload_bytes: bytes, camera_bytes: bytes, manual
         "upload_bytes": upload_bytes,
         "camera_bytes": camera_bytes,
         "manual": manual_text,
+        "camera_barcode": camera_barcode,
     }
     st.session_state["swipe_last_auto_signature"] = sig
     st.session_state["swipe_progress_pct"] = 1
@@ -2841,6 +2866,7 @@ def _analyze_dialog() -> None:
 
     upload_bytes = b""
     camera_bytes = b""
+    camera_barcode = ""
     manual_text = ""
 
     if "Photo" in method:
@@ -2849,6 +2875,7 @@ def _analyze_dialog() -> None:
         if _back_camera is not None:
             cam_value = _back_camera(key=f"dlg_backcam_{nonce}", default=None)
             camera_bytes = _decode_camera_image(cam_value)
+            camera_barcode = _camera_barcode(cam_value)
         else:
             camera = st.camera_input(
                 "Take a photo of the label or barcode",
@@ -2873,7 +2900,7 @@ def _analyze_dialog() -> None:
         )
         manual_text = str(manual or "").strip()
 
-    if not precheck_error and _stage_analysis_from_inputs(upload_bytes, camera_bytes, manual_text):
+    if not precheck_error and _stage_analysis_from_inputs(upload_bytes, camera_bytes, manual_text, camera_barcode):
         # Close the dialog and let the main app run the analysis immediately.
         st.rerun(scope="app")
 
