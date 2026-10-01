@@ -10094,17 +10094,76 @@ def _label_candidate_doses(line: str, depths: list[int], start: int, end: int) -
     return outside, inside
 
 
-def _label_elemental_bracket_dose(line: str, inside: list[re.Match[str]], key: str) -> re.Match[str] | None:
-    """A bracketed "(davon Zink 10 mg = 100% NRV)" dose of mineral `key`: the
-    mineral itself. The bracket must name that mineral (or no nutrient at all:
-    "Magnesiumcitrat 1500 mg (davon 240 mg elementar)")."""
+@functools.lru_cache(maxsize=64)
+def _mineral_own_words(key: str) -> frozenset[str]:
+    """One-word names of a mineral in any language ("kalium", "jod", "zink"):
+    never a salt word when they name the mineral itself."""
+    return frozenset(
+        alias for alias, (alias_key, _display) in _NUTRIENT_ALIAS_INDEX.items() if alias_key == key and " " not in alias
+    ) | frozenset(key.split())
+
+
+def _label_item_names_compound(line: str, item: dict[str, Any], end: int) -> bool:
+    """True when a mineral item is named with its salt ("Magnesiumcitrat",
+    "Zinc gluconate", "Ferrous fumarate", "Kaliumiodid"): every word of the
+    name besides the mineral, and every unbracketed word up to `end`, is a salt
+    word — the dose is then the weight of the COMPOUND. "Magnesium (als
+    Magnesiumcitrat) 300 mg" names the mineral itself."""
+    alias = item["alias"]
+    key, display = _NUTRIENT_ALIAS_INDEX[alias]
     if key not in _LABEL_MINERAL_KEYS:
+        return False
+    own = _mineral_own_words(key) | set(display.split())
+    alias_words = [w for w in alias.split() if w not in own]
+    glued = [
+        w for w in re.sub(r"[(\[][^()\[\]]*[)\]]", " ", line[item["name"].end():max(item["name"].end(), end)]).split()
+        if not re.fullmatch(r"[\d.,%*:;+]+", w) and w not in _LABEL_FILLER_WORDS and w not in _LABEL_PACKAGING_WORDS
+    ]
+    salt_words = alias_words + glued
+    return bool(salt_words) and all(w in _LABEL_SALT_WORDS for w in salt_words)
+
+
+def _label_elemental_bracket_dose(
+    line: str, inside: list[re.Match[str]], outside: list[re.Match[str]], item: dict[str, Any]
+) -> re.Match[str] | None:
+    """The bracketed mineral dose of a row that states a COMPOUND weight
+    ("Zinkgluconat 70 mg (davon Zink 10 mg)", "Magnesiumcitrat 1500 mg (davon
+    240 mg elementar)", "Ferrous fumarate 200 mg (providing 65 mg iron)",
+    "Kaliumiodid 196 µg (davon Jod 150 µg)"): the mineral itself.
+
+    Never for a row naming the mineral itself: in "Magnesium 400 mg (davon 200
+    mg aus Magnesiumcitrat ...)", "Zinc 15 mg (of which 5 mg as zinc
+    picolinate)" or "Magnesium 400 mg (entspricht 1000 mg Magnesiumcitrat)" the
+    bracket holds a share or the compound weight, and the row keeps its dose.
+    The bracket must name only this mineral (or none) and the bracketed dose
+    must not be described as a salt ("entspricht 1000 mg Magnesiumcitrat")."""
+    key = item["key"]
+    if key not in _LABEL_MINERAL_KEYS or not inside:
         return None
-    for d in inside:
+    first = inside[0]
+    end = outside[0].start() if outside else max(line.rfind("(", 0, first.start()), line.rfind("[", 0, first.start()))
+    if not _label_item_names_compound(line, item, end):
+        return None
+    own = _mineral_own_words(key)
+    for n, d in enumerate(inside):
         open_pos = max(line.rfind("(", 0, d.start()), line.rfind("[", 0, d.start()))
-        if open_pos < 0 or not _LABEL_ELEMENTAL_RE.search(line[open_pos:d.start()]):
+        if open_pos < 0:
             continue
-        named = _lexicon_keys_in(line[open_pos:d.start()])
+        lead = line[open_pos:d.start()]
+        elemental = _LABEL_ELEMENTAL_RE.search(lead)
+        if not elemental:
+            continue
+        stops = [x for x in (line.find(")", d.end()), line.find("]", d.end())) if x >= 0]
+        if n + 1 < len(inside):
+            stops.append(inside[n + 1].start())
+        tail = line[d.end():min(stops, default=len(line))]
+        # The source after "aus" / "from" ("davon 150 µg Jod aus Kaliumiodid")
+        # does not describe the dose; "als" / "as" + a salt does.
+        tail = re.split(r"\b(?:aus|from)\b", tail, maxsplit=1)[0]
+        subject = lead[elemental.end():] + " " + tail
+        if any(w in _LABEL_SALT_WORDS and w not in own for w in re.findall(r"[a-z]+", subject)):
+            continue
+        named = _lexicon_keys_in(lead + " " + tail)
         if not named or named == {key}:
             return d
     return None
@@ -10177,14 +10236,10 @@ def _label_row(
             row["dose_value"] = float(low_value)
             row["dose_max"] = float(value)
     # A mineral named with its salt ("Magnesiumcitrat 1500 mg", "Zinc gluconate",
-    # "Ferrous fumarate") states the compound weight.
+    # "Ferrous fumarate", "mit 500 mg Magnesiumcitrat") states the compound weight.
     if key in _LABEL_MINERAL_KEYS and not item.get("elemental"):
-        own = set(key.split()) | set(display.split())
-        alias_words = [w for w in alias.split() if w not in own]
-        glued = [w for w in re.sub(r"[(\[][^()\[\]]*[)\]]", " ", line[item["name"].end():chosen.start() if chosen else form_end]).split()
-                 if not re.fullmatch(r"[\d.,%*:;+]+", w) and w not in _LABEL_FILLER_WORDS and w not in _LABEL_PACKAGING_WORDS]
-        salt_words = alias_words + glued
-        if salt_words and all(w in _LABEL_SALT_WORDS for w in salt_words):
+        salt_end = chosen.start() if chosen is not None and chosen.start() >= item["name"].end() else form_end
+        if _label_item_names_compound(line, item, min(salt_end, form_end)):
             row["compound_weight"] = True
     return row
 
@@ -10363,7 +10418,7 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
                 i += 1  # "Vitamin-B-Komplex": never a row of its own (see _reconcile_label_line_rows)
                 continue
             outside, inside = _label_candidate_doses(line, depths, item["names_end"], item["end"])
-            chosen = _label_elemental_bracket_dose(line, inside, item["key"])
+            chosen = _label_elemental_bracket_dose(line, inside, outside, item)
             if chosen is not None:
                 item["elemental"] = True
             elif outside:

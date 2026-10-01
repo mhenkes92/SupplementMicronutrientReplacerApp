@@ -1,5 +1,7 @@
 """Round-2 confirmation review, label parsing: a dash between a coded nutrient
-name and its dose ("Vitamin D3 - 1000 I.E.") is never a dose range."""
+name and its dose ("Vitamin D3 - 1000 I.E.") is never a dose range, and a
+bracketed "(davon / entspricht / of which ... mg ...)" dose only replaces the
+row's dose when the row itself states a compound weight."""
 from __future__ import annotations
 
 import pytest
@@ -107,3 +109,65 @@ def test_dash_title_card_shows_the_real_dose(sw):
     card = _card(sw, "Vitamin D3 - 1000 I.E. - 365 Tabletten")
     assert card["dose_label"] == "1000 iu"
     assert card.get("dose_max") is None
+
+
+# --- R1-NEW1-BRACKET: a bracket never overrides a plain mineral row ------------
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Magnesium 400 mg (davon 200 mg aus Magnesiumcitrat und 200 mg aus Magnesiumoxid) 107%", ("magnesium", 400.0, "mg", None)),
+        ("Magnesium 300 mg 80% (davon 150 mg Magnesiumcitrat)", ("magnesium", 300.0, "mg", None)),
+        ("Calcium 800 mg (davon 400 mg aus Calciumcarbonat)", ("calcium", 800.0, "mg", None)),
+        ("Zinc 15 mg (of which 5 mg as zinc picolinate)", ("zinc", 15.0, "mg", None)),
+        ("Eisen 14 mg (davon 7 mg als Eisenbisglycinat)", ("iron", 14.0, "mg", None)),
+        ("Magnesium 400 mg (entspricht 1000 mg Magnesiumcitrat)", ("magnesium", 400.0, "mg", None)),
+        ("Calcium 500 mg (equivalent to 1250 mg calcium carbonate)", ("calcium", 500.0, "mg", None)),
+        ("Magnesium 400 mg (als Citrat, entspricht 1000 mg Magnesiumcitrat)", ("magnesium", 400.0, "mg", None)),
+        ("Magnesium 400 mg (davon Magnesium 200 mg)", ("magnesium", 400.0, "mg", None)),
+    ],
+)
+def test_bracket_share_or_compound_weight_never_replaces_a_plain_mineral_dose(text, expected):
+    assert _rows(text) == [expected]
+
+
+def test_compound_equivalent_in_brackets_gives_no_false_upper_limit_warning(sw):
+    card = _card(sw, "Magnesium 400 mg (entspricht 1000 mg Magnesiumcitrat)")
+    assert card["dose_label"] == "400 mg"
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Zinkgluconat 70 mg (davon Zink 10 mg) 100%", ("zinc", 10.0, "mg", None)),
+        ("Zinkbisglycinat 50 mg (davon Zink 10 mg)", ("zinc", 10.0, "mg", None)),
+        ("Magnesiumcitrat 1500 mg (davon 240 mg elementar)", ("magnesium", 240.0, "mg", None)),
+        ("Magnesiumcitrat 1500 mg (entspricht 240 mg Magnesium)", ("magnesium", 240.0, "mg", None)),
+        ("Calciumcarbonat 1250 mg (davon Calcium 500 mg) 63%", ("calcium", 500.0, "mg", None)),
+        ("Ferrous fumarate 200 mg (providing 65 mg iron)", ("iron", 65.0, "mg", None)),
+        ("Kaliumiodid 196 µg (davon Jod 150 µg)", ("iodine", 150.0, "mcg", None)),
+        ("Kaliumiodid 196 µg (davon 150 µg Jod aus Kaliumiodid)", ("iodine", 150.0, "mcg", None)),
+        ("Kaliumcitrat 500 mg (davon Kalium 180 mg)", ("potassium", 180.0, "mg", None)),
+        ("Zinc gluconate 70 mg (of which 10 mg as elemental zinc)", ("zinc", 10.0, "mg", None)),
+    ],
+)
+def test_compound_row_takes_the_elemental_bracket_dose(text, expected):
+    assert _rows(text) == [expected]
+
+
+def test_compound_row_ignores_a_bracketed_salt_weight():
+    # The bracket restates a salt weight: nothing elemental to read.
+    assert _rows("Zinc gluconate 70 mg (of which 10 mg as zinc gluconate)") == [("zinc", 70.0, "mg", None)]
+
+
+def test_cation_names_in_a_title_group_are_not_salt_words():
+    rows = bb.parse_label_nutrient_lines("Kalium + Natrium 100 mg + 50 mg")
+    assert [(r["component"], r["dose_value"], bool(r.get("compound_weight"))) for r in rows] == [
+        ("potassium", 100.0, False),
+        ("sodium", 50.0, False),
+    ]
+
+
+def test_salt_named_after_a_dose_is_a_compound_weight():
+    [row] = bb.parse_label_nutrient_lines("mit 500 mg Magnesiumcitrat")
+    assert (row["component"], row["dose_value"], row.get("compound_weight")) == ("magnesium", 500.0, True)
