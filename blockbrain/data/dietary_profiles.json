@@ -8,13 +8,13 @@
   {
     "id": "vegetarian",
     "label": "Vegetarian",
-    "description": "Avoids meat and fish ingredients.",
+    "description": "Avoids meat, poultry, fish and seafood (eggs and dairy are fine).",
     "avoid_keywords": ["beef", "pork", "chicken", "turkey", "fish", "salmon", "sardine", "anchovy", "tuna", "shrimp", "crab", "lobster"]
   },
   {
     "id": "vegan",
     "label": "Vegan",
-    "description": "Avoids animal-derived ingredients.",
+    "description": "Avoids all animal-derived foods: meat, fish, seafood, eggs, dairy and honey.",
     "avoid_keywords": ["beef", "pork", "chicken", "turkey", "fish", "salmon", "sardine", "egg", "milk", "yogurt", "cheese", "butter", "honey", "gelatin", "whey", "casein"]
   },
   {
@@ -26,37 +26,37 @@
   {
     "id": "halal_friendly",
     "label": "Halal-friendly",
-    "description": "Screens out common non-halal ingredients. Not a halal certification.",
+    "description": "Screens out pork, alcohol, gelatin and non-halal animals. Not a halal certification.",
     "avoid_keywords": ["pork", "ham", "bacon", "lard", "alcohol", "wine", "beer", "gelatin"]
   },
   {
     "id": "kosher_style",
     "label": "Kosher-style",
-    "description": "Screens out common non-kosher ingredients. Not a kosher certification.",
+    "description": "Screens out pork, shellfish/crustaceans/molluscs, eel, catfish, shark and other fish without fins and scales, and non-kosher animals. Not a kosher certification.",
     "avoid_keywords": ["pork", "ham", "bacon", "shellfish", "shrimp", "crab", "lobster"]
   },
   {
     "id": "gluten_free",
     "label": "Gluten-free",
-    "description": "Screens out common gluten-containing ingredients.",
+    "description": "Screens out wheat, barley, rye, spelt and related grains, plus oats: regular oats are usually cross-contaminated with wheat, so only oats labelled gluten-free are safe.",
     "avoid_keywords": ["wheat", "barley", "rye", "bread", "pasta", "flour", "seitan"]
   },
   {
     "id": "lactose_free",
     "label": "Lactose-free",
-    "description": "Screens out common lactose-containing dairy ingredients.",
+    "description": "Screens out milk, cream, yogurt, kefir, whey, butter and soft/fresh cheeses. Aged hard cheeses (Parmesan, Emmental, Gruyere, aged Gouda/Cheddar) are naturally below 0.1 g lactose/100 g and are allowed.",
     "avoid_keywords": ["milk", "cream", "cheese", "yogurt", "whey", "casein"]
   },
   {
     "id": "nut_free",
     "label": "Nut-free",
-    "description": "Screens out common tree nuts and peanuts.",
+    "description": "Screens out tree nuts (almond, hazelnut, walnut, cashew, pecan, Brazil, pistachio, macadamia, pine nuts, chestnuts) and peanuts. Coconut, nutmeg, butternut squash and water chestnuts are allowed.",
     "avoid_keywords": ["peanut", "almond", "walnut", "cashew", "hazelnut", "pistachio", "pecan", "macadamia"]
   },
   {
     "id": "low_sodium_aware",
     "label": "Low-sodium aware",
-    "description": "Screens out common high-sodium processed ingredients.",
+    "description": "Screens out salty processed ingredients and foods with more than 600 mg sodium per 100 g.",
     "avoid_keywords": ["sausage", "bacon", "ham", "processed meat", "instant noodle", "soy sauce"]
   }
 ]

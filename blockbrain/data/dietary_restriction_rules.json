@@ -7,46 +7,46 @@
   {
     "id": "vegetarian",
     "avoid_keywords": ["beef", "pork", "chicken", "turkey", "fish", "salmon", "sardine", "anchovy", "tuna", "shrimp", "crab", "lobster", "gelatin"],
-    "notes": "Keyword screening only"
+    "notes": "Whole-word keyword screening plus USDA food categories (see blockbrain/app.py _DIET_RULES)."
   },
   {
     "id": "vegan",
     "avoid_keywords": ["beef", "pork", "chicken", "turkey", "fish", "salmon", "sardine", "egg", "milk", "yogurt", "cheese", "butter", "honey", "gelatin", "whey", "casein", "collagen"],
-    "notes": "Keyword screening only"
+    "notes": "Whole-word keyword screening plus USDA food categories (see blockbrain/app.py _DIET_RULES)."
   },
   {
     "id": "pescatarian",
     "avoid_keywords": ["beef", "pork", "chicken", "turkey", "lamb", "ham", "bacon", "gelatin"],
-    "notes": "Keyword screening only"
+    "notes": "Whole-word keyword screening plus USDA food categories (see blockbrain/app.py _DIET_RULES)."
   },
   {
     "id": "halal_friendly",
     "avoid_keywords": ["pork", "ham", "bacon", "lard", "alcohol", "wine", "beer", "gelatin"],
-    "notes": "Not halal certification"
+    "notes": "Not halal certification. Whole-word keyword screening plus USDA food categories (see blockbrain/app.py _DIET_RULES)."
   },
   {
     "id": "kosher_style",
     "avoid_keywords": ["pork", "ham", "bacon", "shrimp", "crab", "lobster", "clam", "mussel", "oyster", "scallop", "squid", "octopus"],
-    "notes": "Not kosher certification"
+    "notes": "Not kosher certification. Whole-word keyword screening plus USDA food categories (see blockbrain/app.py _DIET_RULES)."
   },
   {
     "id": "gluten_free",
     "avoid_keywords": ["wheat", "barley", "rye", "spelt", "semolina", "durum", "malt", "bread", "pasta", "seitan", "couscous", "triticale"],
-    "notes": "Keyword screening only"
+    "notes": "Whole-word keyword screening plus USDA food categories (see blockbrain/app.py _DIET_RULES)."
   },
   {
     "id": "lactose_free",
-    "avoid_keywords": ["milk", "cream", "cheese", "yogurt", "whey", "casein", "butter", "ice cream"],
-    "notes": "Keyword screening only"
+    "avoid_keywords": ["milk", "cream", "yogurt", "whey", "casein", "butter", "ice cream"],
+    "notes": "Whole-word keyword screening plus USDA food categories (see blockbrain/app.py _DIET_RULES)."
   },
   {
     "id": "nut_free",
-    "avoid_keywords": ["peanut", "almond", "walnut", "cashew", "hazelnut", "pistachio", "pecan", "macadamia", "nut"],
-    "notes": "Keyword screening only"
+    "avoid_keywords": ["peanut", "almond", "walnut", "cashew", "hazelnut", "pistachio", "pecan", "macadamia"],
+    "notes": "Whole-word keyword screening plus USDA food categories (see blockbrain/app.py _DIET_RULES)."
   },
   {
     "id": "low_sodium_aware",
     "avoid_keywords": ["sausage", "bacon", "ham", "processed meat", "instant noodle", "soy sauce", "brined", "cured"],
-    "notes": "Keyword screening only"
+    "notes": "Whole-word keyword screening plus USDA food categories (see blockbrain/app.py _DIET_RULES)."
   }
 ]
