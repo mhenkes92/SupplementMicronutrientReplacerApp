@@ -146,3 +146,16 @@ def test_saved_scan_args_only_restamp_on_change(sw, sample_cards):
     assert sw._saved_scan_args(state) is first  # unchanged: identical props
     state["swipe_index"] = 3
     assert sw._saved_scan_args(state)["index"] == 3
+
+
+def test_clear_history_also_forgets_the_saved_scan(sw, sample_cards):
+    import time
+
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["_suppswipe_saved_scan"] = sw._scan_snapshot(_scan_state(sw, sample_cards), now=time.time())
+    at.session_state["suppswipe_scan_history"] = [{"ts": "2026-10-01 10:00", "diet": "", "kept": [], "replaced": []}]
+    at.run()
+    assert [b for b in at.button if b.key == "swipe_resume_scan"]
+    at.button(key="swipe_clear_history").click().run()
+    assert at.session_state["_suppswipe_saved_scan"] is None
+    assert not [b for b in at.button if b.key == "swipe_resume_scan"]

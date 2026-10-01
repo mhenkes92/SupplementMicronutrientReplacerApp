@@ -1776,6 +1776,7 @@ def _render_final_actions(
     # Tabs instead of popovers: long answers (meal plans, the benefit
     # comparison) scroll with the page instead of being clipped in a popover.
     excluded = list(excluded or [])
+    plan_key = ""
     tab_meals, tab_cost, tab_pills, tab_share, tab_why = st.tabs(
         ["🍽️ Meals", "🛒 Cost", "💊 Kept pills", "📤 Share", "🌱 Why food"]
     )
@@ -1799,6 +1800,7 @@ def _render_final_actions(
             if ready:
                 plan_box.markdown(ready)
                 st.session_state["swipe_meal_plan"] = ready
+                st.session_state["swipe_meal_plan_key"] = plan_key
                 if st.button("🔄 Different meals", use_container_width=True, key="swipe_regen_meal"):
                     llm_cache.drop(plan_key)
                     with st.spinner("Cooking up new meals…"):
@@ -1809,6 +1811,7 @@ def _render_final_actions(
                 with st.spinner("Cooking up your meals…"):
                     plan = _generate_meal_plan(replace_items, diet_label, int(num_meals), placeholder=plan_box)
                 st.session_state["swipe_meal_plan"] = plan
+                st.session_state["swipe_meal_plan_key"] = plan_key
                 if not plan:
                     st.warning("Couldn't generate meals right now — please try again.")
             elif llm_cache.inflight(plan_key) is not None:
@@ -1849,9 +1852,12 @@ def _render_final_actions(
     with tab_share:
         st.caption("Copy or download your results.")
         _excluded_swaps_caption(excluded, diet_label)
-        share_text = _build_share_text(
-            keep_items, replace_items, str(st.session_state.get("swipe_meal_plan", "") or "")
-        )
+        # Only a plan written for the current swaps (not one from before the
+        # filter or a choice changed) goes into the share text.
+        meal_plan = ""
+        if plan_key and st.session_state.get("swipe_meal_plan_key") == plan_key:
+            meal_plan = str(st.session_state.get("swipe_meal_plan", "") or "")
+        share_text = _build_share_text(keep_items, replace_items, meal_plan)
         st.code(share_text)
         st.download_button(
             "Download as text",
@@ -3249,7 +3255,8 @@ def _render_card() -> None:
             "index": index,
             "component_key": component_key,
             "select_key": select_key,
-            "options": {label: food for label, food in reversed(list(zip(option_labels, foods)))},
+            # reversed(): of two equal labels the first wins, as with option_labels.index().
+            "options": dict(reversed(list(zip(option_labels, foods)))),
             "selected": selected_food,
         }
         with stage:

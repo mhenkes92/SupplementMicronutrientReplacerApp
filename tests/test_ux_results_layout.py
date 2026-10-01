@@ -40,8 +40,16 @@ def _results_app() -> AppTest:
     return at
 
 
-def test_results_use_tabs_not_popovers():
-    at = _results_app()
+@pytest.fixture(scope="module")
+def results_app():
+    # Read-only checks share one results screen (building it takes ~1 s).
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("SUPPSWIPE_PREFETCH_MEALS", "0")
+        yield _results_app()
+
+
+def test_results_use_tabs_not_popovers(results_app):
+    at = results_app
     assert [t.label for t in at.tabs] == TABS
     popovers = _labels(at.main, "popover")
     assert not set(OLD_POPOVERS) & set(popovers), popovers
@@ -60,8 +68,8 @@ def test_results_keep_back_and_per_item_buttons():
     assert not at.session_state["swipe_edit_return"]
 
 
-def test_share_tab_lists_the_swaps():
-    at = _results_app()
+def test_share_tab_lists_the_swaps(results_app):
+    at = results_app
     share = " ".join(c.value for c in at.code)
     assert "SuppSwipe — my results" in share and "Replaced with whole foods" in share
 

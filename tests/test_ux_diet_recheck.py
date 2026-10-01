@@ -104,3 +104,13 @@ def test_card_shows_the_active_filter_line():
     at.session_state["swipe_diet_pills"] = "none"
     at.run()
     assert not [c.value for c in at.caption if c.value.startswith("Filter:")]
+
+
+def test_stale_meal_plan_is_not_shared():
+    at = _results_app("vegan")
+    # A plan written before the filter changed (for other swaps) is not shared.
+    at.session_state["swipe_meal_plan"] = "**Salmon bowl** with 100 g salmon"
+    at.session_state["swipe_meal_plan_key"] = "an-older-plan-key"
+    at.run()
+    share = " ".join(c.value for c in at.code)
+    assert "Salmon bowl" not in share
