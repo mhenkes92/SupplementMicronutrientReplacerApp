@@ -603,7 +603,17 @@ _ASK_AI_HISTORY_MESSAGES = 6  # most recent chat messages sent as memory
 _ASK_AI_BOT_TIMEOUT = (10, 45)  # (connect, read) seconds for the Knowledge Bot
 # How long Ask AI waits for the Knowledge Bot before streaming the agent's
 # answer instead; a bot reply that arrives later is ignored.
-_ASK_AI_BOT_WAIT_S = 15.0
+# How long Ask AI waits for the (non-streaming) Knowledge Bot before it streams
+# the agent's answer instead. Short, so a slow bot never leaves the chat blank
+# for long; SUPPSWIPE_ASK_AI_BOT_WAIT_S overrides it (0 = always the agent).
+def _env_seconds(name: str, default: float) -> float:
+    try:
+        return max(0.0, float(os.getenv(name, "") or default))
+    except ValueError:
+        return default
+
+
+_ASK_AI_BOT_WAIT_S = _env_seconds("SUPPSWIPE_ASK_AI_BOT_WAIT_S", 8.0)
 
 
 def _ask_bot_within(message: str, bot_id: str | None, wait_s: float) -> str | None:
@@ -702,7 +712,15 @@ def _answer_ask_ai_question(
         + _MARKDOWN_STYLE
     )
     research_bot_id = os.getenv("BLOCKBRAIN_RESEARCH_BOT_ID", "").strip()
-    bot_answer = _ask_bot_within(ask_message, research_bot_id or None, _ASK_AI_BOT_WAIT_S)
+    if placeholder is not None and _ASK_AI_BOT_WAIT_S > 0:
+        placeholder.markdown(
+            "<div class='plan-writing'><span class='plan-dots'><i></i><i></i><i></i></span>"
+            "Checking the knowledge base…</div>",
+            unsafe_allow_html=True,
+        )
+    bot_answer = (
+        _ask_bot_within(ask_message, research_bot_id or None, _ASK_AI_BOT_WAIT_S) if _ASK_AI_BOT_WAIT_S > 0 else None
+    )
     if bot_answer and bot_answer.strip() and not _looks_like_extraction_json(bot_answer):
         if cache_key:
             llm_cache.put(cache_key, bot_answer.strip())
@@ -2471,6 +2489,10 @@ def _sync_scan_history_with_browser() -> None:
     if isinstance(stored_history, list) and not st.session_state.get("_suppswipe_history_loaded"):
         st.session_state["_suppswipe_history_loaded"] = True
         saved_scan = stored.get("scan") if isinstance(stored, dict) else None
+        # A first read that arrives after Start over / Clear history may still
+        # carry the scan the visitor just dropped: don't offer it again.
+        if st.session_state.get("_suppswipe_scan_forgotten"):
+            saved_scan = None
         st.session_state["_suppswipe_saved_scan"] = saved_scan if isinstance(saved_scan, dict) else None
         current = _load_scan_history()
         merged: list[dict[str, Any]] = []
@@ -3628,7 +3650,15 @@ def _stage_analysis_from_inputs(
     return True
 
 
-@st.dialog("Analyze my supplement")
+def _close_analyze_dialog() -> None:
+    st.session_state.pop("swipe_open_analyze", None)
+
+
+def _close_restart_dialog() -> None:
+    st.session_state.pop("swipe_confirm_restart", None)
+
+
+@st.dialog("Analyze my supplement", on_dismiss=_close_analyze_dialog)
 def _analyze_dialog() -> None:
     nonce = int(st.session_state.get("swipe_reset_nonce", 0))
     precheck_error = _blockbrain_ready_error()
@@ -3692,13 +3722,15 @@ def _analyze_dialog() -> None:
 
     if not precheck_error and _stage_analysis_from_inputs(upload_bytes, camera_bytes, manual_text, camera_barcode):
         # Close the dialog and let the main app run the analysis immediately.
+        _close_analyze_dialog()
         st.rerun(scope="app")
 
     if st.button("Cancel", width="stretch", key=f"dlg_cancel_{nonce}"):
-        st.rerun()
+        _close_analyze_dialog()
+        st.rerun(scope="app")
 
 
-@st.dialog("Start over?")
+@st.dialog("Start over?", on_dismiss=_close_restart_dialog)
 def _confirm_restart_dialog() -> None:
     st.write(
         "You've already started swiping. Analyzing a new supplement will clear your "
@@ -3707,13 +3739,14 @@ def _confirm_restart_dialog() -> None:
     col_cancel, col_ok = st.columns(2)
     with col_cancel:
         if st.button("Cancel", width="stretch", key="swipe_restart_cancel"):
-            st.rerun()
+            _close_restart_dialog()
+            st.rerun(scope="app")
     with col_ok:
         if st.button("Start over", type="primary", width="stretch", key="swipe_restart_confirm"):
-            _reset_swipe_state()
+            _reset_swipe_state()  # also closes this dialog (its flag is a swipe_ key)
             _forget_saved_scan()
             st.session_state["swipe_open_analyze"] = True
-            st.rerun()
+            st.rerun(scope="app")
 
 
 def _on_results_screen() -> bool:
@@ -4130,6 +4163,7 @@ def _forget_saved_scan() -> None:
     write it straight back and a reload would still offer to resume it."""
     st.session_state["_suppswipe_saved_scan"] = None
     st.session_state["_suppswipe_scan_clear"] = True
+    st.session_state["_suppswipe_scan_forgotten"] = True
     snapshot = _scan_snapshot(st.session_state)
     if snapshot is None:
         st.session_state.pop("_suppswipe_scan_suppressed", None)
@@ -4826,26 +4860,17 @@ def _render_ask_ai_chat(
             args=(pills_key, pending_key),
             label_visibility="collapsed",
         )
-    question = st.text_input(
-        "Question",
-        placeholder="Example: Is this dose usually safe long-term?",
+    question = st.chat_input(
+        "Ask about this nutrient…" if component_key != "summary" else "Ask about your plan…",
         key=f"swipe_rag_chat_input_{component_key}_{index}",
     )
-    send_col, clear_col = st.columns(2)
-    with send_col:
-        send_clicked = st.button("Send", type="primary", width="stretch", key=f"swipe_rag_send_{component_key}_{index}")
-    with clear_col:
-        clear_clicked = st.button("Clear chat", width="stretch", key=f"swipe_rag_clear_{component_key}_{index}")
-
-    if clear_clicked:
+    if history and st.button("Clear chat", type="tertiary", key=f"swipe_rag_clear_{component_key}_{index}"):
         chat_store[component_key] = []
         st.session_state["swipe_rag_chats"] = chat_store
         st.rerun()
 
     pending = str(st.session_state.pop(pending_key, "") or "")
-    asked = pending or (question.strip() if send_clicked else "")
-    if send_clicked and not asked:
-        st.warning("Enter a question first.")
+    asked = pending or str(question or "").strip()
     if asked:
         with st.chat_message("user"):
             st.write(asked)
@@ -4871,10 +4896,20 @@ def _render_ask_ai_chat(
             st.rerun()
 
 
+def _card_ask_ai_suggestions(card: dict[str, Any]) -> list[str]:
+    name = _nutrient_title(card.get("component")) or "this nutrient"
+    dose = str(card.get("dose_label", "") or "").strip()
+    return [
+        f"Is {dose} a safe daily dose?" if dose else f"How much {name} do I need?",
+        "Which everyday foods have the most?",
+        "Who should keep the supplement?",
+    ]
+
+
 def _render_rag_chat_popup(card: dict[str, Any], component_key: str, index: int) -> None:
     with st.popover("💬 Ask AI", width="stretch"):
-        st.caption("Ask AI research questions about this micronutrient in chat form.")
-        _render_ask_ai_chat(card, component_key, index)
+        st.caption("Science-based answers about this nutrient and your dose.")
+        _render_ask_ai_chat(card, component_key, index, suggestions=_card_ask_ai_suggestions(card))
 
 
 def _render_share_tab(
@@ -5018,9 +5053,10 @@ def _build_mobile_ui() -> None:
         _render_dietary_pills()
         # On the welcome screen the main button sits in the hero (_render_card).
         _render_analyze_bar(button=bool(st.session_state.get("swipe_cards")))
-    if st.session_state.pop("swipe_confirm_restart", False):
+    # A dialog stays requested until it is closed (Cancel, X, or its action).
+    if st.session_state.get("swipe_confirm_restart"):
         _confirm_restart_dialog()
-    if st.session_state.pop("swipe_open_analyze", False):
+    elif st.session_state.get("swipe_open_analyze"):
         _analyze_dialog()
     try:
         show_debug = str(st.query_params.get("debug", "") or "") == "1"

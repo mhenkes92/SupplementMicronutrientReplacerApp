@@ -17,7 +17,7 @@ class Box:
     def __init__(self):
         self.renders = []
 
-    def markdown(self, text):
+    def markdown(self, text, **_kwargs):
         self.renders.append(text)
 
     def info(self, text):
@@ -34,8 +34,12 @@ def _fresh_cache():
     llm_cache.clear()
 
 
-def test_default_wait_is_15_seconds(sw):
-    assert sw._ASK_AI_BOT_WAIT_S == 15.0
+def test_default_wait_is_8_seconds(sw, monkeypatch):
+    assert sw._ASK_AI_BOT_WAIT_S == 8.0
+    monkeypatch.setenv("SUPPSWIPE_ASK_AI_BOT_WAIT_S", "0")
+    assert sw._env_seconds("SUPPSWIPE_ASK_AI_BOT_WAIT_S", 8.0) == 0.0
+    monkeypatch.setenv("SUPPSWIPE_ASK_AI_BOT_WAIT_S", "oops")
+    assert sw._env_seconds("SUPPSWIPE_ASK_AI_BOT_WAIT_S", 8.0) == 8.0
 
 
 def test_fast_bot_answer_is_used_and_cached(sw, monkeypatch):
@@ -113,7 +117,9 @@ def test_quota_still_applies_to_the_agent_fallback(sw, monkeypatch):
     monkeypatch.setattr(sw, "_cached_rag_chunks", lambda: [])
     box = Box()
     assert sw._answer_ask_ai_question("Iron", "Best food source?", placeholder=box) == (None, "")
-    assert box.renders == [sw._QUOTA_MESSAGE]
+    # A "checking the knowledge base" line while the bot runs, then the notice.
+    assert "Checking the knowledge base" in box.renders[0]
+    assert box.renders[-1] == sw._QUOTA_MESSAGE
 
 
 def test_bot_errors_fall_back_without_waiting(sw, monkeypatch):

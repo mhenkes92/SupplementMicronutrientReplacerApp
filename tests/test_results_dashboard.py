@@ -154,3 +154,18 @@ def test_waiting_on_background_text_shows_partials(sw):
 @pytest.mark.parametrize("pct,text", [(15, "15%"), (199, "199%"), (200, "2×"), (433, "4.3×"), (1142, "11×")])
 def test_need_share_switches_to_multiples(sw, pct, text):
     assert sw._format_need_share(pct) == text
+
+
+def test_card_ask_ai_suggestions_use_the_dose(sw):
+    card = {"component": "vitamin c", "dose_label": "80 mg"}
+    suggestions = sw._card_ask_ai_suggestions(card)
+    assert suggestions[0] == "Is 80 mg a safe daily dose?" and len(suggestions) == 3
+    assert sw._card_ask_ai_suggestions({"component": "zinc"})[0] == "How much Zinc do I need?"
+
+
+def test_dialog_flags_are_cleared_by_their_close_handlers(sw, monkeypatch):
+    state: dict = {"swipe_open_analyze": True, "swipe_confirm_restart": True}
+    monkeypatch.setattr(sw.st, "session_state", state)
+    sw._close_analyze_dialog()
+    sw._close_restart_dialog()
+    assert state == {}

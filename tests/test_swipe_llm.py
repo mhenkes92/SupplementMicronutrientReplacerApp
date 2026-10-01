@@ -18,7 +18,7 @@ class Box:
     def __init__(self):
         self.renders = []
 
-    def markdown(self, text):
+    def markdown(self, text, **_kwargs):
         self.renders.append(text)
 
     def empty(self):
