@@ -1590,23 +1590,6 @@ def _render_header() -> None:
                 padding-top: 0.8rem;
                 padding-bottom: 0.6rem;
             }
-            /* Dietary filter: horizontally scrollable pills (not a dropdown). */
-            div[role="radiogroup"] {
-                flex-wrap: nowrap !important;
-                overflow-x: auto !important;
-                gap: 6px;
-                padding: 2px 0 8px 0;
-                scrollbar-width: thin;
-            }
-            div[role="radiogroup"] > label {
-                flex: 0 0 auto !important;
-                border: 1px solid #d6dde7;
-                background: #ffffff;
-                border-radius: 999px;
-                padding: 3px 12px;
-                margin: 0 !important;
-                white-space: nowrap;
-            }
             .diet-strip-label {
                 font-size: 0.72rem;
                 font-weight: 800;
@@ -2057,8 +2040,10 @@ def _on_diet_profile_change() -> None:
     restriction". Mirroring the choice into `swipe_diet_profile_id` (never used
     as a widget key) keeps it across swipes.
     """
+    # Tapping the selected chip again clears it (st.pills returns None): treat
+    # that as "No restriction".
     st.session_state["swipe_diet_profile_id"] = str(
-        st.session_state.get("swipe_diet_radio", "none") or "none"
+        st.session_state.get("swipe_diet_pills", "none") or "none"
     )
 
 
@@ -2072,16 +2057,30 @@ def _render_dietary_pills() -> None:
         st.session_state["swipe_diet_profile_id"] = selected_id
 
     st.markdown("<div class='diet-strip-label'>Dietary filter</div>", unsafe_allow_html=True)
-    st.radio(
-        "Dietary filter",
-        options=ordered_ids,
-        index=ordered_ids.index(selected_id),
-        key="swipe_diet_radio",
-        on_change=_on_diet_profile_change,
-        horizontal=True,
-        label_visibility="collapsed",
-        format_func=lambda pid: str(profile_by_id.get(pid, {}).get("label", pid)).strip() or pid,
-    )
+    label_for = lambda pid: str(profile_by_id.get(pid, {}).get("label", pid)).strip() or pid  # noqa: E731
+    if hasattr(st, "pills"):
+        # Native chips wrap onto several lines on a phone; the old horizontal
+        # radio squeezed every label into a one-letter-wide column.
+        st.pills(
+            "Dietary filter",
+            options=ordered_ids,
+            selection_mode="single",
+            default=selected_id,
+            key="swipe_diet_pills",
+            on_change=_on_diet_profile_change,
+            label_visibility="collapsed",
+            format_func=label_for,
+        )
+    else:  # pragma: no cover - Streamlit < 1.40
+        st.selectbox(
+            "Dietary filter",
+            options=ordered_ids,
+            index=ordered_ids.index(selected_id),
+            key="swipe_diet_pills",
+            on_change=_on_diet_profile_change,
+            label_visibility="collapsed",
+            format_func=label_for,
+        )
 
 
 def _run_pending_analysis() -> None:
@@ -2363,6 +2362,16 @@ def _render_label_source_notice() -> None:
     )
 
 
+def _previous_choice_label(decision: dict[str, Any] | None) -> str:
+    """Short label of an earlier choice for this card (shown after going back)."""
+    if not decision:
+        return ""
+    if decision.get("decision") == "keep":
+        return "kept the pill"
+    food = str((decision.get("selected_food") or {}).get("food_description", "") or "").strip()
+    return f"replaced with {food}" if food else "replaced"
+
+
 def _render_card() -> None:
     cards: list[dict[str, Any]] = st.session_state.get("swipe_cards", [])
     index = int(st.session_state.get("swipe_index", 0))
@@ -2375,16 +2384,16 @@ def _render_card() -> None:
                 "<div style='font-size:2.4rem;line-height:1.2;letter-spacing:0.1em;'>💊 &#8594; 🥦</div>"
                 "<div class='tap-card-title' style='font-size:1.1rem;margin-top:0.5rem;'>Ditch the pill. Eat the real thing.</div>"
                 "<div class='tap-card-sub' style='max-width:300px;'>"
-                "Whole foods are <em>generally superior</em> to synthetic supplements — "
-                "more bioavailable, naturally balanced, and packed with synergistic co-nutrients "
-                "no pill can replicate."
+                "Many nutrients in a supplement can come from everyday foods — which also bring "
+                "fibre, protein and other co-nutrients. Some are hard to get from food alone "
+                "(e.g. vitamin D in winter, B12 on a vegan diet), and SuppSwipe tells you when."
                 "</div>"
                 "<div class='tap-card-sub' style='max-width:300px;margin-top:0.5rem;'>"
                 "📸 Scan your supplement label, then <strong>swipe right</strong> to replace each nutrient "
                 "with its whole-food equivalent — or <strong>swipe left</strong> to keep it."
                 "</div>"
                 "<div class='tap-card-sub' style='max-width:300px;margin-top:0.5rem;'>"
-                "🥗 <strong>Vegan? Keto? Nut-free?</strong> Set your dietary filter below and only "
+                "🥗 <strong>Vegan? Gluten-free? Nut-free?</strong> Set your dietary filter below and only "
                 "whole foods that fit <em>your</em> lifestyle will be suggested."
                 "</div>"
                 "<div class='tap-card-sub' style='max-width:300px;margin-top:0.5rem;'>"
@@ -2392,6 +2401,10 @@ def _render_card() -> None:
                 "</div>"
                 "<div style='margin-top:1rem;font-size:0.95rem;font-weight:800;color:#047857;' aria-label='To get started, tap the Analyze my Supplement button below'>"
                 "Ready? &#8594; tap <em>Analyze my Supplement</em> below &#8595;"
+                "</div>"
+                "<div class='tap-card-sub' style='max-width:300px;margin-top:0.6rem;font-size:0.72rem;'>"
+                "General information, not medical advice. Talk to a doctor before stopping a "
+                "supplement you were prescribed or are pregnant, ill or on medication."
                 "</div>"
                 "</div>",
                 unsafe_allow_html=True,
@@ -2512,12 +2525,20 @@ def _render_card() -> None:
                 ink=theme["accent2"],
                 bg=theme["bg"],
                 canReplace=selected_food is not None,
-                height=400,
+                previous=_previous_choice_label(decisions.get(component_key)),
+                height=450,
                 key=f"tinder_{component_key}_{index}_{nonce}",
                 default=None,
             )
 
-    # Advance only via swiping the card (Keep = left, Replace = right).
+    # The card reports a swipe or a button/keyboard action: left = keep,
+    # right = replace, back = return to the previous card (decisions are kept
+    # and can be changed when that card is shown again).
+    if isinstance(swipe_result, dict) and swipe_result.get("dir") == "back":
+        if index > 0:
+            st.session_state["swipe_index"] = index - 1
+            st.rerun()
+        return
     decision = None
     if isinstance(swipe_result, dict) and swipe_result.get("dir") in ("left", "right"):
         decision = "keep" if swipe_result["dir"] == "left" else "replace"
@@ -2548,6 +2569,9 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
     with st.container(border=True):
         st.subheader("Your results")
         st.caption("Tap any nutrient to go back to its card and change your choice.")
+        if cards and st.button("↩ Back to the last card", key="final_back_last"):
+            st.session_state["swipe_index"] = len(cards) - 1
+            st.rerun()
 
         # Two columns of tappable nutrients: kept supplements (left) vs
         # whole-food swaps (right). Tapping one reopens that micronutrient's card.
