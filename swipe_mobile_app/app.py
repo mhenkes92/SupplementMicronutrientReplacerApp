@@ -3147,30 +3147,93 @@ def _render_header() -> None:
                 color: #4f6274;
                 max-width: 280px;
             }
-            .tap-card-wrap {
-                min-height: 380px;
+            .brand {
                 display: flex;
-                flex-direction: column;
+                align-items: center;
+                gap: 8px;
+                font-weight: 900;
+                font-size: 1.05rem;
+                letter-spacing: -0.01em;
+                color: #064e3b;
+                margin: 0 0 0.4rem 0;
+            }
+            .brand-mark {
+                display: inline-flex;
                 align-items: center;
                 justify-content: center;
-                text-align: center;
-                gap: 0.8rem;
-            }
-            .tap-card-title {
-                font-size: 1.05rem;
-                font-weight: 900;
-                color: #132536;
-            }
-            .tap-card-sub {
+                width: 28px;
+                height: 28px;
+                border-radius: 9px;
+                background: #047857;
+                color: #ffffff;
                 font-size: 0.9rem;
-                color: #516476;
-                max-width: 280px;
+            }
+            .hero {
+                background: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 22px;
+                padding: 22px 18px 18px 18px;
+                text-align: center;
+                box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+                margin-bottom: 0.6rem;
+            }
+            .hero-art {
+                font-size: 2.4rem;
+                line-height: 1.1;
+            }
+            .hero-art span {
+                font-size: 1.4rem;
+                color: #94a3b8;
+                margin: 0 10px;
+                vertical-align: middle;
+            }
+            .hero-title {
+                font-size: 1.55rem;
+                font-weight: 900;
+                line-height: 1.15;
+                letter-spacing: -0.02em;
+                color: #0f172a;
+                margin-top: 10px;
+            }
+            .hero-sub {
+                font-size: 0.92rem;
+                line-height: 1.45;
+                color: #475569;
+                margin: 10px auto 0 auto;
+                max-width: 340px;
+            }
+            .steps {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 8px;
+                margin-top: 16px;
+            }
+            .step {
+                background: #f0fdf4;
+                border-radius: 14px;
+                padding: 10px 4px 9px 4px;
+            }
+            .step span {
+                display: block;
+                font-size: 1.35rem;
+            }
+            .step b {
+                display: block;
+                font-size: 0.88rem;
+                color: #064e3b;
+                margin-top: 2px;
+            }
+            .step small {
+                display: block;
+                font-size: 0.7rem;
+                color: #475569;
             }
             @keyframes suppswipe-spin {
                 from { transform: rotate(0deg); }
                 to { transform: rotate(360deg); }
             }
         </style>
+        <div class="brand"><span class="brand-mark" aria-hidden="true">S</span>SuppSwipe</div>
         """,
         unsafe_allow_html=True,
     )
@@ -3658,11 +3721,19 @@ def _render_results_settings() -> None:
         _render_dietary_pills()
 
 
-def _render_analyze_bar(results: bool = False) -> None:
+def _render_analyze_bar(results: bool = False, button: bool = True) -> None:
+    if button:
+        _render_analyze_button(results=results)
+    _render_scan_history_popover()
+    _render_privacy_popover()
+
+
+def _render_analyze_button(results: bool = False, primary: bool = False) -> None:
     if results:
-        label, kind = "📸 Scan another supplement", "secondary"
+        label = "📸 Scan another supplement"
     else:
-        label, kind = f"Analyze my Supplement {LEFT_SWIPE_ICON} → {TITLE_WHOLE_FOOD_ICON}", "primary"
+        label = "📸 Analyze my Supplement"
+    kind = "primary" if primary else "secondary"
     if st.button(label, type=kind, width="stretch", key="swipe_analyze_btn"):
         if results:
             # A finished plan is already in Recent scans: nothing to lose.
@@ -3674,8 +3745,6 @@ def _render_analyze_bar(results: bool = False) -> None:
         else:
             st.session_state["swipe_open_analyze"] = True
         st.rerun()
-    _render_scan_history_popover()
-    _render_privacy_popover()
 
 
 def _render_privacy_popover() -> None:
@@ -4079,37 +4148,21 @@ def _render_card() -> None:
     decisions: dict[str, dict[str, Any]] = st.session_state.get("swipe_decisions", {})
 
     if not cards:
-        with st.container(border=True):
-            st.markdown(
-                "<div class='tap-card-wrap'>"
-                "<div style='font-size:2.4rem;line-height:1.2;letter-spacing:0.1em;'>💊 &#8594; 🥦</div>"
-                "<div class='tap-card-title' style='font-size:1.1rem;margin-top:0.5rem;'>Ditch the pill. Eat the real thing.</div>"
-                "<div class='tap-card-sub' style='max-width:300px;'>"
-                "Many nutrients in a supplement can come from everyday foods — which also bring "
-                "fibre, protein and other co-nutrients. Some are hard to get from food alone "
-                "(e.g. vitamin D in winter, B12 on a vegan diet), and SuppSwipe tells you when."
-                "</div>"
-                "<div class='tap-card-sub' style='max-width:300px;margin-top:0.5rem;'>"
-                "📸 Scan your supplement label, then <strong>swipe right</strong> to replace each nutrient "
-                "with its whole-food equivalent — or <strong>swipe left</strong> to keep it."
-                "</div>"
-                "<div class='tap-card-sub' style='max-width:300px;margin-top:0.5rem;'>"
-                "🥗 <strong>Vegan? Gluten-free? Nut-free?</strong> Set your dietary filter below and only "
-                "whole foods that fit <em>your</em> lifestyle will be suggested."
-                "</div>"
-                "<div class='tap-card-sub' style='max-width:300px;margin-top:0.5rem;'>"
-                "🤖 Not sure about a swap? Tap <strong>Ask AI</strong> on any card for science-backed answers."
-                "</div>"
-                "<div style='margin-top:1rem;font-size:0.95rem;font-weight:800;color:#047857;' aria-label='To get started, tap the Analyze my Supplement button below'>"
-                "Ready? &#8594; tap <em>Analyze my Supplement</em> below &#8595;"
-                "</div>"
-                "<div class='tap-card-sub' style='max-width:300px;margin-top:0.6rem;font-size:0.72rem;'>"
-                "General information, not medical advice. Talk to a doctor before stopping a "
-                "supplement you were prescribed or are pregnant, ill or on medication."
-                "</div>"
-                "</div>",
-                unsafe_allow_html=True,
-            )
+        st.markdown(
+            "<div class='hero'>"
+            "<div class='hero-art' aria-hidden='true'>💊<span>→</span>🥦</div>"
+            "<div class='hero-title'>Ditch the pill.<br>Eat the real thing.</div>"
+            "<div class='hero-sub'>Scan your supplement and see which nutrients everyday foods can "
+            "cover — with fibre, protein and co-nutrients the pill doesn't have — and which are "
+            "worth keeping (e.g. vitamin D in winter, B12 on a vegan diet).</div>"
+            "<div class='steps' role='list'>"
+            "<div class='step' role='listitem'><span aria-hidden='true'>📸</span><b>Scan</b><small>your label</small></div>"
+            "<div class='step' role='listitem'><span aria-hidden='true'>👆</span><b>Swipe</b><small>keep or replace</small></div>"
+            "<div class='step' role='listitem'><span aria-hidden='true'>🥗</span><b>Eat</b><small>your food plan</small></div>"
+            "</div></div>",
+            unsafe_allow_html=True,
+        )
+        _render_analyze_button(primary=True)
         saved_scan = _resumable_scan(st.session_state.get("_suppswipe_saved_scan"))
         if saved_scan is not None:
             st.button(
@@ -4123,6 +4176,10 @@ def _render_card() -> None:
         if st.button("✨ Try it with a sample label", width="stretch", key="swipe_try_sample"):
             if _stage_analysis_from_inputs(b"", b"", _SAMPLE_LABEL_TEXT):
                 st.rerun()
+        st.caption(
+            "General information, not medical advice. Talk to a doctor before stopping a supplement "
+            "you were prescribed, or if you are pregnant, ill or on medication."
+        )
         return
 
     if index >= len(cards):
@@ -4179,7 +4236,7 @@ def _render_card() -> None:
             # Reopened card (Back / edit from the results): keep the earlier food.
             _restore_previous_food(st.session_state, select_key, option_labels, foods, decisions.get(component_key))
             selected_label = st.selectbox(
-                "Whole-food replacement",
+                "Prefer another food?",
                 options=option_labels,
                 # An everyday choice, not simply the richest food (no liver when
                 # another food works, D3 fish before UV mushrooms, ...). A reopened
@@ -4187,7 +4244,6 @@ def _render_card() -> None:
                 # index 0 then avoids Streamlit's default-vs-state warning.
                 index=0 if select_key in st.session_state else _default_food_index(foods, card, selected_profile),
                 key=f"swipe_food_select_{component_key}_{index}",
-                label_visibility="collapsed",
             )
             selected_food = foods[option_labels.index(selected_label)]
             full_name = str(selected_food.get("food_description", "") or "").strip()
@@ -4279,6 +4335,7 @@ def _render_card() -> None:
                 name=_nutrient_title(card.get("component")) or "Unknown micronutrient",
                 dose=str(card.get("dose_label", "Not available")),
                 food=food_label,
+                foodIcon=_whole_food_icon_from_food(selected_food) if selected_food is not None else "",
                 matchDose=match_dose_txt,
                 rdaAmount=rda_amount_txt,
                 rdaLabel=rda_label_txt,
@@ -4296,7 +4353,8 @@ def _render_card() -> None:
                 # Changes after every handled swipe, so the card always gets
                 # fresh props (and resets) even when it stays on the same card.
                 ack=str(st.session_state.get("swipe_last_swipe_id", "") or ""),
-                height=420,
+                # Minimum frame height; the card grows to fit its content.
+                height=320,
                 key=swipe_key,
                 default=None,
             )
@@ -4395,6 +4453,14 @@ def _food_bonus(food: dict[str, Any] | None, grams: float | None, exclude: str =
             out.append((_nutrient_title(key), int(round(pct))))
     out.sort(key=lambda item: -item[1])
     return out[:limit]
+
+
+def _format_need_share(pct: int) -> str:
+    """Share of the daily need: "45%", or "2.4×" / "11×" once it is double or more."""
+    if pct < 200:
+        return f"{pct}%"
+    times = pct / 100.0
+    return f"{times:.1f}×".replace(".0×", "×") if times < 10 else f"{round(times)}×"
 
 
 def _format_plan_grams(grams: float | None) -> str:
@@ -4501,7 +4567,7 @@ def _render_plan_tab(
             else:
                 amount = f"{_format_plan_grams(grams)}/day" if grams else ""
             sub = "for " + ", ".join(dict.fromkeys(n for n in row["nutrients"] if n))
-            bonus = ", ".join(f"{pct}% {nutrient}" for nutrient, pct in row["bonus"])
+            bonus = ", ".join(f"{nutrient} {_format_need_share(pct)}" for nutrient, pct in row["bonus"])
             bonus_html = f"<div class='plan-bonus'>+ also {html.escape(bonus)} of your daily needs</div>" if bonus else ""
             parts.append(
                 "<div class='plan-row'>"
@@ -4939,7 +5005,8 @@ def _build_mobile_ui() -> None:
         _render_analyze_bar(results=True)
     else:
         _render_dietary_pills()
-        _render_analyze_bar()
+        # On the welcome screen the main button sits in the hero (_render_card).
+        _render_analyze_bar(button=bool(st.session_state.get("swipe_cards")))
     if st.session_state.pop("swipe_confirm_restart", False):
         _confirm_restart_dialog()
     if st.session_state.pop("swipe_open_analyze", False):

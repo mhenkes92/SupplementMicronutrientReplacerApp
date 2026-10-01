@@ -149,3 +149,8 @@ def test_waiting_on_background_text_shows_partials(sw):
     future = cache.submit(key, job)
     assert sw._await_background_text(key, future, Box()) == "Lunch: lentil curry"
     assert any(text.startswith("Lunch") for text in shown)
+
+
+@pytest.mark.parametrize("pct,text", [(15, "15%"), (199, "199%"), (200, "2×"), (433, "4.3×"), (1142, "11×")])
+def test_need_share_switches_to_multiples(sw, pct, text):
+    assert sw._format_need_share(pct) == text

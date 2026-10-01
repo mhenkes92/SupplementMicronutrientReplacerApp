@@ -41,14 +41,14 @@
   .rail.repl  { right: 16px; color: #047857; border-color: #10b981; transform: rotate(12deg); }
   .tcard {
     position: absolute;
-    inset: 0;
+    inset: 0 0 6px 0; /* room for the shadow */
     z-index: 2;
-    border-radius: 18px;
-    padding: 16px 16px 12px 16px;
+    border-radius: 20px;
+    padding: 14px 14px 12px 14px;
     box-sizing: border-box;
     background: var(--card-bg, linear-gradient(160deg, #ffffff 0%, #f8fbff 55%, #f4f7fb 100%));
-    border: none;
-    box-shadow: none;
+    border: 1px solid rgba(15, 23, 42, 0.06);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.07);
     cursor: grab;
     touch-action: pan-y;
     display: flex;
@@ -58,30 +58,35 @@
     overflow-y: auto;
   }
   .tcard:focus-visible { box-shadow: 0 0 0 3px #2563eb inset; }
-  .tcard::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: 26px;
-    background: linear-gradient(135deg, var(--accent, #64748b) 0%, transparent 46%);
-    opacity: 0.16;
-    pointer-events: none;
-  }
   .tcard:active { cursor: grabbing; }
-  .row { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .count { font-size: .74rem; font-weight: 800; color: #475569; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .count { font-size: .74rem; font-weight: 800; color: #475569; letter-spacing: .02em; }
   .prev { font-size: .72rem; font-weight: 700; color: #334155; background: rgba(15,23,42,0.06); border-radius: 999px; padding: 2px 8px; }
-  .name { position: relative; z-index: 2; font-size: 1.7rem; font-weight: 900; line-height: 1.05; color: var(--ink, #0f172a); margin-top: 8px; letter-spacing: -0.02em; }
-  .dose { position: relative; z-index: 2; margin-top: 8px; color: #334155; font-size: 1rem; font-weight: 600; }
-  .foodwrap { position: relative; z-index: 2; margin-top: auto; }
-  .foodlbl { font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #475569; }
-  .food { margin-top: 4px; font-size: 1.02rem; font-weight: 800; color: #0f172a; line-height: 1.15; }
-  .portion { position: relative; z-index: 2; margin-top: 10px; padding: 8px 10px; border-radius: 12px; background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.30); color: #234a32; font-size: .82rem; line-height: 1.5; }
+  .bar { height: 4px; border-radius: 999px; background: rgba(15,23,42,0.08); margin-top: 6px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; border-radius: 999px; background: var(--accent, #64748b); }
+  .head { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+  .badge {
+    flex: 0 0 48px; height: 48px; border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.5rem; background: #ffffff; box-shadow: 0 2px 8px rgba(15,23,42,0.08);
+  }
+  .name { font-size: 1.6rem; font-weight: 900; line-height: 1.05; color: var(--ink, #0f172a); letter-spacing: -0.02em; }
+  .dose { margin-top: 4px; color: #334155; font-size: .9rem; font-weight: 600; }
+  .dose b { color: #0f172a; }
+  .foodwrap {
+    margin-top: 12px; padding: 12px; border-radius: 16px;
+    background: rgba(255,255,255,0.82); border: 1px solid rgba(15,23,42,0.06);
+  }
+  .foodlbl { font-size: .7rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: #047857; }
+  .foodrow { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+  .ficon { flex: 0 0 auto; font-size: 1.7rem; line-height: 1; }
+  .food { font-size: 1.05rem; font-weight: 800; color: #0f172a; line-height: 1.2; }
+  .portion { margin-top: 10px; padding: 8px 10px; border-radius: 12px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #14532d; font-size: .84rem; line-height: 1.5; }
   .portion .pl { display: block; }
   .portion b { color: #0f172a; }
-  .warn { position: relative; z-index: 2; margin-top: 6px; padding: 5px 9px; border-radius: 8px; background: rgba(239,68,68,0.10); border: 1px solid rgba(239,68,68,0.30); color: #9b1c1c; font-size: .74rem; font-weight: 700; line-height: 1.3; }
-  .bio { position: relative; z-index: 2; margin-top: 8px; padding: 6px 9px; border-radius: 10px; background: rgba(59,130,246,0.09); border: 1px solid rgba(59,130,246,0.22); color: #24425f; font-size: .74rem; line-height: 1.35; }
-  .hint { position: relative; z-index: 2; text-align: center; margin-top: 10px; font-size: .74rem; color: #475569; }
+  .warn { margin-top: 10px; padding: 7px 10px; border-radius: 12px; background: #fff7ed; border: 1px solid #fed7aa; color: #7c2d12; font-size: .78rem; font-weight: 600; line-height: 1.4; }
+  .bio { margin-top: 8px; padding: 7px 10px; border-radius: 12px; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a5f; font-size: .76rem; line-height: 1.4; }
+  .hint { text-align: center; margin-top: 10px; font-size: .74rem; color: #475569; }
   #actions { display: flex; gap: 8px; padding: 8px 2px 2px 2px; flex: 0 0 auto; }
   #actions button {
     flex: 1 1 0;
@@ -95,9 +100,10 @@
     background: #fff;
   }
   #actions button:focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
-  #btnBack { flex: 0 0 52px; border-color: #cbd5e1; color: #334155; }
-  #btnKeep { border-color: #ef4444; color: #b91c1c; }
-  #btnRepl { border-color: #10b981; color: #047857; background: #ecfdf5; }
+  #actions #btnBack { flex: 0 0 52px; border-color: #e2e8f0; color: #334155; }
+  #actions #btnKeep { border-color: #fca5a5; color: #b91c1c; }
+  #actions #btnRepl { border-color: #047857; color: #ffffff; background: #047857; }
+  #actions button:not(:disabled):active { transform: scale(0.97); }
   #actions button:disabled { opacity: .45; cursor: not-allowed; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
   @media (prefers-reduced-motion: reduce) {
@@ -162,7 +168,7 @@
     var contentHeight = probe.scrollHeight;
     stage.removeChild(probe);
     var actionsHeight = document.getElementById("actions").offsetHeight + 6;
-    var h = Math.max(HEIGHT, Math.min(780, contentHeight + actionsHeight + 4));
+    var h = Math.max(HEIGHT, Math.min(780, contentHeight + actionsHeight + 10));
     if (Math.abs(h - lastHeight) > 2) { lastHeight = h; setHeight(h); }
   }
   window.addEventListener("resize", function () { if (!committed) { fitHeight(); } });
@@ -212,14 +218,20 @@
     var warnHtml = args.warn ? '<div class="warn" role="note">' + esc(args.warn) + '</div>' : '';
     var bioHtml = args.bioNote ? '<div class="bio">💡 ' + esc(args.bioNote) + '</div>' : '';
     var prevHtml = args.previous ? '<span class="prev">Your choice: ' + esc(args.previous) + '</span>' : '';
+    var pct = Math.max(4, Math.min(100, Math.round(100 * idx / Math.max(total, 1))));
+    var foodIcon = args.foodIcon ? '<span class="ficon" aria-hidden="true">' + esc(args.foodIcon) + '</span>' : '';
     card.innerHTML =
       '<div class="row"><span class="count">Card ' + idx + ' of ' + total + '</span>' + prevHtml + '</div>' +
-      warnHtml +
+      '<div class="bar" aria-hidden="true"><span style="width:' + pct + '%"></span></div>' +
+      '<div class="head"><span class="badge" aria-hidden="true">💊</span><div>' +
       '<div class="name">' + esc(args.name || "Micronutrient") + '</div>' +
-      '<div class="dose">Dose: <b>' + esc(args.dose || "n/a") + '</b></div>' +
-      '<div class="foodwrap"><div class="foodlbl">Whole-food replacement</div><div class="food">' + foodTxt + '</div>' + portionHtml + bioHtml + '</div>' +
+      '<div class="dose">In your pill: <b>' + esc(args.dose || "n/a") + '</b></div></div></div>' +
+      warnHtml +
+      '<div class="foodwrap"><div class="foodlbl">Eat instead</div>' +
+      '<div class="foodrow">' + foodIcon + '<div class="food">' + foodTxt + '</div></div>' + portionHtml + '</div>' +
+      bioHtml +
       '<div class="hint">' + (canReplace
-        ? 'Swipe or tap: <b>◀ keep pill</b> · <b>replace ▶</b> (arrow keys work too)'
+        ? 'Swipe <b>◀ keep the pill</b> · <b>eat the food ▶</b>'
         : 'No whole-food match for this one — keep the pill or go back') +
         (editing ? '<br>Editing from your results — your choice takes you straight back.' : '') + '</div>';
     card.setAttribute("aria-label",
