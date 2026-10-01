@@ -1186,7 +1186,8 @@ def _final_upper_limit_warnings(items: list[dict[str, Any]]) -> list[str]:
 # flaky network never breaks the results screen.
 
 # Nutrients most commonly under-consumed by active people (see the Athlete RDA
-# guide caption): flagged even when the kept pill dose looks adequate.
+# guide caption): a neutral info line on the card while the pill gives under
+# 100% of the EU NRV (_athlete_info_note), never a red warning.
 _HIGH_RISK_NUTRIENT_KEYS = {"vitamin d", "iron", "vitamin b12", "zinc", "omega 3", "fish oil", "epa", "dha"}
 
 
@@ -1208,18 +1209,85 @@ def _dose_vs_athlete_ratio(component_key: str, dose_value: Any, dose_unit: str, 
         return None
 
 
+# EU nutrient reference values (NRV) for adults, Regulation (EU) 1169/2011
+# Annex XIII Part A — the "%NRV" (German "% NRV / Nährstoffbezugswert") column
+# of EU supplement labels. Keyed by bb canonical nutrient key; units match the
+# dose conversion in _dose_in_unit. Folic acid is compared as printed on the
+# label (µg folic acid, no DFE factor), the way the %NRV column counts it.
+# Omega-3, choline, sodium and beta-carotene have no NRV.
+_EU_NRV: dict[str, tuple[float, str]] = {
+    "vitamin a": (800.0, "mcg"),
+    "vitamin d": (5.0, "mcg"),
+    "vitamin e": (12.0, "mg"),
+    "vitamin k": (75.0, "mcg"),
+    "vitamin k2": (75.0, "mcg"),
+    "vitamin c": (80.0, "mg"),
+    "thiamin": (1.1, "mg"),
+    "riboflavin": (1.4, "mg"),
+    "niacin": (16.0, "mg"),
+    "vitamin b6": (1.4, "mg"),
+    "folate": (200.0, "mcg"),
+    "vitamin b12": (2.5, "mcg"),
+    "biotin": (50.0, "mcg"),
+    "pantothenic acid": (6.0, "mg"),
+    "potassium": (2000.0, "mg"),
+    "chloride": (800.0, "mg"),
+    "calcium": (800.0, "mg"),
+    "phosphorus": (700.0, "mg"),
+    "magnesium": (375.0, "mg"),
+    "iron": (14.0, "mg"),
+    "zinc": (10.0, "mg"),
+    "copper": (1.0, "mg"),
+    "manganese": (2.0, "mg"),
+    "fluoride": (3.5, "mg"),
+    "selenium": (55.0, "mcg"),
+    "chromium": (40.0, "mcg"),
+    "molybdenum": (50.0, "mcg"),
+    "iodine": (150.0, "mcg"),
+}
+# The low-dose note fires below this share of the NRV.
+_LOW_DOSE_NRV_RATIO = 0.5
+
+
+def _dose_vs_nrv_ratio(component_key: str, dose_value: Any, dose_unit: str, form: str = "") -> float | None:
+    """Pill dose as a fraction of the EU NRV (1.0 == 100% NRV), or None when the
+    nutrient has no NRV or the dose can't be converted."""
+    nrv = _EU_NRV.get(bb.canonical_nutrient_key(component_key))
+    if nrv is None or dose_value is None:
+        return None
+    try:
+        dose = _dose_in_unit(component_key, dose_value, dose_unit, nrv[1], form)
+    except Exception:
+        return None
+    if dose is None or nrv[0] <= 0:
+        return None
+    return dose / nrv[0]
+
+
 def _deficiency_flag(component_key: str, dose_value: Any, dose_unit: str, form: str = "") -> str:
-    """Short warning when the kept pill is well below the athlete target and/or the
-    nutrient is one athletes commonly fall short on. "" when nothing to flag."""
-    high_risk = bb.canonical_nutrient_key(component_key) in _HIGH_RISK_NUTRIENT_KEYS
-    ratio = _dose_vs_athlete_ratio(component_key, dose_value, dose_unit, form)
-    if ratio is not None and ratio < 0.5:
+    """Neutral low-dose note when the pill gives under half the EU NRV, else "".
+
+    Measured against the EU reference intake printed on German labels, not the
+    athlete target (that row stays on the card): a 100% NRV pill is not "low"."""
+    ratio = _dose_vs_nrv_ratio(component_key, dose_value, dose_unit, form)
+    if ratio is not None and ratio < _LOW_DOSE_NRV_RATIO:
         pct = max(1, int(round(ratio * 100)))
-        tail = " — commonly under-consumed, prioritise it" if high_risk else ""
-        return f"⚠️ This pill covers only ~{pct}% of the athlete daily target{tail}."
-    if high_risk:
-        return "⚠️ Athletes commonly fall short on this one — worth prioritising."
+        return f"ℹ️ Low dose: about {pct}% of the EU daily reference intake (NRV)."
     return ""
+
+
+def _athlete_info_note(component_key: str, dose_value: Any, dose_unit: str, form: str = "") -> str:
+    """Neutral info line for nutrients athletes are often low in (vitamin D, iron,
+    B12, zinc, omega-3); never shown once the pill gives >= 100% NRV, nor next
+    to an over-the-upper-limit warning."""
+    if bb.canonical_nutrient_key(component_key) not in _HIGH_RISK_NUTRIENT_KEYS:
+        return ""
+    ratio = _dose_vs_nrv_ratio(component_key, dose_value, dose_unit, form)
+    if ratio is not None and ratio >= 1.0:
+        return ""
+    if _upper_limit_warning(component_key, dose_value, dose_unit, form):
+        return ""
+    return "Often low in active people — worth keeping an eye on your intake."
 
 
 def _plant_based_diet(profile: dict[str, Any] | None) -> str:
@@ -1268,6 +1336,20 @@ def _card_warning_text(
     if bb.canonical_nutrient_key(component_key) == "fish oil" and dose_value is not None:
         parts.append("ℹ️ The label gives the fish-oil weight; portions assume ~30% of it is EPA+DHA.")
     return " ".join(parts)
+
+
+def _card_extra_info(
+    component_key: str,
+    dose_value: Any,
+    dose_unit: str,
+    form: str = "",
+    profile: dict[str, Any] | None = None,
+) -> str:
+    """Extra neutral lines appended to the card's info (after the curated
+    _bioavailability_note): the "often low in athletes" remark."""
+    del profile
+    lines = [_athlete_info_note(component_key, dose_value, dose_unit, form)]
+    return " ".join(line for line in lines if line)
 
 
 # Why the whole food generally beats the isolated pill — one concise, curated
@@ -3203,6 +3285,11 @@ def _render_card() -> None:
             if selected_food is not None
             else ""
         )
+        extra_info = _card_extra_info(
+            component_key, card.get("dose_value"), str(card.get("dose_unit", "") or ""), card_form, selected_profile
+        )
+        if extra_info:
+            bio_note = f"{bio_note} {extra_info}".strip()
 
         _render_rag_chat_popup(card, component_key, index)
 
@@ -3341,6 +3428,15 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
     _render_athlete_rda_popup()
 
 
+def _format_eu_nrv(entry: dict[str, Any]) -> str:
+    """EU NRV of an Athlete-RDA-guide row in that row's unit, or "–" if none."""
+    nrv = next((_EU_NRV[k] for k in entry.get("keys", ()) if k in _EU_NRV), None)
+    if nrv is None:
+        return "–"
+    value = _dose_in_unit(str(entry["keys"][0]), nrv[0], nrv[1], str(entry["unit"]))
+    return bb.format_float(value) if value is not None else "–"
+
+
 def _render_athlete_rda_popup() -> None:
     """Static reference: approximate daily micronutrient targets for athletes.
 
@@ -3352,7 +3448,8 @@ def _render_athlete_rda_popup() -> None:
     with st.popover("\U0001F3C3 Athlete RDA guide", use_container_width=True):
         st.caption(
             "Approximate daily targets for every micronutrient the app tracks. "
-            "Adult RDA/AI from NIH ODS; athlete targets raised per ISSN and "
+            "EU NRV = the reference intake behind the %NRV on EU labels; adult "
+            "RDA/AI from NIH ODS; athlete targets raised per ISSN and "
             "ACSM/AND/DC where training increases needs or sweat losses. General "
             "guidance only — consult a sports dietitian for personalised advice."
         )
@@ -3361,6 +3458,7 @@ def _render_athlete_rda_popup() -> None:
                 {
                     "Nutrient": str(entry["display"]),
                     "Unit": str(entry["unit"]),
+                    "EU NRV": _format_eu_nrv(entry),
                     "Adult RDA": bb.format_float(float(entry["rda"])),
                     "Athlete": bb.format_float(float(entry["athlete"])),
                 }

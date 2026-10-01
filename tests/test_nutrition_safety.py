@@ -88,13 +88,13 @@ def test_high_dose_beta_carotene_gets_the_smoker_note(sw):
     assert "smokers" in sw._upper_limit_warning("beta-carotene", 20, "mg")
 
 
-def test_over_ul_warning_replaces_the_prioritise_flag(sw):
-    # Zinc is a "commonly under-consumed" nutrient: normally the card says prioritise it.
-    assert "prioritis" in sw._card_warning_text("zinc", 15, "mg")
+def test_over_ul_warning_replaces_the_low_dose_flag(sw):
+    # A low zinc dose (< 50% of the 10 mg EU NRV) gets the neutral low-dose note.
+    assert "Low dose" in sw._card_warning_text("zinc", 3, "mg")
     over = sw._card_warning_text("zinc", 50, "mg")
-    assert "safe upper limit" in over and "prioritis" not in over
+    assert "safe upper limit" in over and "Low dose" not in over
     over_d = sw._card_warning_text("vitamin d3", 10000, "iu")
-    assert "safe upper limit" in over_d and "prioritis" not in over_d
+    assert "safe upper limit" in over_d and "Low dose" not in over_d
 
 
 def test_results_screen_lists_kept_pills_above_the_limit(sw):
