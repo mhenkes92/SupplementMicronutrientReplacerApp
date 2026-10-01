@@ -122,3 +122,37 @@ def test_privacy_note_mentions_meal_plans_and_the_background_prefetch(sw):
     source = Path(sw.__file__).read_text(encoding="utf-8")
     assert "Meal plans and the benefit comparison send your chosen foods" in source
     assert "prepared in the background" in source and "pregnancy setting" in source
+
+
+# --- F5: the report logs the name-and-dose span only -------------------------------------------
+
+@pytest.mark.parametrize(
+    "line, key, span",
+    [
+        ("Folsäure 200 µg 100%", "folate", "Folsäure 200 µg 100%"),
+        ("Vitamin D3 20 µg für Max Mustermann, geb. 01.02.1990, Tel 0171 1234567, Niereninsuffizienz",
+         "vitamin d", "Vitamin D3 20 µg"),
+        ("Für Max: Vitamin-B12 2,5 µg", "vitamin b12", "Vitamin-B12 2,5 µg"),
+        ("Vitamin D3 20 µg (800 I.E.) 400%", "vitamin d", "Vitamin D3 20 µg (800 I.E.) 400%"),
+        ("Hallo Welt", "zinc", ""),
+    ],
+)
+def test_label_nutrient_span(sw, line, key, span):
+    assert sw._label_nutrient_span(line, key) == span
+
+
+def test_report_never_logs_personal_text_from_the_label_line(sw, monkeypatch, caplog):
+    import json
+    import logging
+
+    text = "Vitamin D3 20 µg für Max Mustermann, geb. 01.02.1990, Tel 0171 1234567, Niereninsuffizienz"
+    components = sw._filter_to_micronutrients(bb.parse_components(text))
+    [card] = sw._build_swipe_cards(components, [])
+    monkeypatch.setattr(sw.st, "session_state", {"swipe_components": components})
+    with caplog.at_level(logging.WARNING, logger=bb.logger.name):
+        payload = sw._report_card_problem(card, None, None)
+    assert payload["label_line"] == "Vitamin D3 20 µg"
+    message = " ".join(r.getMessage() for r in caplog.records)
+    for personal in ("Mustermann", "1990", "0171", "Niereninsuffizienz"):
+        assert personal not in message
+    assert json.loads(message.split(": ", 1)[1])["label_line"] == "Vitamin D3 20 µg"

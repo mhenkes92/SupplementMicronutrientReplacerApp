@@ -4118,13 +4118,55 @@ Selen 55 µg 100%
 
 # "🚩 Report a problem with this card": one structured warning line in the
 # blockbrain log per tap, for review. Only what the card shows: nutrient, dose,
-# the label line it was read from, the chosen food and the dietary filter — no
-# free text and nothing personal (the pregnancy toggle is not logged).
+# the name-and-dose part of the label line it was read from, the chosen food
+# and the dietary filter — no free text and nothing personal (the rest of the
+# label line and the pregnancy toggle are not logged).
 _REPORT_LABEL_LINE_MAX = 160
 
 
+# Tokens that may follow the dose in the reported span: more numbers, units,
+# brackets and the %NRV ("(800 I.E.) 400%"), nothing with other words.
+_REPORT_TAIL_TOKEN_RE = re.compile(
+    r"^(?:[\d.,()\[\]%*:;/+-]|µg|μg|ug|mcg|mg|g|iu|i\.e\.|ie|nrv|nrv\*|dv|rm)+$", re.IGNORECASE
+)
+
+
+def _label_nutrient_span(label_line: str, nutrient_key: str = "") -> str:
+    """The part of a label line from the nutrient's name through its dose (and a
+    following "(800 I.E.) 400%"), e.g. "Vitamin D3 20 µg" out of "Vitamin D3 20
+    µg für Max Mustermann, Tel ..." — never the free text around it; "" when
+    no name-and-dose span is found."""
+    raw = re.sub(r"\s+", " ", str(label_line or "")).strip()
+    tokens = list(re.finditer(r"\S+", raw))
+    start = None
+    for i in range(len(tokens)):
+        window = bb._fold_label_text(raw[tokens[i].start():tokens[min(len(tokens), i + 4) - 1].end()])
+        m = bb._NUTRIENT_ALIAS_RE.match(window)
+        if not m:
+            continue
+        key = bb._NUTRIENT_ALIAS_INDEX.get(re.sub(r"\s+", " ", m.group(0)), ("",))[0]
+        if start is None:
+            start = i
+        if not nutrient_key or key == nutrient_key:
+            start = i
+            break
+    if start is None:
+        return ""
+    end = None
+    for j in range(start + 1, len(tokens) + 1):
+        if bb._LABEL_DOSE_RE.search(bb._fold_label_text(raw[tokens[start].start():tokens[j - 1].end()])):
+            end = j
+            break
+    if end is None:
+        return ""
+    while end < len(tokens) and _REPORT_TAIL_TOKEN_RE.match(tokens[end].group(0)):
+        end += 1
+    return raw[tokens[start].start():tokens[end - 1].end()]
+
+
 def _card_label_line(card: dict[str, Any]) -> str:
-    """The supplement-label line a card's dose was read from, or ""."""
+    """The name-and-dose part of the supplement-label line a card's dose was
+    read from (_label_nutrient_span), or ""."""
     key = str(card.get("nutrient_key", "") or "")
     try:
         rows = list(st.session_state.get("swipe_components", []) or [])
@@ -4134,7 +4176,7 @@ def _card_label_line(card: dict[str, Any]) -> str:
         if not isinstance(row, dict) or _component_nutrient_key(row) != key:
             continue
         if row.get("dose_value") == card.get("dose_value") and row.get("label_line"):
-            return re.sub(r"\s+", " ", str(row["label_line"])).strip()[:_REPORT_LABEL_LINE_MAX]
+            return _label_nutrient_span(str(row["label_line"]), key)[:_REPORT_LABEL_LINE_MAX]
     return ""
 
 
