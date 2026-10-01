@@ -752,33 +752,85 @@ def unit_to_mg(unit: str) -> float | None:
     return _TO_MG.get(_canon_unit(unit))
 
 
-def _iu_unit_to_mg_for_component(component_name: str | None) -> float | None:
+_IU_UNIT_KEYS: frozenset[str] = frozenset({"iu", "ui", "ie", "i e"})
+
+# Vitamin E form detection from the label text ("(as d-alpha tocopherol)").
+_SYNTHETIC_VITAMIN_E_RE = re.compile(r"\b(?:dl alpha|dl|all rac|synthetic|synthetisch)\b")
+_NATURAL_VITAMIN_E_RE = re.compile(r"\b(?:d alpha|rrr|natural|naturlich|natuerlich)\b")
+
+# Folic acid is absorbed ~1.7x better than food folate: 1 µg folic acid = 1.7 µg
+# DFE (NIH ODS; EFSA). Food folate amounts are DFE, so a folic-acid dose is
+# compared as DFE; doses already given in DFE ("680 mcg DFE") are not scaled.
+_FOLIC_ACID_TO_DFE = 1.7
+# A fish-oil WEIGHT is not an omega-3 amount: a typical fish-oil concentrate
+# ("18/12" oil, 180 mg EPA + 120 mg DHA per 1000 mg) carries ~30% EPA+DHA, the
+# long-chain omega-3s the food list is ranked by.
+_FISH_OIL_EPA_DHA_SHARE = 0.30
+
+
+def _is_folic_acid_dose(component_name: str | None, form: str | None = "") -> bool:
+    """True when the dose is synthetic folic acid (not DFE / methylfolate)."""
+    text = _fold_label_text(f"{component_name or ''} {form or ''}")
+    if canonical_nutrient_key(component_name or "") != "folate" or re.search(r"\bdfe\b", text):
+        return False
+    return bool(re.search(r"\bfol(?:ic acid|saure|saeure)\b", text))
+
+
+def supplement_dose_food_factor(component_name: str | None, form: str | None = "") -> float:
+    """Multiplier turning a label dose into the food-equivalent amount it is
+    compared with: folic acid -> DFE (x1.7), fish-oil weight -> EPA+DHA (x0.3)."""
+    if _is_folic_acid_dose(component_name, form):
+        return _FOLIC_ACID_TO_DFE
+    if canonical_nutrient_key(component_name or "") == "fish oil":
+        return _FISH_OIL_EPA_DHA_SHARE
+    return 1.0
+
+
+def _iu_unit_to_mg_for_component(component_name: str | None, form: str | None = "") -> float | None:
+    """mg per IU for a SUPPLEMENT dose (NIH ODS conversions), or None.
+
+    vitamin D (D2/D3, cholecalciferol, ergocalciferol): 1 IU = 0.025 µg.
+    vitamin A: retinol / retinyl esters 1 IU = 0.3 µg RAE; a vitamin A dose given
+      as supplemental beta-carotene 1 IU = 0.15 µg RAE; a beta-carotene amount
+      itself 1 IU = 0.6 µg beta-carotene.
+    vitamin E: natural d-alpha (RRR) tocopherol 1 IU = 0.67 mg; synthetic
+      dl-alpha (all-rac) 1 IU = 0.45 mg. The form is read from the component name
+      and `form` (the label's "(as ...)" text); unknown forms default to 0.45.
+    """
     component_key = normalize_lookup_key(component_name or "")
-    if not component_key:
+    if not component_key and not form:
         return None
-
-    # Vitamin D supplement labels commonly use IU.
-    # 1 IU vitamin D = 0.025 mcg = 0.000025 mg.
-    if component_key.startswith("vitamin d") or component_key in {"d", "d2", "d3"}:
+    key = canonical_nutrient_key(component_name or "") or canonical_nutrient_key(form or "")
+    if not key and component_key in {"d", "d2", "d3"}:
+        key = "vitamin d"
+    text = _fold_label_text(f"{component_name or ''} {form or ''}")
+    if key == "vitamin d":
         return 0.000025
-
-    # Vitamin A (retinol activity equivalent approximation for supplement labels).
-    # 1 IU vitamin A = 0.3 mcg retinol equivalent = 0.0003 mg.
-    if component_key.startswith("vitamin a") or component_key == "retinol":
+    if key == "vitamin a":
+        if re.search(r"\bbeta ?carot", text) and not re.search(r"\bretin", text):
+            return 0.00015
         return 0.0003
-    if "beta carotene" in component_key or "beta-carotene" in component_key:
-        # Supplemental beta-carotene convention: 1 IU ~= 0.6 mcg.
+    if key == "beta carotene":
         return 0.0006
-
-    # Vitamin E IU conversion is form-dependent.
-    # Use a practical default and handle explicit natural-form hints when available.
-    # synthetic dl-alpha-tocopherol: 1 IU = 0.45 mg
-    # natural d-alpha-tocopherol: 1 IU = 0.67 mg
-    if component_key.startswith("vitamin e") or "tocopherol" in component_key:
-        if any(token in component_key for token in ["natural", "d alpha", "d-alpha", "rrr"]):
+    if key == "vitamin e":
+        if _SYNTHETIC_VITAMIN_E_RE.search(text):
+            return 0.45
+        if _NATURAL_VITAMIN_E_RE.search(text):
             return 0.67
         return 0.45
+    return None
 
+
+def _food_iu_unit_to_mg(component_name: str | None) -> float | None:
+    """mg per IU for a FOOD amount. Food vitamin A IU is never converted: it
+    mixes retinol (0.3 µg RAE/IU) and carotenoids (0.05 µg RAE/IU), so foods are
+    always compared in µg RAE (USDA 1106) instead. Food vitamin E is natural
+    RRR-alpha-tocopherol (0.67 mg/IU); vitamin D is 0.025 µg/IU in any source."""
+    key = canonical_nutrient_key(component_name or "")
+    if key == "vitamin d":
+        return 0.000025
+    if key == "vitamin e":
+        return 0.67
     return None
 
 
@@ -788,28 +840,24 @@ def grams_needed_to_match_dose(
     nutrient_amount_per_100g: float,
     nutrient_unit: str,
     component_name: str | None = None,
+    form: str | None = "",
 ) -> float | None:
+    """Grams of a food (with `nutrient_amount_per_100g` `nutrient_unit`) that
+    supply the supplement dose. `form` is the label's form text (e.g. "d-alpha
+    tocopherol", "DFE; 400 mcg folic acid") and selects IU / DFE conversions."""
     if supplement_dose_value is None:
         return None
 
     supp_factor = unit_to_mg(supplement_dose_unit or "")
-    if supp_factor is None:
-        supp_unit_key = normalize_lookup_key(str(supplement_dose_unit or ""))
-        if supp_unit_key in {"iu", "ui", "ie"}:
-            supp_factor = _iu_unit_to_mg_for_component(component_name)
+    if supp_factor is None and normalize_lookup_key(str(supplement_dose_unit or "")) in _IU_UNIT_KEYS:
+        supp_factor = _iu_unit_to_mg_for_component(component_name, form)
     food_factor = unit_to_mg(nutrient_unit or "")
-    if food_factor is None:
-        # USDA stores fat-soluble vitamins (A, D, E) in IU, so the FOOD side can
-        # also be measured in IU — convert it with the same component-based
-        # factor used for the supplement dose above (otherwise the whole portion
-        # calc silently returns None and the card shows no portion at all).
-        food_unit_key = normalize_lookup_key(str(nutrient_unit or ""))
-        if food_unit_key in {"iu", "ui", "ie"}:
-            food_factor = _iu_unit_to_mg_for_component(component_name)
+    if food_factor is None and normalize_lookup_key(str(nutrient_unit or "")) in _IU_UNIT_KEYS:
+        food_factor = _food_iu_unit_to_mg(component_name)
     if supp_factor is None or food_factor is None:
         return None
 
-    dose_mg = float(supplement_dose_value) * supp_factor
+    dose_mg = float(supplement_dose_value) * supp_factor * supplement_dose_food_factor(component_name, form)
     food_mg_per_100g = float(nutrient_amount_per_100g) * food_factor
     if food_mg_per_100g <= 0:
         return None
