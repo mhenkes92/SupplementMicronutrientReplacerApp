@@ -5794,6 +5794,20 @@ def _lexicon_food_rows(key: str, limit: int) -> tuple[dict[str, Any], ...]:
     return tuple(foods[:limit])
 
 
+@functools.lru_cache(maxsize=32)
+def _lexicon_food_amount_index(key: str) -> dict[str, float]:
+    return {normalize_lookup_key(r["food_description"]): float(r["amount_per_100g"]) for r in _lexicon_food_rows(key, 5000)}
+
+
+def food_nutrient_amount(food_description: str, nutrient: str) -> float | None:
+    """Amount of `nutrient` per 100 g of a food, in the lexicon unit (e.g. µg RAE
+    of vitamin A in a liver the user picked for a B12 card), or None."""
+    key = canonical_nutrient_key(nutrient)
+    if not key:
+        return None
+    return _lexicon_food_amount_index(key).get(normalize_lookup_key(food_description))
+
+
 def _build_local_food_rows_for_component(component_key: str, limit: int = TOP_FOODS_PER_COMPONENT) -> list[dict[str, Any]]:
     """Whole foods ranked by THIS nutrient per 100 g (highest first), one unit."""
     key = canonical_nutrient_key(component_key)

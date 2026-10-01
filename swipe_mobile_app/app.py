@@ -1038,6 +1038,50 @@ def _upper_limit_warning(component_key: str, dose_value: Any, dose_unit: str, fo
     )
 
 
+def _liver_vitamin_a_warning(food: dict[str, Any] | None, grams: float | None) -> str:
+    """Liver tops the B2 / B12 / folate / copper lists, but its vitamin A is
+    preformed retinol: warn when the suggested portion alone passes the vitamin A
+    upper limit (e.g. ~92 g duck liver for 680 µg folate = ~11,000 µg RAE)."""
+    name = str((food or {}).get("food_description", "") or "")
+    if not name or grams is None or grams <= 0 or not re.search(r"\bliver\b", name.lower()):
+        return ""
+    rae_per_100g = bb.food_nutrient_amount(name, "vitamin a")
+    limit = float(_UPPER_LIMITS["vitamin a"]["limit"])
+    if not rae_per_100g or rae_per_100g * grams / 100.0 <= limit:
+        return ""
+    return (
+        f"⚠️ ~{_format_grams(grams)} of this liver also gives ~{bb.format_float(rae_per_100g * grams / 100.0, 0)} mcg "
+        f"vitamin A — above the {bb.format_float(limit)} mcg/day safe upper limit. Pick another food or keep "
+        "liver to about once a week."
+    )
+
+
+def _selected_food_warning(food: dict[str, Any] | None, dose_value: Any, dose_unit: str, component: str, form: str = "") -> str:
+    """Safety note for the food picked to replace the pill (portion-dependent)."""
+    if not isinstance(food, dict):
+        return ""
+    try:
+        grams = bb.grams_needed_to_match_dose(
+            dose_value, dose_unit, float(food.get("amount_per_100g", 0.0) or 0.0), str(food.get("unit", "") or ""), component, form
+        )
+    except Exception:
+        grams = None
+    return _liver_vitamin_a_warning(food, grams)
+
+
+def _final_food_warnings(items: list[dict[str, Any]]) -> list[str]:
+    """Food-side safety notes for replaced pills (decision dicts), for the results screen."""
+    out = []
+    for d in items:
+        warning = _selected_food_warning(
+            d.get("selected_food"), d.get("dose_value"), str(d.get("dose_unit", "") or ""),
+            str(d.get("component", "") or ""), str(d.get("form", "") or ""),
+        )
+        if warning:
+            out.append(f"{d.get('component', '')}: {warning}")
+    return out
+
+
 def _final_upper_limit_warnings(items: list[dict[str, Any]]) -> list[str]:
     """Upper-limit warnings for kept pills (decision dicts), for the results screen."""
     out = []
@@ -2807,6 +2851,11 @@ def _render_card() -> None:
             match_dose_txt = _portion_for_target(
                 selected_food, card.get("dose_value"), str(card.get("dose_unit", "") or ""), comp_name, card_form
             )
+            food_warning = _selected_food_warning(
+                selected_food, card.get("dose_value"), str(card.get("dose_unit", "") or ""), comp_name, card_form
+            )
+            if food_warning:
+                warn_text = f"{warn_text} {food_warning}".strip()
             rda_entry = _rda_for_component(component_key)
             if rda_entry is not None:
                 # The target is a food amount (e.g. folate in DFE), so it is
@@ -2936,6 +2985,8 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
                     ):
                         st.session_state["swipe_index"] = int(d.get("card_index", 0))
                         st.rerun()
+                for warning in _final_food_warnings(replace_items):
+                    st.caption(warning)
             else:
                 st.caption("Nothing swiped right.")
 

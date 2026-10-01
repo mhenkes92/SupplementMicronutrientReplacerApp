@@ -255,3 +255,26 @@ def test_app_renders_cards_and_results_with_ul_warnings():
     at.run(timeout=60)
     assert not at.exception, [e.value for e in at.exception]
     assert any("safe upper limit for vitamin B6" in c.value for c in at.caption)
+
+
+# --- Liver: vitamin A in the suggested portion ------------------------------------
+
+def test_liver_portion_above_vitamin_a_limit_is_flagged(sw):
+    duck = {"food_description": "Duck, domesticated, liver, raw", "amount_per_100g": 738.0, "unit": "mcg"}
+    lamb = {"food_description": "Lamb, New Zealand, imported, liver, raw", "amount_per_100g": 59.0, "unit": "mcg"}
+    # US label folate 680 µg DFE -> ~92 g duck liver = ~11,000 µg RAE (UL 3000 µg).
+    warning = sw._selected_food_warning(duck, 680, "mcg", "folate", "DFE; 400 mcg folic acid")
+    assert warning.startswith("⚠️ ~92 g of this liver also gives ~11042 mcg vitamin A")
+    assert "3000 mcg/day safe upper limit" in warning
+    assert sw._selected_food_warning(lamb, 6, "mcg", "vitamin b12") == ""  # ~10 g liver = ~1500 µg RAE
+    assert "vitamin A" in sw._selected_food_warning(lamb, 25, "mcg", "vitamin b12")
+    nuts = {"food_description": "Nuts, almonds", "amount_per_100g": 25.63, "unit": "mg"}
+    assert sw._selected_food_warning(nuts, 15, "mg", "vitamin e") == ""
+    replaced = [{"component": "folate", "dose_value": 680.0, "dose_unit": "mcg", "form": "DFE; 400 mcg folic acid", "selected_food": duck}]
+    assert sw._final_food_warnings(replaced)[0].startswith("folate: ⚠️ ~92 g of this liver")
+
+
+def test_food_nutrient_amount_lookup():
+    assert bb.food_nutrient_amount("Duck, domesticated, liver, raw", "vitamin a") == 11984.0
+    assert bb.food_nutrient_amount("Nuts, brazilnuts, raw", "Selen") == 1917.0
+    assert bb.food_nutrient_amount("Nuts, almonds", "ashwagandha") is None
