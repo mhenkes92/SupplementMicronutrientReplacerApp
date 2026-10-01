@@ -9571,9 +9571,10 @@ def _label_dose_basis(raw_basis: str | None) -> str:
     return _LABEL_DOSE_BASES.get(basis, "alpha-TE")
 
 
-def _label_segment_forms(segment: str, chosen: re.Match[str]) -> list[str]:
+def _label_segment_forms(segment: str, chosen: re.Match[str], offset: int = 0) -> list[str]:
     """Form / basis notes of one label segment ("beta carotene", "DFE",
-    "400 mcg folic acid", "magnesium citrate", ...), in reading order."""
+    "400 mcg folic acid", "magnesium citrate", ...), in reading order.
+    `offset` is the segment's position in the line `chosen` was matched in."""
     forms: list[str] = []
     basis = _label_dose_basis(chosen.group("basis"))
     if basis:
@@ -9597,8 +9598,16 @@ def _label_segment_forms(segment: str, chosen: re.Match[str]) -> list[str]:
                 forms.append(f"{format_float(_parse_float(dose.group('num')) or 0.0)} {_label_dose_unit(dose.group('unit'))} folic acid")
         elif "%" not in content and re.fullmatch(r"[a-z][a-z0-9 ,.+]*", content):
             forms.append(content)
-    # Unbracketed words around the dose: "citrate", "as sodium ascorbate", ...
-    rest = re.sub(r"[(\[][^()\[\]]*[)\]]", " ", segment)
+    # Unbracketed words between the name and the dose ("Magnesium citrate 400
+    # mg"), and after the dose only when introduced by "as"/"als" ("Calcium 500
+    # mg as calcium carbonate"); other trailing words are marketing ("Unser
+    # Vitamin D3 liefert 2000 I.E. für Knochen und Immunsystem").
+    # (Bracket groups, read above, are blanked first, keeping positions.)
+    rest = re.sub(r"[(\[][^()\[\]]*[)\]]", lambda m: " " * len(m.group(0)), segment)
+    dose_start, dose_end = chosen.start() - offset, chosen.end() - offset
+    if 0 <= dose_start <= dose_end <= len(rest):
+        after = re.search(r"\b(?:as|als|from|aus)\b(.*)$", rest[dose_end:])
+        rest = rest[:dose_start] + " " + (after.group(1) if after else "")
     rest = _LABEL_DOSE_RE.sub(" ", rest)
     rest = re.sub(r"\d+(?:[.,]\d+)*\s*%|\d+(?:[.,]\d+)*|[%*:;,.]", " ", rest)
     words = [w for w in rest.split() if w not in _LABEL_FILLER_WORDS and w not in _LABEL_PACKAGING_WORDS and len(w) > 1]
@@ -9673,7 +9682,7 @@ def _parse_label_segment(
 
     alias = re.sub(r"\s+", " ", name.group(0))
     key, display = _NUTRIENT_ALIAS_INDEX[alias]
-    forms = _label_segment_forms(line[start:end], chosen)
+    forms = _label_segment_forms(line[start:end], chosen, start)
     if key in _FORM_NAMED_NUTRIENT_KEYS and alias not in (key, display) and not any(alias in f for f in forms):
         forms.insert(0, alias)  # "Nicotinic acid 20 mg", "Retinyl palmitate 900 µg"
     if display == "folic acid" and not any("folic" in f for f in forms):
@@ -9748,7 +9757,6 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
     """(rows read from nutrient-table lines, folded text those rows did NOT consume)."""
     rows: list[dict[str, Any]] = []
     unclaimed: list[str] = []
-    seen: set[tuple[str, float, str, str]] = set()
     daily_column = _label_daily_dose_column(text)
     for raw_line in str(text or "").splitlines():
         line = _fold_label_text(raw_line)
@@ -9781,11 +9789,10 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
             if row is None:
                 leftover.append(line[name.start():end])
             else:
+                # Verbatim OCR repeats, titles and translations are collapsed
+                # by _drop_repeated_label_doses (keeping the table line).
                 row["label_line"] = raw_line.strip()
-                sig = (row["nutrient_key"], row["dose_value"], row["dose_unit"], row["form"])
-                if sig not in seen:  # OCR often repeats a line verbatim
-                    seen.add(sig)
-                    rows.append(row)
+                rows.append(row)
             i = j
         unclaimed.append(" ".join(part for part in leftover if part.strip()))
     return _drop_repeated_label_doses(rows), "\n".join(unclaimed)

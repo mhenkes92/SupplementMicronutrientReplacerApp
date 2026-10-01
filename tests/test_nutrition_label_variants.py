@@ -321,3 +321,34 @@ def test_unreadable_unit_never_borrows_another_lines_dose():
     assert not [r for r in rows if bb.canonical_nutrient_key(r["component"]) == "vitamin b12"]
     biotin = [r for r in rows if bb.canonical_nutrient_key(r["component"]) == "biotin"]
     assert [(r["dose_value"], r["dose_unit"]) for r in biotin] == [(50.0, "mcg")]
+
+
+def test_shop_page_title_marketing_and_table_give_the_table_rows(sw):
+    text = (
+        "Vitamin D3 2000 I.E. + K2 MK-7 100 µg Tropfen – hochdosiert, vegan\n"
+        "Unser Vitamin D3 liefert 2000 I.E. pro Tropfen für Knochen und Immunsystem.\n"
+        "Vitamin K2 als Menachinon-7 (all-trans) 100 µg pro Tagesdosis.\n"
+        "Nährwerte pro Tagesdosis (1 Tropfen) %NRV*\n"
+        "Vitamin D3 50 µg (2000 I.E.) 1000 %\n"
+        "Vitamin K2 100 µg 133 %\n"
+    )
+    rows = bb.parse_components(text)
+    assert [(r["component"], r["dose_value"], r["dose_unit"], r["label_line"]) for r in rows] == [
+        ("vitamin d3", 50.0, "mcg", "Vitamin D3 50 µg (2000 I.E.) 1000 %"),
+        ("vitamin k2", 100.0, "mcg", "Vitamin K2 100 µg 133 %"),
+    ]
+    assert _doses(sw, text) == {"vitamin d": "50 mcg", "vitamin k2": "100 mcg"}
+
+
+@pytest.mark.parametrize(
+    "text, form",
+    [
+        ("Calcium 500 mg as calcium carbonate", "calcium carbonate"),
+        ("Zinc 15 mg (as zinc picolinate)", "zinc picolinate"),
+        ("Magnesium Citrat 400 mg", "citrat"),
+        ("Unser Vitamin D3 liefert 2000 I.E. pro Tropfen für Knochen und Immunsystem.", "liefert"),
+    ],
+)
+def test_trailing_words_are_a_form_only_after_as(text, form):
+    [row] = bb.parse_components(text)
+    assert row["form"] == form
