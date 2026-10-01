@@ -520,6 +520,34 @@ def _looks_like_extraction_json(text: str) -> bool:
 
 _ASK_AI_HISTORY_MESSAGES = 6  # most recent chat messages sent as memory
 _ASK_AI_BOT_TIMEOUT = (10, 45)  # (connect, read) seconds for the Knowledge Bot
+# How long Ask AI waits for the Knowledge Bot before streaming the agent's
+# answer instead; a bot reply that arrives later is ignored.
+_ASK_AI_BOT_WAIT_S = 15.0
+
+
+def _ask_bot_within(message: str, bot_id: str | None, wait_s: float) -> str | None:
+    """The Knowledge Bot's reply if it arrives within `wait_s` seconds, else None.
+
+    The call runs in a daemon thread (it touches no Streamlit state), so a slow
+    bot no longer holds the chat for the full request timeout: the caller moves
+    on to the streamed agent answer and the late reply is dropped."""
+    import threading
+
+    result: dict[str, Any] = {}
+
+    def _call() -> None:
+        try:
+            result["answer"] = bb.call_blockbrain_bot(message, bot_id=bot_id, timeout=_ASK_AI_BOT_TIMEOUT)
+        except Exception:
+            result["answer"] = None
+
+    worker = threading.Thread(target=_call, name="suppswipe-ask-bot", daemon=True)
+    worker.start()
+    worker.join(max(0.0, float(wait_s)))
+    if worker.is_alive():
+        return None
+    answer = result.get("answer")
+    return answer if isinstance(answer, str) else None
 
 
 def _ask_ai_history(component_key: str) -> list[dict[str, str]]:
@@ -547,9 +575,10 @@ def _answer_ask_ai_question(
       1) the Blockbrain Knowledge Bot (a cortex bot with the Examine knowledge
          base attached — only bots, not agents, can hold a knowledge base). We
          send an "[ASK]" mode marker so a single dual-mode bot can tell research
-         questions apart from label-extraction requests;
+         questions apart from label-extraction requests. It runs in a
+         background thread and gets _ASK_AI_BOT_WAIT_S seconds;
       2) the Blockbrain agent (general nutrition reasoning), streamed into
-         `placeholder` as it is written;
+         `placeholder` as it is written — also when the bot is too slow;
       3) the local RAG index.
 
     `history` carries the earlier turns of this chat so follow-up questions
@@ -592,20 +621,11 @@ def _answer_ask_ai_question(
         + _MARKDOWN_STYLE
     )
     research_bot_id = os.getenv("BLOCKBRAIN_RESEARCH_BOT_ID", "").strip()
-    try:
-        bot_answer = bb.call_blockbrain_bot(
-            ask_message, bot_id=(research_bot_id or None), timeout=_ASK_AI_BOT_TIMEOUT
-        )
-        if (
-            isinstance(bot_answer, str)
-            and bot_answer.strip()
-            and not _looks_like_extraction_json(bot_answer)
-        ):
-            if cache_key:
-                llm_cache.put(cache_key, bot_answer.strip())
-            return bot_answer.strip(), ""
-    except Exception:
-        pass
+    bot_answer = _ask_bot_within(ask_message, research_bot_id or None, _ASK_AI_BOT_WAIT_S)
+    if bot_answer and bot_answer.strip() and not _looks_like_extraction_json(bot_answer):
+        if cache_key:
+            llm_cache.put(cache_key, bot_answer.strip())
+        return bot_answer.strip(), ""
 
     # 2) Fallback: the general agent (streamed).
     system_prompt = (
