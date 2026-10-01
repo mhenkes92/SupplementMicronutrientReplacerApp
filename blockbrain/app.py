@@ -10210,12 +10210,15 @@ def _drop_repeated_label_doses(rows: list[dict[str, Any]]) -> list[dict[str, Any
 
 
 def _label_group_doses(
-    items: list[dict[str, Any]], doses: list[re.Match[str]], line: str
-) -> list[re.Match[str] | None]:
+    items: list[dict[str, Any]], doses: list[re.Match[str]], line: str, title_joiner: bool = True
+) -> list[re.Match[str] | None] | None:
     """The dose of each name of a joined title group ("Vitamin D3 + K2 MK-7 1000
     IE + 20 µg", "Calcium + Vitamin D3 600 mg / 400 IE"): in order when there is
-    one plausible dose per name, else only doses whose unit fits exactly one of
-    the names ("Vitamin D3 + K2 2000 I.E." -> D3); the rest get none."""
+    one plausible dose per name, the same dose for all after "je" / "each", else
+    only doses whose unit fits exactly one of the names ("Vitamin D3 + K2 2000
+    I.E." -> D3); the rest get none. A list joined only by commas ("Calcium,
+    Vitamin D3, Magnesium 400 mg") is not a title: None (each name is read on
+    its own, the dose going to the name it follows)."""
     keys = [item["key"] for item in items]
     assigned: list[re.Match[str] | None] = [None] * len(items)
     if not doses:
@@ -10225,6 +10228,8 @@ def _label_group_doses(
         return [doses[0] if _label_unit_plausible(k, units[0]) else None for k in keys]
     if len(doses) >= len(items) and all(_label_unit_plausible(k, u) for k, u in zip(keys, units)):
         return list(doses[: len(items)])
+    if not title_joiner:
+        return None
     for dose, unit in zip(doses, units):
         fits = [i for i, k in enumerate(keys) if assigned[i] is None and _label_unit_plausible(k, unit)]
         if len(fits) == 1:
@@ -10281,8 +10286,12 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
             if k > i:
                 group = items[i:k + 1]
                 outside, _inside = _label_candidate_doses(line, depths, group[-1]["names_end"], group[-1]["end"])
-                if outside:
-                    for member, dose in zip(group, _label_group_doses(group, outside, line)):
+                title_joiner = any(
+                    line[a["names_end"]:b["start"]].strip() not in ("", ",") for a, b in zip(group, group[1:])
+                )
+                group_doses = _label_group_doses(group, outside, line, title_joiner) if outside else None
+                if group_doses is not None:
+                    for member, dose in zip(group, group_doses):
                         if _NUTRIENT_LEXICON.get(member["key"], {}).get("umbrella"):
                             continue
                         form_end = member["end"] if member is not group[-1] else group[-1]["end"]

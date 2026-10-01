@@ -201,6 +201,14 @@ def test_ambiguous_title_dose_is_not_guessed(sw):
     assert ("vitamin b6", "400 mg") not in cards
 
 
+def test_a_comma_list_is_not_a_title_group(sw):
+    # The dose belongs to the name it follows; nothing is spread over the list.
+    assert _cards(sw, "Calcium, Vitamin D3, Magnesium 400 mg") == [("magnesium", "400 mg")]
+    assert _cards(sw, "Vitamin B1, B2, B6 1,4 mg") == [("vitamin b6", "1.4 mg")]
+    # One dose per name still reads in order.
+    assert _cards(sw, "Zink, Selen 10 mg 55 µg") == [("zinc", "10 mg"), ("selenium", "55 mcg")]
+
+
 def test_vitamin_d_never_gets_a_milligram_dose_from_a_title(sw):
     assert ("vitamin d3", "600 mg") not in _cards(sw, "Calcium + Vitamin D3 600 mg / 400 IE")
 
