@@ -1268,12 +1268,15 @@ def _selected_food_warning(food: dict[str, Any] | None, dose_value: Any, dose_un
 # choice; the whole ranked list stays in the dropdown:
 #   1. no food whose portion breaks a co-nutrient upper limit (liver vitamin A,
 #      Brazil-nut selenium, ...);
+#   1b. no food the card's Replace soft-block refuses (vegan / vegetarian B12:
+#      a B12-fortified food first; see _replace_block_reason);
 #   2. no organ meat (liver, kidney, heart, giblets) when a non-organ food can
 #      supply the dose at a practical portion;
 #   3. on vitamin D cards, no mushroom (vitamin D2; UV-treated ones only) when
 #      a vitamin D3 food (fish, eggs) offers an equally practical portion;
-#   4. a whole food before a B12-fortified one, unless the diet is vegan /
-#      vegetarian (then the fortified foods are the reliable B12 source);
+#   4. a whole food before a B12-fortified one (curated, or a plant food with
+#      B12: _is_b12_fortified_food), unless the diet is vegan / vegetarian
+#      (then the fortified foods are the reliable B12 source);
 #   5. a practical portion ("ok", < 400 g/day) before "large" / "impractical";
 #   6. on vitamin D cards, an everyday vitamin D3 food first (salmon, herring,
 #      mackerel, sardines, trout, eggs);
@@ -1321,7 +1324,9 @@ def _default_food_index(foods: list[dict[str, Any]], card: dict[str, Any], profi
             "d3": key == "vitamin d" and bool(_EVERYDAY_VITAMIN_D3_RE.search(name)) and not _MUSHROOM_RE.search(name),
             "d3_source": key == "vitamin d" and bool(_VITAMIN_D3_SOURCE_RE.search(name)) and not _MUSHROOM_RE.search(name),
             "mushroom": key == "vitamin d" and bool(_MUSHROOM_RE.search(name)),
-            "fortified": bool(food.get("fortified")) and not plant,
+            "fortified": (_is_b12_fortified_food(food) if key == "vitamin b12" else bool(food.get("fortified"))) and not plant,
+            # Plant-based B12 / vegan iodine: a food Replace would refuse is never the default.
+            "blocked": bool(_replace_block_reason(card, food, profile)),
         })
     # The best portion a non-organ whole food offers: an organ meat is only the
     # default when it is strictly more practical than every other food.
@@ -1335,6 +1340,7 @@ def _default_food_index(foods: list[dict[str, Any]], card: dict[str, Any], profi
         f = facts[i]
         return (
             int(f["unsafe"]),
+            int(f["blocked"]),
             int(f["organ"] and best_non_organ is not None and best_non_organ <= f["practical"]),
             int(f["mushroom"] and best_d3 is not None and best_d3 <= f["practical"]),
             int(f["fortified"]),
@@ -1344,6 +1350,35 @@ def _default_food_index(foods: list[dict[str, Any]], card: dict[str, Any], profi
         )
 
     return min(range(len(foods)), key=_rank)
+
+
+# Plants hold no natural vitamin B12 (EFSA; DGE): a plant food (by its USDA
+# category, not its name) with a real B12 amount is fortified — USDA soy milks,
+# fortified cereals. Trace amounts from soil bacteria (tempeh, mushrooms,
+# kiwi: < 0.1 µg/100 g) are not; algae hold inactive analogues (see
+# bb._NUTRIENT_FOOD_EXCLUSIONS). 0.35 µg/100 g is just below the lowest EU
+# fortification level of plant drinks (0.38 µg/100 ml = 15% NRV).
+_PLANT_FOOD_CATEGORY_RE = re.compile(
+    r"\b(?:legumes?|vegetables?|cereals?|grains?|pasta|fruits?|nuts?|seeds?|spices?|herbs?|beverages?|fortified)\b",
+    re.IGNORECASE,
+)
+_B12_FORTIFIED_MIN_MCG_PER_100G = 0.35
+
+
+def _is_b12_fortified_food(food: dict[str, Any] | None) -> bool:
+    """True for a B12-fortified food from a vitamin B12 card's list: a curated
+    fortified option, or any non-algae plant-category food whose B12
+    (amount_per_100g, in the card's unit) reaches a fortification level."""
+    if not isinstance(food, dict):
+        return False
+    if food.get("fortified"):
+        return True
+    name, category = _food_name_and_category(food)
+    algae = bb._NUTRIENT_FOOD_EXCLUSIONS.get("vitamin b12")
+    if not _PLANT_FOOD_CATEGORY_RE.search(category) or (algae is not None and algae.search(name)):
+        return False
+    mcg = _dose_in_unit("vitamin b12", food.get("amount_per_100g"), str(food.get("unit", "") or ""), "mcg")
+    return mcg is not None and mcg >= _B12_FORTIFIED_MIN_MCG_PER_100G
 
 
 def _with_fortified_options(foods: list[dict[str, Any]], card: dict[str, Any], profile: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -1362,11 +1397,12 @@ def _with_fortified_options(foods: list[dict[str, Any]], card: dict[str, Any], p
 
 def _replace_block_reason(card: dict[str, Any], food: dict[str, Any] | None, profile: dict[str, Any] | None) -> str:
     """Why "replace with food" is soft-blocked on this card ("" when it is not):
-    vegan / vegetarian B12 unless a B12-fortified food is picked, and vegan
+    vegan / vegetarian B12 unless a B12-fortified food is picked (a curated
+    one or any plant food with B12, see _is_b12_fortified_food), and vegan
     iodine (no reliable plant source; iodised salt is not a food portion)."""
     diet = _plant_based_diet(profile)
     key = str(card.get("nutrient_key", "") or "") or bb.canonical_nutrient_key(str(card.get("component", "") or ""))
-    if diet and key == "vitamin b12" and not (food or {}).get("fortified"):
+    if diet and key == "vitamin b12" and not _is_b12_fortified_food(food):
         return f"On a {diet} diet only a B12-fortified food can replace a B12 pill."
     if diet == "vegan" and key == "iodine":
         return "On a vegan diet no food replaces an iodine pill reliably."

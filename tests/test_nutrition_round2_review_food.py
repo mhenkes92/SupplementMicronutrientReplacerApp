@@ -76,3 +76,69 @@ def test_plant_based_b12_card_never_shows_zero_kilograms(sw, profiles, diet, tex
         sw._portion_for_target(food, rda["athlete"], rda["unit"], rda["display"], note=False),
     ]
     assert all(s and "~0 kg" not in s and "~0.1 kg" not in s for s in shown), shown
+
+
+# --- R1-B12-DEFAULT-BLOCKED: plant-based B12 pre-selects a food Replace accepts -
+
+_B12_CARD = {"component": "vitamin b12", "component_key": "vitamin b12", "nutrient_key": "vitamin b12",
+             "dose_value": 6.0, "dose_unit": "mcg", "form": ""}
+# USDA rows as the merged (ws-diet) pool shows them on vegan / vegetarian cards.
+_USDA_SOY_MILK = {"food_description": "Soy milk, sweetened, plain, refrigerated", "food_category": "Legumes and Legume Products",
+                  "amount_per_100g": 1.327, "unit": "mcg", "source_db": "USDA Local DB"}
+_USDA_EGG_YOLK = {"food_description": "Egg, yolk, raw, fresh", "food_category": "Dairy and Egg Products",
+                  "amount_per_100g": 1.95, "unit": "mcg", "source_db": "USDA Local DB"}
+
+
+def _merged_shape_b12_list(sw, profile, extra=()) -> list[dict]:
+    return sw._with_fortified_options([*extra, _USDA_SOY_MILK], _B12_CARD, profile)
+
+
+@pytest.mark.parametrize("diet", ["vegan", "vegetarian"])
+def test_usda_soy_milk_counts_as_fortified_and_is_preselected(sw, profiles, diet):
+    profile = profiles[diet]
+    extra = (_USDA_EGG_YOLK,) if diet == "vegetarian" else ()
+    foods = _merged_shape_b12_list(sw, profile, extra)
+    assert sw._replace_block_reason(_B12_CARD, _USDA_SOY_MILK, profile) == ""
+    # 6 µg: ~450 g soy milk beats 60 g of flakes (past their ~30 g/day) and,
+    # on a vegetarian card, ~308 g of egg yolks that Replace would refuse.
+    default = foods[sw._default_food_index(foods, _B12_CARD, profile)]
+    assert default is _USDA_SOY_MILK
+    assert sw._replace_block_reason(_B12_CARD, default, profile) == ""
+    if diet == "vegetarian":
+        assert sw._replace_block_reason(_B12_CARD, _USDA_EGG_YOLK, profile)
+
+
+@pytest.mark.parametrize(
+    "food, fortified",
+    [
+        (_USDA_SOY_MILK, True),
+        ({"food_description": "B12-fortified oat drink", "food_category": "Fortified foods", "amount_per_100g": 0.38,
+          "unit": "mcg", "fortified": True}, True),
+        ({"food_description": "Cereals ready-to-eat, fortified", "food_category": "Breakfast Cereals",
+          "amount_per_100g": 6.0, "unit": "mcg"}, True),
+        ({"food_description": "Tempeh", "food_category": "Legumes and Legume Products", "amount_per_100g": 0.08,
+          "unit": "mcg"}, False),
+        ({"food_description": "Mushrooms, white, raw", "food_category": "Vegetables and Vegetable Products",
+          "amount_per_100g": 0.04, "unit": "mcg"}, False),
+        ({"food_description": "Seaweed, laver, raw", "food_category": "Vegetables and Vegetable Products",
+          "amount_per_100g": 32.0, "unit": "mcg"}, False),
+        (_USDA_EGG_YOLK, False),
+        ({"food_description": "Beef, liver, raw", "food_category": "Beef Products", "amount_per_100g": 59.3, "unit": "mcg"}, False),
+    ],
+)
+def test_is_b12_fortified_food(sw, food, fortified):
+    assert sw._is_b12_fortified_food(food) is fortified
+
+
+@pytest.mark.parametrize("diet", ["vegan", "vegetarian"])
+@pytest.mark.parametrize("text", ["Vitamin B12 6 mcg", "Vitamin B12 2.5 mcg", "Vitamin B12 25 mcg", "Vitamin B12 1000 µg"])
+def test_plant_based_b12_default_is_never_soft_blocked(sw, profiles, diet, text):
+    food, card, _foods = _default(sw, text, profiles[diet])
+    assert sw._replace_block_reason(card, food, profiles[diet]) == "", food
+
+
+def test_omnivore_b12_default_is_a_whole_food_not_a_fortified_plant_food(sw, profiles):
+    foods = [_USDA_SOY_MILK, {"food_description": "Fish, tuna, fresh, bluefin, raw", "food_category": "Finfish and Shellfish Products",
+                              "amount_per_100g": 9.43, "unit": "mcg"}]
+    foods.sort(key=lambda f: f["amount_per_100g"], reverse=True)
+    assert "tuna" in foods[sw._default_food_index(foods, _B12_CARD, profiles["none"])]["food_description"]
