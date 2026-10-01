@@ -740,6 +740,16 @@ def _dose_label(component: dict[str, Any]) -> str:
     dose_unit = str(component.get("dose_unit", "") or "").strip()
     if dose_value is None:
         return "Dose not found"
+    days = int(component.get("intake_days") or 1)
+    if days > 1 and component.get("intake_dose_value") is not None:
+        # A weekly product: the label's dose, then the daily average the card uses.
+        per_intake = _dose_label({**component, "dose_value": component["intake_dose_value"],
+                                  "dose_max": component.get("intake_dose_max"), "intake_days": 1})
+        every = "once a week" if days == 7 else f"every {days} days"
+        per_day = float(dose_value)
+        digits = 0 if per_day >= 10 else 1 if per_day >= 1 else 3
+        unit_txt = "IU" if bb.normalize_lookup_key(dose_unit) in bb._IU_UNIT_KEYS else dose_unit
+        return f"{per_intake} {every} (~{bb.format_float(per_day, digits)} {unit_txt}/day)".replace("  ", " ")
     if bb.normalize_lookup_key(dose_unit) in bb._IU_UNIT_KEYS:
         dose_unit = "IU"  # "1000 IU", never the parser's lowercase "iu"
     try:
@@ -1891,6 +1901,16 @@ def _card_warning_text(
     return " ".join(parts)
 
 
+def _unit_corrected_note(card: dict[str, Any]) -> str:
+    """Info line for a dose whose unit was corrected from the printed %NRV."""
+    if not card.get("unit_corrected"):
+        return ""
+    return (
+        "ℹ️ Read as µg, not mg: only µg fits the %NRV printed on the label (photos often turn µ into m) — "
+        "check your pack."
+    )
+
+
 def _card_info_notes(
     component_key: str,
     dose_value: Any,
@@ -2977,6 +2997,106 @@ def _filter_to_micronutrients(components: list[dict[str, Any]]) -> list[dict[str
     return [c for c in components if _is_micronutrient(str(c.get("component", "") or ""))]
 
 
+# --- What the rest of the label says about a dose ------------------------------------
+# Applied to the parsed micronutrients of a scan (and of a resumed one):
+#  - a µ read as m (photo OCR): "Vitamin D3 20 mg 400%" — the printed %NRV
+#    only fits µg (20 µg = 400% of 5 µg), so the unit is corrected;
+#  - weekly products ("Einnahme: 1 Tablette pro Woche"): the limits and
+#    portions use the daily average (500 µg a week ~ 71 µg a day).
+_PRINTED_PERCENT_RE = re.compile(r"(\d+(?:[.,]\d+)*)\s*%(?!\s*(?:as|als|aus|from|of|beta|davon)\b)", re.IGNORECASE)
+# The mg reading must be this many times the printed %NRV (a 1000x misread
+# leaves no doubt) while the µg reading is within a factor of 2 of it.
+_MISREAD_UNIT_MIN_RATIO = 300.0
+_MISREAD_UNIT_MATCH = 2.0
+_WEEKLY_INTAKE_RE = re.compile(
+    r"\b(?:pro|je|per|a|each|every|einmal\s+(?:pro|die|in\s+der|je))\s+woche\b|\bw(?:ö|oe|o)chentlich\b|"
+    r"\bweekly\b|\bonce\s+a\s+week\b|\bper\s+week\b",
+    re.IGNORECASE,
+)
+_EVERY_N_DAYS_RE = re.compile(r"\balle\s+(\d{1,2})\s+tage\b|\bevery\s+(\d{1,2})\s+days\b", re.IGNORECASE)
+_EVERY_N_WEEKS_RE = re.compile(r"\balle\s+(\d)\s+wochen\b|\bevery\s+(\d)\s+weeks\b", re.IGNORECASE)
+_DAILY_INTAKE_RE = re.compile(
+    r"\bt(?:ä|ae|a)glich\b|\b(?:pro|je)\s+tag\b|\btagesdosis\b|\bdaily\b|\bper\s+day\b|\ba\s+day\b",
+    re.IGNORECASE,
+)
+
+
+def _printed_nrv_percent(label_line: Any) -> float | None:
+    """The %NRV / %DV printed on a label line (the last percentage outside
+    brackets that is not a share such as "50% as beta-carotene"), or None."""
+    line = str(label_line or "")
+    depth, depths = 0, []
+    for ch in line:
+        depth += ch in "(["
+        depths.append(depth)
+        depth -= ch in ")]"
+        depth = max(depth, 0)
+    found = [m for m in _PRINTED_PERCENT_RE.finditer(line) if depths[m.start()] == 0]
+    if not found:
+        return None
+    value = bb._parse_float(found[-1].group(1))
+    return value if value and value > 0 else None
+
+
+def _correct_misread_unit(component: dict[str, Any]) -> dict[str, Any]:
+    """`component` with "mg" turned into "mcg" (and "unit_corrected": True) when
+    the line's printed %NRV proves the unit was misread (see above)."""
+    if str(component.get("dose_unit", "") or "").lower() != "mg" or component.get("dose_value") is None:
+        return component
+    name = str(component.get("component", "") or "")
+    key = str(component.get("nutrient_key", "") or "") or bb.canonical_nutrient_key(name)
+    nrv = _EU_NRV.get(key)
+    printed = _printed_nrv_percent(component.get("label_line"))
+    if nrv is None or nrv[1] != "mcg" or printed is None:
+        return component
+    form = str(component.get("form", "") or "")
+    as_mg = _dose_vs_nrv_ratio(key, component["dose_value"], "mg", form)
+    as_mcg = _dose_vs_nrv_ratio(key, component["dose_value"], "mcg", form)
+    if as_mg is None or as_mcg is None:
+        return component
+    if as_mg * 100 / printed >= _MISREAD_UNIT_MIN_RATIO and 1 / _MISREAD_UNIT_MATCH <= as_mcg * 100 / printed <= _MISREAD_UNIT_MATCH:
+        return {**component, "dose_unit": "mcg", "unit_corrected": True}
+    return component
+
+
+def _intake_interval_days(text: str) -> int:
+    """7 for a weekly product ("1 Tablette pro Woche", "once a week"), N for
+    "alle N Tage" / "every N days" (or N weeks), else 1. A label that also
+    speaks of a daily intake ("täglich", "Tagesdosis", "per day") stays daily."""
+    raw = str(text or "")
+    if _DAILY_INTAKE_RE.search(raw):
+        return 1
+    weeks = _EVERY_N_WEEKS_RE.search(raw)
+    if weeks:
+        return 7 * int(weeks.group(1) or weeks.group(2))
+    days = _EVERY_N_DAYS_RE.search(raw)
+    if days:
+        n = int(days.group(1) or days.group(2))
+        return n if 2 <= n <= 60 else 1
+    return 7 if _WEEKLY_INTAKE_RE.search(raw) else 1
+
+
+def _apply_label_context(components: list[dict[str, Any]], text: str) -> list[dict[str, Any]]:
+    """The scan's micronutrients with misread units corrected and, for a
+    weekly (every-N-days) product, the daily average as the dose
+    ("intake_days" and the label's own "intake_dose_value" kept for the card)."""
+    out = [_correct_misread_unit(c) for c in components]
+    days = _intake_interval_days(text)
+    if days <= 1:
+        return out
+    spread = []
+    for c in out:
+        if c.get("dose_value") is None:
+            spread.append(c)
+            continue
+        c = {**c, "intake_days": days, "intake_dose_value": c["dose_value"], "intake_dose_max": c.get("dose_max")}
+        c["dose_value"] = float(c["dose_value"]) / days
+        if c.get("dose_max") is not None:
+            c["dose_max"] = float(c["dose_max"]) / days
+        spread.append(c)
+    return spread
+
+
 # --- One card per nutrient ----------------------------------------------------
 # Cards that resolve to the same nutrient are merged (they would otherwise
 # overwrite each other's swipe decision). One dosed row is kept: the most
@@ -3016,6 +3136,8 @@ def _sum_distinct_form_doses(rows: list[dict[str, Any]]) -> dict[str, Any] | Non
         parts.append(f"{form} {_dose_text(row.get('dose_value'), str(row.get('dose_unit', '') or '')).lower()}")
     merged = dict(first)
     merged.update({"dose_value": round(total, 6), "dose_unit": target_unit, "form": " + ".join(parts)})
+    if int(first.get("intake_days") or 1) > 1:  # a weekly product: the label's own summed dose
+        merged.update({"intake_dose_value": round(total * int(first["intake_days"]), 6), "intake_dose_max": None})
     return merged
 
 
@@ -3135,6 +3257,7 @@ def _build_swipe_cards(components: list[dict[str, Any]], details: list[dict[str,
                 "dose_unit": str(item.get("dose_unit", "") or ""),
                 "form": str(item.get("form", "") or ""),
                 "foods": foods,
+                "unit_corrected": bool(item.get("unit_corrected")),
             }
         )
     return cards
@@ -3677,7 +3800,7 @@ def _run_pending_analysis() -> None:
             # minerals, plus choline / omega-3 unless _STRICT_MICRONUTRIENTS_ONLY).
             # This drops macronutrients (protein/fat/carbs/sugar/calories),
             # fillers and label metadata so the user only swipes real nutrients.
-            components = _filter_to_micronutrients(components)
+            components = _apply_label_context(_filter_to_micronutrients(components), combined)
             if not components:
                 _abort(
                     "No micronutrients found. The label's non-nutrient lines "
@@ -4137,7 +4260,7 @@ def _restore_scan(state: Any, saved: dict[str, Any]) -> bool:
     card then simply asks again)."""
     text = str(saved.get("text", "") or "")
     try:
-        components = _filter_to_micronutrients(bb.parse_components(text))
+        components = _apply_label_context(_filter_to_micronutrients(bb.parse_components(text)), text)
         cards = _build_swipe_cards(components, []) if components else []
     except Exception:
         return False
@@ -4393,9 +4516,14 @@ def _render_card() -> None:
         # Soft block (the card's diet warning says why): vegan / vegetarian B12
         # unless a B12-fortified food is picked, vegan iodine.
         replace_block = _replace_block_reason(card, selected_food, selected_profile) if selected_food is not None else ""
-        extra_info = _card_extra_info(
-            component_key, card.get("dose_value"), str(card.get("dose_unit", "") or ""), card_form, selected_profile,
-            dose_max=card.get("dose_max"),
+        extra_info = " ".join(
+            line for line in (
+                _unit_corrected_note(card),
+                _card_extra_info(
+                    component_key, card.get("dose_value"), str(card.get("dose_unit", "") or ""), card_form,
+                    selected_profile, dose_max=card.get("dose_max"),
+                ),
+            ) if line
         )
         if extra_info:
             bio_note = f"{bio_note} {extra_info}".strip()
