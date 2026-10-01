@@ -221,6 +221,16 @@ def test_plant_based_b12_defaults_to_a_fortified_food_and_only_it_can_replace(sw
     assert sw._replace_block_reason(card, food, profiles["none"]) == ""
 
 
+def test_fortified_food_portion_beyond_a_realistic_daily_amount_is_not_practical(sw, profiles):
+    foods = _shown(sw, _card(sw, "Vitamin B12 2.5 mcg"), profiles["vegan"])
+    yeast = next(f for f in foods if "yeast" in f["food_description"].lower())
+    drink = next(f for f in foods if "soy drink" in f["food_description"].lower())
+    assert sw._portion_for_target(yeast, 2.5, "mcg", "vitamin b12") == "~25 g"
+    assert sw._portion_for_target(yeast, 25, "mcg", "vitamin b12").startswith("not practical from food alone")
+    assert sw._portion_for_target(drink, 2.5, "mcg", "vitamin b12").startswith("a lot of food")
+    assert sw._portion_for_target(drink, 4, "mcg", "vitamin b12").startswith("not practical from food alone")
+
+
 def test_vegan_iodine_is_warned_and_soft_blocked(sw, profiles):
     card = _card(sw, "Iodine 150 mcg")
     vegan = profiles["vegan"]

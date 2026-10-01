@@ -5809,14 +5809,16 @@ _NUTRIENT_FOOD_EXCLUSIONS: dict[str, re.Pattern[str]] = {
 # foods can. Amounts are typical EU fortification levels per 100 g / 100 ml
 # (plant drinks: 0.38 µg = 15% NRV; nutritional yeast flakes vary widely by
 # brand, ~10 µg is a conservative typical value) — always "check the pack".
+# "max_daily_g" is a realistic daily amount (a few spoons of flakes, three
+# glasses of drink): a larger portion counts as not practical.
 FORTIFIED_FOOD_OPTIONS: dict[str, list[dict[str, Any]]] = {
     "vitamin b12": [
         {"food_description": "Nutritional yeast flakes, fortified with vitamin B12 (amount varies by brand)",
-         "food_category": "Fortified foods", "amount_per_100g": 10.0, "unit": "mcg"},
+         "food_category": "Fortified foods", "amount_per_100g": 10.0, "unit": "mcg", "max_daily_g": 30.0},
         {"food_description": "Soy drink, fortified with vitamin B12", "food_category": "Fortified foods",
-         "amount_per_100g": 0.38, "unit": "mcg"},
+         "amount_per_100g": 0.38, "unit": "mcg", "max_daily_g": 750.0},
         {"food_description": "Oat drink, fortified with vitamin B12", "food_category": "Fortified foods",
-         "amount_per_100g": 0.38, "unit": "mcg"},
+         "amount_per_100g": 0.38, "unit": "mcg", "max_daily_g": 750.0},
     ],
 }
 

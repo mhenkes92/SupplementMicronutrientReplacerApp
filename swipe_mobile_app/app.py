@@ -765,13 +765,21 @@ _PORTION_LARGE_G = 400.0
 _PORTION_IMPRACTICAL_G = 1000.0
 
 
-def _portion_practicality(grams: float | None) -> str:
-    """"ok" | "large" (400-1000 g/day) | "impractical" (> 1 kg/day) for a daily food amount."""
+def _portion_practicality(grams: float | None, food: dict[str, Any] | None = None) -> str:
+    """"ok" | "large" (400-1000 g/day) | "impractical" (> 1 kg/day) for a daily food amount.
+
+    A food with its own realistic daily maximum ("max_daily_g": ~30 g of
+    fortified yeast flakes, ~750 ml of a fortified plant drink) is
+    "impractical" above it."""
     try:
         value = float(grams) if grams is not None else 0.0
     except Exception:
         value = 0.0
-    if value > _PORTION_IMPRACTICAL_G:
+    try:
+        own_max = float((food or {}).get("max_daily_g") or 0.0) if isinstance(food, dict) else 0.0
+    except Exception:
+        own_max = 0.0
+    if value > _PORTION_IMPRACTICAL_G or (own_max > 0 and value > own_max):
         return "impractical"
     if value >= _PORTION_LARGE_G:
         return "large"
@@ -839,7 +847,7 @@ def _portion_core_for_target(
     if grams is None or grams <= 0:
         return ""
 
-    practicality = _portion_practicality(grams)
+    practicality = _portion_practicality(grams, food)
     if practicality == "impractical":
         return f"not practical from food alone (~{bb.format_float(grams / 1000.0, 1)} kg/day)"
     if practicality == "large":
@@ -1140,7 +1148,7 @@ def _card_portion_grams(food: dict[str, Any] | None, dose_value: Any, dose_unit:
         athlete = _food_portion_grams(food, entry["athlete"], str(entry["unit"]), str(entry["display"]))
         if athlete:
             grams.append(athlete)
-    edible = [g for g in grams if _portion_practicality(g) != "impractical"]
+    edible = [g for g in grams if _portion_practicality(g, food) != "impractical"]
     return max(edible) if edible else None
 
 
@@ -1292,14 +1300,14 @@ def _default_food_index(foods: list[dict[str, Any]], card: dict[str, Any], profi
         name, category = _food_name_and_category(food)
         grams = _target_grams(food)
         checked = _card_portion_grams(food, dose_value, dose_unit, component, form)
-        if checked is None and grams is not None and _portion_practicality(grams) != "impractical":
+        if checked is None and grams is not None and _portion_practicality(grams, food) != "impractical":
             checked = grams
         facts.append({
             "unsafe": _food_exceeds_a_limit(
                 food, checked, component, _all_portion_grams(food, dose_value, dose_unit, component, form) or grams
             ),
             "organ": bb.food_is_organ_meat(name, category),
-            "practical": _PRACTICALITY_RANK.get(_portion_practicality(grams), 3) if grams else 3,
+            "practical": _PRACTICALITY_RANK.get(_portion_practicality(grams, food), 3) if grams else 3,
             "d3": key == "vitamin d" and bool(_EVERYDAY_VITAMIN_D3_RE.search(name)) and not _MUSHROOM_RE.search(name),
             "mushroom": key == "vitamin d" and bool(_MUSHROOM_RE.search(name)),
             "fortified": bool(food.get("fortified")) and not plant,
