@@ -3120,7 +3120,10 @@ _DIET_DAIRY_WORDS = frozenset(
         "eggnog", "souffle", "custard", "ice cream", "dessert topping", "whipped topping",
     }
 )
-_DIET_EGG_WORDS = frozenset({"egg", "yolk", "egg white", "mayonnaise", "meringue", "souffle", "eggnog"})
+# USDA "Pasta, fresh-refrigerated" is egg pasta (it carries cholesterol and B12).
+_DIET_EGG_WORDS = frozenset(
+    {"egg", "yolk", "egg white", "mayonnaise", "meringue", "souffle", "eggnog", "pasta fresh-refrigerated", "fresh pasta"}
+)
 _DIET_BEE_WORDS = frozenset({"honey", "royal jelly", "beeswax", "propolis"})
 _DIET_PORK_WORDS = frozenset(
     {"pork", "ham", "bacon", "lard", "boar", "pig", "swine", "prosciutto", "pancetta", "chorizo", "pepperoni"}

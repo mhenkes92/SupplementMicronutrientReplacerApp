@@ -63,6 +63,9 @@ CASES = [
     ("vegan", "Honey", False),
     ("vegan", "Fish, salmon, sockeye, raw", False),
     ("vegan", "Spinach souffle", False),
+    ("vegan", "Pasta, fresh-refrigerated, plain, as purchased", False),   # egg pasta
+    ("vegetarian", "Pasta, fresh-refrigerated, plain, as purchased", True),
+    ("vegan", "Pasta, dry, unenriched", True),
     # --- vegetarian ------------------------------------------------------------
     ("vegetarian", "Egg, duck, whole, fresh, raw", True),      # duck egg is not duck
     ("vegetarian", "Egg, quail, whole, fresh, raw", True),
