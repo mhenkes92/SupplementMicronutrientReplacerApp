@@ -1419,7 +1419,43 @@ def _selected_food_warning(food: dict[str, Any] | None, dose_value: Any, dose_un
             f"{entry['unit']} {what} — above the {bb.format_float(float(entry['limit']))} {entry['unit']}/day safe upper "
             "limit. Pick another food or a smaller portion."
         )
+    parts.append(_own_limit_food_warning(food, dose_value, dose_unit, component, form))
     return " ".join(p for p in parts if p)
+
+
+def _own_limit_target_grams(
+    food: dict[str, Any] | None, dose_value: Any, dose_unit: str, component: str, form: str = ""
+) -> float | None:
+    """When matching an over-the-limit pill dose from food would itself pass the
+    card nutrient's safe upper limit (zinc, iodine, copper, selenium: EFSA
+    limits for total intake, food included), the portion for the daily target
+    instead (or 0 when there is no target); None when the limit is not passed."""
+    key = bb.canonical_nutrient_key(component)
+    if key not in _CO_NUTRIENT_LIMIT_KEYS or not isinstance(food, dict):
+        return None
+    entry = _UPPER_LIMITS[key]
+    grams = _food_portion_grams(food, dose_value, dose_unit, component, form)
+    edible = _edible_portion(grams, food) if grams else None
+    dose = _dose_in_unit(component, dose_value, dose_unit, str(entry["unit"]), form)
+    if not edible or dose is None or dose * edible / grams <= float(entry["limit"]) * (1 + 1e-9):
+        return None
+    target = _rda_for_component(component)
+    if target is None:
+        return 0.0
+    return _food_portion_grams(food, target["athlete"], str(target["unit"]), str(target["display"])) or 0.0
+
+
+def _own_limit_food_warning(food: dict[str, Any] | None, dose_value: Any, dose_unit: str, component: str, form: str = "") -> str:
+    """"Matching this dose from food is also above the limit" (see _own_limit_target_grams)."""
+    target_grams = _own_limit_target_grams(food, dose_value, dose_unit, component, form)
+    if target_grams is None:
+        return ""
+    entry = _UPPER_LIMITS[bb.canonical_nutrient_key(component)]
+    advice = f"aim for the daily target (~{_format_grams(target_grams)}) instead" if target_grams else "eat a normal portion instead"
+    return (
+        f"⚠️ Matching this dose from food is also above the {bb.format_float(float(entry['limit']))} "
+        f"{entry['unit']}/day safe upper limit for {entry['name']} — {advice}."
+    )
 
 
 # The food pre-selected on a card (index 0 of the dropdown is the richest, not
@@ -2112,9 +2148,11 @@ def _bioavailability_note(
 # row per food with its basis (dry weight, fillet, meat weight ...). Used only
 # for a rough basket estimate that the UI labels as approximate.
 _GERMAN_FOOD_PRICES_PATH = ROOT_DIR / "blockbrain" / "data" / "german_food_prices.csv"
-# A swap needing more than this much of one food per day is not a realistic
-# replacement: it is listed as "not practical from food" instead of priced.
-_BASKET_MAX_PRACTICAL_G_PER_DAY = 1000.0
+# A swap needing more than this much of one food per day (or more than the
+# food's own realistic daily maximum, see _portion_practicality) is not a
+# realistic replacement: it is listed as "not practical from food" instead of
+# priced.
+_BASKET_MAX_PRACTICAL_G_PER_DAY = _PORTION_IMPRACTICAL_G
 
 
 _GERMAN_FOOD_PRICES_CACHE: list[tuple[tuple[Any, ...], float, str]] = []
@@ -2209,29 +2247,53 @@ def _grams_to_match_dose(decision: dict[str, Any]) -> float | None:
         return None
 
 
+def _swap_grams(decision: dict[str, Any]) -> float | None:
+    """The daily amount of a swap's food the results count: the match-dose
+    portion, or the daily-target portion when matching an over-the-limit pill
+    from food would pass the safe upper limit too (_own_limit_target_grams)."""
+    grams = _grams_to_match_dose(decision)
+    target = _own_limit_target_grams(
+        decision.get("selected_food"), decision.get("dose_value"), str(decision.get("dose_unit", "") or ""),
+        str(decision.get("component", "") or ""), str(decision.get("form", "") or ""),
+    )
+    return target if target else grams
+
+
+def _swap_foods(replace_items: list[dict[str, Any]]) -> list[tuple[str, float | None, dict[str, Any]]]:
+    """(display name, grams/day, food) per distinct food of the swaps: a food
+    chosen for several nutrients (also under two USDA names, "Nuts, almonds"
+    and "Almonds") counts once, at its largest amount."""
+    by_name: dict[str, tuple[str, float | None, dict[str, Any]]] = {}
+    for d in replace_items:
+        food = d.get("selected_food") or {}
+        name = _food_name(food)
+        if not name:
+            continue
+        grams = _swap_grams(d)
+        key = bb.normalize_lookup_key(name)
+        if key not in by_name or (grams or 0.0) > (by_name[key][1] or 0.0):
+            by_name[key] = (name, grams, food)
+    return list(by_name.values())
+
+
 def _basket_cost_breakdown(replace_items: list[dict[str, Any]]) -> dict[str, Any]:
     """Daily cost of the whole-food swaps.
 
     Returns {"total": EUR/day, "rows": [(name, EUR/day)], "unknown": [name],
-    "impractical": [(name, grams/day)]}. Swaps needing more than
-    _BASKET_MAX_PRACTICAL_G_PER_DAY of one food are not priced (eating e.g.
-    23 kg of bananas a day is not a real option) but listed separately.
+    "impractical": [(name, grams/day)]}. Each food is priced once
+    (_swap_foods). Swaps the card calls not practical from food (more than
+    1 kg a day, or past the food's realistic daily maximum, see
+    _portion_practicality) are not priced but listed separately.
     """
     rows: list[tuple[str, float]] = []
     unknown: list[str] = []
     impractical: list[tuple[str, float]] = []
     total = 0.0
-    for d in replace_items:
-        food = d.get("selected_food") or {}
-        usda_name = str(food.get("food_description", "") or "")
-        name = _food_name(food)
-        if not name:
-            continue
-        grams = _grams_to_match_dose(d)
-        if grams is not None and grams > _BASKET_MAX_PRACTICAL_G_PER_DAY:
+    for name, grams, food in _swap_foods(replace_items):
+        if grams is not None and _portion_practicality(grams, food) == "impractical":
             impractical.append((name, grams))
             continue
-        cost = _estimate_food_price_eur(usda_name, grams)
+        cost = _estimate_food_price_eur(str(food.get("food_description", "") or ""), grams)
         if cost is not None and cost > 0:
             rows.append((name, cost))
             total += cost
@@ -2255,35 +2317,32 @@ _SWAP_TOTAL_MAX_KCAL = 1200.0
 def _swap_totals(replace_items: list[dict[str, Any]]) -> dict[str, Any]:
     """How much food the whole-food swaps add per day.
 
-    Uses the match-dose grams of each replaced item; a food chosen for several
-    nutrients counts once, at its largest amount. Energy is USDA kcal per 100 g
-    (bb.food_energy_kcal_per_100g). Items whose amount is impractical (> 1 kg a
-    day, see _portion_practicality) are listed separately and not summed.
+    Uses the match-dose grams of each replaced item (_swap_grams); a food chosen
+    for several nutrients counts once, at its largest amount (_swap_foods).
+    Energy is USDA kcal per 100 g (bb.food_energy_kcal_per_100g). Items whose
+    amount is impractical (> 1 kg a day or past the food's realistic daily
+    maximum, see _portion_practicality) are listed separately and not summed.
 
     Returns {"grams", "kcal", "foods": [(name, grams, kcal or None)],
     "no_energy": [name], "impractical": [(name, grams)], "too_much": bool}.
     """
-    by_food: dict[str, tuple[str, float, str]] = {}
-    impractical: dict[str, tuple[str, float]] = {}
-    for d in replace_items:
-        food = d.get("selected_food") or {}
+    by_food: list[tuple[str, float, str]] = []
+    impractical: list[tuple[str, float]] = []
+    for name, grams, food in _swap_foods(replace_items):
         usda_name = str(food.get("food_description", "") or "").strip()
-        grams = _grams_to_match_dose(d)
         if not usda_name or grams is None or grams <= 0:
             continue
-        key = bb.normalize_lookup_key(usda_name)
-        name = _food_name(food) or usda_name
-        if _portion_practicality(grams) == "impractical":
-            if key not in impractical or grams > impractical[key][1]:
-                impractical[key] = (name, grams)
+        # The same rule as the card: past a food's own realistic daily amount
+        # (~30 g of yeast flakes) is not practical, whatever it weighs.
+        if _portion_practicality(grams, food) == "impractical":
+            impractical.append((name, grams))
             continue
-        if key not in by_food or grams > by_food[key][1]:
-            by_food[key] = (name, grams, usda_name)
+        by_food.append((name, grams, usda_name))
 
     foods: list[tuple[str, float, float | None]] = []
     no_energy: list[str] = []
     total_g = total_kcal = 0.0
-    for name, grams, usda_name in by_food.values():
+    for name, grams, usda_name in by_food:
         try:
             kcal_100g = bb.food_energy_kcal_per_100g(usda_name)
         except Exception:
@@ -2300,7 +2359,7 @@ def _swap_totals(replace_items: list[dict[str, Any]]) -> dict[str, Any]:
         "kcal": total_kcal,
         "foods": foods,
         "no_energy": no_energy,
-        "impractical": list(impractical.values()),
+        "impractical": impractical,
         "too_much": total_g > _SWAP_TOTAL_MAX_G or total_kcal > _SWAP_TOTAL_MAX_KCAL,
     }
 
@@ -2332,7 +2391,7 @@ def _swap_totals_lines(replace_items: list[dict[str, Any]]) -> list[tuple[str, s
             (
                 "caption",
                 "Not counted, not practical from food: "
-                + ", ".join(f"{name} (~{bb.format_float(grams / 1000.0, 1)} kg/day)" for name, grams in totals["impractical"])
+                + ", ".join(f"{name} (~{_format_grams(grams)}/day)" for name, grams in totals["impractical"])
                 + ".",
             )
         )
@@ -2362,7 +2421,16 @@ def _meal_plan_amount(decision: dict[str, Any]) -> str:
     food = decision.get("selected_food") or {}
     if _is_organ_meat(food) and not re.search(r"\boil\b", str(food.get("food_description", "") or "").lower()):
         return _MEAL_PLAN_ORGAN_PORTION
-    if _portion_practicality(_grams_to_match_dose(decision)) in ("large", "impractical"):
+    # An over-the-limit pill matched from food is over the limit too: the daily target.
+    target_grams = _own_limit_target_grams(
+        food, decision.get("dose_value"), str(decision.get("dose_unit", "") or ""),
+        str(decision.get("component", "") or ""), str(decision.get("form", "") or ""),
+    )
+    if target_grams is not None:
+        if target_grams and _portion_practicality(target_grams, food) == "ok":
+            return f"eat ~{_format_grams(target_grams)} (the daily target; the full dose would pass the safe upper limit)"
+        return _MEAL_PLAN_NORMAL_PORTION
+    if _portion_practicality(_grams_to_match_dose(decision), food) in ("large", "impractical"):
         return _MEAL_PLAN_NORMAL_PORTION
     return _amount_to_match_dose(decision)
 
@@ -2762,8 +2830,9 @@ def _render_final_actions(
             if impractical:
                 st.markdown(
                     "**Not practical from food:** "
-                    + ", ".join(f"{name} (~{bb.format_float(grams / 1000.0, 1)} kg/day)" for name, grams in impractical)
-                    + " — more than 1 kg a day, so not priced; keeping the supplement may be the practical choice."
+                    + ", ".join(f"{name} (~{_format_grams(grams)}/day)" for name, grams in impractical)
+                    + " — more than you'd realistically eat in a day, so not priced; keeping the supplement may be "
+                    "the practical choice."
                 )
             if unknown:
                 st.caption("No estimate for: " + ", ".join(unknown))

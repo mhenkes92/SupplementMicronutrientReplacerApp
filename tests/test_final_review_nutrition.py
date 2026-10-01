@@ -281,3 +281,66 @@ def test_pregnancy_meal_plan_never_asks_for_liver_or_swordfish(sw):
     assert "pregnancy-safe" not in user and "per week" in user
     warnings = sw._pregnancy_food_warnings([liver, sword], pregnant=True)
     assert len(warnings) == 2 and all("isn't advised in pregnancy" in w for w in warnings)
+
+
+# --- F5: an over-the-limit pill matched from food is over the limit too -------------
+
+_OYSTER = _row("Mollusks, oyster, eastern, wild, raw", "Finfish and Shellfish Products", 39.3, "mg")
+
+
+def _decision(component: str, food: dict, dose: float, unit: str) -> dict:
+    return {"decision": "replace", "component": component, "component_key": component, "dose_value": dose,
+            "dose_unit": unit, "form": "", "selected_food": food}
+
+
+def test_matching_an_over_limit_zinc_pill_from_food_warns_and_points_to_the_target(sw):
+    warning = sw._selected_food_warning(_OYSTER, 50, "mg", "zinc")
+    assert "Matching this dose from food is also above the 25 mg/day safe upper limit for zinc" in warning
+    assert "aim for the daily target (~38 g) instead" in warning
+    decision = _decision("zinc", _OYSTER, 50, "mg")
+    # Still on the results after Replace (the pill is no longer "kept").
+    assert any("also above the 25 mg/day" in w for w in sw._final_food_warnings([decision]))
+    assert sw._meal_plan_amount(decision).startswith("eat ~38 g (the daily target")
+    assert sw._swap_grams(decision) == pytest.approx(15 / 39.3 * 100)
+
+
+def test_a_dose_within_the_limit_has_no_own_limit_warning(sw):
+    assert "Matching this dose" not in sw._selected_food_warning(_OYSTER, 10, "mg", "zinc")
+    decision = _decision("zinc", _OYSTER, 10, "mg")
+    assert sw._meal_plan_amount(decision) == sw._amount_to_match_dose(decision)
+    assert sw._swap_grams(decision) == pytest.approx(sw._grams_to_match_dose(decision))
+
+
+def test_iodine_over_the_limit_from_food(sw):
+    haddock = _row("Fish, haddock, raw", "Finfish and Shellfish Products", 300.0, "mcg")
+    warning = sw._selected_food_warning(haddock, 1000, "mcg", "iodine")
+    assert "also above the 600 mcg/day safe upper limit for iodine" in warning
+    # A portion over 1 kg a day is not eaten, so there is nothing to warn about.
+    cod = _row("Fish, cod, Atlantic, raw", "Finfish and Shellfish Products", 99.0, "mcg")
+    assert "Matching this dose" not in sw._selected_food_warning(cod, 1000, "mcg", "iodine")
+
+
+# --- F11: totals and basket agree with the card ------------------------------------------
+
+def test_impractical_yeast_flakes_are_not_counted_in_the_totals_or_priced(sw):
+    yeast = next(f for f in bb.fortified_food_options("vitamin b12") if "yeast" in f["food_description"])
+    decision = _decision("vitamin b12", yeast, 25, "mcg")
+    totals = sw._swap_totals([decision])
+    assert totals["foods"] == [] and totals["grams"] == 0
+    assert [name for name, _g in totals["impractical"]] == [sw._food_name(yeast)]
+    lines = sw._swap_totals_lines([decision])
+    assert lines == [("caption", f"Not counted, not practical from food: {sw._food_name(yeast)} (~250 g/day).")]
+    basket = sw._basket_cost_breakdown([decision])
+    assert basket["rows"] == [] and [name for name, _g in basket["impractical"]] == [sw._food_name(yeast)]
+    assert sw._meal_plan_amount(decision) == sw._MEAL_PLAN_NORMAL_PORTION
+
+
+def test_the_same_food_under_two_usda_names_counts_once(sw):
+    nuts = _row("Nuts, almonds", "Nut and Seed Products", 1.14, "mg")
+    plain = _row("Almonds", "Nut and Seed Products", 57.0, "mcg")
+    items = [_decision("riboflavin", nuts, 0.68, "mg"), _decision("biotin", plain, 23, "mcg")]  # ~60 g and ~40 g
+    totals = sw._swap_totals(items)
+    assert [name for name, _g, _k in totals["foods"]] == ["Almonds"]
+    assert totals["grams"] == pytest.approx(0.68 / 1.14 * 100)
+    basket = sw._basket_cost_breakdown(items)
+    assert [name for name, _c in basket["rows"]] == ["Almonds"]
