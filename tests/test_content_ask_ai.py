@@ -106,8 +106,9 @@ def test_slow_bot_on_a_first_question_caches_the_agent_answer(sw, monkeypatch):
 
 
 def test_quota_still_applies_to_the_agent_fallback(sw, monkeypatch):
+    # Final review (LLM F2): an exhausted quota stops the Knowledge Bot too.
     monkeypatch.setattr(sw, "_ASK_AI_BOT_WAIT_S", 0.1)
-    monkeypatch.setattr(bb, "call_blockbrain_bot", lambda *a, **k: "")
+    monkeypatch.setattr(bb, "call_blockbrain_bot", lambda *a, **k: pytest.fail("bot called with the quota used up"))
     monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: pytest.fail("quota exhausted"))
     monkeypatch.setattr(sw, "_consume_llm_quota", lambda kind: False)
     monkeypatch.setattr(sw, "_cached_rag_chunks", lambda: [])

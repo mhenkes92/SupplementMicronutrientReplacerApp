@@ -247,10 +247,12 @@ def _reset_swipe_app() -> None:
 
 
 @st.cache_data(show_spinner=False, ttl=6 * 3600, max_entries=64)
-def _cached_extract_from_url(url: str) -> str:
+def _cached_extract_from_url(url: str, _llm_allowed: Any = None) -> str:
     # Raise instead of returning "": st.cache_data doesn't cache exceptions, so a
     # transient fetch/LLM failure is retried next time instead of sticking.
-    text = str(bb.extract_supplement_text_from_url(url) or "")
+    # `_llm_allowed` (not part of the cache key) meters the LLM step: a cached
+    # page or one the local parser reads costs no quota.
+    text = str(bb.extract_supplement_text_from_url(url, llm_allowed=_llm_allowed) or "")
     if not text.strip():
         raise RuntimeError("couldn't read supplement facts from that page")
     return text
@@ -399,15 +401,45 @@ def _llm_quota_limit(kind: str) -> int:
         return default
 
 
+def _global_llm_quota_limit() -> int:
+    try:
+        return max(1, int(os.getenv("SUPPSWIPE_MAX_LLM_CALLS_PER_HOUR_GLOBAL", "") or 600))
+    except ValueError:
+        return 600
+
+
+@st.cache_resource(show_spinner=False)
+def _global_llm_usage() -> dict[str, Any]:
+    """Process-wide LLM use (all sessions): the per-session allowance resets on
+    a reload, this backstop does not. One per server process."""
+    import threading
+
+    return {"lock": threading.Lock(), "times": []}
+
+
+def _consume_global_llm_quota(now: float) -> bool:
+    usage = _global_llm_usage()
+    with usage["lock"]:
+        usage["times"] = [t for t in usage["times"] if now - t < _LLM_QUOTA_WINDOW_S]
+        if len(usage["times"]) >= _global_llm_quota_limit():
+            return False
+        usage["times"].append(now)
+        return True
+
+
 def _consume_llm_quota(kind: str) -> bool:
     """Record one LLM use of `kind` ("vision" or "generate"); False when this
-    session already used its hourly allowance."""
+    session already used its hourly allowance, or the whole app its hourly
+    backstop (SUPPSWIPE_MAX_LLM_CALLS_PER_HOUR_GLOBAL, default 600)."""
     import time as _time
 
     now = _time.time()
     store = st.session_state.setdefault("_suppswipe_llm_usage", {})
     recent = [t for t in store.get(kind, []) if now - t < _LLM_QUOTA_WINDOW_S]
     if len(recent) >= _llm_quota_limit(kind):
+        store[kind] = recent
+        return False
+    if not _consume_global_llm_quota(now):
         store[kind] = recent
         return False
     recent.append(now)
@@ -450,11 +482,13 @@ def _stream_llm_text(
     placeholder: Any = None,
     history: list[dict[str, str]] | None = None,
     budget_s: float | None = None,
+    consume_quota: bool = True,
 ) -> str:
     """Generate text, streaming partial output into `placeholder` (an st.empty()).
 
     Reuses a cached answer or a background prefetch for the same prompt when one
-    exists; only non-empty answers are cached.
+    exists; only non-empty answers are cached. `consume_quota=False` when the
+    caller already counted this request against the session's allowance.
     """
     cached = llm_cache.get(cache_key)
     if cached:
@@ -472,7 +506,7 @@ def _stream_llm_text(
                 placeholder.markdown(text)
             return text
 
-    if not _consume_llm_quota("generate"):
+    if consume_quota and not _consume_llm_quota("generate"):
         if placeholder is not None:
             placeholder.info(_QUOTA_MESSAGE)
         return ""
@@ -623,6 +657,12 @@ def _answer_ask_ai_question(
         "base. General guidance only; no individual medical advice."
         + _MARKDOWN_STYLE
     )
+    # One question = one unit of the session's generation allowance, whether
+    # the bot or the agent answers it (a cached first question above is free).
+    if not _consume_llm_quota("generate"):
+        if placeholder is not None:
+            placeholder.info(_QUOTA_MESSAGE)
+        return _local_rag_answer(scoped_question)
     research_bot_id = os.getenv("BLOCKBRAIN_RESEARCH_BOT_ID", "").strip()
     bot_answer = _ask_bot_within(ask_message, research_bot_id or None, _ASK_AI_BOT_WAIT_S)
     if bot_answer and bot_answer.strip() and not _looks_like_extraction_json(bot_answer):
@@ -652,11 +692,17 @@ def _answer_ask_ai_question(
         placeholder=placeholder,
         history=history,
         budget_s=90,
+        consume_quota=False,  # already counted for this question
     )
     if agent_answer:
         return agent_answer, ""
 
     # 3) Fallback: local research RAG index.
+    return _local_rag_answer(scoped_question)
+
+
+def _local_rag_answer(scoped_question: str) -> tuple[str | None, str]:
+    """(answer, sources line) from the local research index (no LLM), or (None, "")."""
     try:
         chunks = _cached_rag_chunks()
     except Exception:
@@ -3792,7 +3838,7 @@ def _run_pending_analysis() -> None:
                 elif re.match(r"https?://", manual, re.I):
                     _set_progress(56, "Fetching product page…")
                     try:
-                        url_text = _cached_extract_from_url(manual)
+                        url_text = _cached_extract_from_url(manual, lambda: _consume_llm_quota("generate"))
                         if url_text.strip():
                             text_parts.append(url_text)
                     except Exception as exc:

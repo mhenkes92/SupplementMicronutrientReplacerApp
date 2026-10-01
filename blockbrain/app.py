@@ -25,7 +25,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 import requests
@@ -10689,7 +10689,10 @@ def extract_supplement_text_from_page_text_local(page_text: str) -> str:
     return "\n".join(unique)
 
 
-def extract_supplement_text_from_url(url: str) -> str:
+def extract_supplement_text_from_url(url: str, llm_allowed: Callable[[], bool] | None = None) -> str:
+    """Supplement-facts text from a product page: the local parser first, else
+    the text LLM. `llm_allowed` (e.g. the app's per-session quota) is asked
+    right before the LLM call; False skips it."""
     global LAST_URL_PARSE_REASON
     global LAST_TEXT_PROVIDER
     LAST_URL_PARSE_REASON = ""
@@ -10726,7 +10729,11 @@ def extract_supplement_text_from_url(url: str) -> str:
         f"{prompt_source}\n"
         "PAGE_TEXT>>>"
     )
-    llm_text = call_text_llm(system_prompt, user_prompt)
+    if llm_allowed is not None and not llm_allowed():
+        LAST_URL_PARSE_REASON = "AI quota used up; LLM extraction skipped."
+        llm_text = ""
+    else:
+        llm_text = call_text_llm(system_prompt, user_prompt)
 
     if llm_text:
         if passes_extraction_gate(llm_text):
