@@ -263,11 +263,38 @@ def _cached_extract_from_url(url: str, _llm_allowed: Any = None) -> str:
     return text
 
 
+# A vision model's refusal or apology ("I'm sorry, I can't read the text in
+# this image") is not label text: never cached (a transient refusal would
+# stick for 6 h) and never sent on to the product-research agent.
+_OCR_REFUSAL_RE = re.compile(
+    r"\b(?:i'?m sorry|i am sorry|i apologi[sz]e|sorry, (?:but )?i|i (?:can ?not|can'?t|am unable to|'m unable to|"
+    r"was unable to|could ?n[o']t)\b|unable to (?:read|extract|see|process|identify)|as an ai\b|"
+    r"es tut mir leid|leider (?:kann|konnte) ich|ich kann (?:den|die|das|keinen?)\b.{0,40}\bnicht)",
+    re.IGNORECASE,
+)
+
+
+def _is_ocr_refusal(text: str) -> bool:
+    """True for vision output that is a refusal / apology rather than label text
+    (a short reply with a refusal phrase and no dose)."""
+    raw = str(text or "").strip()
+    if not raw or not _OCR_REFUSAL_RE.search(raw[:300]):
+        return False
+    return not re.search(r"\d\s*(?:mg|mcg|µg|ug|iu|i\.?e\.?|%)", raw, re.IGNORECASE)
+
+
+def _ocr_has_product_words(text: str) -> bool:
+    """True when OCR text holds at least two words a product search could use."""
+    return len(re.findall(r"[A-Za-zÄÖÜäöüß]{3,}", str(text or ""))) >= 2
+
+
 @st.cache_data(show_spinner=False, ttl=6 * 3600, max_entries=64)
 def _cached_ocr(image_bytes: bytes) -> str:
     text = str(bb.extract_image_text_with_blockbrain(image_bytes) or "")
     if not text.strip():
         raise RuntimeError("vision OCR returned no text")
+    if _is_ocr_refusal(text):
+        raise RuntimeError("vision OCR returned a refusal, not label text")
     return text
 
 
@@ -3827,7 +3854,12 @@ def _run_pending_analysis() -> None:
                         # Product-name fallback: if we still don't have a readable
                         # facts panel, treat the photo as a product shot and research
                         # the label from its visible brand / product name.
-                        if ocr_text.strip() and not bb.extraction_gate_report("\n".join(text_parts)).get("passed"):
+                        if (
+                            ocr_text.strip()
+                            and not _is_ocr_refusal(ocr_text)
+                            and _ocr_has_product_words(ocr_text)
+                            and not bb.extraction_gate_report("\n".join(text_parts)).get("passed")
+                        ):
                             _set_progress(min(96, pct + 6), "Researching the product from the label…")
                             researched_name, source_url = _research_product_from_label_text(ocr_text)
                             if researched_name:

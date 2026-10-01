@@ -205,3 +205,61 @@ def test_streamlit_config_caps_websocket_messages():
 
     config = (Path(__file__).resolve().parent.parent / ".streamlit" / "config.toml").read_text(encoding="utf-8")
     assert "maxMessageSize = 25" in config
+
+
+# --- F7: vision refusals are not cached or researched ---------------------------------------------
+
+@pytest.mark.parametrize(
+    "text, refusal",
+    [
+        ("I'm sorry, I can't read the text in this image right now.", True),
+        ("I am unable to read the label in this photo.", True),
+        ("Es tut mir leid, ich kann den Text nicht lesen.", True),
+        ("Sorry, I cannot help with that.", True),
+        ("Vitamin D3 20 µg 400%\nZink 10 mg 100%", False),
+        ("Doppelherz Magnesium 400 Depot", False),
+        ("I'm sorry if unclear: Vitamin C 80 mg 100%", False),  # holds a dose: label text
+    ],
+)
+def test_ocr_refusal_detection(sw, text, refusal):
+    assert sw._is_ocr_refusal(text) is refusal
+
+
+def test_a_vision_refusal_is_not_cached(sw, monkeypatch):
+    calls = []
+
+    def refusing_vision(image_bytes):
+        calls.append(1)
+        return "I'm sorry, I can't read the text in this image right now."
+
+    monkeypatch.setattr(bb, "extract_image_text_with_blockbrain", refusing_vision)
+    sw._cached_ocr.clear()
+    for _ in range(2):
+        with pytest.raises(RuntimeError):
+            sw._cached_ocr(b"same image bytes")
+    assert len(calls) == 2  # retried, not served from the cache
+    monkeypatch.setattr(bb, "extract_image_text_with_blockbrain", lambda b: calls.append(1) or "Zink 10 mg")
+    assert sw._cached_ocr(b"same image bytes") == "Zink 10 mg"
+    assert sw._cached_ocr(b"same image bytes") == "Zink 10 mg"
+    assert len(calls) == 3
+    sw._cached_ocr.clear()
+
+
+def test_a_refusal_is_never_sent_to_product_research(monkeypatch):
+    from pathlib import Path
+
+    from streamlit.testing.v1 import AppTest
+
+    research = []
+    monkeypatch.setattr(bb, "build_vision_image_variants", lambda data: [("fast_jpeg", b"jpeg bytes")])
+    monkeypatch.setattr(bb, "extract_image_text_with_blockbrain", lambda data: "I'm sorry, I can't read this image.")
+    monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: research.append(a) or "NONE")
+    app = str(Path(__file__).resolve().parent.parent / "swipe_mobile_app" / "app.py")
+    at = AppTest.from_file(app, default_timeout=60)
+    at.run()
+    at.session_state["swipe_pending_request"] = {"upload_bytes": b"photo", "camera_bytes": b"", "manual": "", "camera_barcode": ""}
+    at.session_state["swipe_is_analyzing"] = True
+    at.session_state["swipe_analysis_kicked"] = True
+    at.run()
+    assert research == []
+    assert any("No analyzable input found" in e.value for e in at.error)
