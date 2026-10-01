@@ -83,3 +83,42 @@ def test_process_wide_backstop_survives_new_sessions(sw, monkeypatch):
         results.append(sw._consume_llm_quota("generate"))
     assert results == [True, True, True, False]
     sw._global_llm_usage.clear()
+
+
+# --- F3: no background meal plan with sensitive settings ------------------------------------
+
+_REPLACE = [{
+    "decision": "replace", "component": "vitamin c", "dose_value": 80, "dose_unit": "mg", "form": "",
+    "selected_food": {"food_description": "Kiwifruit, green, raw", "amount_per_100g": 92.7, "unit": "mg"},
+}]
+
+
+@pytest.mark.parametrize(
+    "diet, pregnant, prefetched",
+    [
+        ("none", False, True), ("vegan", False, True), ("pescatarian", False, True),
+        ("none", True, False), ("vegan", True, False),
+        ("halal friendly", False, False), ("kosher style", False, False), ("gluten free", False, False),
+        ("lactose free", False, False), ("nut free", False, False), ("low sodium aware", False, False),
+    ],
+)
+def test_prefetch_skips_pregnancy_and_religious_or_health_diets(sw, session, monkeypatch, diet, pregnant, prefetched):
+    monkeypatch.setenv("BLOCKBRAIN_API_KEY", "k")
+    monkeypatch.setenv("SUPPSWIPE_PREFETCH_MEALS", "1")
+    session.update({"swipe_diet_profile_id": diet, "swipe_pregnant": pregnant})
+    calls = []
+    monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: calls.append(a) or "Plan")
+    sw._prefetch_meal_plan(_REPLACE, diet, 3)
+    _sys, _usr, key = sw._meal_plan_prompts(_REPLACE, diet, 3)
+    job = llm_cache.inflight(key)
+    if job is not None:
+        job.result(timeout=5)
+    assert bool(calls) is prefetched
+
+
+def test_privacy_note_mentions_meal_plans_and_the_background_prefetch(sw):
+    from pathlib import Path
+
+    source = Path(sw.__file__).read_text(encoding="utf-8")
+    assert "Meal plans and the benefit comparison send your chosen foods" in source
+    assert "prepared in the background" in source and "pregnancy setting" in source

@@ -2609,11 +2609,27 @@ def _generate_meal_plan(
     return _stream_llm_text(key, system_prompt, user_prompt, placeholder=placeholder)
 
 
+# Diets whose meal-plan prompt may be prepared in the background. A religious
+# or health-related filter (Halal, Kosher, gluten- / lactose-free, nut-free,
+# low-sodium) and the pregnancy setting are sensitive (GDPR Art. 9): they are
+# sent to Blockbrain only when the user taps "Generate meals".
+_PREFETCH_DIET_IDS = frozenset({"none", "vegetarian", "vegan", "pescatarian"})
+
+
+def _prefetch_allowed(diet_id: Any = None, pregnant: bool | None = None) -> bool:
+    if pregnant is None:
+        pregnant = _pregnancy_mode()
+    if diet_id is None:
+        diet_id = st.session_state.get("swipe_diet_profile_id", "none")
+    return not pregnant and bb.normalize_lookup_key(str(diet_id or "none")) in _PREFETCH_DIET_IDS
+
+
 def _prefetch_meal_plan(replace_items: list[dict[str, Any]], diet_label: str, num_meals: int = 3) -> None:
     """Start writing the default meal plan in the background as soon as the
     results screen opens, so "Generate meals" is instant (or nearly) when tapped.
-    Disable with SUPPSWIPE_PREFETCH_MEALS=0."""
-    if not replace_items:
+    Not with the pregnancy setting or a religious / health diet (see
+    _PREFETCH_DIET_IDS). Disable with SUPPSWIPE_PREFETCH_MEALS=0."""
+    if not replace_items or not _prefetch_allowed():
         return
     if str(os.getenv("SUPPSWIPE_PREFETCH_MEALS", "1") or "1").strip().lower() in {"0", "false", "off", "no"}:
         return
@@ -4056,6 +4072,11 @@ def _render_privacy_popover() -> None:
             "- Label photos, pasted text or links and *Ask AI* questions are sent to "
             "[Blockbrain](https://theblockbrain.ai), the AI service that reads labels and writes answers. "
             "Don't include personal details.\n"
+            "- Meal plans and the benefit comparison send your chosen foods, your dietary filter and the "
+            "pregnancy setting to Blockbrain. A default meal plan is prepared in the background when your "
+            "results open — but not with the pregnancy setting or a religious or health-related filter "
+            "(Halal, Kosher, gluten-, lactose- or nut-free, low-sodium): those are sent only when you tap "
+            "*Generate meals*.\n"
             "- Barcode numbers are looked up in public product databases and web search "
             "(Open Food Facts, UPCitemdb, DuckDuckGo). Pasted links are fetched by the app's server.\n"
             "- Your scan history and the scan you're working on (with your dietary filter and pregnancy "
