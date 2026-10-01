@@ -318,6 +318,50 @@ def test_clear_history_on_the_results_forgets_the_saved_scan(page):
     assert page.get_by_role("button", name="Resume your last scan").count() == 0
 
 
+def test_filter_change_keeps_the_chosen_food_while_offered(page):
+    # Card 2 is vitamin D: switching to Vegan drops the fish but keeps the
+    # UV mushrooms, so a chosen mushroom stays selected.
+    start_sample(page)
+    name = card_name(page)
+    card(page).locator("#btnKeep").click()
+    assert "vitamin d" in wait_name_change(page, name).lower()
+    settle(page)
+    chosen = choose_option(page, 2)
+    assert "mushroom" in chosen.lower()
+    page.locator('[data-testid="stButtonGroup"] button', has_text="Vegan").click()
+    settle(page)
+    page.get_by_text("Filter: Vegan").wait_for(timeout=5000)
+    assert selected_option(page) == chosen
+
+
+def _active_chips(page) -> list[str]:
+    return page.evaluate(
+        """() => [...document.querySelectorAll('[data-testid="stButtonGroup"] button')]
+            .filter(b => b.getAttribute('aria-checked') === 'true').map(b => b.innerText)"""
+    )
+
+
+def test_resume_keeps_the_diet_filter_chip(page):
+    start_sample(page)
+    page.locator('[data-testid="stButtonGroup"] button', has_text="Vegan").click()
+    settle(page)
+    name = card_name(page)
+    card(page).locator("#btnKeep").click()
+    wait_name_change(page, name)
+    settle(page, 1.2)
+    page.reload(wait_until="networkidle")
+    page.get_by_role("button", name="Resume your last scan").click(timeout=20000)
+    card(page).locator("#card .name").wait_for(timeout=20000)
+    settle(page)
+    assert _active_chips(page) == ["Vegan"]
+    name = card_name(page)
+    card(page).locator("#btnKeep").click()  # the next run keeps the filter
+    wait_name_change(page, name)
+    settle(page)
+    assert _active_chips(page) == ["Vegan"]
+    page.get_by_text("Filter: Vegan").wait_for(timeout=5000)
+
+
 def test_build_tag_in_about_popover(page):
     page.get_by_role("button", name="🔒 About & privacy").click()
     page.get_by_text("Build ", exact=False).first.wait_for(timeout=5000)

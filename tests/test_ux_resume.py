@@ -91,8 +91,7 @@ def test_restore_rebuilds_cards_and_reapplies_decisions(sw, sample_cards):
     assert state["swipe_decisions"][first]["card_index"] == 0
     assert state["swipe_decisions"][second]["decision"] == "keep"
     assert state["swipe_index"] == 2
-    assert state["swipe_diet_profile_id"] == "vegetarian"
-    assert "swipe_diet_pills" not in state  # chips start from the profile id (no state-vs-default warning)
+    assert state["swipe_diet_profile_id"] == "vegetarian" == state["swipe_diet_pills"]
     assert state["swipe_last_auto_signature"]
 
 

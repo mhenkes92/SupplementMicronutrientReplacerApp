@@ -2433,11 +2433,14 @@ def _render_dietary_pills() -> None:
     if hasattr(st, "pills"):
         # Native chips wrap onto several lines on a phone; the old horizontal
         # radio squeezed every label into a one-letter-wide column.
+        # The key is the chips' identity, so `default` only seeds them when they
+        # have no state yet. Passing it while the state is set (e.g. by Resume)
+        # makes Streamlit log a default-vs-state warning.
         st.pills(
             "Dietary filter",
             options=ordered_ids,
             selection_mode="single",
-            default=selected_id,
+            default=None if "swipe_diet_pills" in st.session_state else selected_id,
             key="swipe_diet_pills",
             on_change=_on_diet_profile_change,
             label_visibility="collapsed",
@@ -3058,9 +3061,7 @@ def _restore_scan(state: Any, saved: dict[str, Any]) -> bool:
     state["swipe_index"] = max(0, min(len(cards), index))
     state["swipe_edit_return"] = False
     state["swipe_diet_profile_id"] = diet
-    # The filter chips start from swipe_diet_profile_id (their default). Also
-    # setting their key here makes Streamlit log a default-vs-state warning.
-    state.pop("swipe_diet_pills", None)
+    state["swipe_diet_pills"] = diet  # keep the filter chips in step
     state["swipe_last_auto_signature"] = sig
     if saved.get("recorded"):
         state["swipe_history_recorded_sig"] = sig  # already in the scan history
