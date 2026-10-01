@@ -87,7 +87,9 @@ def test_organ_meat_is_the_default_only_when_strictly_more_practical(sw):
 
 
 def test_default_prefers_a_practical_portion(sw):
-    card = {"component": "magnesium", "nutrient_key": "magnesium", "dose_value": 400, "dose_unit": "mg", "form": ""}
+    # 340 mg: ~68 g of pumpkin seeds (within the ~70 g/day nuts-and-seeds
+    # maximum, final review F4) beats ~430 g of raw spinach ("a lot of food").
+    card = {"component": "magnesium", "nutrient_key": "magnesium", "dose_value": 340, "dose_unit": "mg", "form": ""}
     big = {"food_description": "Spinach, raw", "food_category": "Vegetables and Vegetable Products", "amount_per_100g": 79.0, "unit": "mg"}
     seeds = {"food_description": "Seeds, pumpkin seeds (pepitas), raw", "food_category": "Nut and Seed Products", "amount_per_100g": 499.7, "unit": "mg"}
     assert sw._default_food_index([big, seeds], card) == 1

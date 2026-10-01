@@ -830,24 +830,72 @@ def _amount_to_match_dose(decision: dict[str, Any]) -> str:
 
 # Daily portions above these sizes are flagged instead of presented as a normal
 # serving: 400-1000 g is a lot of food, more than 1 kg/day is not practical.
+# Energy-dense foods are judged by energy too: a portion of 600 kcal or more
+# for one nutrient (~110 g of nuts) is a lot of food whatever it weighs.
 _PORTION_LARGE_G = 400.0
 _PORTION_IMPRACTICAL_G = 1000.0
+_PORTION_LARGE_KCAL = 600.0
+
+# Realistic daily maximum of foods that a weight threshold alone would call a
+# normal portion (USDA names / categories): chia (pre-packed chia sold in the
+# EU must state a 15 g/day maximum), nuts and seeds (~70 g, a generous
+# handful; bb.SERVING_SIZE_GROUP_RULES "nuts_seeds_group"), egg yolks (~3 a
+# day at ~17 g), whole eggs (~4 a day), garlic (~3 cloves) and fish roe / caviar.
+_NUT_SEED_NAME_RE = re.compile(
+    r"^\s*(?:nuts|seeds|peanuts?|almonds?|walnuts?|hazelnuts?|cashews?|pistachios?|pecans?|macadamias?|"
+    r"brazil ?nuts?|pine nuts?|sunflower seeds?|pumpkin seeds?|flaxseeds?|linseeds?|sesame seeds?)\b",
+    re.IGNORECASE,
+)
+_NUT_SEED_NOT_SOLID_RE = re.compile(r"\b(?:water|milk|cream|beverage|drink|oil)\b", re.IGNORECASE)
+_FOOD_DAILY_MAX_RULES: tuple[tuple[re.Pattern[str], float], ...] = (
+    (re.compile(r"\bchia\b", re.IGNORECASE), 15.0),
+    (re.compile(r"\byolks?\b", re.IGNORECASE), 51.0),
+    (re.compile(r"^\s*eggs?\b", re.IGNORECASE), 200.0),
+    (re.compile(r"\bgarlic\b", re.IGNORECASE), 10.0),
+    (re.compile(r"\b(?:roe|caviar)\b", re.IGNORECASE), 50.0),
+)
+_NUTS_SEEDS_MAX_DAILY_G = 70.0
 
 
 def _food_max_daily_g(food: dict[str, Any] | None) -> float:
-    """A food's own realistic daily maximum in grams ("max_daily_g"), or 0."""
-    try:
-        return float((food or {}).get("max_daily_g") or 0.0) if isinstance(food, dict) else 0.0
-    except Exception:
+    """A food's own realistic daily maximum in grams ("max_daily_g", else the
+    rules above), or 0 when it has none."""
+    if not isinstance(food, dict):
         return 0.0
+    try:
+        own = float(food.get("max_daily_g") or 0.0)
+    except Exception:
+        own = 0.0
+    if own > 0:
+        return own
+    name, category = _food_name_and_category(food)
+    for pattern, max_g in _FOOD_DAILY_MAX_RULES:
+        if pattern.search(name):
+            return max_g
+    nut_or_seed = "nut and seed" in category.lower() or _NUT_SEED_NAME_RE.search(name)
+    if nut_or_seed and not _NUT_SEED_NOT_SOLID_RE.search(name):
+        return _NUTS_SEEDS_MAX_DAILY_G
+    return 0.0
+
+
+def _portion_kcal(grams: float | None, food: dict[str, Any] | None) -> float | None:
+    """Energy of `grams` of a USDA food (kcal), or None when unknown."""
+    if not isinstance(food, dict) or not grams:
+        return None
+    try:
+        kcal_100g = bb.food_energy_kcal_per_100g(str(food.get("food_description", "") or ""))
+    except Exception:
+        kcal_100g = None
+    return float(grams) * float(kcal_100g) / 100.0 if kcal_100g else None
 
 
 def _portion_practicality(grams: float | None, food: dict[str, Any] | None = None) -> str:
-    """"ok" | "large" (400-1000 g/day) | "impractical" (> 1 kg/day) for a daily food amount.
+    """"ok" | "large" (400-1000 g/day, or >= 600 kcal) | "impractical" (> 1 kg/day)
+    for a daily food amount.
 
-    A food with its own realistic daily maximum ("max_daily_g": ~30 g of
-    fortified yeast flakes, ~750 ml of a fortified plant drink) is
-    "impractical" above it."""
+    A food with its own realistic daily maximum (_food_max_daily_g: ~30 g of
+    fortified yeast flakes, ~750 ml of a fortified plant drink, 15 g of chia,
+    ~70 g of nuts, ~3 egg yolks) is "impractical" above it."""
     try:
         value = float(grams) if grams is not None else 0.0
     except Exception:
@@ -856,6 +904,9 @@ def _portion_practicality(grams: float | None, food: dict[str, Any] | None = Non
     if value > _PORTION_IMPRACTICAL_G or (own_max > 0 and value > own_max):
         return "impractical"
     if value >= _PORTION_LARGE_G:
+        return "large"
+    kcal = _portion_kcal(value, food)
+    if kcal is not None and kcal >= _PORTION_LARGE_KCAL:
         return "large"
     return "ok"
 
@@ -935,6 +986,9 @@ def _portion_core_for_target(
         # grams, never "~0 kg/day".
         return f"not practical from food alone (~{_format_grams(grams)}/day; realistic max ~{_format_grams(_food_max_daily_g(food))}/day)"
     if practicality == "large":
+        kcal = _portion_kcal(grams, food)
+        if kcal is not None and kcal >= _PORTION_LARGE_KCAL:
+            return f"a lot of food (~{bb.format_float(grams, 0)} g/day, ~{_round_total(kcal)} kcal)"
         return f"a lot of food (~{bb.format_float(grams, 0)} g/day)"
 
     grams_txt = _format_grams(grams)
@@ -1233,11 +1287,21 @@ def _card_portions(food: dict[str, Any] | None, dose_value: Any, dose_unit: str,
     return grams
 
 
+def _edible_portion(grams: float, food: dict[str, Any] | None) -> float | None:
+    """The part of a card portion someone could actually eat: none of one over
+    1 kg/day, at most the food's realistic daily maximum otherwise (70 g of
+    Brazil nuts still hold far too much selenium)."""
+    if grams > _PORTION_IMPRACTICAL_G:
+        return None
+    own_max = _food_max_daily_g(food)
+    return min(grams, own_max) if own_max > 0 else grams
+
+
 def _card_portion_grams(food: dict[str, Any] | None, dose_value: Any, dose_unit: str, component: str, form: str = "") -> float | None:
-    """The largest of the card's portions that someone could actually eat,
-    leaving out one the card already calls "not practical from food alone".
-    None if there is none."""
-    edible = [g for g in _card_portions(food, dose_value, dose_unit, component, form) if _portion_practicality(g, food) != "impractical"]
+    """The largest of the card's portions that someone could actually eat
+    (_edible_portion: none over 1 kg/day, capped at the food's realistic daily
+    maximum). None if there is none."""
+    edible = [e for g in _card_portions(food, dose_value, dose_unit, component, form) if (e := _edible_portion(g, food))]
     return max(edible) if edible else None
 
 
@@ -1413,7 +1477,7 @@ def _default_food_index(foods: list[dict[str, Any]], card: dict[str, Any], profi
         grams = _target_grams(food)
         portions = _card_portions(food, dose_value, dose_unit, component, form) or ([grams] if grams else [])
         # Co-nutrient limits on the portions someone could eat; liver vitamin A on all of them.
-        edible = [g for g in portions if _portion_practicality(g, food) != "impractical"]
+        edible = [e for g in portions if (e := _edible_portion(g, food))]
         facts.append({
             "unsafe": _food_exceeds_a_limit(food, max(edible, default=None), component, max(portions, default=None)),
             "organ": bb.food_is_organ_meat(name, category),

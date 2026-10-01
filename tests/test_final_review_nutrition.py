@@ -128,3 +128,94 @@ def test_fortified_b12_portion_says_check_the_label(sw):
     assert "check the label" not in sw._portion_for_target(drink, 2.0, "mcg", "calcium")
     beef = {"food_description": "Beef, liver, raw", "food_category": "Beef Products", "amount_per_100g": 59.3, "unit": "mcg"}
     assert "check the label" not in sw._portion_for_target(beef, 2.5, "mcg", "vitamin b12")
+
+
+# --- F4: realistic daily maxima and energy, not weight alone -----------------------
+
+def _row(name: str, category: str, amount: float, unit: str) -> dict:
+    return {"food_description": name, "food_category": category, "amount_per_100g": amount, "unit": unit}
+
+
+_CHIA = _row("Chia seeds, dry, raw", "Cereal Grains and Pasta", 631.0, "mg")
+_YOLK = _row("Egg, yolk, raw, fresh", "Dairy and Egg Products", 0.125, "g")
+_PISTACHIO = _row("Nuts, pistachio nuts, raw", "Nut and Seed Products", 1.7, "mg")
+_PEANUTS = _row("Peanuts, all types, raw", "Legumes and Legume Products", 12.07, "mg")
+_GARLIC = _row("Garlic, raw", "Vegetables and Vegetable Products", 1.235, "mg")
+_ROE = _row("Fish, roe, mixed species, raw", "Finfish and Shellfish Products", 7.0, "mg")
+
+
+@pytest.mark.parametrize(
+    "food, max_g",
+    [(_CHIA, 15.0), (_YOLK, 51.0), (_PISTACHIO, 70.0), (_PEANUTS, 70.0), (_GARLIC, 10.0), (_ROE, 50.0),
+     (_row("Egg, whole, raw, fresh", "Dairy and Egg Products", 2.0, "mcg"), 200.0),
+     (_row("Seeds, sunflower seed kernels, dried", "Nut and Seed Products", 1.1, "mg"), 70.0)],
+)
+def test_foods_have_a_realistic_daily_maximum(sw, food, max_g):
+    assert sw._food_max_daily_g(food) == max_g
+    assert sw._portion_practicality(max_g * 0.9, food) in ("ok", "large")
+    assert sw._portion_practicality(max_g * 1.5, food) == "impractical"
+
+
+@pytest.mark.parametrize(
+    "food",
+    [_row("Nuts, coconut water", "Nut and Seed Products", 1.0, "mg"), _row("Spinach, raw", "Vegetables and Vegetable Products", 79.0, "mg"),
+     _row("Fish, salmon, Atlantic, wild, raw", "Finfish and Shellfish Products", 3.2, "mcg"),
+     _row("Noodles, egg, cooked", "Cereal Grains and Pasta", 1.0, "mg")],
+)
+def test_other_foods_keep_the_weight_thresholds(sw, food):
+    assert sw._food_max_daily_g(food) == 0.0
+
+
+@pytest.mark.parametrize(
+    "food, dose, unit, component, shown",
+    [
+        (_CHIA, 1200, "mg", "calcium", "not practical from food alone (~190 g/day; realistic max ~15 g/day)"),
+        (_PISTACHIO, 6, "mg", "vitamin b6", "not practical from food alone (~353 g/day; realistic max ~70 g/day)"),
+        (_GARLIC, 2.8, "mg", "vitamin b6", "not practical from food alone (~227 g/day; realistic max ~10 g/day)"),
+        (_ROE, 24, "mg", "vitamin e", "not practical from food alone (~343 g/day; realistic max ~50 g/day)"),
+    ],
+)
+def test_reviewer_portions_are_flagged(sw, food, dose, unit, component, shown):
+    assert sw._portion_for_target(food, dose, unit, component) == shown
+
+
+def test_egg_yolk_portion_past_three_yolks_is_not_practical(sw):
+    text = sw._portion_for_target(_YOLK, 375, "mg", "omega-3")
+    assert text.startswith("not practical from food alone (~300 g/day") and "realistic max ~51 g/day" in text
+
+
+def test_energy_dense_portion_is_a_lot_of_food(sw):
+    rice = bb.fortified_food_options("vitamin b12")  # curated rows have no USDA energy
+    assert sw._portion_kcal(100, rice[0]) is None
+    black_rice = _row("Rice, black, unenriched, raw", "Cereal Grains and Pasta", 8.28, "mg")
+    kcal = sw._portion_kcal(300, black_rice)
+    assert kcal and kcal > 600
+    assert sw._portion_practicality(300, black_rice) == "large"
+    text = sw._portion_for_target(black_rice, 25, "mg", "niacin")
+    assert text.startswith("a lot of food (~302 g/day, ~") and text.endswith(" kcal)")
+
+
+def test_brazil_nuts_past_their_maximum_still_warn_about_selenium(sw):
+    brazil = _row("Nuts, brazilnuts, raw", "Nut and Seed Products", 376.0, "mg")
+    warning = sw._selected_food_warning(brazil, 400, "mg", "magnesium")
+    assert "~70 g of this food also gives" in warning and "selenium" in warning
+
+
+@pytest.mark.parametrize(
+    "text, diet, banned",
+    [
+        ("Calcium 1200 mg", "vegetarian", "chia"),
+        ("Vitamin B6 6 mg", "none", "pistachio"),
+        ("Niacin 50 mg", "vegan", "peanut"),
+        ("Riboflavin 2,8 mg", "none", "almond"),
+        ("Pantothensäure 12 mg", "none", "sunflower"),
+        ("Vitamin B6 2,8 mg", "nut free", "garlic"),
+        ("Vitamin E 24 mg", "nut free", "roe"),
+        ("Biotin 100 µg", "nut free", "yolk"),
+    ],
+)
+def test_reviewer_defaults_are_no_longer_impractical_foods(sw, profiles, text, diet, banned):
+    [card] = _cards(sw, text)
+    foods = _shown(sw, card, profiles[diet])
+    food = foods[sw._default_food_index(foods, card, profiles[diet])]
+    assert banned not in food["food_description"].lower(), food

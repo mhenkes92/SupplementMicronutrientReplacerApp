@@ -77,7 +77,10 @@ def test_vitamin_e_natural_vs_synthetic_iu(sw):
     assert sw._portion_for_target(almonds_n, 400, "iu", natural["component"], natural["form"]).startswith(
         "not practical from food alone (~"
     )
-    assert sw._portion_for_target(almonds_s, 400, "iu", synthetic["component"], synthetic["form"]) == "a lot of food (~702 g/day)"
+    # (almonds: at most ~70 g a day, final review F4)
+    assert sw._portion_for_target(almonds_s, 400, "iu", synthetic["component"], synthetic["form"]) == (
+        "not practical from food alone (~702 g/day; realistic max ~70 g/day)"
+    )
 
 
 def test_magnesium_citrate(sw):
