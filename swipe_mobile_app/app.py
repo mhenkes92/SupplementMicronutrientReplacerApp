@@ -670,7 +670,7 @@ def _answer_ask_ai_question(
 
 
 def _render_rag_chat_popup(card: dict[str, Any], component_key: str, index: int) -> None:
-    with st.popover("💬 Ask AI", use_container_width=True):
+    with st.popover("💬 Ask AI", width="stretch"):
         st.caption("Ask AI research questions about this micronutrient in chat form.")
         chat_store: dict[str, list[dict[str, str]]] = st.session_state.get("swipe_rag_chats", {})
         history = list(chat_store.get(component_key, []))
@@ -694,13 +694,13 @@ def _render_rag_chat_popup(card: dict[str, Any], component_key: str, index: int)
             send_clicked = st.button(
                 "Send",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
                 key=f"swipe_rag_send_{component_key}_{index}",
             )
         with clear_col:
             clear_clicked = st.button(
                 "Clear chat",
-                use_container_width=True,
+                width="stretch",
                 key=f"swipe_rag_clear_{component_key}_{index}",
             )
 
@@ -2504,7 +2504,7 @@ def _render_scan_history_popover() -> None:
     history = _load_scan_history()
     if not history:
         return
-    with st.popover(f"🕘 Recent scans ({len(history)})", use_container_width=True):
+    with st.popover(f"🕘 Recent scans ({len(history)})", width="stretch"):
         st.caption("Your past scans, saved only in this browser — newest first.")
         for entry in reversed(history[-15:]):
             ts = str(entry.get("ts", "") or "")
@@ -2520,7 +2520,7 @@ def _render_scan_history_popover() -> None:
             for k in kept:
                 st.markdown(f"- 💊 {_nutrient_title(k.get('component'))} {k.get('dose', '')}".rstrip())
             st.divider()
-        if st.button("Clear history", use_container_width=True, key="swipe_clear_history"):
+        if st.button("Clear history", width="stretch", key="swipe_clear_history"):
             st.session_state["suppswipe_scan_history"] = []
             st.session_state["_suppswipe_history_clear"] = True
             _forget_saved_scan()
@@ -2569,13 +2569,13 @@ def _render_final_actions(
                 plan_box.markdown(ready)
                 st.session_state["swipe_meal_plan"] = ready
                 st.session_state["swipe_meal_plan_key"] = plan_key
-                if st.button("🔄 Different meals", use_container_width=True, key="swipe_regen_meal"):
+                if st.button("🔄 Different meals", width="stretch", key="swipe_regen_meal"):
                     llm_cache.drop(plan_key)
                     with st.spinner("Cooking up new meals…"):
                         st.session_state["swipe_meal_plan"] = _generate_meal_plan(
                             replace_items, diet_label, int(num_meals), placeholder=plan_box
                         )
-            elif st.button("Generate meals", type="primary", use_container_width=True, key="swipe_gen_meal"):
+            elif st.button("Generate meals", type="primary", width="stretch", key="swipe_gen_meal"):
                 with st.spinner("Cooking up your meals…"):
                     plan = _generate_meal_plan(replace_items, diet_label, int(num_meals), placeholder=plan_box)
                 st.session_state["swipe_meal_plan"] = plan
@@ -2632,7 +2632,7 @@ def _render_final_actions(
             data=share_text,
             file_name="suppswipe_results.txt",
             mime="text/plain",
-            use_container_width=True,
+            width="stretch",
             key="swipe_share_dl",
         )
     with tab_why:
@@ -2650,7 +2650,7 @@ def _render_final_actions(
             elif st.button(
                 "Show benefit comparison",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
                 key="swipe_gen_benefits",
             ):
                 with st.spinner("Gathering whole-food benefits…"):
@@ -3498,7 +3498,7 @@ def _analyze_dialog() -> None:
                 key=f"dlg_manual_{nonce}",
                 placeholder="e.g. https://… or 4006040000000 or 'Vitamin D3 20 µg, Zink 10 mg …'",
             )
-            submitted = st.form_submit_button("Analyze", type="primary", use_container_width=True)
+            submitted = st.form_submit_button("Analyze", type="primary", width="stretch")
         manual_text = str(manual or "").strip() if submitted else ""
         if submitted and not manual_text:
             st.warning("Paste a link, a barcode number or the label text first.")
@@ -3507,7 +3507,7 @@ def _analyze_dialog() -> None:
         # Close the dialog and let the main app run the analysis immediately.
         st.rerun(scope="app")
 
-    if st.button("Cancel", use_container_width=True, key=f"dlg_cancel_{nonce}"):
+    if st.button("Cancel", width="stretch", key=f"dlg_cancel_{nonce}"):
         st.rerun()
 
 
@@ -3519,10 +3519,10 @@ def _confirm_restart_dialog() -> None:
     )
     col_cancel, col_ok = st.columns(2)
     with col_cancel:
-        if st.button("Cancel", use_container_width=True, key="swipe_restart_cancel"):
+        if st.button("Cancel", width="stretch", key="swipe_restart_cancel"):
             st.rerun()
     with col_ok:
-        if st.button("Start over", type="primary", use_container_width=True, key="swipe_restart_confirm"):
+        if st.button("Start over", type="primary", width="stretch", key="swipe_restart_confirm"):
             _reset_swipe_state()
             _forget_saved_scan()
             st.session_state["swipe_open_analyze"] = True
@@ -3531,7 +3531,7 @@ def _confirm_restart_dialog() -> None:
 
 def _render_analyze_bar() -> None:
     label = f"Analyze my Supplement {LEFT_SWIPE_ICON} → {TITLE_WHOLE_FOOD_ICON}"
-    if st.button(label, type="primary", use_container_width=True, key="swipe_analyze_btn"):
+    if st.button(label, type="primary", width="stretch", key="swipe_analyze_btn"):
         if _selected_session_in_progress():
             st.session_state["swipe_confirm_restart"] = True
         else:
@@ -3543,7 +3543,7 @@ def _render_analyze_bar() -> None:
 
 def _render_privacy_popover() -> None:
     """Plain-language notice of what the app does with a visitor's input."""
-    with st.popover("🔒 About & privacy", use_container_width=True):
+    with st.popover("🔒 About & privacy", width="stretch"):
         st.markdown(
             "**SuppSwipe** gives general nutrition information — it is not medical advice. "
             "Talk to a doctor or pharmacist before stopping a supplement you were prescribed, "
@@ -3977,13 +3977,13 @@ def _render_card() -> None:
         if saved_scan is not None:
             st.button(
                 _resume_label(saved_scan),
-                use_container_width=True,
+                width="stretch",
                 key="swipe_resume_scan",
                 on_click=_resume_saved_scan,
             )
         if st.session_state.pop("swipe_resume_failed", False):
             st.caption("Couldn't restore your last scan — please scan the label again.")
-        if st.button("✨ Try it with a sample label", use_container_width=True, key="swipe_try_sample"):
+        if st.button("✨ Try it with a sample label", width="stretch", key="swipe_try_sample"):
             if _stage_analysis_from_inputs(b"", b"", _SAMPLE_LABEL_TEXT):
                 st.rerun()
         return
@@ -4195,7 +4195,7 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
                         label += f" · {dose}"
                     st.button(
                         label,
-                        use_container_width=True,
+                        width="stretch",
                         key=f"final_keep_{component_key}",
                         on_click=_open_card,
                         args=(int(d.get("card_index", 0)), True),
@@ -4220,7 +4220,7 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
                         label += f" → {detail}"
                     st.button(
                         label,
-                        use_container_width=True,
+                        width="stretch",
                         key=f"final_repl_{component_key}",
                         help=f"USDA: {food.get('food_description', '')}" if food.get("food_description") else None,
                         on_click=_open_card,
@@ -4231,7 +4231,7 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
                     food_name = _food_name(d.get("selected_food")) or "this food"
                     st.button(
                         f"⚠️ {_nutrient_title(d.get('component')) or 'Unknown'} → {food_name} doesn't fit {diet_name} — tap to choose another",
-                        use_container_width=True,
+                        width="stretch",
                         key=f"final_misfit_{component_key}",
                         on_click=_open_card,
                         args=(int(d.get("card_index", 0)), True),
@@ -4279,7 +4279,7 @@ def _render_athlete_rda_popup() -> None:
     of Dietary Supplements RDA fact sheets. General guidance only — kept in a
     popover so the long table doesn't push the results down.
     """
-    with st.popover("\U0001F3C3 Athlete RDA guide", use_container_width=True):
+    with st.popover("\U0001F3C3 Athlete RDA guide", width="stretch"):
         st.caption(
             "Approximate daily targets for every micronutrient the app tracks. "
             "EU NRV = the reference intake behind the %NRV on EU labels; adult "
