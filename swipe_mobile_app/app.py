@@ -2871,6 +2871,12 @@ def _render_header() -> None:
             [data-testid="stButtonGroup"] button {
                 min-height: 40px;
             }
+            @media (max-width: 360px) {
+                [data-testid="stButtonGroup"] button {
+                    padding-left: 0.55rem;
+                    padding-right: 0.55rem;
+                }
+            }
             /* Long labels (results items, "doesn't fit Vegan — tap to choose
                another") wrap instead of ending in an ellipsis. */
             .stButton button [data-testid="stMarkdownContainer"],
@@ -3628,13 +3634,18 @@ def _analyze_dialog() -> None:
     precheck_error = _blockbrain_ready_error()
     if precheck_error:
         st.error(precheck_error)
-    st.caption("Photos and files are analysed as soon as you add them; for links or text, tap Analyze.")
-
-    method = st.radio(
+    method = st.segmented_control(
         "How would you like to add your supplement?",
-        options=["📷 Photo / Barcode", "🖼️ File / Gallery", "🔗 URL / Text"],
+        options=["📷 Camera", "🖼️ Upload", "🔗 Paste"],
+        default="📷 Camera",
+        required=True,
         key=f"dlg_method_{nonce}",
         label_visibility="collapsed",
+        width="stretch",
+    ) or "📷 Camera"
+    st.caption(
+        "Snap or upload the nutrition table or the barcode — it's read right away. "
+        "Or paste a product link, a barcode number or the label text."
     )
 
     upload_bytes = b""
@@ -3642,7 +3653,7 @@ def _analyze_dialog() -> None:
     camera_barcode = ""
     manual_text = ""
 
-    if "Photo" in method:
+    if "Camera" in method:
         # Custom back-camera component (getUserMedia facingMode 'environment').
         # Falls back to Streamlit's default camera if the component is unavailable.
         if _back_camera is not None:
@@ -3656,7 +3667,7 @@ def _analyze_dialog() -> None:
                 label_visibility="collapsed",
             )
             camera_bytes = camera.getvalue() if camera is not None else b""
-    elif "File" in method:
+    elif "Upload" in method:
         upload = st.file_uploader(
             "Choose an image from your files or gallery",
             type=["png", "jpg", "jpeg", "webp"],

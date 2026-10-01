@@ -241,11 +241,13 @@ def test_results_tabs_show_their_content(page):
     wait_name_change(page, name)
     settle(page)
     finish_all_cards(page, replace=True)
+    page.get_by_role("tab", name="📤 Share").wait_for(timeout=10000)  # all tabs drawn
     tabs = page.get_by_role("tab")
     assert [t.strip() for t in tabs.all_inner_texts()] == ["🥗 Plan", "🍽️ Meals", "🛒 Shopping", "💬 Ask AI", "📤 Share"]
     page.locator(".plan-hero").wait_for(timeout=5000)
-    assert page.get_by_role("button", name="Athlete RDA guide").count() == 1
-    assert page.get_by_role("button", name="✎ Change a choice").count() == 1
+    for name in ("Athlete RDA guide", "✎ Change a choice"):
+        page.get_by_role("button", name=name).wait_for(timeout=5000)
+        assert page.get_by_role("button", name=name).count() == 1
     page.get_by_role("tab", name="🍽️ Meals").click()
     page.get_by_text("Quick ideas").wait_for(timeout=5000)
     page.get_by_role("tab", name="🛒 Shopping").click()
