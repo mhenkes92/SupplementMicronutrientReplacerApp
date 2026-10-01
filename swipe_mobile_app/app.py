@@ -1232,10 +1232,25 @@ def _co_nutrient_excesses(food: dict[str, Any] | None, grams: float | None, comp
     return out
 
 
+def _algae_with_unknown_iodine(food: dict[str, Any] | None, component: str) -> bool:
+    """Seaweed / algae (the B12 algae regex of bb._NUTRIENT_FOOD_EXCLUSIONS)
+    without a USDA iodine value, on a card for another nutrient: its iodine
+    is unknown and can be far above the upper limit (a few grams of kelp), so
+    the co-nutrient check cannot clear it."""
+    name, _category = _food_name_and_category(food)
+    algae = bb._NUTRIENT_FOOD_EXCLUSIONS.get("vitamin b12")
+    if not name or algae is None or not algae.search(name) or bb.canonical_nutrient_key(component) == "iodine":
+        return False
+    return bb.food_nutrient_amount(name, "iodine") is None
+
+
 def _food_exceeds_a_limit(food: dict[str, Any] | None, grams: float | None, component: str, liver_grams: float | None = None) -> bool:
     """True when the portion breaks a co-nutrient upper limit, or the liver
     portion (`liver_grams`, default `grams`) its vitamin A limit (liver of
-    unknown vitamin A content counts as over)."""
+    unknown vitamin A content counts as over), or the food is seaweed of
+    unknown iodine content (counts as over)."""
+    if _algae_with_unknown_iodine(food, component):
+        return True
     if _is_liver(food):
         name, category = _food_name_and_category(food)
         preformed = bb.food_preformed_vitamin_a(name, category)
@@ -1253,6 +1268,13 @@ def _selected_food_warning(food: dict[str, Any] | None, dose_value: Any, dose_un
     grams = _card_portion_grams(food, dose_value, dose_unit, component, form)
     # Liver: any portion the card names, even a "not practical" one.
     parts = [_liver_vitamin_a_warning(food, _all_portion_grams(food, dose_value, dose_unit, component, form), component)]
+    if _algae_with_unknown_iodine(food, component):
+        iodine = _UPPER_LIMITS["iodine"]
+        parts.append(
+            f"⚠️ Seaweed can hold far more iodine than the {bb.format_float(float(iodine['limit']))} "
+            f"{iodine['unit']}/day safe upper limit, and USDA lists no iodine value for this one — keep it to "
+            "small, occasional portions, not a daily staple."
+        )
     for key, amount, entry in _co_nutrient_excesses(food, grams, component):
         what = "preformed vitamin A" if key == "vitamin a" else entry["name"]
         parts.append(
@@ -1267,7 +1289,7 @@ def _selected_food_warning(food: dict[str, Any] | None, dose_value: Any, dose_un
 # necessarily the most sensible one). _default_food_index picks an everyday
 # choice; the whole ranked list stays in the dropdown:
 #   1. no food whose portion breaks a co-nutrient upper limit (liver vitamin A,
-#      Brazil-nut selenium, ...);
+#      Brazil-nut selenium, ...) or seaweed of unknown iodine content;
 #   1b. no food the card's Replace soft-block refuses (vegan / vegetarian B12:
 #      a B12-fortified food first; see _replace_block_reason);
 #   2. no organ meat (liver, kidney, heart, giblets) when a non-organ food can

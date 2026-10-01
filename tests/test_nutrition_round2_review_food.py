@@ -142,3 +142,36 @@ def test_omnivore_b12_default_is_a_whole_food_not_a_fortified_plant_food(sw, pro
                               "amount_per_100g": 9.43, "unit": "mcg"}]
     foods.sort(key=lambda f: f["amount_per_100g"], reverse=True)
     assert "tuna" in foods[sw._default_food_index(foods, _B12_CARD, profiles["none"])]["food_description"]
+
+
+# --- R1-SEAWEED-IODINE: seaweed of unknown iodine is warned about and demoted ----
+
+_WAKAME = {"food_description": "Seaweed, wakame, raw", "food_category": "Vegetables and Vegetable Products",
+           "amount_per_100g": 186.0, "unit": "mg"}
+
+
+def test_seaweed_without_an_iodine_value_is_flagged_on_other_cards(sw):
+    assert bb.food_nutrient_amount("Seaweed, wakame, raw", "iodine") is None
+    assert sw._algae_with_unknown_iodine(_WAKAME, "omega-3")
+    assert sw._food_exceeds_a_limit(_WAKAME, 10.0, "omega-3")
+    warning = sw._selected_food_warning(_WAKAME, 1000, "mg", "omega-3")
+    assert "iodine" in warning and "600 mcg/day" in warning
+    # Not on the iodine card itself (its portion is sized to the iodine dose).
+    assert not sw._algae_with_unknown_iodine(_WAKAME, "iodine")
+    # Not for a land plant.
+    assert not sw._algae_with_unknown_iodine({"food_description": "Seeds, chia seeds, dried"}, "omega-3")
+
+
+def test_seaweed_is_the_default_only_when_nothing_else_is_listed(sw):
+    card = {"component": "omega-3", "nutrient_key": "omega 3", "dose_value": 1000.0, "dose_unit": "mg", "form": ""}
+    quinoa = {"food_description": "Quinoa, uncooked", "food_category": "Cereal Grains and Pasta", "amount_per_100g": 47.0, "unit": "mg"}
+    assert sw._default_food_index([_WAKAME, quinoa], card) == 1
+    assert sw._default_food_index([_WAKAME], card) == 0
+
+
+@pytest.mark.parametrize("diet", ["none", "pescatarian", "vegetarian", "vegan"])
+@pytest.mark.parametrize("text", ["Eisen 14 mg", "Vitamin B2 1.4 mg", "Kalium 500 mg", "Omega-3 1000 mg"])
+def test_default_food_is_not_seaweed_when_another_food_exists(sw, profiles, diet, text):
+    food, _card_, foods = _default(sw, text, profiles[diet])
+    assert len(foods) > 1
+    assert "seaweed" not in food["food_description"].lower(), food
