@@ -136,6 +136,21 @@ def _load_blockbrain_secrets() -> tuple[str, str, str]:
 BLOCKBRAIN_FALLBACK_AGENTS = ["customAgent", "researchAgent", "scientificAgent"]
 
 
+def _load_blockbrain_research_agent_id() -> str:
+    """Optional agent for calls that need web tools (product research).
+
+    Lets BLOCKBRAIN_AGENT_ID point at a fast, tool-free SuppSwipe agent for OCR,
+    meal plans and answers, while slow research agents are only used when a
+    product has to be looked up online. Empty = use BLOCKBRAIN_AGENT_ID.
+    """
+    try:
+        import streamlit as st  # noqa: F401
+        value = st.secrets.get("BLOCKBRAIN_RESEARCH_AGENT_ID", "") or os.getenv("BLOCKBRAIN_RESEARCH_AGENT_ID", "")
+    except Exception:
+        value = os.getenv("BLOCKBRAIN_RESEARCH_AGENT_ID", "")
+    return str(value or "").strip()
+
+
 # Pinned vision model for nutrition-label OCR (agentic vision route).
 # Benchmarked live on the real One A Day Men's 50+ label (22 ground-truth values,
 # image downscaled to ~140 KB), per-call latency; ACCURACY WAS IDENTICAL across
@@ -8942,7 +8957,12 @@ def _blockbrain_chat(
     # image OCR). Ordered, de-duplicated: last working endpoint first, then the
     # configured agent, then fallbacks; recently failed endpoints go last.
     agent_order: list[str] = []
-    for _a in [agent_id] + list(BLOCKBRAIN_FALLBACK_AGENTS):
+    primary_agents = [agent_id]
+    if allow_tools:
+        research_agent = _load_blockbrain_research_agent_id()
+        if research_agent:
+            primary_agents.insert(0, research_agent)
+    for _a in primary_agents + list(BLOCKBRAIN_FALLBACK_AGENTS):
         _a = str(_a or "").strip()
         if _a and _a not in agent_order:
             agent_order.append(_a)
@@ -8953,7 +8973,10 @@ def _blockbrain_chat(
         stream_endpoints.append(f"{base_url}/v1/api/agents/{_a}/stream")
     join_mode = _stream_join_mode()
     last_error = ""
-    for stream_url in _order_stream_endpoints(base_url, stream_endpoints):
+    # Tool calls remember their own last working endpoint, so a fast agent that
+    # answered a meal plan never displaces the research agent for web lookups.
+    sticky_key = base_url + ("|tools" if allow_tools else "")
+    for stream_url in _order_stream_endpoints(sticky_key, stream_endpoints):
         if time.monotonic() - started > budget:
             last_error = (last_error + " | " if last_error else "") + f"gave up after {int(budget)}s budget"
             break
@@ -8981,19 +9004,19 @@ def _blockbrain_chat(
             last_error = f"Blockbrain request error: {exc}"
             attempt["status"] = "error"
             attempt["s"] = round(time.monotonic() - attempt_started, 2)
-            _mark_stream_endpoint(base_url, stream_url, ok=False)
+            _mark_stream_endpoint(sticky_key, stream_url, ok=False)
             continue
 
         with resp:
             attempt["status"] = resp.status_code
             if resp.status_code == 404:
-                _mark_stream_endpoint(base_url, stream_url, ok=False, cooldown_s=_ENDPOINT_COOLDOWN_404_S)
+                _mark_stream_endpoint(sticky_key, stream_url, ok=False, cooldown_s=_ENDPOINT_COOLDOWN_404_S)
                 attempt["s"] = round(time.monotonic() - attempt_started, 2)
                 continue
             if resp.status_code != 200:
                 last_error = f"Blockbrain HTTP {resp.status_code}: {resp.text[:200]}"
                 if resp.status_code >= 500 or resp.status_code == 429:
-                    _mark_stream_endpoint(base_url, stream_url, ok=False)
+                    _mark_stream_endpoint(sticky_key, stream_url, ok=False)
                 attempt["s"] = round(time.monotonic() - attempt_started, 2)
                 continue
 
@@ -9069,7 +9092,7 @@ def _blockbrain_chat(
         attempt["s"] = round(time.monotonic() - attempt_started, 2)
         merged = _current_text()
         if merged:
-            _mark_stream_endpoint(base_url, stream_url, ok=True)
+            _mark_stream_endpoint(sticky_key, stream_url, ok=True)
             if on_text is not None:
                 try:
                     on_text(merged)

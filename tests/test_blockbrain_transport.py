@@ -233,3 +233,15 @@ def test_allow_tools_skips_fast_mode_flags(monkeypatch):
     bb._LAST_GOOD_STREAM_URL.clear()
     bb._blockbrain_chat({"messages": []}, allow_tools=True)
     assert "activeTools" not in bodies[-1][1] and "maxSteps" not in bodies[-1][1]
+
+
+def test_tool_calls_prefer_the_research_agent(monkeypatch):
+    monkeypatch.setenv("BLOCKBRAIN_AGENT_ID", "fastSuppSwipe")
+    monkeypatch.setenv("BLOCKBRAIN_RESEARCH_AGENT_ID", "researchAgent")
+    calls = _install(monkeypatch, lambda url, n: FakeResponse(events=[{"type": "text-delta", "delta": "ok"}]))
+    bb._blockbrain_chat({"messages": []})
+    assert "/agents/fastSuppSwipe/" in calls[-1]
+    bb._blockbrain_chat({"messages": []}, allow_tools=True)
+    assert "/agents/researchAgent/" in calls[-1]
+    bb._blockbrain_chat({"messages": []})  # the fast agent stays sticky for normal calls
+    assert "/agents/fastSuppSwipe/" in calls[-1]
