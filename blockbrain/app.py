@@ -10266,12 +10266,14 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
             return line[prev_end:item["start"]]
 
         i = 0
+        singles_until = -1  # items of a joined group without doses: read one by one
         while i < len(items):
             item = items[i]
             # A joined title group: "Vitamin D3 + K2 ...", "Calcium + Vitamin D3 ...".
             k = i
             while (
-                k + 1 < len(items)
+                i > singles_until
+                and k + 1 < len(items)
                 and depths[items[k + 1]["start"]] == 0
                 and _LABEL_JOINER_GAP_RE.match(line[items[k]["names_end"]:items[k + 1]["start"]])
             ):
@@ -10292,6 +10294,7 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
                     prev_end = group[-1]["end"]
                     i = k + 1
                     continue
+                singles_until = k
             # One name: its dose follows it (the daily-dose column of a
             # multi-column row), else a bracketed one ("Vitamin D3 (25 µg)"),
             # else one written right before it ("mit 500 µg Vitamin B12").
