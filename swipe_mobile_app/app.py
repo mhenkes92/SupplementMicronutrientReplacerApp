@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import io
+import json
 import os
 import re
 import subprocess
@@ -208,6 +209,7 @@ def _init_state() -> None:
         "swipe_components": [],
         "swipe_rag_chats": {},
         "swipe_diet_profile_id": "none",
+        "swipe_pregnant": False,
         "swipe_reset_nonce": 0,
         "swipe_is_analyzing": False,
         "swipe_pending_request": None,
@@ -520,6 +522,34 @@ def _looks_like_extraction_json(text: str) -> bool:
 
 _ASK_AI_HISTORY_MESSAGES = 6  # most recent chat messages sent as memory
 _ASK_AI_BOT_TIMEOUT = (10, 45)  # (connect, read) seconds for the Knowledge Bot
+# How long Ask AI waits for the Knowledge Bot before streaming the agent's
+# answer instead; a bot reply that arrives later is ignored.
+_ASK_AI_BOT_WAIT_S = 15.0
+
+
+def _ask_bot_within(message: str, bot_id: str | None, wait_s: float) -> str | None:
+    """The Knowledge Bot's reply if it arrives within `wait_s` seconds, else None.
+
+    The call runs in a daemon thread (it touches no Streamlit state), so a slow
+    bot no longer holds the chat for the full request timeout: the caller moves
+    on to the streamed agent answer and the late reply is dropped."""
+    import threading
+
+    result: dict[str, Any] = {}
+
+    def _call() -> None:
+        try:
+            result["answer"] = bb.call_blockbrain_bot(message, bot_id=bot_id, timeout=_ASK_AI_BOT_TIMEOUT)
+        except Exception:
+            result["answer"] = None
+
+    worker = threading.Thread(target=_call, name="suppswipe-ask-bot", daemon=True)
+    worker.start()
+    worker.join(max(0.0, float(wait_s)))
+    if worker.is_alive():
+        return None
+    answer = result.get("answer")
+    return answer if isinstance(answer, str) else None
 
 
 def _ask_ai_history(component_key: str) -> list[dict[str, str]]:
@@ -547,9 +577,10 @@ def _answer_ask_ai_question(
       1) the Blockbrain Knowledge Bot (a cortex bot with the Examine knowledge
          base attached — only bots, not agents, can hold a knowledge base). We
          send an "[ASK]" mode marker so a single dual-mode bot can tell research
-         questions apart from label-extraction requests;
+         questions apart from label-extraction requests. It runs in a
+         background thread and gets _ASK_AI_BOT_WAIT_S seconds;
       2) the Blockbrain agent (general nutrition reasoning), streamed into
-         `placeholder` as it is written;
+         `placeholder` as it is written — also when the bot is too slow;
       3) the local RAG index.
 
     `history` carries the earlier turns of this chat so follow-up questions
@@ -592,20 +623,11 @@ def _answer_ask_ai_question(
         + _MARKDOWN_STYLE
     )
     research_bot_id = os.getenv("BLOCKBRAIN_RESEARCH_BOT_ID", "").strip()
-    try:
-        bot_answer = bb.call_blockbrain_bot(
-            ask_message, bot_id=(research_bot_id or None), timeout=_ASK_AI_BOT_TIMEOUT
-        )
-        if (
-            isinstance(bot_answer, str)
-            and bot_answer.strip()
-            and not _looks_like_extraction_json(bot_answer)
-        ):
-            if cache_key:
-                llm_cache.put(cache_key, bot_answer.strip())
-            return bot_answer.strip(), ""
-    except Exception:
-        pass
+    bot_answer = _ask_bot_within(ask_message, research_bot_id or None, _ASK_AI_BOT_WAIT_S)
+    if bot_answer and bot_answer.strip() and not _looks_like_extraction_json(bot_answer):
+        if cache_key:
+            llm_cache.put(cache_key, bot_answer.strip())
+        return bot_answer.strip(), ""
 
     # 2) Fallback: the general agent (streamed).
     system_prompt = (
@@ -692,7 +714,7 @@ def _render_rag_chat_popup(card: dict[str, Any], component_key: str, index: int)
                 st.warning("Enter a question first.")
             else:
                 with st.spinner("Asking AI research assistant..."):
-                    component_name = str(card.get("component", "") or "").strip()
+                    component_name = str(card.get("display", "") or "") or _nutrient_title(card.get("component"))
                     stream_box = st.empty()
                     answer, sources_line = _answer_ask_ai_question(
                         component_name,
@@ -739,6 +761,39 @@ def _food_name(food: dict[str, Any] | None) -> str:
         return bb.food_display_name(full) or full
     except Exception:
         return full
+
+
+# Card names for nutrients the lexicon spells as abbreviations or merged rows.
+_NUTRIENT_TITLE_OVERRIDES = {
+    "omega-3 (epa+dha)": "Omega-3 (EPA+DHA)",
+    "epa": "EPA",
+    "dha": "DHA",
+}
+
+
+def _nutrient_title(name: Any) -> str:
+    """Display name of a nutrient for cards, results, share text, history and
+    prompts: the lexicon's card name, capitalised ("folsäure" -> "Folic acid",
+    "vitamin d3" -> "Vitamin D3", "jod" -> "Iodine"). Unknown names are kept
+    as written, only the first letter is raised. Idempotent."""
+    raw = str(name or "").strip()
+    if not raw:
+        return ""
+    override = _NUTRIENT_TITLE_OVERRIDES.get(raw.lower())
+    if override:
+        return override
+    try:
+        display = bb.nutrient_display_name(raw) or raw
+    except Exception:
+        display = raw
+    override = _NUTRIENT_TITLE_OVERRIDES.get(display.lower())
+    if override:
+        return override
+    if display != display.lower():
+        return display[:1].upper() + display[1:]  # unknown name, already cased
+    display = re.sub(r"\bvitamin ([a-z]\d{0,2})\b", lambda m: "Vitamin " + m.group(1).upper(), display)
+    display = re.sub(r"\b(epa|dha|ala)\b", lambda m: m.group(1).upper(), display)
+    return display[:1].upper() + display[1:]
 
 
 def _food_label(food: dict[str, Any]) -> str:
@@ -1459,7 +1514,7 @@ def _final_food_warnings(items: list[dict[str, Any]]) -> list[str]:
             str(d.get("component", "") or ""), str(d.get("form", "") or ""),
         )
         if warning:
-            out.append(f"{d.get('component', '')}: {warning}")
+            out.append(f"{_nutrient_title(d.get('component'))}: {warning}")
     return out
 
 
@@ -1474,7 +1529,7 @@ def _final_upper_limit_warnings(items: list[dict[str, Any]]) -> list[str]:
             str(d.get("form", "") or ""),
         )
         if warning:
-            out.append(f"{d.get('component', '')}: {warning}")
+            out.append(f"{_nutrient_title(d.get('component'))}: {warning}")
     return out
 
 
@@ -1484,7 +1539,8 @@ def _final_upper_limit_warnings(items: list[dict[str, Any]]) -> list[str]:
 # flaky network never breaks the results screen.
 
 # Nutrients most commonly under-consumed by active people (see the Athlete RDA
-# guide caption): flagged even when the kept pill dose looks adequate.
+# guide caption): a neutral info line on the card while the pill gives under
+# 100% of the EU NRV (_athlete_info_note), never a red warning.
 _HIGH_RISK_NUTRIENT_KEYS = {"vitamin d", "iron", "vitamin b12", "zinc", "omega 3", "fish oil", "epa", "dha"}
 
 
@@ -1506,18 +1562,85 @@ def _dose_vs_athlete_ratio(component_key: str, dose_value: Any, dose_unit: str, 
         return None
 
 
+# EU nutrient reference values (NRV) for adults, Regulation (EU) 1169/2011
+# Annex XIII Part A — the "%NRV" (German "% NRV / Nährstoffbezugswert") column
+# of EU supplement labels. Keyed by bb canonical nutrient key; units match the
+# dose conversion in _dose_in_unit. Folic acid is compared as printed on the
+# label (µg folic acid, no DFE factor), the way the %NRV column counts it.
+# Omega-3, choline, sodium and beta-carotene have no NRV.
+_EU_NRV: dict[str, tuple[float, str]] = {
+    "vitamin a": (800.0, "mcg"),
+    "vitamin d": (5.0, "mcg"),
+    "vitamin e": (12.0, "mg"),
+    "vitamin k": (75.0, "mcg"),
+    "vitamin k2": (75.0, "mcg"),
+    "vitamin c": (80.0, "mg"),
+    "thiamin": (1.1, "mg"),
+    "riboflavin": (1.4, "mg"),
+    "niacin": (16.0, "mg"),
+    "vitamin b6": (1.4, "mg"),
+    "folate": (200.0, "mcg"),
+    "vitamin b12": (2.5, "mcg"),
+    "biotin": (50.0, "mcg"),
+    "pantothenic acid": (6.0, "mg"),
+    "potassium": (2000.0, "mg"),
+    "chloride": (800.0, "mg"),
+    "calcium": (800.0, "mg"),
+    "phosphorus": (700.0, "mg"),
+    "magnesium": (375.0, "mg"),
+    "iron": (14.0, "mg"),
+    "zinc": (10.0, "mg"),
+    "copper": (1.0, "mg"),
+    "manganese": (2.0, "mg"),
+    "fluoride": (3.5, "mg"),
+    "selenium": (55.0, "mcg"),
+    "chromium": (40.0, "mcg"),
+    "molybdenum": (50.0, "mcg"),
+    "iodine": (150.0, "mcg"),
+}
+# The low-dose note fires below this share of the NRV.
+_LOW_DOSE_NRV_RATIO = 0.5
+
+
+def _dose_vs_nrv_ratio(component_key: str, dose_value: Any, dose_unit: str, form: str = "") -> float | None:
+    """Pill dose as a fraction of the EU NRV (1.0 == 100% NRV), or None when the
+    nutrient has no NRV or the dose can't be converted."""
+    nrv = _EU_NRV.get(bb.canonical_nutrient_key(component_key))
+    if nrv is None or dose_value is None:
+        return None
+    try:
+        dose = _dose_in_unit(component_key, dose_value, dose_unit, nrv[1], form)
+    except Exception:
+        return None
+    if dose is None or nrv[0] <= 0:
+        return None
+    return dose / nrv[0]
+
+
 def _deficiency_flag(component_key: str, dose_value: Any, dose_unit: str, form: str = "") -> str:
-    """Short warning when the kept pill is well below the athlete target and/or the
-    nutrient is one athletes commonly fall short on. "" when nothing to flag."""
-    high_risk = bb.canonical_nutrient_key(component_key) in _HIGH_RISK_NUTRIENT_KEYS
-    ratio = _dose_vs_athlete_ratio(component_key, dose_value, dose_unit, form)
-    if ratio is not None and ratio < 0.5:
+    """Neutral low-dose note when the pill gives under half the EU NRV, else "".
+
+    Measured against the EU reference intake printed on German labels, not the
+    athlete target (that row stays on the card): a 100% NRV pill is not "low"."""
+    ratio = _dose_vs_nrv_ratio(component_key, dose_value, dose_unit, form)
+    if ratio is not None and ratio < _LOW_DOSE_NRV_RATIO:
         pct = max(1, int(round(ratio * 100)))
-        tail = " — commonly under-consumed, prioritise it" if high_risk else ""
-        return f"⚠️ This pill covers only ~{pct}% of the athlete daily target{tail}."
-    if high_risk:
-        return "⚠️ Athletes commonly fall short on this one — worth prioritising."
+        return f"ℹ️ Low dose: about {pct}% of the EU daily reference intake (NRV)."
     return ""
+
+
+def _athlete_info_note(component_key: str, dose_value: Any, dose_unit: str, form: str = "") -> str:
+    """Neutral info line for nutrients athletes are often low in (vitamin D, iron,
+    B12, zinc, omega-3); never shown once the pill gives >= 100% NRV, nor next
+    to an over-the-upper-limit warning."""
+    if bb.canonical_nutrient_key(component_key) not in _HIGH_RISK_NUTRIENT_KEYS:
+        return ""
+    ratio = _dose_vs_nrv_ratio(component_key, dose_value, dose_unit, form)
+    if ratio is not None and ratio >= 1.0:
+        return ""
+    if _upper_limit_warning(component_key, dose_value, dose_unit, form):
+        return ""
+    return "Often low in active people — worth keeping an eye on your intake."
 
 
 def _plant_based_diet(profile: dict[str, Any] | None) -> str:
@@ -1600,6 +1723,118 @@ def _card_warning_text(
     if winter:
         parts.append(winter)
     return " ".join(parts)
+
+
+# --- Pregnancy & medication guardrails ----------------------------------------
+# "🤰 Pregnant or breastfeeding" (a toggle next to the dietary filter, kept in
+# swipe_pregnant like the diet filter) hides organ meats from the food options,
+# marks the nutrients usually kept as a supplement in pregnancy and adds
+# food-safety rules to the meal plan. Medication notes show on every relevant
+# card. Short, general lines only — the card points to the doctor / midwife.
+
+# Organ words, matched whole on the USDA name. Plant foods that share a word
+# (kidney beans, hearts of palm, artichoke hearts) are excluded by category and
+# by the false-friend words below.
+_ORGAN_MEAT_RE = re.compile(
+    r"\b(?:liver|livers|liverwurst|leberwurst|braunschweiger|kidneys?|hearts?|gizzards?|tongues?|"
+    r"sweetbreads?|giblets|brains?|tripe|spleen|lungs?|pancreas|thymus|offal|chitterlings|foie gras|pate|pâté)\b"
+)
+_ORGAN_FALSE_FRIEND_RE = re.compile(r"\b(?:beans?|palm|artichokes?|celery|lettuce|romaine|cabbage)\b")
+_PLANT_CATEGORY_WORDS = ("legume", "vegetable", "fruit", "nut and seed", "cereal", "spice", "beverage")
+
+# Nutrients usually kept as a supplement in pregnancy (folic acid, iodine,
+# vitamin D, iron; B12 too on a vegan / vegetarian diet).
+_PREGNANCY_SUPPLEMENT_KEYS = {"folate", "iodine", "vitamin d", "iron"}
+_PREGNANCY_NOTE = "🤰 Usually advised to keep as a supplement in pregnancy — check with your doctor or midwife."
+_PREGNANCY_MEAL_RULES = (
+    " The user is pregnant or breastfeeding, so follow pregnancy food-safety rules: no liver or "
+    "liver products (pâté, liver sausage) and no other organ meats, no raw or undercooked meat, fish "
+    "or eggs (no sushi, tartare, runny eggs), no unpasteurised (raw-milk) soft cheese, and no "
+    "high-mercury fish (swordfish, shark, king mackerel, bigeye tuna; tuna at most twice a week)."
+)
+_MEDICATION_NOTES: dict[str, str] = {
+    "vitamin k": "💊 On blood thinners like warfarin or phenprocoumon (Marcumar)? Keep your vitamin K intake steady and ask your doctor before changing it.",
+    "vitamin k2": "💊 On blood thinners like warfarin or phenprocoumon (Marcumar)? Keep your vitamin K intake steady and ask your doctor before changing it.",
+    "potassium": "💊 Kidney disease or certain blood-pressure drugs (e.g. ACE inhibitors, potassium-sparing diuretics)? Ask your doctor before adding potassium.",
+    "iodine": "💊 Thyroid condition? Ask your doctor before changing your iodine intake.",
+}
+
+
+def _pregnancy_mode() -> bool:
+    """True while the "Pregnant or breastfeeding" toggle is on."""
+    try:
+        return bool(st.session_state.get("swipe_pregnant", False))
+    except Exception:
+        return False
+
+
+def _is_organ_meat(food: dict[str, Any] | None) -> bool:
+    """True for liver, kidney, heart and other organ meats (incl. liver products
+    and fish-liver oil); False for plant foods such as kidney beans."""
+    if not isinstance(food, dict):
+        return False
+    desc = str(food.get("food_description", "") or "").lower()
+    if not _ORGAN_MEAT_RE.search(desc):
+        return False
+    category = str(food.get("food_category", "") or "").lower()
+    if any(word in category for word in _PLANT_CATEGORY_WORDS):
+        return False
+    return not _ORGAN_FALSE_FRIEND_RE.search(desc)
+
+
+def _card_food_options(
+    foods: list[dict[str, Any]], profile: dict[str, Any] | None, pregnant: bool | None = None
+) -> list[dict[str, Any]]:
+    """The card's dropdown: the pool filtered by the dietary profile, without
+    organ meats in pregnancy mode, capped to SWIPE_CARD_DROPDOWN_MAX."""
+    options = bb.apply_food_filters(foods, profile, use_llm_adjudication=False)
+    if _pregnancy_mode() if pregnant is None else pregnant:
+        options = [food for food in options if not _is_organ_meat(food)]
+    return options[:SWIPE_CARD_DROPDOWN_MAX]
+
+
+def _pregnancy_note(component_key: str, profile: dict[str, Any] | None = None) -> str:
+    key = bb.canonical_nutrient_key(component_key)
+    if key in _PREGNANCY_SUPPLEMENT_KEYS or (key == "vitamin b12" and _plant_based_diet(profile)):
+        return _PREGNANCY_NOTE
+    return ""
+
+
+def _medication_note(component_key: str) -> str:
+    return _MEDICATION_NOTES.get(bb.canonical_nutrient_key(component_key), "")
+
+
+def _pregnancy_food_warnings(items: list[dict[str, Any]], pregnant: bool | None = None) -> list[str]:
+    """Results-screen notes for organ meats picked before pregnancy mode was on."""
+    if not (_pregnancy_mode() if pregnant is None else pregnant):
+        return []
+    return [
+        f"🤰 {_nutrient_title(d.get('component'))}: {_food_name(d.get('selected_food'))} isn't advised in "
+        "pregnancy — tap it to pick another food."
+        for d in items
+        if _is_organ_meat(d.get("selected_food"))
+    ]
+
+
+def _card_extra_info(
+    component_key: str,
+    dose_value: Any,
+    dose_unit: str,
+    form: str = "",
+    profile: dict[str, Any] | None = None,
+    pregnant: bool | None = None,
+) -> str:
+    """Extra lines appended to the card's info (after the curated
+    _bioavailability_note): the "often low in athletes" remark, the pregnancy
+    note (pregnancy mode only) and the medication note."""
+    if pregnant is None:
+        pregnant = _pregnancy_mode()
+    lines = [
+        _athlete_info_note(component_key, dose_value, dose_unit, form),
+        _pregnancy_note(component_key, profile) if pregnant else "",
+        _medication_note(component_key),
+    ]
+    return " ".join(line for line in lines if line)
 
 
 # Why the whole food generally beats the isolated pill — one concise, curated
@@ -1853,16 +2088,141 @@ def _basket_cost_summary(replace_items: list[dict[str, Any]]) -> tuple[float, li
     return breakdown["total"], breakdown["rows"], breakdown["unknown"]
 
 
+# Daily totals of the swaps on the results screen. Above either limit the swaps
+# are a lot of food on top of a normal diet, so the screen suggests keeping
+# some supplements.
+_SWAP_TOTAL_MAX_G = 1000.0
+_SWAP_TOTAL_MAX_KCAL = 1200.0
+
+
+def _swap_totals(replace_items: list[dict[str, Any]]) -> dict[str, Any]:
+    """How much food the whole-food swaps add per day.
+
+    Uses the match-dose grams of each replaced item; a food chosen for several
+    nutrients counts once, at its largest amount. Energy is USDA kcal per 100 g
+    (bb.food_energy_kcal_per_100g). Items whose amount is impractical (> 1 kg a
+    day, see _portion_practicality) are listed separately and not summed.
+
+    Returns {"grams", "kcal", "foods": [(name, grams, kcal or None)],
+    "no_energy": [name], "impractical": [(name, grams)], "too_much": bool}.
+    """
+    by_food: dict[str, tuple[str, float, str]] = {}
+    impractical: dict[str, tuple[str, float]] = {}
+    for d in replace_items:
+        food = d.get("selected_food") or {}
+        usda_name = str(food.get("food_description", "") or "").strip()
+        grams = _grams_to_match_dose(d)
+        if not usda_name or grams is None or grams <= 0:
+            continue
+        key = bb.normalize_lookup_key(usda_name)
+        name = _food_name(food) or usda_name
+        if _portion_practicality(grams) == "impractical":
+            if key not in impractical or grams > impractical[key][1]:
+                impractical[key] = (name, grams)
+            continue
+        if key not in by_food or grams > by_food[key][1]:
+            by_food[key] = (name, grams, usda_name)
+
+    foods: list[tuple[str, float, float | None]] = []
+    no_energy: list[str] = []
+    total_g = total_kcal = 0.0
+    for name, grams, usda_name in by_food.values():
+        try:
+            kcal_100g = bb.food_energy_kcal_per_100g(usda_name)
+        except Exception:
+            kcal_100g = None
+        kcal = grams * float(kcal_100g) / 100.0 if kcal_100g is not None else None
+        foods.append((name, grams, kcal))
+        total_g += grams
+        if kcal is None:
+            no_energy.append(name)
+        else:
+            total_kcal += kcal
+    return {
+        "grams": total_g,
+        "kcal": total_kcal,
+        "foods": foods,
+        "no_energy": no_energy,
+        "impractical": list(impractical.values()),
+        "too_much": total_g > _SWAP_TOTAL_MAX_G or total_kcal > _SWAP_TOTAL_MAX_KCAL,
+    }
+
+
+def _round_total(value: float) -> str:
+    """"1,250" / "85" — whole numbers, to the nearest 10 from 100 up."""
+    rounded = round(value, -1) if value >= 100 else round(value)
+    return f"{int(rounded):,}"
+
+
+def _swap_totals_lines(replace_items: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """(kind, text) lines for the results screen: "total", "warning", "caption"."""
+    totals = _swap_totals(replace_items)
+    lines: list[tuple[str, str]] = []
+    if totals["foods"]:
+        grams_txt = _round_total(totals["grams"])
+        if len(totals["no_energy"]) == len(totals["foods"]):
+            lines.append(("total", f"🍽️ Your swaps add about {grams_txt} g of food a day."))
+        else:
+            lines.append(
+                ("total", f"🍽️ Your swaps add about {grams_txt} g of food and ~{_round_total(totals['kcal'])} kcal a day.")
+            )
+            if totals["no_energy"]:
+                lines.append(("caption", "kcal without " + ", ".join(totals["no_energy"]) + " (no USDA energy value)."))
+        if totals["too_much"]:
+            lines.append(("warning", "⚠️ This is a lot of food — consider keeping some supplements."))
+    if totals["impractical"]:
+        lines.append(
+            (
+                "caption",
+                "Not counted, not practical from food: "
+                + ", ".join(f"{name} (~{bb.format_float(grams / 1000.0, 1)} kg/day)" for name, grams in totals["impractical"])
+                + ".",
+            )
+        )
+    return lines
+
+
+def _render_swap_totals(replace_items: list[dict[str, Any]]) -> None:
+    for kind, text in _swap_totals_lines(replace_items):
+        if kind == "total":
+            st.markdown(f"**{text}**")
+        elif kind == "warning":
+            st.warning(text)
+        else:
+            st.caption(text)
+
+
+# Amounts the meal plan asks for instead of the match-dose portion: a normal
+# serving when the full dose would take a large / impractical amount of food
+# (the plan must not ask for 1.5 kg of spinach), and the once-a-week limit for
+# organ meats (vitamin A, see _liver_vitamin_a_warning).
+_MEAL_PLAN_NORMAL_PORTION = "a normal portion (about 150 g); the full dose isn't practical from food"
+_MEAL_PLAN_ORGAN_PORTION = "at most one small portion (~50 g) per week"
+
+
+def _meal_plan_amount(decision: dict[str, Any]) -> str:
+    """The daily amount of a replaced item's food as written into the meal-plan prompt."""
+    food = decision.get("selected_food") or {}
+    if _is_organ_meat(food) and not re.search(r"\boil\b", str(food.get("food_description", "") or "").lower()):
+        return _MEAL_PLAN_ORGAN_PORTION
+    if _portion_practicality(_grams_to_match_dose(decision)) in ("large", "impractical"):
+        return _MEAL_PLAN_NORMAL_PORTION
+    return _amount_to_match_dose(decision)
+
+
 def _meal_plan_prompts(
-    replace_items: list[dict[str, Any]], diet_label: str, num_meals: int = 3
+    replace_items: list[dict[str, Any]], diet_label: str, num_meals: int = 3, pregnant: bool | None = None
 ) -> tuple[str, str, str]:
-    """(system_prompt, user_prompt, cache_key) for the meal-plan generation."""
+    """(system_prompt, user_prompt, cache_key) for the meal-plan generation.
+    `pregnant` (default: the pregnancy toggle) adds pregnancy food-safety rules."""
     n = max(1, min(3, int(num_meals or 3)))
+    if pregnant is None:
+        pregnant = _pregnancy_mode()
     lines = []
     for d in replace_items:
         food = _food_name(d.get("selected_food"))
-        amount = _amount_to_match_dose(d)
-        nutrient = str(d.get("component", "") or "")
+        amount = _meal_plan_amount(d)
+        nutrient = _nutrient_title(d.get("component"))
         lines.append(f"- {food} ({amount}) for {nutrient}")
     diet_clause = ""
     if diet_label and diet_label.strip().lower() not in ("no restriction", "none", ""):
@@ -1880,6 +2240,7 @@ def _meal_plan_prompts(
         "because of vitamin A, at most 2 Brazil nuts per day because of selenium), use a sensible "
         "amount instead and add one short note that a supplement may be the practical choice for that "
         "nutrient. General guidance only; no medical advice."
+        + (_PREGNANCY_MEAL_RULES if pregnant else "")
         + _MARKDOWN_STYLE
     )
     user_prompt = (
@@ -1929,7 +2290,7 @@ def _prefetch_meal_plan(replace_items: list[dict[str, Any]], diet_label: str, nu
 def _benefits_prompts(replace_items: list[dict[str, Any]]) -> tuple[str, str, str] | None:
     lines = []
     for d in replace_items:
-        nutrient = str(d.get("component", "") or "")
+        nutrient = _nutrient_title(d.get("component"))
         food = _food_name(d.get("selected_food"))
         if nutrient and food:
             lines.append(f"- Isolated pill nutrient: {nutrient}  |  Whole food chosen instead: {food}")
@@ -1969,7 +2330,7 @@ def _generate_whole_food_benefits(replace_items: list[dict[str, Any]], placehold
 def _supplement_search_links(keep_items: list[dict[str, Any]]) -> tuple[str, dict[str, str]]:
     import urllib.parse
 
-    names = [str(d.get("component", "") or "").strip() for d in keep_items if d.get("component")]
+    names = [_nutrient_title(d.get("component")) for d in keep_items if d.get("component")]
     names = list(dict.fromkeys([n for n in names if n]))
     if not names:
         return "", {}
@@ -1993,14 +2354,14 @@ def _build_share_text(
     if replace_items:
         for d in replace_items:
             food = _food_name(d.get("selected_food"))
-            out.append(f"  • {d.get('component', '')}: {food} ({_amount_to_match_dose(d)})")
+            out.append(f"  • {_nutrient_title(d.get('component'))}: {food} ({_amount_to_match_dose(d)})")
     else:
         out.append("  • (none)")
     out.append("")
     out.append(f"💊 Kept as a supplement ({len(keep_items)}):")
     if keep_items:
         for d in keep_items:
-            out.append(f"  • {d.get('component', '')} {d.get('dose_label', '')}".rstrip())
+            out.append(f"  • {_nutrient_title(d.get('component'))} {d.get('dose_label', '')}".rstrip())
     else:
         out.append("  • (none)")
     if meal_plan.strip():
@@ -2077,13 +2438,13 @@ def _record_scan_to_history(decisions: dict[str, dict[str, Any]], diet_label: st
         "ts": time.strftime("%Y-%m-%d %H:%M"),
         "diet": diet_label,
         "kept": [
-            {"component": str(d.get("component", "") or ""), "dose": str(d.get("dose_label", "") or "")}
+            {"component": _nutrient_title(d.get("component")), "dose": str(d.get("dose_label", "") or "")}
             for d in decisions.values()
             if d.get("decision") == "keep"
         ],
         "replaced": [
             {
-                "component": str(d.get("component", "") or ""),
+                "component": _nutrient_title(d.get("component")),
                 "food": _food_name(d.get("selected_food")),
                 "amount": _amount_to_match_dose(d),
             }
@@ -2113,9 +2474,9 @@ def _render_scan_history_popover() -> None:
                 head += f" · {diet}"
             st.markdown(head)
             for r in replaced:
-                st.markdown(f"- 🥗 {r.get('component', '')} → {r.get('food', '')} ({r.get('amount', '')})")
+                st.markdown(f"- 🥗 {_nutrient_title(r.get('component'))} → {r.get('food', '')} ({r.get('amount', '')})")
             for k in kept:
-                st.markdown(f"- 💊 {k.get('component', '')} {k.get('dose', '')}".rstrip())
+                st.markdown(f"- 💊 {_nutrient_title(k.get('component'))} {k.get('dose', '')}".rstrip())
             st.divider()
         if st.button("Clear history", use_container_width=True, key="swipe_clear_history"):
             st.session_state["suppswipe_scan_history"] = []
@@ -2193,7 +2554,7 @@ def _render_final_actions(
                 st.info("You didn't keep any supplements — nothing to buy!")
             else:
                 _query, links = _supplement_search_links(keep_items)
-                covers = ", ".join(dict.fromkeys(str(d.get("component", "") or "") for d in keep_items if d.get("component")))
+                covers = ", ".join(dict.fromkeys(_nutrient_title(d.get("component")) for d in keep_items if d.get("component")))
                 st.markdown(f"**Covers:** {covers}")
                 for label, url in links.items():
                     st.markdown(f"- [{label}]({url})")
@@ -2913,14 +3274,17 @@ def _render_header() -> None:
 
 
 def _reset_swipe_state() -> None:
-    """Clear swipe session state, but keep the chosen dietary filter."""
+    """Clear swipe session state, but keep the chosen dietary filter and the
+    pregnancy toggle."""
     saved_diet = st.session_state.get("swipe_diet_profile_id", "none")
+    saved_pregnant = bool(st.session_state.get("swipe_pregnant", False))
     next_nonce = int(st.session_state.get("swipe_reset_nonce", 0)) + 1
     for key in [k for k in list(st.session_state.keys()) if k.startswith("swipe_")]:
         st.session_state.pop(key, None)
     st.session_state["swipe_reset_nonce"] = next_nonce
     _init_state()
     st.session_state["swipe_diet_profile_id"] = saved_diet
+    st.session_state["swipe_pregnant"] = saved_pregnant
 
 
 def _selected_session_in_progress() -> bool:
@@ -3035,6 +3399,11 @@ def _on_diet_profile_change() -> None:
     )
 
 
+def _on_pregnancy_change() -> None:
+    """Mirror the pregnancy toggle into `swipe_pregnant` (see _on_diet_profile_change)."""
+    st.session_state["swipe_pregnant"] = bool(st.session_state.get("swipe_pregnant_toggle", False))
+
+
 def _render_dietary_pills() -> None:
     ordered_ids, profile_by_id = _dietary_profile_lookup()
     if not ordered_ids:
@@ -3069,6 +3438,16 @@ def _render_dietary_pills() -> None:
             label_visibility="collapsed",
             format_func=label_for,
         )
+    st.toggle(
+        "🤰 Pregnant or breastfeeding",
+        value=_pregnancy_mode(),
+        key="swipe_pregnant_toggle",
+        on_change=_on_pregnancy_change,
+        help=(
+            "Hides liver and other organ meats, marks nutrients usually kept as a supplement "
+            "in pregnancy and adds food-safety rules to the meal plan."
+        ),
+    )
 
 
 def _run_pending_analysis() -> None:
@@ -3415,6 +3794,50 @@ Selen 55 µg 100%
 *NRV = Nährstoffbezugswerte"""
 
 
+# "🚩 Report a problem with this card": one structured warning line in the
+# blockbrain log per tap, for review. Only what the card shows: nutrient, dose,
+# the label line it was read from, the chosen food and the dietary filter — no
+# free text and nothing personal (the pregnancy toggle is not logged).
+_REPORT_LABEL_LINE_MAX = 160
+
+
+def _card_label_line(card: dict[str, Any]) -> str:
+    """The supplement-label line a card's dose was read from, or ""."""
+    key = str(card.get("nutrient_key", "") or "")
+    try:
+        rows = list(st.session_state.get("swipe_components", []) or [])
+    except Exception:
+        rows = []
+    for row in rows:
+        if not isinstance(row, dict) or _component_nutrient_key(row) != key:
+            continue
+        if row.get("dose_value") == card.get("dose_value") and row.get("label_line"):
+            return re.sub(r"\s+", " ", str(row["label_line"])).strip()[:_REPORT_LABEL_LINE_MAX]
+    return ""
+
+
+def _card_report_payload(
+    card: dict[str, Any], selected_food: dict[str, Any] | None, profile: dict[str, Any] | None
+) -> dict[str, str]:
+    return {
+        "nutrient": _nutrient_title(card.get("component")),
+        "nutrient_key": str(card.get("nutrient_key", "") or ""),
+        "dose": str(card.get("dose_label", "") or ""),
+        "label_line": _card_label_line(card),
+        "food": str((selected_food or {}).get("food_description", "") or ""),
+        "diet": str((profile or {}).get("label", "") or "No restriction"),
+    }
+
+
+def _report_card_problem(
+    card: dict[str, Any], selected_food: dict[str, Any] | None, profile: dict[str, Any] | None
+) -> dict[str, str]:
+    """Log one structured "card report" warning line and return its payload."""
+    payload = _card_report_payload(card, selected_food, profile)
+    bb.logger.warning("SuppSwipe card report: %s", json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    return payload
+
+
 def _previous_choice_label(decision: dict[str, Any] | None) -> str:
     """Short label of an earlier choice for this card (shown after going back)."""
     if not decision:
@@ -3477,7 +3900,7 @@ def _render_card() -> None:
     selected_profile = _selected_dietary_profile()
     # Filter the (possibly deep) pool by the dietary profile, then cap the
     # visible dropdown (highest concentration first) so the list stays manageable.
-    foods = bb.apply_food_filters(foods_raw, selected_profile, use_llm_adjudication=False)[:SWIPE_CARD_DROPDOWN_MAX]
+    foods = _card_food_options(foods_raw, selected_profile)
     # Self-heal: if there is nothing to show (the stored pool was empty, OR a
     # stale/shallow pool built by an older version got filtered away by the
     # dietary profile), re-fetch the deep pool live and retry. This applies the
@@ -3488,7 +3911,7 @@ def _render_card() -> None:
         if deep_pool and deep_pool != foods_raw:
             card["foods"] = deep_pool
             foods_raw = deep_pool
-            foods = bb.apply_food_filters(deep_pool, selected_profile, use_llm_adjudication=False)[:SWIPE_CARD_DROPDOWN_MAX]
+            foods = _card_food_options(deep_pool, selected_profile)
     # Vegan / vegetarian B12: the fortified foods are the reliable option.
     foods = _with_fortified_options(foods, card, selected_profile)
 
@@ -3584,13 +4007,25 @@ def _render_card() -> None:
         # Soft block (the card's diet warning says why): vegan / vegetarian B12
         # unless a B12-fortified food is picked, vegan iodine.
         replace_block = _replace_block_reason(card, selected_food, selected_profile) if selected_food is not None else ""
+        extra_info = _card_extra_info(
+            component_key, card.get("dose_value"), str(card.get("dose_unit", "") or ""), card_form, selected_profile
+        )
+        if extra_info:
+            bio_note = f"{bio_note} {extra_info}".strip()
 
         _render_rag_chat_popup(card, component_key, index)
+        if st.button(
+            "🚩 Report a problem with this card",
+            type="tertiary",
+            key=f"swipe_report_{component_key}_{index}_{nonce}",
+        ):
+            _report_card_problem(card, selected_food, selected_profile)
+            st.toast("Thanks — logged for review")
 
         food_label = _food_name(selected_food)
         with stage:
             swipe_result = tinder_swipe(
-                name=str(card.get("component", "Unknown micronutrient")),
+                name=_nutrient_title(card.get("component")) or "Unknown micronutrient",
                 dose=str(card.get("dose_label", "Not available")),
                 food=food_label,
                 matchDose=match_dose_txt,
@@ -3663,7 +4098,7 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
                 for d in keep_items:
                     component_key = str(d.get("component_key", "") or "")
                     dose = str(d.get("dose_label", "") or "")
-                    label = f"{LEFT_SWIPE_ICON} {d.get('component', 'Unknown')}"
+                    label = f"{LEFT_SWIPE_ICON} {_nutrient_title(d.get('component')) or 'Unknown'}"
                     if dose:
                         label += f" · {dose}"
                     if st.button(
@@ -3688,7 +4123,7 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
                     icon = _whole_food_icon_from_food(food, component_key)
                     amount_txt = _amount_to_match_dose(d)
                     detail = food_name + (f" ({amount_txt})" if (food_name and amount_txt) else "")
-                    label = f"{icon} {d.get('component', 'Unknown')}"
+                    label = f"{icon} {_nutrient_title(d.get('component')) or 'Unknown'}"
                     if detail:
                         label += f" → {detail}"
                     if st.button(
@@ -3699,10 +4134,12 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
                     ):
                         st.session_state["swipe_index"] = int(d.get("card_index", 0))
                         st.rerun()
-                for warning in _final_food_warnings(replace_items):
+                for warning in _final_food_warnings(replace_items) + _pregnancy_food_warnings(replace_items):
                     st.caption(warning)
             else:
                 st.caption("Nothing swiped right.")
+        # Daily food amount and energy of the swaps.
+        _render_swap_totals(replace_items)
 
     # Record this completed scan to the on-device history (once per analysis).
     diet_label = str((_selected_dietary_profile() or {}).get("label", "") or "")
@@ -3715,12 +4152,21 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
     _render_final_actions(keep_items, replace_items, diet_label)
 
     # A single Ask AI chat for the whole summary, shown once below the card.
-    all_components = [str(d.get("component", "") or "") for d in decisions.values() if d.get("component")]
-    summary_context = {"component": ", ".join(all_components)} if all_components else {"component": ""}
+    all_components = [_nutrient_title(d.get("component")) for d in decisions.values() if d.get("component")]
+    summary_context = {"component": ", ".join(all_components), "display": ", ".join(all_components)}
     _render_rag_chat_popup(summary_context, "summary", 0)
 
     # Athlete RDA reference guide, shown once directly below Ask AI on the results screen.
     _render_athlete_rda_popup()
+
+
+def _format_eu_nrv(entry: dict[str, Any]) -> str:
+    """EU NRV of an Athlete-RDA-guide row in that row's unit, or "–" if none."""
+    nrv = next((_EU_NRV[k] for k in entry.get("keys", ()) if k in _EU_NRV), None)
+    if nrv is None:
+        return "–"
+    value = _dose_in_unit(str(entry["keys"][0]), nrv[0], nrv[1], str(entry["unit"]))
+    return bb.format_float(value) if value is not None else "–"
 
 
 def _render_athlete_rda_popup() -> None:
@@ -3734,7 +4180,8 @@ def _render_athlete_rda_popup() -> None:
     with st.popover("\U0001F3C3 Athlete RDA guide", use_container_width=True):
         st.caption(
             "Approximate daily targets for every micronutrient the app tracks. "
-            "Adult RDA/AI from NIH ODS; athlete targets raised per ISSN and "
+            "EU NRV = the reference intake behind the %NRV on EU labels; adult "
+            "RDA/AI from NIH ODS; athlete targets raised per ISSN and "
             "ACSM/AND/DC where training increases needs or sweat losses. General "
             "guidance only — consult a sports dietitian for personalised advice."
         )
@@ -3743,6 +4190,7 @@ def _render_athlete_rda_popup() -> None:
                 {
                     "Nutrient": str(entry["display"]),
                     "Unit": str(entry["unit"]),
+                    "EU NRV": _format_eu_nrv(entry),
                     "Adult RDA": bb.format_float(float(entry["rda"])),
                     "Athlete": bb.format_float(float(entry["athlete"])),
                 }
