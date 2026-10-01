@@ -717,7 +717,8 @@ def _dose_label(component: dict[str, Any]) -> str:
     if dose_value is None:
         return "Dose not found"
     try:
-        return f"{bb.format_float(float(dose_value))} {dose_unit}".strip()
+        # 3 decimals so small label doses stay exact ("0.025 mg", not "0.03 mg").
+        return f"{bb.format_float(float(dose_value), 3)} {dose_unit}".strip()
     except Exception:
         return str(dose_value)
 
@@ -747,8 +748,40 @@ def _amount_to_match_dose(decision: dict[str, Any]) -> str:
         decision.get("dose_value"),
         str(decision.get("dose_unit", "") or ""),
         str(decision.get("component", "") or ""),
+        str(decision.get("form", "") or ""),
     )
-    return f"eat {core}" if core else ""
+    if not core:
+        return ""
+    return core if core.startswith("not practical") else f"eat {core}"
+
+
+# Daily portions above these sizes are flagged instead of presented as a normal
+# serving: 400-1000 g is a lot of food, more than 1 kg/day is not practical.
+_PORTION_LARGE_G = 400.0
+_PORTION_IMPRACTICAL_G = 1000.0
+
+
+def _portion_practicality(grams: float | None) -> str:
+    """"ok" | "large" (400-1000 g/day) | "impractical" (> 1 kg/day) for a daily food amount."""
+    try:
+        value = float(grams) if grams is not None else 0.0
+    except Exception:
+        value = 0.0
+    if value > _PORTION_IMPRACTICAL_G:
+        return "impractical"
+    if value >= _PORTION_LARGE_G:
+        return "large"
+    return "ok"
+
+
+def _format_grams(grams: float) -> str:
+    if grams < 1:
+        return "<1 g"
+    if grams < 10:
+        return f"{bb.format_float(grams, 1)} g"
+    if grams < 1000:
+        return f"{bb.format_float(grams, 0)} g"
+    return f"{bb.format_float(grams / 1000.0, 1)} kg"
 
 
 def _portion_for_target(
@@ -756,12 +789,15 @@ def _portion_for_target(
     target_value: Any,
     target_unit: str,
     component: str,
+    form: str = "",
 ) -> str:
     """How much of `food` supplies `target_value target_unit` of the nutrient.
 
-    Returns a short label like "~85 g (~2 eggs)" or "" when it can't be computed.
-    Units of the target and the food need not match — both are normalised to mg
-    internally by bb.grams_needed_to_match_dose.
+    Returns a short label like "~85 g (~2 eggs)", "<1 g", "a lot of food (~450
+    g/day)" or "not practical from food alone (~23.5 kg/day)", or "" when it
+    can't be computed. Units of the target and the food need not match — both
+    are normalised by bb.grams_needed_to_match_dose; `form` (the label's "(as
+    ...)" text) selects the IU / folic-acid conversions for a PILL dose.
     """
     if not isinstance(food, dict):
         return ""
@@ -773,19 +809,19 @@ def _portion_for_target(
     food_name = str(food.get("food_description", "") or "")
 
     try:
-        grams = bb.grams_needed_to_match_dose(target_value, target_unit, amount_per_100g, unit, component)
+        grams = bb.grams_needed_to_match_dose(target_value, target_unit, amount_per_100g, unit, component, form)
     except Exception:
         grams = None
     if grams is None or grams <= 0:
         return ""
 
-    if grams >= 1000:
-        grams_txt = f"{bb.format_float(grams / 1000.0, 2)} kg"
-    elif grams >= 10:
-        grams_txt = f"{bb.format_float(grams, 0)} g"
-    else:
-        grams_txt = f"{bb.format_float(grams, 1)} g"
+    practicality = _portion_practicality(grams)
+    if practicality == "impractical":
+        return f"not practical from food alone (~{bb.format_float(grams / 1000.0, 1)} kg/day)"
+    if practicality == "large":
+        return f"a lot of food (~{bb.format_float(grams, 0)} g/day)"
 
+    grams_txt = _format_grams(grams)
     portion = ""
     try:
         portion_full = bb.estimate_whole_food_units(food_name, grams)
@@ -796,9 +832,10 @@ def _portion_for_target(
     except Exception:
         portion = ""
 
+    core = grams_txt if grams_txt.startswith("<") else f"~{grams_txt}"
     if portion:
-        return f"~{grams_txt} ({portion})"
-    return f"~{grams_txt}"
+        return f"{core} ({portion})"
+    return core
 
 
 # --- Daily micronutrient targets ---------------------------------------------
@@ -806,55 +843,296 @@ def _portion_for_target(
 # "Athlete RDA guide". "rda" = general adult RDA/AI (NIH ODS); "athlete" = a
 # representative daily target for active people (ISSN 2017; ACSM/AND/DC 2016),
 # raised where training increases needs or sweat losses. Units are chosen so
-# they normalise cleanly against USDA food units for the portion math. General
-# guidance only — not individualised medical advice.
+# they normalise cleanly against USDA food units for the portion math. "keys"
+# are bb canonical nutrient keys; optional "match" words are a whole-word fallback
+# only for partial names the lexicon does not know ("ascorbic", "folic").
+# General guidance only — not individualised medical advice.
 _MICRONUTRIENT_RDA: list[dict[str, Any]] = [
-    # B-vitamins listed B12 -> B1 so "vitamin b1" never prefix-matches "b12".
-    {"display": "Vitamin B12", "unit": "mcg", "rda": 2.4, "athlete": 4.0, "match": ["vitamin b12", "cobalamin"]},
-    {"display": "Vitamin B9 (Folate)", "unit": "mcg", "rda": 400, "athlete": 600, "match": ["vitamin b9", "folate", "folic", "folacin", "methylfolate"]},
-    {"display": "Vitamin B7 (Biotin)", "unit": "mcg", "rda": 30, "athlete": 30, "match": ["vitamin b7", "biotin"]},
-    {"display": "Vitamin B6", "unit": "mg", "rda": 1.3, "athlete": 2.0, "match": ["vitamin b6", "pyridox"]},
-    {"display": "Vitamin B5 (Pantothenic)", "unit": "mg", "rda": 5, "athlete": 7, "match": ["vitamin b5", "pantothen", "panthenol"]},
-    {"display": "Vitamin B3 (Niacin)", "unit": "mg", "rda": 16, "athlete": 20, "match": ["vitamin b3", "niacin", "nicotinamide", "nicotinic"]},
-    {"display": "Vitamin B2 (Riboflavin)", "unit": "mg", "rda": 1.3, "athlete": 2.0, "match": ["vitamin b2", "riboflavin"]},
-    {"display": "Vitamin B1 (Thiamin)", "unit": "mg", "rda": 1.2, "athlete": 2.0, "match": ["vitamin b1", "thiamin"]},
-    {"display": "Vitamin A", "unit": "mcg", "rda": 900, "athlete": 1000, "match": ["vitamin a", "retinol", "retinyl", "beta carotene", "betacarotene", "carotene"]},
-    {"display": "Vitamin C", "unit": "mg", "rda": 90, "athlete": 200, "match": ["vitamin c", "ascorb"]},
-    {"display": "Vitamin D", "unit": "mcg", "rda": 15, "athlete": 25, "match": ["vitamin d", "cholecalciferol", "ergocalciferol"]},
-    {"display": "Vitamin E", "unit": "mg", "rda": 15, "athlete": 20, "match": ["vitamin e", "tocopherol", "tocopheryl", "tocotrienol"]},
-    {"display": "Vitamin K", "unit": "mcg", "rda": 120, "athlete": 120, "match": ["vitamin k", "phylloquinone", "menaquinone", "phytonadione"]},
-    {"display": "Calcium", "unit": "mg", "rda": 1000, "athlete": 1300, "match": ["calcium"]},
-    {"display": "Phosphorus", "unit": "mg", "rda": 700, "athlete": 1000, "match": ["phosphorus", "phosphate"]},
-    {"display": "Magnesium", "unit": "mg", "rda": 400, "athlete": 500, "match": ["magnesium"]},
-    {"display": "Potassium", "unit": "mg", "rda": 3400, "athlete": 3500, "match": ["potassium"]},
-    {"display": "Sodium", "unit": "mg", "rda": 1500, "athlete": 2300, "match": ["sodium"]},
-    {"display": "Chloride", "unit": "mg", "rda": 2300, "athlete": 2300, "match": ["chloride"]},
-    {"display": "Iron", "unit": "mg", "rda": 8, "athlete": 18, "match": ["iron", "ferrous", "ferric"]},
-    {"display": "Zinc", "unit": "mg", "rda": 11, "athlete": 15, "match": ["zinc"]},
-    {"display": "Copper", "unit": "mg", "rda": 0.9, "athlete": 1.2, "match": ["copper", "cupric"]},
-    {"display": "Manganese", "unit": "mg", "rda": 2.3, "athlete": 2.3, "match": ["manganese"]},
-    {"display": "Iodine", "unit": "mcg", "rda": 150, "athlete": 150, "match": ["iodine", "iodide"]},
-    {"display": "Selenium", "unit": "mcg", "rda": 55, "athlete": 70, "match": ["selenium", "selenite", "selenomethionine"]},
-    {"display": "Molybdenum", "unit": "mcg", "rda": 45, "athlete": 45, "match": ["molybdenum"]},
-    {"display": "Chromium", "unit": "mcg", "rda": 35, "athlete": 35, "match": ["chromium"]},
-    {"display": "Fluoride", "unit": "mg", "rda": 4, "athlete": 4, "match": ["fluoride", "fluorine"]},
-    {"display": "Choline", "unit": "mg", "rda": 550, "athlete": 550, "match": ["choline"]},
-    {"display": "Omega-3 (EPA+DHA)", "unit": "g", "rda": 0.25, "athlete": 2.0, "match": ["omega", "epa", "dha", "fish oil", "linolenic", "docosahexaenoic", "eicosapentaenoic"]},
+    {"display": "Vitamin B12", "unit": "mcg", "rda": 2.4, "athlete": 4.0, "keys": ["vitamin b12"]},
+    {"display": "Vitamin B9 (Folate)", "unit": "mcg", "rda": 400, "athlete": 600, "keys": ["folate"], "match": ["folic"]},
+    {"display": "Vitamin B7 (Biotin)", "unit": "mcg", "rda": 30, "athlete": 30, "keys": ["biotin"]},
+    {"display": "Vitamin B6", "unit": "mg", "rda": 1.3, "athlete": 2.0, "keys": ["vitamin b6"]},
+    {"display": "Vitamin B5 (Pantothenic)", "unit": "mg", "rda": 5, "athlete": 7, "keys": ["pantothenic acid"], "match": ["pantothenic"]},
+    {"display": "Vitamin B3 (Niacin)", "unit": "mg", "rda": 16, "athlete": 20, "keys": ["niacin"], "match": ["nicotinic"]},
+    {"display": "Vitamin B2 (Riboflavin)", "unit": "mg", "rda": 1.3, "athlete": 2.0, "keys": ["riboflavin"]},
+    {"display": "Vitamin B1 (Thiamin)", "unit": "mg", "rda": 1.2, "athlete": 2.0, "keys": ["thiamin"]},
+    {"display": "Vitamin A", "unit": "mcg", "rda": 900, "athlete": 1000, "keys": ["vitamin a"]},
+    {"display": "Vitamin C", "unit": "mg", "rda": 90, "athlete": 200, "keys": ["vitamin c"], "match": ["ascorbic"]},
+    {"display": "Vitamin D", "unit": "mcg", "rda": 15, "athlete": 25, "keys": ["vitamin d"]},
+    {"display": "Vitamin E", "unit": "mg", "rda": 15, "athlete": 20, "keys": ["vitamin e"]},
+    {"display": "Vitamin K", "unit": "mcg", "rda": 120, "athlete": 120, "keys": ["vitamin k", "vitamin k2"]},
+    {"display": "Calcium", "unit": "mg", "rda": 1000, "athlete": 1300, "keys": ["calcium"]},
+    {"display": "Phosphorus", "unit": "mg", "rda": 700, "athlete": 1000, "keys": ["phosphorus"], "match": ["phosphate"]},
+    {"display": "Magnesium", "unit": "mg", "rda": 400, "athlete": 500, "keys": ["magnesium"]},
+    {"display": "Potassium", "unit": "mg", "rda": 3400, "athlete": 3500, "keys": ["potassium"]},
+    {"display": "Sodium", "unit": "mg", "rda": 1500, "athlete": 2300, "keys": ["sodium"]},
+    {"display": "Chloride", "unit": "mg", "rda": 2300, "athlete": 2300, "keys": ["chloride"]},
+    {"display": "Iron", "unit": "mg", "rda": 8, "athlete": 18, "keys": ["iron"]},
+    {"display": "Zinc", "unit": "mg", "rda": 11, "athlete": 15, "keys": ["zinc"]},
+    {"display": "Copper", "unit": "mg", "rda": 0.9, "athlete": 1.2, "keys": ["copper"]},
+    {"display": "Manganese", "unit": "mg", "rda": 2.3, "athlete": 2.3, "keys": ["manganese"]},
+    {"display": "Iodine", "unit": "mcg", "rda": 150, "athlete": 150, "keys": ["iodine"]},
+    {"display": "Selenium", "unit": "mcg", "rda": 55, "athlete": 70, "keys": ["selenium"]},
+    {"display": "Molybdenum", "unit": "mcg", "rda": 45, "athlete": 45, "keys": ["molybdenum"]},
+    {"display": "Chromium", "unit": "mcg", "rda": 35, "athlete": 35, "keys": ["chromium"]},
+    {"display": "Fluoride", "unit": "mg", "rda": 4, "athlete": 4, "keys": ["fluoride"]},
+    {"display": "Choline", "unit": "mg", "rda": 550, "athlete": 550, "keys": ["choline"]},
+    # EPA+DHA target; single EPA or DHA cards have no matching target of their own.
+    {"display": "Omega-3 (EPA+DHA)", "unit": "g", "rda": 0.25, "athlete": 2.0, "keys": ["omega 3", "fish oil"]},
+    {"display": "Omega-3 ALA", "unit": "g", "rda": 1.6, "athlete": 1.6, "keys": ["ala"]},
 ]
+_RDA_BY_NUTRIENT_KEY: dict[str, dict[str, Any]] = {
+    key: entry for entry in _MICRONUTRIENT_RDA for key in entry["keys"]
+}
+
+
+def _nutrient_name_head(name: str) -> str:
+    """Normalised nutrient name BEFORE any "(as ...)" form ("Iodine (as
+    potassium iodide)" -> "iodine"); the whole name if nothing precedes it."""
+    raw = str(name or "")
+    head = re.split(r"[(\[]", raw, maxsplit=1)[0]
+    return bb.normalize_lookup_key(head if head.strip() else raw).replace("-", " ")
+
+
+def _whole_word_in(needle: str, text: str) -> bool:
+    return re.search(r"(?<![a-z0-9])" + re.escape(needle) + r"(?![a-z0-9])", text) is not None
 
 
 def _rda_for_component(component_key: str) -> dict[str, Any] | None:
-    key = bb.normalize_lookup_key(component_key)
-    if not key:
+    key = bb.canonical_nutrient_key(component_key)
+    if key:
+        return _RDA_BY_NUTRIENT_KEY.get(key)
+    head = _nutrient_name_head(component_key)
+    if not head:
         return None
     for entry in _MICRONUTRIENT_RDA:
-        if any(m in key for m in entry["match"]):
+        if any(_whole_word_in(m, head) for m in entry.get("match", ())):
             return entry
     return None
 
 
 def _format_rda_target(entry: dict[str, Any]) -> str:
     return f"{bb.format_float(float(entry['athlete']))} {entry['unit']}"
+
+
+# --- Safe upper intake levels (adult ULs) -------------------------------------
+# Applied to the PILL dose. For each nutrient the STRICTER of EFSA and NIH ODS
+# is used (EFSA Scientific Committee ULs incl. the 2022-2024 updates for B6,
+# selenium and iron; NIH ODS fact sheets):
+#   nutrient      EFSA UL                         NIH ODS UL              used
+#   vitamin A     3000 µg RE (preformed only)     3000 µg RAE (preformed) 3000 µg  - retinol/retinyl, NOT beta-carotene
+#   vitamin D     100 µg                          100 µg (4000 IU)        100 µg
+#   vitamin E     300 mg                          1000 mg                 300 mg   EFSA
+#   vitamin C     not set                         2000 mg                 2000 mg  NIH
+#   niacin        nicotinic acid 10 mg,           35 mg (supplements)     nicotinic acid 10 mg (EFSA, the flushing
+#                 nicotinamide 900 mg                                     form); otherwise 35 mg (NIH)
+#   vitamin B6    12 mg (2023)                    100 mg                  12 mg    EFSA
+#   folic acid    1000 µg (synthetic only)        1000 µg                 1000 µg  - folic acid only, not food folate
+#   calcium       2500 mg                         2500 mg                 2500 mg
+#   iron          40 mg (2024)                    45 mg                   40 mg    EFSA
+#   zinc          25 mg                           40 mg                   25 mg    EFSA
+#   copper        5 mg                            10 mg                   5 mg     EFSA
+#   selenium      255 µg (2023)                   400 µg                  255 µg   EFSA
+#   iodine        600 µg                          1100 µg                 600 µg   EFSA
+#   magnesium     250 mg (supplements)            350 mg (supplements)    250 mg   EFSA
+#   manganese     not set                         11 mg                   11 mg    NIH
+#   molybdenum    600 µg                          2000 µg                 600 µg   EFSA
+#   fluoride      7 mg                            10 mg                   7 mg     EFSA
+#   phosphorus    not set                         4000 mg                 4000 mg  NIH
+#   choline       not set                         3500 mg                 3500 mg  NIH
+# No UL is set for vitamin K, B1, B2, B5, biotin, B12, chromium, potassium or
+# beta-carotene (EFSA: <15 mg/day supplemental beta-carotene is of no concern,
+# even for smokers; above that smokers should avoid it).
+_UPPER_LIMITS: dict[str, dict[str, Any]] = {
+    "vitamin a": {"name": "vitamin A", "limit": 3000.0, "unit": "mcg", "source": "EFSA & NIH"},
+    "vitamin d": {"name": "vitamin D", "limit": 100.0, "unit": "mcg", "source": "EFSA & NIH"},
+    "vitamin e": {"name": "vitamin E", "limit": 300.0, "unit": "mg", "source": "EFSA"},
+    "vitamin c": {"name": "vitamin C", "limit": 2000.0, "unit": "mg", "source": "NIH"},
+    "niacin": {"name": "niacin", "limit": 35.0, "unit": "mg", "source": "NIH, from supplements"},
+    "vitamin b6": {"name": "vitamin B6", "limit": 12.0, "unit": "mg", "source": "EFSA"},
+    "folate": {"name": "folic acid", "limit": 1000.0, "unit": "mcg", "source": "EFSA & NIH"},
+    "calcium": {"name": "calcium", "limit": 2500.0, "unit": "mg", "source": "EFSA & NIH"},
+    "iron": {"name": "iron", "limit": 40.0, "unit": "mg", "source": "EFSA"},
+    "zinc": {"name": "zinc", "limit": 25.0, "unit": "mg", "source": "EFSA"},
+    "copper": {"name": "copper", "limit": 5.0, "unit": "mg", "source": "EFSA"},
+    "selenium": {"name": "selenium", "limit": 255.0, "unit": "mcg", "source": "EFSA"},
+    "iodine": {"name": "iodine", "limit": 600.0, "unit": "mcg", "source": "EFSA"},
+    "magnesium": {"name": "magnesium", "limit": 250.0, "unit": "mg", "source": "EFSA, from supplements"},
+    "manganese": {"name": "manganese", "limit": 11.0, "unit": "mg", "source": "NIH"},
+    "molybdenum": {"name": "molybdenum", "limit": 600.0, "unit": "mcg", "source": "EFSA"},
+    "fluoride": {"name": "fluoride", "limit": 7.0, "unit": "mg", "source": "EFSA"},
+    "phosphorus": {"name": "phosphorus", "limit": 4000.0, "unit": "mg", "source": "NIH"},
+    "choline": {"name": "choline", "limit": 3500.0, "unit": "mg", "source": "NIH"},
+}
+_NICOTINIC_ACID_UPPER_LIMIT = {"name": "niacin as nicotinic acid", "limit": 10.0, "unit": "mg", "source": "EFSA — the form that causes flushing"}
+_BETA_CAROTENE_SMOKER_MG = 15.0
+
+
+def _dose_in_unit(component: str, value: Any, unit: str, target_unit: str, form: str = "") -> float | None:
+    """`value unit` of a pill dose expressed in `target_unit` (mg/mcg/g), IU included."""
+    try:
+        amount = float(value)
+    except Exception:
+        return None
+    factor = bb.unit_to_mg(str(unit or ""))
+    if factor is None and bb.normalize_lookup_key(str(unit or "")) in bb._IU_UNIT_KEYS:
+        factor = bb._iu_unit_to_mg_for_component(component, form)
+    target_factor = bb.unit_to_mg(target_unit)
+    if factor is None or not target_factor:
+        return None
+    return amount * factor / target_factor
+
+
+def _dose_text(value: Any, unit: str) -> str:
+    unit_txt = "IU" if bb.normalize_lookup_key(str(unit or "")) in bb._IU_UNIT_KEYS else str(unit or "")
+    try:
+        return f"{bb.format_float(float(value))} {unit_txt}".strip()
+    except Exception:
+        return f"{value} {unit_txt}".strip()
+
+
+def _form_dose_parts(form: str) -> list[tuple[str, float, str]]:
+    """(form, value, unit) parts of a merged multi-form dose
+    ("retinyl palmitate 450 mcg + beta carotene 450 mcg")."""
+    parts: list[tuple[str, float, str]] = []
+    for chunk in str(form or "").split(" + "):
+        m = re.search(r"^(?P<form>.*?)\s+(?P<num>\d+(?:\.\d+)?)\s*(?P<unit>mcg|mg|g|iu)\s*$", chunk.strip(), re.I)
+        if m:
+            parts.append((m.group("form"), float(m.group("num")), m.group("unit").lower()))
+    return parts
+
+
+def _upper_limit_dose(key: str, component: str, value: Any, unit: str, form: str) -> tuple[float, str, dict[str, Any]] | None:
+    """(amount in the UL unit, dose text, UL entry) for the part of the dose a UL applies to."""
+    entry = _UPPER_LIMITS.get(key)
+    if entry is None or value is None:
+        return None
+    form_l = bb.normalize_lookup_key(str(form or "")).replace("-", " ")
+    if key == "niacin" and re.search(r"\bnicotinic acid|\bnicotinsaure", form_l):
+        entry = _NICOTINIC_ACID_UPPER_LIMIT
+    if key == "vitamin a":
+        parts = _form_dose_parts(form)
+        if parts:  # merged retinyl + beta-carotene: only the preformed share counts
+            total = 0.0
+            for part_form, part_value, part_unit in parts:
+                if "carot" not in part_form.lower():
+                    total += _dose_in_unit(component, part_value, part_unit, entry["unit"], part_form) or 0.0
+            return total, f"{bb.format_float(total)} {entry['unit']} of preformed vitamin A", entry
+        share = bb.vitamin_a_beta_carotene_share(component or "vitamin a", form)
+        if share >= 1.0:
+            return None  # beta-carotene has no UL
+        if share > 0.0:  # "(50% as beta-carotene)": only the preformed share counts
+            if bb.normalize_lookup_key(str(unit or "")) in bb._IU_UNIT_KEYS:
+                preformed = _dose_in_unit("vitamin a", float(value) * (1.0 - share), unit, entry["unit"], "retinyl")
+            else:
+                full = _dose_in_unit(component, value, unit, entry["unit"], form)
+                preformed = full * (1.0 - share) if full is not None else None
+            if preformed is None:
+                return None
+            return preformed, f"{_dose_text(value, unit)} ({bb.format_float(preformed)} {entry['unit']} preformed vitamin A)", entry
+    if key == "folate":
+        share = re.search(r"(\d+(?:\.\d+)?)\s*(mcg|mg)\s+folic acid", form_l)
+        if share:
+            amount = _dose_in_unit(component, share.group(1), share.group(2), entry["unit"])
+            return (amount, f"{bb.format_float(float(share.group(1)))} {share.group(2)} folic acid", entry) if amount is not None else None
+        if not bb._is_folic_acid_dose(component, form):
+            return None  # food folate / methylfolate / DFE without a folic-acid share
+    amount = _dose_in_unit(component, value, unit, entry["unit"], form)
+    if amount is None:
+        return None
+    text = _dose_text(value, unit)
+    if bb.normalize_lookup_key(str(unit or "")) in bb._IU_UNIT_KEYS:
+        text += f" ({bb.format_float(amount)} {entry['unit']})"
+    return amount, text, entry
+
+
+def _upper_limit_warning(component_key: str, dose_value: Any, dose_unit: str, form: str = "") -> str:
+    """Warning text when the PILL dose is above the adult safe upper limit, else "".
+
+    e.g. "⚠️ 50 mg is above the safe upper limit for vitamin B6 (12 mg/day,
+    EFSA) — check with a doctor before taking this long-term."
+    """
+    component = str(component_key or "")
+    key = bb.canonical_nutrient_key(component)
+    if key in ("beta carotene", "vitamin a") and dose_value is not None:
+        beta_mg = None
+        if key == "beta carotene":
+            beta_mg = _dose_in_unit(component, dose_value, dose_unit, "mg", form)
+        if beta_mg is not None and beta_mg >= _BETA_CAROTENE_SMOKER_MG:
+            return (
+                f"⚠️ {_dose_text(dose_value, dose_unit)} beta-carotene: EFSA advises smokers not to take "
+                f"{bb.format_float(_BETA_CAROTENE_SMOKER_MG)} mg/day or more from supplements."
+            )
+    found = _upper_limit_dose(key, component, dose_value, dose_unit, form)
+    if found is None:
+        return ""
+    amount, dose_txt, entry = found
+    if amount <= float(entry["limit"]) * (1 + 1e-9):
+        return ""
+    return (
+        f"⚠️ {dose_txt} is above the safe upper limit for {entry['name']} "
+        f"({bb.format_float(float(entry['limit']))} {entry['unit']}/day, {entry['source']}) — "
+        "check with a doctor before taking this long-term."
+    )
+
+
+def _liver_vitamin_a_warning(food: dict[str, Any] | None, grams: float | None) -> str:
+    """Liver tops the B2 / B12 / folate / copper lists, but its vitamin A is
+    preformed retinol: warn when the suggested portion alone passes the vitamin A
+    upper limit (e.g. ~92 g duck liver for 680 µg folate = ~11,000 µg RAE)."""
+    name = str((food or {}).get("food_description", "") or "")
+    if not name or grams is None or grams <= 0 or not re.search(r"\bliver\b", name.lower()):
+        return ""
+    rae_per_100g = bb.food_nutrient_amount(name, "vitamin a")
+    limit = float(_UPPER_LIMITS["vitamin a"]["limit"])
+    if not rae_per_100g or rae_per_100g * grams / 100.0 <= limit:
+        return ""
+    return (
+        f"⚠️ ~{_format_grams(grams)} of this liver also gives ~{bb.format_float(rae_per_100g * grams / 100.0, 0)} mcg "
+        f"vitamin A — above the {bb.format_float(limit)} mcg/day safe upper limit. Pick another food or keep "
+        "liver to about once a week."
+    )
+
+
+def _selected_food_warning(food: dict[str, Any] | None, dose_value: Any, dose_unit: str, component: str, form: str = "") -> str:
+    """Safety note for the food picked to replace the pill (portion-dependent)."""
+    if not isinstance(food, dict):
+        return ""
+    try:
+        grams = bb.grams_needed_to_match_dose(
+            dose_value, dose_unit, float(food.get("amount_per_100g", 0.0) or 0.0), str(food.get("unit", "") or ""), component, form
+        )
+    except Exception:
+        grams = None
+    return _liver_vitamin_a_warning(food, grams)
+
+
+def _final_food_warnings(items: list[dict[str, Any]]) -> list[str]:
+    """Food-side safety notes for replaced pills (decision dicts), for the results screen."""
+    out = []
+    for d in items:
+        warning = _selected_food_warning(
+            d.get("selected_food"), d.get("dose_value"), str(d.get("dose_unit", "") or ""),
+            str(d.get("component", "") or ""), str(d.get("form", "") or ""),
+        )
+        if warning:
+            out.append(f"{d.get('component', '')}: {warning}")
+    return out
+
+
+def _final_upper_limit_warnings(items: list[dict[str, Any]]) -> list[str]:
+    """Upper-limit warnings for kept pills (decision dicts), for the results screen."""
+    out = []
+    for d in items:
+        warning = _upper_limit_warning(
+            str(d.get("component", "") or d.get("component_key", "") or ""),
+            d.get("dose_value"),
+            str(d.get("dose_unit", "") or ""),
+            str(d.get("form", "") or ""),
+        )
+        if warning:
+            out.append(f"{d.get('component', '')}: {warning}")
+    return out
 
 
 # --- Deficiency risk, bioavailability, pricing, meal plan, share, history -----
@@ -864,35 +1142,32 @@ def _format_rda_target(entry: dict[str, Any]) -> str:
 
 # Nutrients most commonly under-consumed by active people (see the Athlete RDA
 # guide caption): flagged even when the kept pill dose looks adequate.
-_HIGH_RISK_NUTRIENTS = ["vitamin d", "iron", "vitamin b12", "cobalamin", "zinc", "omega", "epa", "dha"]
+_HIGH_RISK_NUTRIENT_KEYS = {"vitamin d", "iron", "vitamin b12", "zinc", "omega 3", "fish oil", "epa", "dha"}
 
 
-def _dose_vs_athlete_ratio(component_key: str, dose_value: Any, dose_unit: str) -> float | None:
-    """Kept pill dose as a fraction of the athlete daily target (1.0 == meets it)."""
+def _dose_vs_athlete_ratio(component_key: str, dose_value: Any, dose_unit: str, form: str = "") -> float | None:
+    """Kept pill dose as a fraction of the athlete daily target (1.0 == meets it).
+
+    Folic acid counts as DFE (x1.7) and a fish-oil weight as ~30% EPA+DHA, the
+    same food equivalents the portion math uses."""
     entry = _rda_for_component(component_key)
     if entry is None or dose_value is None:
         return None
     try:
-        supp_factor = bb.unit_to_mg(str(dose_unit or ""))
-        if supp_factor is None and bb.normalize_lookup_key(str(dose_unit or "")) in {"iu", "ui", "ie"}:
-            supp_factor = bb._iu_unit_to_mg_for_component(component_key)
-        target_factor = bb.unit_to_mg(str(entry["unit"]))
-        if supp_factor is None or target_factor is None:
+        dose = _dose_in_unit(component_key, dose_value, dose_unit, str(entry["unit"]), form)
+        target = float(entry["athlete"])
+        if dose is None or target <= 0:
             return None
-        target_mg = float(entry["athlete"]) * target_factor
-        if target_mg <= 0:
-            return None
-        return (float(dose_value) * supp_factor) / target_mg
+        return dose * bb.supplement_dose_food_factor(component_key, form) / target
     except Exception:
         return None
 
 
-def _deficiency_flag(component_key: str, dose_value: Any, dose_unit: str) -> str:
+def _deficiency_flag(component_key: str, dose_value: Any, dose_unit: str, form: str = "") -> str:
     """Short warning when the kept pill is well below the athlete target and/or the
     nutrient is one athletes commonly fall short on. "" when nothing to flag."""
-    key = bb.normalize_lookup_key(component_key)
-    high_risk = any(h in key for h in _HIGH_RISK_NUTRIENTS)
-    ratio = _dose_vs_athlete_ratio(component_key, dose_value, dose_unit)
+    high_risk = bb.canonical_nutrient_key(component_key) in _HIGH_RISK_NUTRIENT_KEYS
+    ratio = _dose_vs_athlete_ratio(component_key, dose_value, dose_unit, form)
     if ratio is not None and ratio < 0.5:
         pct = max(1, int(round(ratio * 100)))
         tail = " — commonly under-consumed, prioritise it" if high_risk else ""
@@ -902,34 +1177,130 @@ def _deficiency_flag(component_key: str, dose_value: Any, dose_unit: str) -> str
     return ""
 
 
-# Why the whole food generally beats the isolated pill (one concise, curated line
-# per nutrient; generic fallback otherwise). General guidance only.
-_BIOAVAILABILITY_NOTES: list[tuple[str, str]] = [
-    ("vitamin a", "Food gives beta-carotene, which the body converts only as needed — safer than pre-formed retinol pills."),
-    ("beta carotene", "Food gives beta-carotene, which the body converts only as needed — safer than pre-formed retinol pills."),
-    ("vitamin c", "Whole foods pair vitamin C with bioflavonoids that support its absorption and antioxidant action."),
-    ("vitamin d", "Food and sunlight deliver vitamin D alongside cofactors (magnesium, K2) needed to actually use it."),
-    ("vitamin e", "Food vitamin E is the full tocopherol/tocotrienol family, not just the single alpha form in most pills."),
-    ("vitamin k", "Greens supply K1 with fat and fibre that aid uptake; fermented foods add well-absorbed K2."),
-    ("folate", "Natural food folate is better balanced than high-dose folic acid, which can mask a B12 deficiency."),
-    ("vitamin b12", "Animal foods carry B12 bound to protein with the cofactors that aid its absorption."),
-    ("cobalamin", "Animal foods carry B12 bound to protein with the cofactors that aid its absorption."),
-    ("iron", "Heme iron from food is far better absorbed than iron salts — and much gentler on the gut."),
-    ("calcium", "Food calcium arrives with vitamin D, K2 and magnesium that direct it into bone."),
-    ("magnesium", "Food magnesium comes bound to fibre and other minerals, so it's better tolerated than high-dose salts."),
-    ("zinc", "Food zinc is balanced with copper; isolated zinc pills can deplete copper over time."),
-    ("selenium", "One or two Brazil nuts cover selenium — food keeps you clear of the narrow toxic threshold of pills."),
-    ("potassium", "Food potassium is well-absorbed and unrestricted, unlike dose-capped supplements."),
-    ("omega", "Whole fish delivers EPA+DHA with protein and vitamin D, and is less oxidised than old capsules."),
-    ("choline", "Eggs and liver supply choline with phospholipids and other B-vitamins that work together."),
-]
+def _plant_based_diet(profile: dict[str, Any] | None) -> str:
+    """"vegan" / "vegetarian" for those dietary profiles, else ""."""
+    if not isinstance(profile, dict):
+        return ""
+    blob = bb.normalize_lookup_key(f"{profile.get('id', '')} {profile.get('label', '')}")
+    if "vegan" in blob:
+        return "vegan"
+    if "vegetarian" in blob:
+        return "vegetarian"
+    return ""
 
 
-def _bioavailability_note(component_key: str) -> str:
-    key = bb.normalize_lookup_key(component_key)
-    for needle, note in _BIOAVAILABILITY_NOTES:
-        if needle in key:
-            return note
+def _diet_specific_warning(component_key: str, profile: dict[str, Any] | None) -> str:
+    """Diet-specific advice that overrides "replace with food" (vegan/vegetarian B12)."""
+    diet = _plant_based_diet(profile)
+    if diet and bb.canonical_nutrient_key(component_key) == "vitamin b12":
+        return (
+            f"⚠️ On a {diet} diet whole foods aren't a reliable vitamin B12 source — "
+            "keeping the supplement is recommended."
+        )
+    return ""
+
+
+def _card_warning_text(
+    component_key: str,
+    dose_value: Any,
+    dose_unit: str,
+    form: str = "",
+    profile: dict[str, Any] | None = None,
+) -> str:
+    """The card's warn text: an over-upper-limit warning replaces the
+    deficiency / "prioritise it" flag (never both); diet advice is appended."""
+    parts = []
+    upper = _upper_limit_warning(component_key, dose_value, dose_unit, form)
+    diet = _diet_specific_warning(component_key, profile)
+    if upper:
+        parts.append(upper)
+    elif not diet:
+        flag = _deficiency_flag(component_key, dose_value, dose_unit, form)
+        if flag:
+            parts.append(flag)
+    if diet:
+        parts.append(diet)
+    if bb.canonical_nutrient_key(component_key) == "fish oil" and dose_value is not None:
+        parts.append("ℹ️ The label gives the fish-oil weight; portions assume ~30% of it is EPA+DHA.")
+    return " ".join(parts)
+
+
+# Why the whole food generally beats the isolated pill — one concise, curated
+# line per nutrient (keyed by bb canonical nutrient key), worded so it never
+# contradicts the foods the card ranks (e.g. liver tops vitamin A, seaweed and
+# soy top iron, a 5 g Brazil nut holds ~95 µg selenium). General guidance only.
+_BIOAVAILABILITY_NOTES: dict[str, str] = {
+    "vitamin a": "Liver is extremely high in preformed vitamin A — keep it to a small portion about once a week (avoid it in pregnancy). Orange and dark-green vegetables give beta-carotene, which the body converts only as needed.",
+    "beta carotene": "Orange and dark-green vegetables deliver beta-carotene in its natural carotenoid mix; eat them with a little fat to absorb it.",
+    "vitamin c": "Whole foods pair vitamin C with bioflavonoids that support its absorption and antioxidant action.",
+    "vitamin d": "Few foods are rich in vitamin D: UV-exposed mushrooms give D2, which raises blood levels less than D3; oily fish and egg yolk give D3. Sunlight is the main source.",
+    "vitamin e": "Food vitamin E is the full tocopherol/tocotrienol family, not just the single alpha form in most pills.",
+    "vitamin k": "Leafy greens supply vitamin K1 — eat them with a little fat to absorb it.",
+    "vitamin k2": "USDA has no vitamin K2 data, so these are literature values (Schurgers & Vermeer 2000). Natto is the only rich MK-7 source; cheese K2 is mostly MK-8/MK-9.",
+    "folate": "Natural food folate is better balanced than high-dose folic acid, which can mask a B12 deficiency.",
+    "vitamin b12": "Only animal foods reliably supply active vitamin B12, bound to protein; liver and shellfish are the richest sources.",
+    "iron": "Heme iron from meat, fish and liver is absorbed far better (~15–35%) than non-heme iron from plants and seaweed (~2–20%) — pair plant sources with vitamin C.",
+    "calcium": "Food calcium comes in smaller amounts spread over meals, which the body absorbs more efficiently than one large pill dose.",
+    "magnesium": "Food magnesium comes bound to fibre and other minerals, so it's better tolerated than high-dose salts.",
+    "zinc": "Food zinc is balanced with copper; isolated zinc pills can deplete copper over time.",
+    "iodine": "Sea fish, dairy and eggs supply iodine; in Germany iodised salt is the main everyday source.",
+    "potassium": "Food potassium is well-absorbed and unrestricted, unlike dose-capped supplements.",
+    "omega 3": "Oily fish delivers EPA+DHA with protein, selenium and vitamin D, and is fresher than long-stored capsules.",
+    "fish oil": "Oily fish delivers EPA+DHA with protein, selenium and vitamin D, and is fresher than long-stored capsules.",
+    "epa": "Oily fish delivers EPA+DHA with protein, selenium and vitamin D, and is fresher than long-stored capsules.",
+    "dha": "Oily fish delivers EPA+DHA with protein, selenium and vitamin D, and is fresher than long-stored capsules.",
+    "ala": "Flax, chia, hemp and walnuts give ALA; the body converts only a few percent of it into EPA/DHA.",
+    "choline": "Eggs and liver supply choline with phospholipids and other B-vitamins that work together.",
+    "chromium": "Chromium values are approximate (NIH ODS) — USDA has no per-food chromium data.",
+}
+_FOLIC_ACID_NOTE = (
+    "Your pill is folic acid, which is absorbed ~1.7× better than food folate — so the food "
+    "portion is sized to 1.7× the label amount (µg DFE)."
+)
+
+
+_BRAZIL_NUT = "Nuts, brazilnuts, raw"
+_BRAZIL_NUT_GRAMS = 5.0
+
+
+def _selenium_note(dose_value: Any = None, dose_unit: str = "") -> str:
+    """Brazil-nut advice that agrees with the nut count on the card and the UL:
+    a 5 g nut holds ~96 µg (USDA reference 1917 µg/100 g), so 3 nuts (~290 µg)
+    already pass the 255 µg/day EFSA limit."""
+    per_100g = bb.food_nutrient_amount(_BRAZIL_NUT, "selenium") or 1917.0
+    per_nut = per_100g * _BRAZIL_NUT_GRAMS / 100.0
+    limit = float(_UPPER_LIMITS["selenium"]["limit"])
+    too_many = int(limit // per_nut) + 1
+    dose = _dose_in_unit("selenium", dose_value, dose_unit, "mcg") if dose_value is not None else None
+    nuts = round(dose / per_nut * 2) / 2 if dose else None
+    head = (
+        f"One Brazil nut (~{bb.format_float(_BRAZIL_NUT_GRAMS, 0)} g) holds roughly 50–100 µg selenium "
+        f"(it varies with soil; USDA reference ~{bb.format_float(per_nut, 0)} µg)"
+    )
+    if nuts is None or nuts <= 1:
+        advice = "one nut a day is plenty"
+    elif nuts < too_many:
+        advice = f"the ~{bb.format_float(nuts, 1)} nuts that match this dose are fine, but don't eat more"
+    else:
+        advice = f"matching this dose would take ~{bb.format_float(nuts, 1)} nuts, more than is safe"
+    return (
+        f"{head} — {advice}; {too_many} or more nuts a day can pass the "
+        f"{bb.format_float(limit)} µg/day safe upper limit."
+    )
+
+
+def _bioavailability_note(component_key: str, form: str = "", dose_value: Any = None, dose_unit: str = "") -> str:
+    """One curated line on why the whole food helps; `dose_value`/`dose_unit`
+    (the pill dose) make dose-dependent notes (Brazil-nut selenium) match the
+    portion on the card."""
+    key = bb.canonical_nutrient_key(component_key)
+    if key == "folate" and bb._is_folic_acid_dose(component_key, form):
+        return _FOLIC_ACID_NOTE
+    if key == "selenium":
+        return _selenium_note(dose_value, dose_unit)
+    note = _BIOAVAILABILITY_NOTES.get(key)
+    if note:
+        return note
     return (
         "Whole foods deliver this nutrient with natural cofactors and a food matrix "
         "that generally improve absorption versus an isolated pill."
@@ -996,6 +1367,7 @@ def _grams_to_match_dose(decision: dict[str, Any]) -> float | None:
             amount_per_100g,
             str(food.get("unit", "") or ""),
             str(decision.get("component", "") or ""),
+            str(decision.get("form", "") or ""),
         )
     except Exception:
         return None
@@ -1396,71 +1768,33 @@ def _render_final_actions(
 
 # --- Micronutrient allow-list -------------------------------------------------
 # Only scientifically recognised nutrients become swipe cards: the 13 essential
-# vitamins + the essential minerals, plus choline and the omega-3 essential
-# fatty acids (EPA/DHA/ALA) which are common, legitimate supplement categories.
-_VITAMIN_ALIASES = [
-    "vitamin a", "retinol", "retinyl", "retinal", "beta carotene", "betacarotene", "carotene",
-    "vitamin c", "ascorbic", "ascorbate",
-    "vitamin d", "cholecalciferol", "ergocalciferol",
-    "vitamin e", "tocopherol", "tocopheryl", "tocotrienol",
-    "vitamin k", "phylloquinone", "menaquinone", "phytonadione",
-    "vitamin b1", "thiamin", "thiamine",
-    "vitamin b2", "riboflavin",
-    "vitamin b3", "niacin", "niacinamide", "nicotinamide", "nicotinic",
-    "vitamin b5", "pantothenic", "pantothenate", "panthenol",
-    "vitamin b6", "pyridoxine", "pyridoxal", "pyridoxamine",
-    "vitamin b7", "biotin",
-    "vitamin b9", "folate", "folic", "folacin", "folinic", "methylfolate",
-    "vitamin b12", "cobalamin",
-    "vitamin b complex", "b-complex", "b complex",
-]
+# vitamins + the essential minerals, plus choline and the omega-3 fatty acids
+# (EPA/DHA/ALA), i.e. exactly the nutrients of the bb canonical nutrient
+# lexicon. Recognition is whole-word on the name BEFORE "(as ...)": "Ashwagandha"
+# is not DHA, "environmental" is not iron, omega-6 / GLA are not omega-3, while
+# "Vitamin B-12", "B12" and "Zinc (as zinc amino acid chelate)" are accepted.
 
-_MINERAL_ALIASES = [
-    "calcium", "phosphorus", "phosphate", "magnesium", "potassium", "sodium", "chloride",
-    "iron", "ferrous", "ferric", "zinc", "copper", "cupric", "manganese",
-    "iodine", "iodide", "selenium", "selenite", "selenomethionine",
-    "molybdenum", "chromium", "fluoride", "fluorine", "cobalt", "boron", "sulfur", "sulphur",
-]
-
-# Vitamin-like nutrient + essential fatty acids (choline, omega-3): common,
-# legitimate supplement categories — always included.
-_ESSENTIAL_EXTRA_ALIASES = [
-    "choline", "inositol",
-    "omega", "epa", "dha", "fish oil", "docosahexaenoic", "eicosapentaenoic",
-    "alpha-linolenic", "alpha linolenic", "linolenic",
-]
-
-# Checked FIRST: if any of these appear in the name it is never a micronutrient
-# (covers macronutrients, label metadata and common fillers/excipients — e.g.
-# "magnesium stearate" must be dropped even though it contains "magnesium").
+# Checked FIRST (whole words, on the name before "(as ...)"): fillers,
+# excipients and label metadata are never cards even when they name a mineral
+# ("magnesium stearate", "sodium benzoate").
 _NON_MICRONUTRIENT_DENY = [
-    # macronutrients / nutrition-panel lines
-    "protein", "amino acid", "carbohydrate", "total carb", "net carb",
-    "total fat", "saturated fat", "trans fat", "monounsaturated", "polyunsaturated",
-    "dietary fiber", "dietary fibre", "fiber", "fibre", "sugar", "sugars",
-    "calorie", "calories", "energy", "kcal", "cholesterol",
-    "serving size", "servings per", "daily value", "container",
-    # fillers / excipients / additives
-    "stearate", "stearic", "gelatin", "cellulose", "microcrystalline",
-    "croscarmellose", "povidone", "benzoate", "lauryl", "polysorbate",
-    "silica", "silicon dioxide", "titanium dioxide", "maltodextrin", "dextrose",
-    "rice flour", "rice concentrate", "sucralose", "sorbitol", "xylitol",
-    "sweetener", "flavor", "flavour", "coloring", "colouring",
+    "stearate", "stearic", "gelatin", "cellulose", "microcrystalline", "croscarmellose", "povidone",
+    "benzoate", "lauryl", "polysorbate", "silica", "silicate", "silicon dioxide", "titanium dioxide",
+    "maltodextrin", "dextrose", "starch", "glycolate", "rice flour", "rice concentrate", "sucralose",
+    "sorbitol", "xylitol", "sweetener", "flavor", "flavour", "coloring", "colouring",
+    "serving size", "servings per", "daily value", "container", "proprietary",
 ]
-
-
-_MICRONUTRIENT_ALIASES = _VITAMIN_ALIASES + _MINERAL_ALIASES + _ESSENTIAL_EXTRA_ALIASES
 
 
 def _is_micronutrient(name: str) -> bool:
     """True for scientifically recognised nutrients (vitamins, minerals, choline,
-    omega-3); False for macronutrients, fillers and label metadata."""
-    key = bb.normalize_lookup_key(str(name or ""))
-    if not key:
+    omega-3); False for macronutrients, botanicals, fillers and label metadata."""
+    head = _nutrient_name_head(str(name or ""))
+    if not head:
         return False
-    if any(bad in key for bad in _NON_MICRONUTRIENT_DENY):
+    if any(_whole_word_in(bad, head) for bad in _NON_MICRONUTRIENT_DENY):
         return False
-    return any(good in key for good in _MICRONUTRIENT_ALIASES)
+    return bool(bb.canonical_nutrient_key(str(name or "")))
 
 
 def _filter_to_micronutrients(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1468,21 +1802,133 @@ def _filter_to_micronutrients(components: list[dict[str, Any]]) -> list[dict[str
     return [c for c in components if _is_micronutrient(str(c.get("component", "") or ""))]
 
 
+# --- One card per nutrient ----------------------------------------------------
+# Cards that resolve to the same nutrient are merged (they would otherwise
+# overwrite each other's swipe decision). One dosed row is kept: the most
+# authoritative one (bb.label_row_preference — the nutrient-table line with
+# %NRV / %DV, else the row naming a chemical form, else the first). A product
+# title ("Vitamin D3 1000 I.E. Tabletten"), a marketing line or a
+# second-language line (DE/FR labels) repeats the dose; it never adds to it.
+# Doses are summed ONLY for the one whitelisted pair of chemically distinct
+# forms listed on separate lines: vitamin A as preformed retinol / retinyl
+# ester + as beta-carotene (the UL applies to the preformed share only). Other
+# "two forms" (magnesium citrate + oxide on separate lines) are too rare to
+# tell apart from a title or a translation, so they are not summed.
+# Omega-3 rows ("Fish oil 1000 mg / EPA 180 mg / DHA 120 mg") become ONE
+# EPA+DHA card; the fish-oil weight is the carrier, not an omega-3 amount.
+_OMEGA3_FAMILY_KEYS = ("omega 3", "fish oil", "epa", "dha")
+
+
+def _component_nutrient_key(item: dict[str, Any]) -> str:
+    name = str(item.get("component", "") or "")
+    return str(item.get("nutrient_key", "") or "") or bb.canonical_nutrient_key(name) or bb.normalize_lookup_key(name)
+
+
+def _sum_distinct_form_doses(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """One row with the summed dose of several forms, or None if not summable."""
+    first = rows[0]
+    unit = bb._normalize_component_unit_token(str(first.get("dose_unit", "") or ""))
+    target_unit = unit if unit in ("mg", "mcg", "g") else "mcg"
+    total = 0.0
+    parts = []
+    for row in rows:
+        component = str(row.get("component", "") or "")
+        form = str(row.get("form", "") or "")
+        amount = _dose_in_unit(component, row.get("dose_value"), str(row.get("dose_unit", "") or ""), target_unit, form)
+        if amount is None:
+            return None
+        total += amount
+        parts.append(f"{form} {_dose_text(row.get('dose_value'), str(row.get('dose_unit', '') or '')).lower()}")
+    merged = dict(first)
+    merged.update({"dose_value": round(total, 6), "dose_unit": target_unit, "form": " + ".join(parts)})
+    return merged
+
+
+def _vitamin_a_form_pair(rows: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """[preformed row, beta-carotene row] when vitamin A is listed on separate
+    label lines in both forms, else None."""
+    by_kind: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        if _component_nutrient_key(row) != "vitamin a" or not row.get("label_line"):
+            continue
+        kind = bb.vitamin_a_form_kind(str(row.get("component", "") or ""), str(row.get("form", "") or ""))
+        if kind:
+            by_kind.setdefault(kind, []).append(row)
+    if set(by_kind) != {"preformed", "carotenoid"}:
+        return None
+    pair = [max(by_kind[kind], key=bb.label_row_preference) for kind in ("preformed", "carotenoid")]
+    if pair[0].get("label_line") == pair[1].get("label_line"):
+        return None
+    return pair
+
+
+def _merge_same_nutrient_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    dosed = [r for r in rows if r.get("dose_value") is not None]
+    if not dosed:
+        return dict(rows[0])
+    if len(dosed) > 1:
+        pair = _vitamin_a_form_pair(dosed)
+        summed = _sum_distinct_form_doses(pair) if pair else None
+        if summed is not None:
+            return summed
+    return dict(max(dosed, key=bb.label_row_preference))  # first of the best
+
+
+def _merge_omega3_family(rows_by_key: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    epa, dha = rows_by_key.get("epa"), rows_by_key.get("dha")
+    if epa and dha and epa.get("dose_value") is not None and dha.get("dose_value") is not None:
+        epa_mg = _dose_in_unit("epa", epa.get("dose_value"), str(epa.get("dose_unit", "") or ""), "mg")
+        dha_mg = _dose_in_unit("dha", dha.get("dose_value"), str(dha.get("dose_unit", "") or ""), "mg")
+        if epa_mg is not None and dha_mg is not None:
+            return {
+                "component": "omega-3 (epa+dha)",
+                "dose_value": round(epa_mg + dha_mg, 6),
+                "dose_unit": "mg",
+                "form": f"EPA {bb.format_float(epa_mg)} mg + DHA {bb.format_float(dha_mg)} mg",
+                "nutrient_key": "omega 3",
+            }
+    for key in ("omega 3", "epa", "dha", "fish oil"):
+        row = rows_by_key.get(key)
+        if row and row.get("dose_value") is not None:
+            return row
+    return next(iter(rows_by_key.values()))
+
+
+def _merge_duplicate_components(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One component per nutrient, in label order (see the comment above)."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    order: list[str] = []
+    for item in components:
+        key = _component_nutrient_key(item)
+        if not key:
+            continue
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(item)
+    merged = {key: _merge_same_nutrient_rows(rows) for key, rows in groups.items()}
+    family = [key for key in order if key in _OMEGA3_FAMILY_KEYS]
+    if len(family) > 1:
+        merged[family[0]] = _merge_omega3_family({key: merged[key] for key in family})
+        order = [key for key in order if key not in family[1:]]
+    return [merged[key] for key in order]
+
+
 def _build_swipe_cards(components: list[dict[str, Any]], details: list[dict[str, Any]]) -> list[dict[str, Any]]:
     detail_by_component = {
         bb.normalize_lookup_key(str(d.get("component", ""))): d for d in details
     }
     cards: list[dict[str, Any]] = []
-    for item in components:
+    for item in _merge_duplicate_components(components):
         comp_name = str(item.get("component", "") or "").strip()
         comp_key = bb.normalize_lookup_key(comp_name)
         # Primary source: USDA single-ingredient whole foods, ranked by the
-        # amount of THIS nutrient per 100 g (highest dose on top). A deep pool is
-        # kept so dietary filtering downstream still leaves options for
-        # restrictive diets (e.g. vegan B1/B12).
+        # amount of THIS nutrient per 100 g (highest dose on top, one unit per
+        # list). A deep pool is kept so dietary filtering downstream still
+        # leaves options for restrictive diets (e.g. vegan B1/B12).
         foods: list[dict[str, Any]] = []
         try:
-            foods = list(bb._build_local_food_rows_for_component(comp_key, limit=SWIPE_CARD_FOOD_POOL) or [])
+            foods = list(bb._build_local_food_rows_for_component(comp_name, limit=SWIPE_CARD_FOOD_POOL) or [])
         except Exception:
             foods = []
         # Fallback to LLM-generated matches only if USDA has nothing.
@@ -1499,9 +1945,11 @@ def _build_swipe_cards(components: list[dict[str, Any]], details: list[dict[str,
             {
                 "component": comp_name,
                 "component_key": comp_key,
+                "nutrient_key": _component_nutrient_key(item),
                 "dose_label": _dose_label(item),
                 "dose_value": item.get("dose_value"),
                 "dose_unit": str(item.get("dose_unit", "") or ""),
+                "form": str(item.get("form", "") or ""),
                 "foods": foods,
             }
         )
@@ -2515,8 +2963,9 @@ def _render_card() -> None:
     with st.container(border=True):
         # Computed here but shown INSIDE the swipe card (passed as `warn` below),
         # so only the dropdown / Ask AI / dietary filter sit below the card.
-        deficiency_flag = _deficiency_flag(
-            component_key, card.get("dose_value"), str(card.get("dose_unit", "") or "")
+        card_form = str(card.get("form", "") or "")
+        warn_text = _card_warning_text(
+            component_key, card.get("dose_value"), str(card.get("dose_unit", "") or ""), card_form, selected_profile
         )
         stage = st.container()  # draggable swipe card sits at the top of this card
 
@@ -2537,12 +2986,19 @@ def _render_card() -> None:
             # are rendered INSIDE the swipe card (passed as props below).
             comp_name = str(card.get("component", "") or "")
             match_dose_txt = _portion_for_target(
-                selected_food, card.get("dose_value"), str(card.get("dose_unit", "") or ""), comp_name
+                selected_food, card.get("dose_value"), str(card.get("dose_unit", "") or ""), comp_name, card_form
             )
+            food_warning = _selected_food_warning(
+                selected_food, card.get("dose_value"), str(card.get("dose_unit", "") or ""), comp_name, card_form
+            )
+            if food_warning:
+                warn_text = f"{warn_text} {food_warning}".strip()
             rda_entry = _rda_for_component(component_key)
             if rda_entry is not None:
+                # The target is a food amount (e.g. folate in DFE), so it is
+                # named by the RDA entry, not by the pill's form.
                 rda_amount_txt = _portion_for_target(
-                    selected_food, rda_entry["athlete"], str(rda_entry["unit"]), comp_name
+                    selected_food, rda_entry["athlete"], str(rda_entry["unit"]), str(rda_entry["display"])
                 )
                 if rda_amount_txt:
                     rda_label_txt = _format_rda_target(rda_entry)
@@ -2563,7 +3019,11 @@ def _render_card() -> None:
         # Portion guidance, the bioavailability tip and the deficiency warning all
         # render INSIDE the swipe card (passed as props below). Only the dropdown,
         # Ask AI and dietary filter stay below the card.
-        bio_note = _bioavailability_note(component_key) if selected_food is not None else ""
+        bio_note = (
+            _bioavailability_note(component_key, card_form, card.get("dose_value"), str(card.get("dose_unit", "") or ""))
+            if selected_food is not None
+            else ""
+        )
 
         _render_rag_chat_popup(card, component_key, index)
 
@@ -2576,7 +3036,7 @@ def _render_card() -> None:
                 matchDose=match_dose_txt,
                 rdaAmount=rda_amount_txt,
                 rdaLabel=rda_label_txt,
-                warn=deficiency_flag,
+                warn=warn_text,
                 bioNote=bio_note,
                 index=index,
                 total=len(cards),
@@ -2612,6 +3072,7 @@ def _render_card() -> None:
             "dose_label": card.get("dose_label", ""),
             "dose_value": card.get("dose_value"),
             "dose_unit": card.get("dose_unit", ""),
+            "form": card_form,
             "decision": decision,
             "selected_food": selected_food,
             "card_index": index,
@@ -2651,6 +3112,9 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
                     ):
                         st.session_state["swipe_index"] = int(d.get("card_index", 0))
                         st.rerun()
+                # Kept pills above the safe upper limit stay flagged on the results.
+                for warning in _final_upper_limit_warnings(keep_items):
+                    st.caption(warning)
             else:
                 st.caption("Nothing swiped left.")
         with col_replace:
@@ -2673,6 +3137,8 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
                     ):
                         st.session_state["swipe_index"] = int(d.get("card_index", 0))
                         st.rerun()
+                for warning in _final_food_warnings(replace_items):
+                    st.caption(warning)
             else:
                 st.caption("Nothing swiped right.")
 

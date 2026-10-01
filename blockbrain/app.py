@@ -435,10 +435,28 @@ WHOLE_FOOD_UNIT_ESTIMATES: list[tuple[str, str, str, float]] = [
     ("mango", "mango", "mangoes", 200.0),
     ("avocado", "avocado", "avocados", 150.0),
     ("tomato", "tomato", "tomatoes", 123.0),
+    ("carrots baby", "baby carrot", "baby carrots", 10.0),
     ("carrot", "carrot", "carrots", 61.0),
+    ("egg yolk", "egg yolk", "egg yolks", 17.0),
+    ("egg white", "egg white", "egg whites", 33.0),
     ("egg", "egg", "eggs", 50.0),
     ("peppers bell", "bell pepper", "bell peppers", 119.0),
+    ("brazilnut", "Brazil nut", "Brazil nuts", 5.0),
+    ("brazil nut", "Brazil nut", "Brazil nuts", 5.0),
 ]
+# Foods whose name contains a unit keyword but are not that unit
+# ("Eggplant", "Fish, whitefish, eggs" are not hen's eggs; an orange bell
+# pepper is not an orange).
+WHOLE_FOOD_UNIT_EXCLUSIONS: dict[str, tuple[str, ...]] = {
+    "egg": ("eggplant", "fish", "roe", "caviar"),
+    "orange": ("pepper",),
+    "apple": ("pineapple",),
+}
+# Dried / processed forms weigh nothing like the whole fresh item, so no
+# "~N bananas" estimate is given for them.
+WHOLE_FOOD_UNIT_PROCESSED_WORDS: tuple[str, ...] = (
+    "dried", "dehydrated", "powder", "juice", "paste", "puree", "sauce", "chips", "flakes",
+)
 
 # Approximate grams per cup for selected foods where cup-based measures are common.
 VOLUME_FOOD_ESTIMATES: list[tuple[str, str, str, float]] = [
@@ -759,33 +777,120 @@ def unit_to_mg(unit: str) -> float | None:
     return _TO_MG.get(_canon_unit(unit))
 
 
-def _iu_unit_to_mg_for_component(component_name: str | None) -> float | None:
+_IU_UNIT_KEYS: frozenset[str] = frozenset({"iu", "ui", "ie", "i e"})
+
+# Vitamin E form detection from the label text ("(as d-alpha tocopherol)").
+_SYNTHETIC_VITAMIN_E_RE = re.compile(r"\b(?:dl alpha|dl|all rac|synthetic|synthetisch)\b")
+_NATURAL_VITAMIN_E_RE = re.compile(r"\b(?:d alpha|rrr|natural\w*|naturlich\w*|natuerlich\w*)\b")
+
+# Folic acid is absorbed ~1.7x better than food folate: 1 µg folic acid = 1.7 µg
+# DFE (NIH ODS; EFSA). Food folate amounts are DFE, so a folic-acid dose is
+# compared as DFE; doses already given in DFE ("680 mcg DFE") are not scaled.
+_FOLIC_ACID_TO_DFE = 1.7
+# A fish-oil WEIGHT is not an omega-3 amount: a typical fish-oil concentrate
+# ("18/12" oil, 180 mg EPA + 120 mg DHA per 1000 mg) carries ~30% EPA+DHA, the
+# long-chain omega-3s the food list is ranked by.
+_FISH_OIL_EPA_DHA_SHARE = 0.30
+
+
+def _is_folic_acid_dose(component_name: str | None, form: str | None = "") -> bool:
+    """True when the dose is synthetic folic acid (not DFE / methylfolate)."""
+    text = _fold_label_text(f"{component_name or ''} {form or ''}")
+    if canonical_nutrient_key(component_name or "") != "folate" or re.search(r"\bdfe\b", text):
+        return False
+    return bool(re.search(r"\bfol(?:ic acid|saure|saeure)\b", text))
+
+
+_BETA_CAROTENE_SHARE_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*%\s*(?:as|als|from|aus)?\s*beta\s*carot")
+
+
+def vitamin_a_beta_carotene_share(component_name: str | None, form: str | None = "") -> float:
+    """Fraction of a vitamin A dose given as beta-carotene: 1.0 for "(as
+    beta-carotene)", 0.5 for "(50% as beta-carotene)", 0.0 for retinol /
+    retinyl esters or an unknown form (counted as preformed: the safe side
+    for the upper limit)."""
+    if canonical_nutrient_key(component_name or "") != "vitamin a":
+        return 0.0
+    text = _fold_label_text(f"{component_name or ''} {form or ''}")
+    share = _BETA_CAROTENE_SHARE_RE.search(text)
+    if share:
+        return max(0.0, min(1.0, (_parse_float(share.group(1)) or 0.0) / 100.0))
+    if re.search(r"carot", text) and not re.search(r"\bretin|palmitat|\bacetat|preformed", text):
+        return 1.0
+    return 0.0
+
+
+def vitamin_a_form_kind(component_name: str | None, form: str | None = "") -> str:
+    """"preformed" (retinol / retinyl esters), "carotenoid" (beta-carotene) or
+    "" (unknown or mixed) for a vitamin A dose, read from its name and form."""
+    if canonical_nutrient_key(component_name or "") != "vitamin a":
+        return ""
+    text = _fold_label_text(f"{component_name or ''} {form or ''}")
+    if _BETA_CAROTENE_SHARE_RE.search(text):
+        return ""  # "(50% as beta-carotene)": mixed
+    carotenoid = bool(re.search(r"carot", text))
+    preformed = bool(re.search(r"\bretin|palmitat|\bacetat|preformed", text))
+    if carotenoid != preformed:
+        return "carotenoid" if carotenoid else "preformed"
+    return ""
+
+
+def supplement_dose_food_factor(component_name: str | None, form: str | None = "") -> float:
+    """Multiplier turning a label dose into the food-equivalent amount it is
+    compared with: folic acid -> DFE (x1.7), fish-oil weight -> EPA+DHA (x0.3)."""
+    if _is_folic_acid_dose(component_name, form):
+        return _FOLIC_ACID_TO_DFE
+    if canonical_nutrient_key(component_name or "") == "fish oil":
+        return _FISH_OIL_EPA_DHA_SHARE
+    return 1.0
+
+
+def _iu_unit_to_mg_for_component(component_name: str | None, form: str | None = "") -> float | None:
+    """mg per IU for a SUPPLEMENT dose (NIH ODS conversions), or None.
+
+    vitamin D (D2/D3, cholecalciferol, ergocalciferol): 1 IU = 0.025 µg.
+    vitamin A: retinol / retinyl esters 1 IU = 0.3 µg RAE; a vitamin A dose given
+      as supplemental beta-carotene 1 IU = 0.15 µg RAE; a beta-carotene amount
+      itself 1 IU = 0.6 µg beta-carotene.
+    vitamin E: natural d-alpha (RRR) tocopherol 1 IU = 0.67 mg; synthetic
+      dl-alpha (all-rac) 1 IU = 0.45 mg. The form is read from the component name
+      and `form` (the label's "(as ...)" text); unknown forms default to 0.45.
+    """
     component_key = normalize_lookup_key(component_name or "")
-    if not component_key:
+    if not component_key and not form:
         return None
-
-    # Vitamin D supplement labels commonly use IU.
-    # 1 IU vitamin D = 0.025 mcg = 0.000025 mg.
-    if component_key.startswith("vitamin d") or component_key in {"d", "d2", "d3"}:
+    key = canonical_nutrient_key(component_name or "") or canonical_nutrient_key(form or "")
+    if not key and component_key in {"d", "d2", "d3"}:
+        key = "vitamin d"
+    text = _fold_label_text(f"{component_name or ''} {form or ''}")
+    if key == "vitamin d":
         return 0.000025
-
-    # Vitamin A (retinol activity equivalent approximation for supplement labels).
-    # 1 IU vitamin A = 0.3 mcg retinol equivalent = 0.0003 mg.
-    if component_key.startswith("vitamin a") or component_key == "retinol":
-        return 0.0003
-    if "beta carotene" in component_key or "beta-carotene" in component_key:
-        # Supplemental beta-carotene convention: 1 IU ~= 0.6 mcg.
+    if key == "vitamin a":
+        # Weighted by the beta-carotene share ("5000 IU (50% as beta-carotene)"
+        # = 2500 IU x 0.3 + 2500 IU x 0.15 = 1125 µg RAE).
+        share = vitamin_a_beta_carotene_share(component_name or "vitamin a", form)
+        return 0.0003 * (1.0 - share) + 0.00015 * share
+    if key == "beta carotene":
         return 0.0006
-
-    # Vitamin E IU conversion is form-dependent.
-    # Use a practical default and handle explicit natural-form hints when available.
-    # synthetic dl-alpha-tocopherol: 1 IU = 0.45 mg
-    # natural d-alpha-tocopherol: 1 IU = 0.67 mg
-    if component_key.startswith("vitamin e") or "tocopherol" in component_key:
-        if any(token in component_key for token in ["natural", "d alpha", "d-alpha", "rrr"]):
+    if key == "vitamin e":
+        if _SYNTHETIC_VITAMIN_E_RE.search(text):
+            return 0.45
+        if _NATURAL_VITAMIN_E_RE.search(text):
             return 0.67
         return 0.45
+    return None
 
+
+def _food_iu_unit_to_mg(component_name: str | None) -> float | None:
+    """mg per IU for a FOOD amount. Food vitamin A IU is never converted: it
+    mixes retinol (0.3 µg RAE/IU) and carotenoids (0.05 µg RAE/IU), so foods are
+    always compared in µg RAE (USDA 1106) instead. Food vitamin E is natural
+    RRR-alpha-tocopherol (0.67 mg/IU); vitamin D is 0.025 µg/IU in any source."""
+    key = canonical_nutrient_key(component_name or "")
+    if key == "vitamin d":
+        return 0.000025
+    if key == "vitamin e":
+        return 0.67
     return None
 
 
@@ -795,28 +900,24 @@ def grams_needed_to_match_dose(
     nutrient_amount_per_100g: float,
     nutrient_unit: str,
     component_name: str | None = None,
+    form: str | None = "",
 ) -> float | None:
+    """Grams of a food (with `nutrient_amount_per_100g` `nutrient_unit`) that
+    supply the supplement dose. `form` is the label's form text (e.g. "d-alpha
+    tocopherol", "DFE; 400 mcg folic acid") and selects IU / DFE conversions."""
     if supplement_dose_value is None:
         return None
 
     supp_factor = unit_to_mg(supplement_dose_unit or "")
-    if supp_factor is None:
-        supp_unit_key = normalize_lookup_key(str(supplement_dose_unit or ""))
-        if supp_unit_key in {"iu", "ui", "ie"}:
-            supp_factor = _iu_unit_to_mg_for_component(component_name)
+    if supp_factor is None and normalize_lookup_key(str(supplement_dose_unit or "")) in _IU_UNIT_KEYS:
+        supp_factor = _iu_unit_to_mg_for_component(component_name, form)
     food_factor = unit_to_mg(nutrient_unit or "")
-    if food_factor is None:
-        # USDA stores fat-soluble vitamins (A, D, E) in IU, so the FOOD side can
-        # also be measured in IU — convert it with the same component-based
-        # factor used for the supplement dose above (otherwise the whole portion
-        # calc silently returns None and the card shows no portion at all).
-        food_unit_key = normalize_lookup_key(str(nutrient_unit or ""))
-        if food_unit_key in {"iu", "ui", "ie"}:
-            food_factor = _iu_unit_to_mg_for_component(component_name)
+    if food_factor is None and normalize_lookup_key(str(nutrient_unit or "")) in _IU_UNIT_KEYS:
+        food_factor = _food_iu_unit_to_mg(component_name)
     if supp_factor is None or food_factor is None:
         return None
 
-    dose_mg = float(supplement_dose_value) * supp_factor
+    dose_mg = float(supplement_dose_value) * supp_factor * supplement_dose_food_factor(component_name, form)
     food_mg_per_100g = float(nutrient_amount_per_100g) * food_factor
     if food_mg_per_100g <= 0:
         return None
@@ -891,29 +992,37 @@ def estimate_whole_food_units(food_description: str, grams_needed: float | None)
         return ""
 
     text = normalize_lookup_key(food_description)
+    if any(re.search(r"\b" + word + r"\b", text) for word in WHOLE_FOOD_UNIT_PROCESSED_WORDS):
+        return ""
     for keyword, singular, plural, avg_weight_g in WHOLE_FOOD_UNIT_ESTIMATES:
-        if keyword in text and avg_weight_g > 0:
-            units = float(grams_needed) / float(avg_weight_g)
-            if units <= 0:
-                return ""
+        # Whole-word match ("pineapple" is not an apple, "eggplant" not an egg).
+        if avg_weight_g <= 0 or not re.search(r"\b" + re.escape(keyword) + r"(?:s|es)?\b", text):
+            continue
+        if any(bad in text for bad in WHOLE_FOOD_UNIT_EXCLUSIONS.get(keyword.split()[0], ())):
+            continue
+        units = float(grams_needed) / float(avg_weight_g)
+        if units <= 0:
+            return ""
 
-            if units >= 2:
-                shown_units = float(math.ceil(units))
-                units_txt = format_float(shown_units, 0)
-            else:
-                shown_units = round(units, 1)
-                units_txt = format_float(shown_units, 1)
+        if units >= 2:
+            # Nearest half, not rounded up: rounding 2.09 Brazil nuts up to 3
+            # (~290 µg selenium) would push a 200 µg dose past the 255 µg UL.
+            shown_units = round(units * 2) / 2
+            units_txt = format_float(shown_units, 1)
+        else:
+            shown_units = round(units, 1)
+            units_txt = format_float(shown_units, 1)
 
-            try:
-                is_single = abs(float(units_txt) - 1.0) < 1e-9
-            except Exception:
-                is_single = False
+        try:
+            is_single = abs(float(units_txt) - 1.0) < 1e-9
+        except Exception:
+            is_single = False
 
-            noun = singular if is_single else plural
-            return (
-                f"Approximate whole-food portion: ~{units_txt} {noun} "
-                f"(assuming ~{format_float(float(avg_weight_g), 0)} g each)."
-            )
+        noun = singular if is_single else plural
+        return (
+            f"Approximate whole-food portion: ~{units_txt} {noun} "
+            f"(assuming ~{format_float(float(avg_weight_g), 0)} g each)."
+        )
 
     return ""
 
@@ -5177,162 +5286,351 @@ def _load_usda_nutrients_index() -> list[dict[str, Any]]:
     return out
 
 
-# Curated component-key -> USDA nutrient id overrides for nutrients whose USDA
-# name does not token-match the common supplement term. Omega-3 fatty acids are
-# stored in FoodData Central as "PUFA 22:6 n-3 (DHA)", "PUFA 20:5 n-3 (EPA)" and
-# "PUFA 18:3 n-3 c,c,c (ALA)", so a plain "omega-3" query would never match them.
-# Vitamin E is stored as "Vitamin E (alpha-tocopherol)" (id 1109, the only entry
-# with food rows); the bare "Vitamin E" summary ids (1158/2068) have none, and
-# label forms like "Vitamin E (as dl-alpha-tocopheryl acetate)" don't token-match
-# cleanly (parentheses stick to tokens), so we pin them here.
-_NUTRIENT_ID_OVERRIDES: dict[str, list[int]] = {
-    "omega 3": [1272, 1278, 1404],           # DHA + EPA + ALA (fish + plant sources)
-    "omega 3 fatty acids": [1272, 1278, 1404],
-    "omega 3 fatty acid": [1272, 1278, 1404],
-    "n 3 fatty acids": [1272, 1278, 1404],
-    "fish oil": [1272, 1278],                # EPA + DHA
-    "epa": [1278],
-    "dha": [1272],
-    "epa dha": [1272, 1278],
-    "alpha linolenic acid": [1404],
-    "alpha linolenic": [1404],
-    "eicosapentaenoic acid": [1278],
-    "docosahexaenoic acid": [1272],
-    "vitamin e": [1109],                     # alpha-tocopherol (698 food rows)
-    "tocopherol": [1109],
-    "tocopheryl": [1109],
-    "alpha tocopherol": [1109],
-    "d alpha tocopherol": [1109],
-    "dl alpha tocopherol": [1109],
-    "alpha tocopheryl": [1109],
+# ---------------------------------------------------------------------------
+# Canonical micronutrient lexicon
+# ---------------------------------------------------------------------------
+# ONE table drives label-line parsing, name canonicalisation, the swipe app's
+# micronutrient filter / RDA lookup and the USDA food lookup, so they can never
+# disagree about what a label name means.
+#
+#   display  default card name for the nutrient
+#   unit     unit of the per-100 g food amounts returned for it. Every food list
+#            uses exactly ONE unit (no IU rows sorted against µg rows).
+#   usda     ((USDA FDC nutrient id, factor into `unit`), ...). With combine
+#            "first" each food takes the first id that has data for it; with
+#            "sum" the ids are added (EPA + DHA). Empty = no usable USDA data.
+#   aliases  English + German label names, chemical forms and salts in folded
+#            form (see _fold_label_text: lowercase ASCII, umlauts dropped,
+#            hyphens as spaces). ("alias", "card name") keeps a label-specific
+#            card name such as "vitamin d3" or "folic acid".
+#
+# USDA ids were checked against blockbrain/data/usda_rankings.db (rows > 0):
+# 1106 Vitamin A, RAE µg (687 foods) · 1107 beta-carotene µg (283) · 1162 vitamin
+# C mg (572) · 1114 vitamin D2+D3 µg (267), 1110 vitamin D IU (313; used x0.025
+# only for foods without a µg row) · 1109 alpha-tocopherol mg (666) · 1185
+# phylloquinone µg (525) · 1165/1166/1167/1170/1175 thiamin, riboflavin, niacin,
+# pantothenic acid, B6 mg · 1176 biotin µg (71) · 1190 folate DFE µg (783), 1187
+# food folate (843), 1177 total folate (916) — identical to DFE for unfortified
+# foods · 1178 B12 µg (542) · 1180 choline mg (506) · 1087/1091/1090/1092/1093/
+# 1089/1095/1098/1101 Ca, P, Mg, K, Na, Fe, Zn, Cu, Mn mg · 1100 iodine µg (8) ·
+# 1103 selenium µg (942) · 1102 molybdenum µg (54) · 1099 fluoride µg (32) · 1137
+# boron µg (34) · 1278 EPA g (319) · 1272 DHA g (253) · 1404 ALA g (274), 1270
+# PUFA 18:3 g (834).
+# Chromium (1096) and vitamin K2 have no food rows -> curated lists below.
+_NUTRIENT_LEXICON: dict[str, dict[str, Any]] = {
+    "vitamin a": {
+        "display": "vitamin a", "unit": "mcg", "usda": ((1106, 1.0),),
+        "aliases": ["vitamin a", "retinol", "retinyl", "retinal", "retinyl palmitate", "retinyl acetate",
+                    "retinylpalmitat", "retinylacetat", "vitamin a palmitate", "vitamin a acetate"],
+    },
+    "beta carotene": {
+        "display": "beta-carotene", "unit": "mcg", "usda": ((1107, 1.0),),
+        "aliases": ["beta carotene", "betacarotene", "beta carotin", "betacarotin", "provitamin a"],
+    },
+    "vitamin c": {
+        "display": "vitamin c", "unit": "mg", "usda": ((1162, 1.0),),
+        "aliases": ["vitamin c", "ascorbic acid", "l ascorbic acid", "ascorbinsaure", "l ascorbinsaure", "ascorbate",
+                    "sodium ascorbate", "calcium ascorbate", "natrium ascorbat", "calcium ascorbat", "ascorbyl palmitate"],
+    },
+    "vitamin d": {
+        "display": "vitamin d", "unit": "mcg", "usda": ((1114, 1.0), (1110, 0.025)),
+        "aliases": ["vitamin d", ("vitamin d3", "vitamin d3"), ("cholecalciferol", "vitamin d3"),
+                    ("colecalciferol", "vitamin d3"), ("vitamin d2", "vitamin d2"), ("ergocalciferol", "vitamin d2"),
+                    "calciferol"],
+    },
+    "vitamin e": {
+        "display": "vitamin e", "unit": "mg", "usda": ((1109, 1.0),),
+        "aliases": ["vitamin e", "tocopherol", "tocopherols", "alpha tocopherol", "d alpha tocopherol",
+                    "dl alpha tocopherol", "rrr alpha tocopherol", "tocopheryl", "tocopheryl acetate",
+                    "tocopheryl succinate", "d alpha tocopheryl acetate", "dl alpha tocopheryl acetate",
+                    "d alpha tocopheryl succinate", "tocopherylacetat", "tocotrienol", "tocotrienols"],
+    },
+    "vitamin k": {
+        "display": "vitamin k", "unit": "mcg", "usda": ((1185, 1.0),),
+        "aliases": ["vitamin k", ("vitamin k1", "vitamin k1"), "phylloquinone", "phytonadione", "phyllochinon",
+                    "phytomenadion", "phytomenadione"],
+    },
+    "vitamin k2": {
+        # USDA FDC has no usable K2 (menaquinone) data — only 16 trace MK-4 rows —
+        # so K2 cards use the curated literature list, never K1 (leafy-green) foods.
+        "display": "vitamin k2", "unit": "mcg", "usda": (),
+        "aliases": ["vitamin k2", "menaquinone", "menaquinone 7", "menaquinone 4", "menachinon", "menachinon 7",
+                    "mk 7", "mk7", "mk 4", "mk4", "menatetrenone"],
+    },
+    "thiamin": {
+        "display": "thiamin", "unit": "mg", "usda": ((1165, 1.0),),
+        "aliases": ["thiamin", "thiamine", ("vitamin b1", "vitamin b1"), ("b1", "vitamin b1"), "thiamine mononitrate",
+                    "thiamin mononitrate", "thiamine hydrochloride", "thiamine hcl", "thiaminmononitrat",
+                    "thiaminhydrochlorid", "benfotiamine"],
+    },
+    "riboflavin": {
+        "display": "riboflavin", "unit": "mg", "usda": ((1166, 1.0),),
+        "aliases": ["riboflavin", "riboflavine", ("vitamin b2", "vitamin b2"), ("b2", "vitamin b2"),
+                    "riboflavin 5 phosphate", "riboflavin 5 phosphat"],
+    },
+    "niacin": {
+        "display": "niacin", "unit": "mg", "usda": ((1167, 1.0),),
+        "aliases": ["niacin", ("vitamin b3", "vitamin b3"), ("b3", "vitamin b3"), "niacinamide", "niacinamid",
+                    "nicotinamide", "nicotinamid", "nicotinic acid", "nicotinsaure", "nikotinsaure",
+                    "inositol hexanicotinate", "inositol hexaniacinate"],
+    },
+    "pantothenic acid": {
+        "display": "pantothenic acid", "unit": "mg", "usda": ((1170, 1.0),),
+        "aliases": ["pantothenic acid", ("vitamin b5", "vitamin b5"), ("b5", "vitamin b5"), "pantothenate",
+                    "calcium pantothenate", "calcium d pantothenate", "d calcium pantothenate", "pantothensaure",
+                    "pantothensaeure", "calcium d pantothenat", "calcium pantothenat", "d pantothenat",
+                    "pantothenat", "panthenol", "dexpanthenol"],
+    },
+    "vitamin b6": {
+        "display": "vitamin b6", "unit": "mg", "usda": ((1175, 1.0),),
+        "aliases": ["vitamin b6", ("b6", "vitamin b6"), "pyridoxine", "pyridoxin", "pyridoxine hcl",
+                    "pyridoxine hydrochloride", "pyridoxinhydrochlorid", "pyridoxal", "pyridoxal 5 phosphate",
+                    "pyridoxal 5 phosphat", "p 5 p", "p5p", "pyridoxamine"],
+    },
+    "biotin": {
+        "display": "biotin", "unit": "mcg", "usda": ((1176, 1.0),),
+        "aliases": ["biotin", "d biotin", ("vitamin b7", "vitamin b7"), ("b7", "vitamin b7"), "vitamin h"],
+    },
+    "folate": {
+        # Folate DFE first; for foods without a DFE row, food folate / total folate
+        # (equal to DFE when the food is not fortified with folic acid).
+        "display": "folate", "unit": "mcg", "usda": ((1190, 1.0), (1187, 1.0), (1177, 1.0)),
+        "aliases": ["folate", "folat", "folacin", ("folic acid", "folic acid"), ("folsaure", "folic acid"),
+                    ("folsaeure", "folic acid"), ("pteroylmonoglutamic acid", "folic acid"),
+                    ("pteroylmonoglutaminsaure", "folic acid"), ("vitamin b9", "vitamin b9"), ("b9", "vitamin b9"),
+                    "methylfolate", "l methylfolate", "methylfolat", "calcium l methylfolate",
+                    "calcium l methylfolat", "5 mthf", "5 methyltetrahydrofolate", "folinic acid", "metafolin",
+                    "quatrefolic"],
+    },
+    "vitamin b12": {
+        "display": "vitamin b12", "unit": "mcg", "usda": ((1178, 1.0),),
+        "aliases": ["vitamin b12", ("b12", "vitamin b12"), "cobalamin", "cobalamine", "cyanocobalamin",
+                    "cyanocobalamine", "methylcobalamin", "methylcobalamine", "hydroxocobalamin",
+                    "hydroxycobalamin", "adenosylcobalamin"],
+    },
+    "choline": {
+        "display": "choline", "unit": "mg", "usda": ((1180, 1.0),),
+        "aliases": ["choline", "cholin", "choline bitartrate", "cholinbitartrat", "choline chloride"],
+    },
+    "calcium": {"display": "calcium", "unit": "mg", "usda": ((1087, 1.0),), "aliases": ["calcium", "kalzium"]},
+    "phosphorus": {"display": "phosphorus", "unit": "mg", "usda": ((1091, 1.0),),
+                   "aliases": ["phosphorus", "phosphorous", "phosphor"]},
+    "magnesium": {"display": "magnesium", "unit": "mg", "usda": ((1090, 1.0),), "aliases": ["magnesium"]},
+    "potassium": {"display": "potassium", "unit": "mg", "usda": ((1092, 1.0),), "aliases": ["potassium", "kalium"]},
+    "sodium": {"display": "sodium", "unit": "mg", "usda": ((1093, 1.0),), "aliases": ["sodium", "natrium"]},
+    "chloride": {"display": "chloride", "unit": "mg", "usda": (), "aliases": ["chloride", "chlorid"]},
+    "iron": {
+        "display": "iron", "unit": "mg", "usda": ((1089, 1.0),),
+        "aliases": ["iron", "eisen", "ferrous", "ferric", "ferrous fumarate", "ferrous sulfate", "ferrous sulphate",
+                    "ferrous gluconate", "ferrous bisglycinate", "iron bisglycinate", "carbonyl iron",
+                    "eisen fumarat", "eisen gluconat", "eisen sulfat", "eisen bisglycinat"],
+    },
+    "zinc": {"display": "zinc", "unit": "mg", "usda": ((1095, 1.0),), "aliases": ["zinc", "zink"]},
+    "copper": {"display": "copper", "unit": "mg", "usda": ((1098, 1.0),),
+               "aliases": ["copper", "kupfer", "cupric", "cupric oxide", "cupric sulfate"]},
+    "manganese": {"display": "manganese", "unit": "mg", "usda": ((1101, 1.0),), "aliases": ["manganese", "mangan"]},
+    "iodine": {
+        "display": "iodine", "unit": "mcg", "usda": ((1100, 1.0),),
+        "aliases": ["iodine", "jod", "iod", "iodide", "iodid", "jodid", "potassium iodide", "potassium iodate",
+                    "kalium iodid", "kalium jodid", "kalium iodat", "kalium jodat", "sodium iodide"],
+    },
+    "selenium": {
+        "display": "selenium", "unit": "mcg", "usda": ((1103, 1.0),),
+        "aliases": ["selenium", "selen", "selenite", "selenate", "sodium selenite", "sodium selenate",
+                    "natrium selenit", "natrium selenat", "selenomethionine", "l selenomethionine",
+                    "selenomethionin", "selenium yeast", "selenhefe"],
+    },
+    "molybdenum": {
+        "display": "molybdenum", "unit": "mcg", "usda": ((1102, 1.0),),
+        "aliases": ["molybdenum", "molybdan", "molybdaen", "sodium molybdate", "natrium molybdat",
+                    "ammonium molybdate"],
+    },
+    "chromium": {
+        "display": "chromium", "unit": "mcg", "usda": (),
+        "aliases": ["chromium", "chrom", "chromium picolinate", "chromium chloride", "chromium polynicotinate",
+                    "chrom picolinat", "chrom chlorid"],
+    },
+    "fluoride": {"display": "fluoride", "unit": "mcg", "usda": ((1099, 1.0),),
+                 "aliases": ["fluoride", "fluorid", "fluorine", "sodium fluoride", "natrium fluorid"]},
+    "boron": {"display": "boron", "unit": "mcg", "usda": ((1137, 1.0),), "aliases": ["boron", "bor"]},
+    "cobalt": {"display": "cobalt", "unit": "mcg", "usda": ((1097, 1.0),), "aliases": ["cobalt", "kobalt"]},
+    "sulfur": {"display": "sulfur", "unit": "mg", "usda": ((1094, 1.0),), "aliases": ["sulfur", "sulphur", "schwefel"]},
+    # Omega-3: EPA + DHA are the long-chain forms supplements provide; ALA (plant
+    # omega-3) is a different nutrient, so it never ranks on an EPA/DHA card.
+    "omega 3": {
+        "display": "omega-3", "unit": "g", "usda": ((1278, 1.0), (1272, 1.0)), "combine": "sum",
+        "aliases": ["omega 3", "omega3", "omega 3 fatty acids", "omega 3 fatty acid", "omega 3 fettsauren",
+                    "n 3 fatty acids", "epa + dha", "epa dha", "epa and dha", "epa und dha"],
+    },
+    "fish oil": {
+        "display": "fish oil", "unit": "g", "usda": ((1278, 1.0), (1272, 1.0)), "combine": "sum",
+        "aliases": ["fish oil", "fischol", "fish oil concentrate", "krill oil", "krillol", "cod liver oil",
+                    "lebertran", "salmon oil", "lachsol", "algal oil", "algae oil", "algenol"],
+    },
+    "epa": {"display": "epa", "unit": "g", "usda": ((1278, 1.0),),
+            "aliases": ["epa", "eicosapentaenoic acid", "eicosapentaensaure"]},
+    "dha": {"display": "dha", "unit": "g", "usda": ((1272, 1.0),),
+            "aliases": ["dha", "docosahexaenoic acid", "docosahexaensaure"]},
+    # ALA: 1404 (18:3 n-3) where analysed, else 1270 (18:3 total), which is how
+    # USDA SR Legacy stores plant ALA (flaxseed 22.8 g); plant 18:3 is ~all ALA.
+    "ala": {"display": "alpha-linolenic acid", "unit": "g", "usda": ((1404, 1.0), (1270, 1.0)),
+            "aliases": ["alpha linolenic acid", "alpha linolenic", "a linolenic acid", "alpha linolensaure"]},
+    # Recognised (they become cards) but without whole-food data.
+    "inositol": {"display": "inositol", "unit": "mg", "usda": (), "aliases": ["inositol", "myo inositol"]},
+    "vitamin b complex": {"display": "vitamin b complex", "unit": "mg", "usda": (),
+                          "aliases": ["vitamin b complex", "b complex", "vitamin b komplex", "b komplex"]},
 }
+
+# Form words in "(as ...)" that change WHICH nutrient a generic name means.
+_LEXICON_FORM_REFINEMENTS: list[tuple[str, re.Pattern[str], str, str]] = [
+    ("vitamin k", re.compile(r"\b(?:mena\w*|mk ?[47]|k2)\b"), "vitamin k2", "vitamin k2"),
+    ("omega 3", re.compile(r"\b(?:ala|alpha linolen\w*|flax\w*|lein\w*|chia)\b"), "ala", "alpha-linolenic acid"),
+]
+# Form words that only make the card name more specific (vitamin d -> vitamin d3).
+_LEXICON_DISPLAY_REFINEMENTS: list[tuple[str, re.Pattern[str], str]] = [
+    ("vitamin d", re.compile(r"\b(?:cholecalciferol|colecalciferol|d3)\b"), "vitamin d3"),
+    ("vitamin d", re.compile(r"\b(?:ergocalciferol|d2)\b"), "vitamin d2"),
+]
+
+# Applied AFTER NFKD + lowercasing, so the micro sign (U+00B5 -> U+03BC), the
+# capital mu of an upper-cased label ("800 ΜG") and the "㎍" square unit sign
+# all arrive here as "μ" and become "u" (µg -> ug), never a bare "g".
+_FOLD_CHAR_MAP = str.maketrans({"µ": "u", "μ": "u", "α": " alpha ", "ß": "ss", "‐": "-", "–": "-", "—": "-"})
+# Vitamin codes a label may space or hyphenate ("Vitamin B 6", "Vit.B6",
+# "VitaminB12", "Vitamin K 2"). Only real codes are joined, and never when the
+# number is itself the dose ("Vitamin D 3 µg", "Vitamin B 1,1 mg").
+_VITAMIN_CODE = r"(?:b\s*-?\s*(?:1[0-2]|[1-9])|d\s*-?\s*[23]|k\s*-?\s*[12])"
+_VITAMIN_CODE_END = r"(?!\d)(?![.,]\d)(?!\s*(?:mcg|mg|ug|g|iu|ie|i\.\s?e|ui|%)(?![a-z]))"
+_VITAMIN_GLUED_RE = re.compile(r"\bvit(?:amine?|main|arnin|amln)?\.?(?=" + _VITAMIN_CODE + _VITAMIN_CODE_END + r")")
+_VITAMIN_SPACED_CODE_RE = re.compile(r"\b(vitamin\s+)(" + _VITAMIN_CODE + r")" + _VITAMIN_CODE_END)
+_OMEGA_BLEND_RE = re.compile(
+    r"\bomega\s*-?\s*3(?:\s*(?:[-/,+&]|und|and)\s*(?:omega\s*)?-?\s*[69](?![0-9]))+"
+    r"|\bomega\s*-?\s*3\s+6\s+9(?![0-9])"
+)
+# German salt compounds written as one word ("Magnesiumcitrat", "Kaliumiodid").
+_GERMAN_SALT_COMPOUND_RE = re.compile(
+    r"\b(magnesium|zink|zinc|calcium|kalzium|kalium|natrium|eisen|kupfer|mangan|chrom|selen)"
+    r"((?:ii|iii)?(?:citrat|oxid|gluconat|carbonat|bisglycinat|diglycinat|glycinat|sulfat|chlorid|"
+    r"picolinat|fumarat|orotat|malat|lactat|aspartat|selenit|selenat|iodid|jodid|iodat|jodat|molybdat|"
+    r"ascorbat|pantothenat|threonat|taurat|hydroxid|phosphat|fluorid))\b"
+)
+
+
+def _fold_label_text(text: str) -> str:
+    """Fold label text for lexicon matching: lowercase ASCII with umlauts dropped
+    (Folsäure -> folsaure), µg/ΜG/㎍ -> ug, α-TE -> alpha te, "Vit." -> vitamin,
+    "B-12"/"Vitamin B 12"/"VitaminB12"/"Vit.B12"/OCR "Bl2" -> b12 (likewise B1-B9,
+    D2/D3, K1/K2), German salt compounds split (Kaliumiodid -> kalium iodid)
+    and hyphens/slashes as spaces. Digits, decimal marks, % and brackets are
+    kept so doses can still be read from the result."""
+    t = unicodedata.normalize("NFKD", str(text or "")).lower().translate(_FOLD_CHAR_MAP)
+    # A micro sign variant NFKD does not know must not leave a bare "g" (grams):
+    # "800 ?g" becomes the unknown unit "xg" instead of 800 g.
+    t = re.sub(r"(?<=[\d\s])[^\x00-\x7f]+(?=g(?![a-z]))", "x", t)
+    t = t.encode("ascii", "ignore").decode("ascii")
+    t = re.sub(r"(\d)\s*u\s+g(?![a-z])", r"\1 ug", t)  # OCR: "2,5 µ g"
+    t = re.sub(r"\bb\s*-?\s*l2\b", "b12", t)  # OCR: "Bl2"
+    t = _VITAMIN_GLUED_RE.sub("vitamin ", t)
+    t = re.sub(r"\bvit(?:amine?|main|arnin|amln)?\b\.?", "vitamin", t)
+    t = _VITAMIN_SPACED_CODE_RE.sub(lambda m: m.group(1) + re.sub(r"[\s-]+", "", m.group(2)), t)
+    t = re.sub(r"\b([bdk])\s*-\s*(\d{1,2})\b", r"\1\2", t)
+    t = _GERMAN_SALT_COMPOUND_RE.sub(r"\1 \2", t)
+    # "Omega 3-6-9", "Omega-3/6/9", "Omega-3, -6 und -9", "Omega 3 + Omega 6" are
+    # blends (mostly ALA / linoleic / oleic acid), never an EPA+DHA omega-3.
+    t = _OMEGA_BLEND_RE.sub("omega 369 blend", t)
+    t = re.sub(r"\s*\+\s*", " + ", t)
+    t = re.sub(r"[^a-z0-9.,%()\[\]+:;*\s]", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _build_nutrient_alias_index() -> tuple[dict[str, tuple[str, str]], re.Pattern[str]]:
+    index: dict[str, tuple[str, str]] = {}
+    for key, spec in _NUTRIENT_LEXICON.items():
+        for alias in spec["aliases"]:
+            phrase, display = alias if isinstance(alias, tuple) else (alias, spec["display"])
+            index[_fold_label_text(phrase)] = (key, display)
+    # Longest alias first so "potassium iodide" (iodine) beats "potassium" and
+    # "vitamin d3" beats "vitamin d" at the same position.
+    phrases = sorted(index, key=len, reverse=True)
+    body = "|".join(r"\s+".join(re.escape(tok) for tok in p.split()) for p in phrases)
+    return index, re.compile(r"(?<![a-z0-9])(?:" + body + r")(?![a-z0-9])")
+
+
+_NUTRIENT_ALIAS_INDEX, _NUTRIENT_ALIAS_RE = _build_nutrient_alias_index()
+
+
+def _refine_lexicon_hit(key: str, display: str, form_text: str) -> tuple[str, str]:
+    for base, pattern, new_key, new_display in _LEXICON_FORM_REFINEMENTS:
+        if key == base and pattern.search(form_text):
+            return new_key, new_display
+    for base, pattern, new_display in _LEXICON_DISPLAY_REFINEMENTS:
+        if key == base and display == _NUTRIENT_LEXICON[key]["display"] and pattern.search(form_text):
+            return key, new_display
+    return key, display
+
+
+@functools.lru_cache(maxsize=4096)
+def _lexicon_match(name: str) -> tuple[str, str]:
+    """(canonical key, card name) for a nutrient name, or ("", "") if unknown.
+
+    The name BEFORE "(as ...)" decides which nutrient it is (so "Iodine (as
+    potassium iodide)" is iodine, never potassium); the bracketed form only
+    refines it (vitamin K + menaquinone -> vitamin K2)."""
+    folded = _fold_label_text(name)
+    head = folded.split("(", 1)[0].split("[", 1)[0]
+    hit = _NUTRIENT_ALIAS_RE.search(head)
+    if not hit:
+        return "", ""
+    key, display = _NUTRIENT_ALIAS_INDEX[re.sub(r"\s+", " ", hit.group(0))]
+    form_text = folded[: hit.start()] + " " + folded[hit.end():]
+    return _refine_lexicon_hit(key, display, form_text)
+
+
+def canonical_nutrient_key(name: str) -> str:
+    """Canonical lexicon key ("vitamin d", "folate", "iodine", ...) for a label or
+    component name — English or German, any form/salt — or "" if it is not a
+    recognised micronutrient. Generic words never match on their own: "vitamin
+    b" (a truncated "Vitamin B-12") is unknown rather than guessed as B9."""
+    return _lexicon_match(str(name or ""))[0]
+
+
+# --- Compatibility wrappers ---------------------------------------------------
+# The names below predate the lexicon and are kept (as thin wrappers over it)
+# for callers outside this module; the app itself uses canonical_nutrient_key /
+# _lexicon_match and the label-line parser directly.
+
+def nutrient_display_name(name: str) -> str:
+    """Compatibility wrapper. Card name for a nutrient name ("Folsäure" ->
+    "folic acid", "Jod" -> "iodine", "Cholecalciferol" -> "vitamin d3"); "" if
+    unknown."""
+    return _lexicon_match(str(name or ""))[1]
 
 
 def _nutrient_id_override_for(target: str) -> list[int]:
-    """Return curated USDA nutrient ids for a component key, or [] if none.
-
-    Short keys (epa/dha) require an exact match to avoid false positives; longer
-    keys also match as substrings so "omega 3 (as fish oil)" still resolves.
-    Hyphens are treated as spaces so "omega-3" and "omega 3" both match.
-    """
-    t = re.sub(r"\s+", " ", normalize_lookup_key(target).replace("-", " ")).strip()
-    if not t:
+    """Compatibility wrapper. USDA nutrient ids pinned for a component name by
+    the lexicon, or []."""
+    key = canonical_nutrient_key(target)
+    if not key:
         return []
-    for ov_key, ids in _NUTRIENT_ID_OVERRIDES.items():
-        norm_key = re.sub(r"\s+", " ", ov_key.replace("-", " ")).strip()
-        if t == norm_key:
-            return ids
-        if len(norm_key) >= 5 and (norm_key in t or t in norm_key):
-            return ids
-    return []
+    return [int(nid) for nid, _factor in _NUTRIENT_LEXICON[key]["usda"]]
 
 
-# Alternate / chemical ingredient names -> the standard micronutrient name that
-# USDA FoodData Central actually indexes, so odd-but-valid label terms (e.g.
-# "pyridoxine HCl" for B6, "cyanocobalamin" for B12, "ferrous fumarate" for iron)
-# still resolve to whole-food rows. Keys are normalised (lowercase, hyphens as
-# spaces); only names that don't already token-match USDA are listed, and values
-# are chosen because they DO match a populated USDA nutrient.
+# Compatibility view: alternate / chemical / German ingredient names ->
+# canonical nutrient key, derived from the lexicon so it always agrees with the
+# parser (e.g. "pyridoxine HCl" -> vitamin b6, "Folsäure" -> folate, "Jod" ->
+# iodine, "vitamin b1" -> thiamin).
 _NUTRIENT_SYNONYMS: dict[str, str] = {
-    # Vitamin B6
-    "pyridoxine": "vitamin b6",
-    "pyridoxine hydrochloride": "vitamin b6",
-    "pyridoxine hcl": "vitamin b6",
-    "pyridoxal": "vitamin b6",
-    "pyridoxal 5 phosphate": "vitamin b6",
-    "pyridoxamine": "vitamin b6",
-    "p5p": "vitamin b6",
-    # Vitamin B12
-    "cobalamin": "vitamin b12",
-    "cyanocobalamin": "vitamin b12",
-    "methylcobalamin": "vitamin b12",
-    "hydroxocobalamin": "vitamin b12",
-    "adenosylcobalamin": "vitamin b12",
-    # Vitamin B9 (folate)
-    "folic acid": "folate",
-    "folacin": "folate",
-    "methylfolate": "folate",
-    "l methylfolate": "folate",
-    "5 mthf": "folate",
-    "folinic acid": "folate",
-    # Vitamin B3 (niacin) - nicotinamide / nicotinic acid don't match "niacin"
-    "nicotinamide": "niacin",
-    "nicotinic acid": "niacin",
-    # Vitamin B5
-    "pantothenate": "pantothenic acid",
-    "calcium pantothenate": "pantothenic acid",
-    "panthenol": "pantothenic acid",
-    "dexpanthenol": "pantothenic acid",
-    # Vitamin A
-    "retinol": "vitamin a",
-    "retinyl": "vitamin a",
-    "retinyl palmitate": "vitamin a",
-    "retinyl acetate": "vitamin a",
-    "retinal": "vitamin a",
-    "beta carotene": "vitamin a",
-    "betacarotene": "vitamin a",
-    # Vitamin C
-    "ascorbic acid": "vitamin c",
-    "l ascorbic acid": "vitamin c",
-    "ascorbate": "vitamin c",
-    "sodium ascorbate": "vitamin c",
-    "calcium ascorbate": "vitamin c",
-    # Vitamin D
-    "cholecalciferol": "vitamin d",
-    "ergocalciferol": "vitamin d",
-    "vitamin d3": "vitamin d",
-    "vitamin d2": "vitamin d",
-    # Vitamin E
-    "tocopherol": "vitamin e",
-    "tocopheryl": "vitamin e",
-    "alpha tocopherol": "vitamin e",
-    "d alpha tocopherol": "vitamin e",
-    "dl alpha tocopherol": "vitamin e",
-    "tocopheryl acetate": "vitamin e",
-    "tocotrienol": "vitamin e",
-    # Vitamin K
-    "phylloquinone": "vitamin k",
-    "phytonadione": "vitamin k",
-    "menaquinone": "vitamin k",
-    "menaquinone 7": "vitamin k",
-    "mk 7": "vitamin k",
-    "vitamin k1": "vitamin k",
-    "vitamin k2": "vitamin k",
-    # Iron
-    "ferrous": "iron",
-    "ferrous sulfate": "iron",
-    "ferrous fumarate": "iron",
-    "ferrous gluconate": "iron",
-    "ferrous bisglycinate": "iron",
-    "ferric": "iron",
-    "iron bisglycinate": "iron",
-    # Copper
-    "cupric": "copper",
-    "copper gluconate": "copper",
-    "copper sulfate": "copper",
-    # Iodine
-    "iodide": "iodine",
-    "potassium iodide": "iodine",
-    # Selenium
-    "selenite": "selenium",
-    "sodium selenite": "selenium",
-    "selenomethionine": "selenium",
-    "l selenomethionine": "selenium",
+    phrase: key
+    for phrase, (key, _display) in _NUTRIENT_ALIAS_INDEX.items()
+    if phrase != key
 }
-
-# Longer keys first so multi-word forms (e.g. "ferrous fumarate") win over "ferrous".
-_SORTED_NUTRIENT_SYNONYM_KEYS: list[str] = sorted(_NUTRIENT_SYNONYMS, key=len, reverse=True)
 
 
 def _canonicalize_nutrient_name(normalized_target: str) -> str:
-    """Map an alternate/chemical nutrient name to the standard USDA name (deterministic)."""
-    t = re.sub(r"\s+", " ", str(normalized_target or "").replace("-", " ")).strip()
-    if not t:
-        return normalized_target
-    for syn in _SORTED_NUTRIENT_SYNONYM_KEYS:
-        if re.search(r"\b" + re.escape(syn) + r"\b", t):
-            return _NUTRIENT_SYNONYMS[syn]
-    return normalized_target
+    """Compatibility wrapper. Map an alternate/chemical nutrient name to the
+    standard (lexicon) name; unknown names are returned unchanged."""
+    key = canonical_nutrient_key(normalized_target)
+    return key or normalized_target
 
 
 # Cache AI canonicalisations (successes and misses) so the fallback LLM call
@@ -5343,7 +5641,7 @@ _AI_CANON_CACHE: dict[str, str] = {}
 def _ai_canonicalize_nutrient_name(component_key: str) -> str:
     """Last-resort: ask the LLM to map an unusual nutrient name to its standard name.
 
-    Only used when the deterministic map + token match both find nothing. Result
+    Only used when the lexicon + token match both find nothing. Result
     (including empty misses) is cached to avoid repeat calls.
     """
     key = normalize_lookup_key(component_key)
@@ -5371,62 +5669,76 @@ def _ai_canonicalize_nutrient_name(component_key: str) -> str:
     return result
 
 
+# Tokens too generic to identify a nutrient on their own ("vitamin" matches every
+# vitamin, "acid" matched malic acid for pantothenic acid, "mg" matched Magnesium
+# for "EPA 180 mg"). They never count towards a token match.
+_RESOLVER_GENERIC_TOKENS: frozenset[str] = frozenset({
+    "vitamin", "vitamins", "acid", "acids", "mg", "mcg", "ug", "iu", "total", "added", "as", "from", "and",
+    "with", "of", "the", "natural", "form", "extract", "powder", "root", "complex", "blend", "fatty", "oil",
+    "per", "serving", "dose", "daily",
+})
+# A USDA nutrient must cover at least this share of the meaningful name tokens.
+_RESOLVER_MIN_TOKEN_COVERAGE = 0.5
+
+
+def _meaningful_name_tokens(text: str) -> set[str]:
+    return {
+        tok for tok in re.split(r"[^a-z0-9]+", normalize_lookup_key(text))
+        if len(tok) >= 3 and not tok.isdigit() and tok not in _RESOLVER_GENERIC_TOKENS
+    }
+
+
 def _resolve_local_nutrient_candidates(component_key: str, max_ids: int = 3) -> list[dict[str, Any]]:
+    """USDA nutrient(s) whose food rankings represent `component_key`.
+
+    Lexicon nutrients resolve to their pinned id (ONE id per nutrient; the
+    EPA+DHA sum is the only multi-id case), so a list never mixes units. Other
+    names fall back to a token match that ignores generic tokens and requires a
+    minimum relevance, returning the single best nutrient (or nothing)."""
     target = normalize_lookup_key(component_key)
     if not target:
         return []
-    # Translate alternate/chemical names (pyridoxine -> vitamin b6, etc.) so odd
-    # but valid label terms still hit the USDA nutrient rankings.
-    target = _canonicalize_nutrient_name(target)
+    by_id = {int(n.get("id", 0) or 0): n for n in _load_usda_nutrients_index()}
+    # Canonicalise the raw name: normalize_lookup_key drops umlauts ("Folsäure").
+    key = canonical_nutrient_key(component_key) or canonical_nutrient_key(target)
+    if key:
+        spec = _NUTRIENT_LEXICON[key]
+        ids = [nid for nid, _f in spec["usda"]]
+        if spec.get("combine") != "sum":
+            ids = ids[:1]
+        return [by_id[i] for i in ids if i in by_id][: max(1, int(max_ids))]
 
-    override_ids = _nutrient_id_override_for(target)
-    if override_ids:
-        by_id = {int(n.get("id", 0) or 0): n for n in _load_usda_nutrients_index()}
-        picked = [by_id[i] for i in override_ids if i in by_id]
-        if picked:
-            return picked[:max_ids]
-
-    target_compact = re.sub(r"[^a-z0-9]+", "", target)
-    target_tokens = {t for t in target.split() if len(t) >= 2}
+    target_tokens = _meaningful_name_tokens(target)
+    if not target_tokens:
+        return []
     row_counts = _usda_nutrient_rankings_counts()
-    ranked: list[tuple[tuple[int, int, int, int], dict[str, Any]]] = []
+    best: tuple[tuple[float, int, float, int], dict[str, Any]] | None = None
     for nutrient in _load_usda_nutrients_index():
-        nkey = str(nutrient.get("key", "") or "")
-        ncompact = str(nutrient.get("compact", "") or "")
-        ntokens = {t for t in nkey.split() if len(t) >= 2}
+        ntokens = _meaningful_name_tokens(str(nutrient.get("key", "") or ""))
         overlap = len(target_tokens & ntokens)
-        direct = int(target in nkey or nkey in target)
-        compact_match = int(target_compact and ncompact and (target_compact in ncompact or ncompact in target_compact))
-        relevance = direct + compact_match + min(overlap, 4)
-        if relevance <= 0:
+        if not overlap:
             continue
-        # Prefer nutrients that actually carry food-ranking rows: USDA summary
-        # entries (e.g. "Vitamin E") often have none, while the descriptive
-        # variant ("Vitamin E (alpha-tocopherol)") holds all the real foods.
+        coverage = overlap / len(target_tokens)
+        if coverage < _RESOLVER_MIN_TOKEN_COVERAGE:
+            continue
+        # Prefer nutrients that actually carry food-ranking rows, then the one
+        # whose own name is best covered (exact "Lutein" over "Lutein + zeaxanthin").
         has_data = 1 if row_counts.get(int(nutrient.get("id", 0) or 0), 0) > 0 else 0
-        score = (relevance, has_data, overlap, -len(nkey))
-        ranked.append((score, nutrient))
-
-    ranked.sort(key=lambda item: item[0], reverse=True)
-    out: list[dict[str, Any]] = []
-    seen_ids: set[int] = set()
-    for _score, nutrient in ranked:
-        nid = int(nutrient.get("id", 0) or 0)
-        if nid <= 0 or nid in seen_ids:
-            continue
-        seen_ids.add(nid)
-        out.append(nutrient)
-        if len(out) >= max_ids:
-            break
-    return out
+        score = (coverage, has_data, overlap / max(1, len(ntokens)), -len(str(nutrient.get("key", ""))))
+        if best is None or score > best[0]:
+            best = (score, nutrient)
+    return [best[1]] if best else []
 
 
-# Curated single-ingredient whole-food sources for micronutrients that USDA
-# FoodData Central measures but has essentially no populated per-food rows for
-# (chromium). Amounts are approximate representative values from the NIH Office
-# of Dietary Supplements chromium fact sheet, expressed per 100 g. Used only as
-# a last resort when the USDA rankings return nothing, so the user still sees
-# valid, diet-filterable whole foods instead of an empty card.
+# Curated whole-food sources for micronutrients the local USDA data cannot rank,
+# expressed per 100 g. Used instead of USDA rows (never mixed with them), so the
+# user still sees valid, diet-filterable whole foods instead of an empty card.
+#  - chromium: approximate representative values from the NIH Office of Dietary
+#    Supplements chromium fact sheet (USDA has no per-food chromium rows).
+#  - vitamin K2: USDA has no menaquinone data, so K2 must not borrow K1 (leafy
+#    green) rows. Literature values for total menaquinones (MK-4..MK-10):
+#    Schurgers LJ & Vermeer C, Haemostasis 2000;30:298-307. Natto is the only
+#    rich MK-7 source; cheese K2 is mostly MK-8/MK-9; egg yolk and butter MK-4.
 _CURATED_NUTRIENT_FOOD_FALLBACKS: dict[str, list[dict[str, Any]]] = {
     "chromium": [
         {"food_description": "Broccoli, raw", "food_category": "Vegetables", "amount_per_100g": 14.0, "unit": "mcg"},
@@ -5436,19 +5748,39 @@ _CURATED_NUTRIENT_FOOD_FALLBACKS: dict[str, list[dict[str, Any]]] = {
         {"food_description": "Apple, with skin, raw", "food_category": "Fruits", "amount_per_100g": 0.8, "unit": "mcg"},
         {"food_description": "Banana, raw", "food_category": "Fruits", "amount_per_100g": 0.85, "unit": "mcg"},
     ],
+    "vitamin k2": [
+        {"food_description": "Natto (fermented soybeans)", "food_category": "Legumes", "amount_per_100g": 1103.4, "unit": "mcg"},
+        {"food_description": "Cheese, hard (Gouda/Emmental type)", "food_category": "Dairy", "amount_per_100g": 76.3, "unit": "mcg"},
+        {"food_description": "Cheese, soft (Brie/Camembert type)", "food_category": "Dairy", "amount_per_100g": 56.5, "unit": "mcg"},
+        {"food_description": "Egg, yolk, raw", "food_category": "Eggs", "amount_per_100g": 31.4, "unit": "mcg"},
+        {"food_description": "Cheese, curd (quark)", "food_category": "Dairy", "amount_per_100g": 24.8, "unit": "mcg"},
+        {"food_description": "Butter", "food_category": "Dairy", "amount_per_100g": 15.0, "unit": "mcg"},
+        {"food_description": "Chicken, leg, raw", "food_category": "Poultry", "amount_per_100g": 8.5, "unit": "mcg"},
+        {"food_description": "Sauerkraut", "food_category": "Vegetables", "amount_per_100g": 4.8, "unit": "mcg"},
+    ],
+}
+_CURATED_SOURCE_LABELS: dict[str, str] = {
+    "chromium": "NIH ODS reference",
+    "vitamin k2": "Literature (Schurgers & Vermeer 2000) - USDA has no K2 data",
+}
+
+# Per-food corrections where the local DB sample is far off the USDA reference
+# value. Brazil-nut selenium varies >10x with soil; this DB's Foundation-Foods
+# sample (280 µg/100 g) understates USDA SR Legacy #12078 and NIH ODS (544 µg
+# per oz = 1917 µg/100 g, i.e. ~95 µg per 5 g nut). Using the reference value
+# keeps portion advice on the safe side (fewer nuts, not 4 nuts = ~380 µg).
+_FOOD_NUTRIENT_VALUE_CORRECTIONS: dict[tuple[str, str], float] = {
+    ("selenium", "nuts brazilnuts raw"): 1917.0,
 }
 
 
 def _curated_food_fallback(component_key: str, limit: int) -> list[dict[str, Any]]:
     """Return curated whole-food rows for nutrients with no usable USDA data."""
-    key = normalize_lookup_key(component_key)
-    rows: list[dict[str, Any]] = []
-    for needle, foods in _CURATED_NUTRIENT_FOOD_FALLBACKS.items():
-        if needle in key:
-            rows = foods
-            break
+    key = canonical_nutrient_key(component_key)
+    rows = _CURATED_NUTRIENT_FOOD_FALLBACKS.get(key, [])
     if not rows:
         return []
+    source = _CURATED_SOURCE_LABELS.get(key, "Curated reference")
     out: list[dict[str, Any]] = []
     for idx, food in enumerate(rows[: max(1, int(limit))], start=1):
         out.append(
@@ -5458,85 +5790,146 @@ def _curated_food_fallback(component_key: str, limit: int) -> list[dict[str, Any
                 "food_category": str(food.get("food_category", "Whole food")),
                 "amount_per_100g": float(food.get("amount_per_100g", 0.0) or 0.0),
                 "unit": _normalize_component_unit_token(str(food.get("unit", "") or "")),
-                "source_db": "NIH ODS reference",
+                "source_db": source,
             }
         )
     return out
 
 
-def _build_local_food_rows_for_component(component_key: str, limit: int = TOP_FOODS_PER_COMPONENT) -> list[dict[str, Any]]:
-    nutrient_candidates = _resolve_local_nutrient_candidates(component_key, max_ids=3)
-    if not nutrient_candidates:
-        curated = _curated_food_fallback(component_key, limit)
-        if curated:
-            return curated
-        # Last-resort: let the LLM translate a truly unusual name, then retry once.
-        ai_name = _ai_canonicalize_nutrient_name(component_key)
-        if ai_name:
-            nutrient_candidates = _resolve_local_nutrient_candidates(ai_name, max_ids=3)
-        if not nutrient_candidates:
-            return _curated_food_fallback(ai_name, limit) if ai_name else []
-
-    nutrient_ids = [int(x.get("id", 0) or 0) for x in nutrient_candidates if int(x.get("id", 0) or 0) > 0]
+def _query_usda_food_amounts(nutrient_ids: list[int]) -> list[tuple[int, str, str, float]]:
+    """(nutrient_id, food_description, food_category, amount_per_100g) rows > 0."""
     if not nutrient_ids:
-        return _curated_food_fallback(component_key, limit)
-
+        return []
     conn = try_open_usda_db()
     if conn is None:
         return []
     try:
         placeholders = ",".join(["?"] * len(nutrient_ids))
-        sql = (
-            "SELECT nr.food_description, nr.food_category, nr.amount_per_100g, nr.nutrient_id, n.nutrient_name, n.unit_name "
-            "FROM nutrient_rankings nr "
-            "JOIN nutrients n ON n.id = nr.nutrient_id "
-            f"WHERE nr.nutrient_id IN ({placeholders}) "
-            "AND nr.amount_per_100g IS NOT NULL "
-            "AND nr.amount_per_100g > 0 "
-            "ORDER BY nr.amount_per_100g DESC "
-            "LIMIT 600"
-        )
-        rows = conn.execute(sql, nutrient_ids).fetchall()
+        rows = conn.execute(
+            "SELECT nutrient_id, food_description, food_category, amount_per_100g "
+            f"FROM nutrient_rankings WHERE nutrient_id IN ({placeholders}) "
+            "AND amount_per_100g IS NOT NULL AND amount_per_100g > 0 "
+            "ORDER BY amount_per_100g DESC",
+            list(nutrient_ids),
+        ).fetchall()
     except Exception:
         return []
     finally:
         conn.close()
-
-    nutrient_by_id = {int(x["id"]): x for x in nutrient_candidates}
-    foods: list[dict[str, Any]] = []
-    seen_foods: set[str] = set()
-    for idx, row in enumerate(rows, start=1):
-        food_desc = str(row[0] or "").strip()
-        if not food_desc:
-            continue
-        fkey = normalize_lookup_key(food_desc)
-        if not fkey or fkey in seen_foods:
-            continue
-        seen_foods.add(fkey)
+    out: list[tuple[int, str, str, float]] = []
+    for nid, desc, category, amount in rows:
         try:
-            amount = float(row[2] or 0.0)
+            out.append((int(nid), str(desc or "").strip(), str(category or "Whole food"), float(amount or 0.0)))
         except Exception:
-            amount = 0.0
+            continue
+    return out
+
+
+@functools.lru_cache(maxsize=128)
+def _lexicon_food_rows(key: str, limit: int) -> tuple[dict[str, Any], ...]:
+    """Ranked whole-food rows for a lexicon nutrient, in the lexicon unit.
+
+    Cached: the USDA DB is static, so every card / rerun / self-heal after the
+    first costs no SQLite access."""
+    spec = _NUTRIENT_LEXICON[key]
+    usda = tuple(spec.get("usda") or ())
+    if not usda:
+        return tuple(_curated_food_fallback(key, limit))
+    factors = {int(nid): float(f) for nid, f in usda}
+    priority = {int(nid): i for i, (nid, _f) in enumerate(usda)}
+    combine_sum = spec.get("combine") == "sum"
+    unit = _normalize_component_unit_token(str(spec["unit"]))
+
+    per_food: dict[str, dict[str, Any]] = {}
+    for nid, desc, category, amount in _query_usda_food_amounts(list(factors)):
+        fkey = normalize_lookup_key(desc)
+        if not fkey:
+            continue
+        entry = per_food.setdefault(fkey, {"desc": desc, "category": category, "by_id": {}})
+        # Keep the highest value if the DB repeats a food for the same nutrient.
+        entry["by_id"][nid] = max(entry["by_id"].get(nid, 0.0), amount * factors[nid])
+
+    foods: list[dict[str, Any]] = []
+    for fkey, entry in per_food.items():
+        by_id = entry["by_id"]
+        if combine_sum:
+            amount = sum(by_id.values())
+        else:
+            amount = by_id[min(by_id, key=lambda i: priority[i])]
+        amount = _FOOD_NUTRIENT_VALUE_CORRECTIONS.get((key, fkey), amount)
         if amount <= 0:
             continue
-        nutrient_id = int(row[3] or 0)
-        candidate = nutrient_by_id.get(nutrient_id, {})
-        unit_name = str(row[5] or candidate.get("unit", "") or "")
         foods.append(
             {
-                "rank": idx,
-                "food_description": food_desc,
-                "food_category": str(row[1] or "Whole food"),
-                "amount_per_100g": amount,
-                "unit": _normalize_component_unit_token(unit_name),
+                "rank": 0,
+                "food_description": entry["desc"],
+                "food_category": entry["category"],
+                "amount_per_100g": round(float(amount), 6),
+                "unit": unit,
                 "source_db": "USDA Local DB",
             }
         )
-
     foods = filter_and_rank_common_foods(foods, limit)
+    for idx, food in enumerate(foods, start=1):
+        food["rank"] = idx
     if not foods:
-        return _curated_food_fallback(component_key, limit)
-    return foods[:limit]
+        return tuple(_curated_food_fallback(key, limit))
+    return tuple(foods[:limit])
+
+
+@functools.lru_cache(maxsize=32)
+def _lexicon_food_amount_index(key: str) -> dict[str, float]:
+    return {normalize_lookup_key(r["food_description"]): float(r["amount_per_100g"]) for r in _lexicon_food_rows(key, 5000)}
+
+
+def food_nutrient_amount(food_description: str, nutrient: str) -> float | None:
+    """Amount of `nutrient` per 100 g of a food, in the lexicon unit (e.g. µg RAE
+    of vitamin A in a liver the user picked for a B12 card), or None."""
+    key = canonical_nutrient_key(nutrient)
+    if not key:
+        return None
+    return _lexicon_food_amount_index(key).get(normalize_lookup_key(food_description))
+
+
+def _build_local_food_rows_for_component(component_key: str, limit: int = TOP_FOODS_PER_COMPONENT) -> list[dict[str, Any]]:
+    """Whole foods ranked by THIS nutrient per 100 g (highest first), one unit."""
+    key = canonical_nutrient_key(component_key)
+    if key:
+        return [dict(row) for row in _lexicon_food_rows(key, max(1, int(limit)))]
+
+    nutrient_candidates = _resolve_local_nutrient_candidates(component_key, max_ids=1)
+    if not nutrient_candidates:
+        # Last-resort: let the LLM translate a truly unusual name, then retry once.
+        ai_name = _ai_canonicalize_nutrient_name(component_key)
+        if not ai_name:
+            return []
+        ai_key = canonical_nutrient_key(ai_name)
+        if ai_key:
+            return [dict(row) for row in _lexicon_food_rows(ai_key, max(1, int(limit)))]
+        nutrient_candidates = _resolve_local_nutrient_candidates(ai_name, max_ids=1)
+        if not nutrient_candidates:
+            return []
+
+    nutrient = nutrient_candidates[0]
+    unit = _normalize_component_unit_token(str(nutrient.get("unit", "") or ""))
+    foods: list[dict[str, Any]] = []
+    seen_foods: set[str] = set()
+    for _nid, desc, category, amount in _query_usda_food_amounts([int(nutrient.get("id", 0) or 0)]):
+        fkey = normalize_lookup_key(desc)
+        if not fkey or fkey in seen_foods:
+            continue
+        seen_foods.add(fkey)
+        foods.append(
+            {
+                "rank": len(foods) + 1,
+                "food_description": desc,
+                "food_category": category,
+                "amount_per_100g": amount,
+                "unit": unit,
+                "source_db": "USDA Local DB",
+            }
+        )
+    return filter_and_rank_common_foods(foods, limit)[:limit]
 
 
 def build_ai_food_matches(components: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
@@ -9218,6 +9611,487 @@ def _score_component_rows(rows: list[dict[str, Any]]) -> float:
     return max(0.0, min(1.0, (0.6 * (with_dose / total)) + (0.4 * (nutrient_like / total))))
 
 
+# ---------------------------------------------------------------------------
+# Label-line parser (Supplement Facts / Nährwertangaben tables)
+# ---------------------------------------------------------------------------
+# Supplement labels list one nutrient per line: name, optional "(as form)", the
+# dose (+ a basis such as DFE / NE / α-TE / RE) and %DV / %NRV. This parser reads
+# those lines deterministically with the canonical nutrient lexicon, which is
+# far more precise than the generic OCR pipeline for the common case: German
+# decimal commas ("1,1 mg"), µg and "I.E.", German names (Folsäure, Jod, Eisen,
+# Zink, Selen, ...), "Iodine (as potassium iodide)" never becoming potassium and
+# "Vitamin B-12" never becoming B9. Its rows are authoritative for the lines it
+# reads; the generic pipeline still covers whatever it could not read.
+
+_LABEL_DOSE_RE = re.compile(
+    r"(?<![a-z0-9.,])(?P<num>\d+(?:[.,]\d+)*)\s*"
+    r"(?P<unit>mcg|meg|mcq|ug|pg|mg|rng|g|iu|i\.\s?e\.?|ie|ui)(?![a-z0-9])"
+    r"(?:\s*(?P<basis>dfe|rae|re|ne|alpha\s*te|a\s*te|te)(?![a-z0-9]))?"
+)
+# "pg" is the usual OCR misread of "µg" (picograms never appear on supplement labels).
+_LABEL_DOSE_UNITS: dict[str, str] = {
+    "mcg": "mcg", "meg": "mcg", "mcq": "mcg", "ug": "mcg", "pg": "mcg", "mg": "mg", "rng": "mg", "g": "g",
+}
+_LABEL_DOSE_BASES: dict[str, str] = {"dfe": "DFE", "rae": "RAE", "re": "RE", "ne": "NE"}
+_LABEL_FORM_PREFIX_RE = re.compile(r"^(?:as|from|als|aus|in form of|in the form of|source|quelle)\b[\s:]*")
+# A preceding "as"/"als" makes a nutrient name a form of the previous one:
+# "Vitamin A as beta-carotene 900 mcg" is ONE vitamin A row.
+_LABEL_FORM_LEAD_RE = re.compile(r"\b(?:as|from|als|aus)\s*$")
+# Multi-column tables ("pro Kapsel | pro empfohlener Tagesverzehrmenge (2
+# Kapseln)", "je Kapsel je Verzehrempfehlung", "pro 100 g | pro Portion"): the
+# header's column descriptors, in order, say which dose column is the daily
+# dose (see _label_daily_dose_column). Only "pro/je/per <descriptor>" counts,
+# so the mandatory "Die angegebene empfohlene tägliche Verzehrmenge darf nicht
+# überschritten werden" sentence is never mistaken for a column header.
+_LABEL_COLUMN_DAY_WORDS = (
+    r"tagesdosis|tagesportion|tagesverzehrmenge|tagesverzehrempfehlung|verzehrempfehlung|"
+    r"tagliche[nr]?\s+verzehrmenge|verzehrmenge|tagesration|daily\s+(?:dose|serving|intake|portion|amount)"
+)
+_LABEL_COLUMN_UNIT_WORDS = (
+    r"(?:1\s+)?(?:kapsel|kapseln|weichkapsel|tablette|tabletten|kautablette|lutschtablette|brausetablette|"
+    r"tablet|capsule|softgel|portion|serving|riegel|beutel|stick|sachet|messloffel|scoop|tropfen|drop|"
+    r"dragee|ampulle|trinkampulle|gummi|gummy)"
+)
+_LABEL_COLUMN_RE = re.compile(
+    r"\b(?:pro|je|per)\s+(?:(?:empfohlene[nrm]?|recommended)\s+)?"
+    r"(?:(?P<day>" + _LABEL_COLUMN_DAY_WORDS + r"|day|tag)|(?P<hundred>100\s*(?:g|ml))|(?P<unit>"
+    + _LABEL_COLUMN_UNIT_WORDS + r"))(?![a-z])"
+)
+# In a header line that has a "pro ..." descriptor, a bare "Tagesdosis" is a column too.
+_LABEL_BARE_DAY_COLUMN_RE = re.compile(r"\b(?:" + _LABEL_COLUMN_DAY_WORDS + r")(?![a-z])")
+# Words between the name and the dose that are table layout, not a form.
+_LABEL_FILLER_WORDS: frozenset[str] = frozenset({
+    "total", "per", "serving", "pro", "je", "davon", "of", "which", "amount", "content", "gehalt", "as", "from",
+    "als", "aus", "and", "und", "nrv", "dv", "rda", "rm", "ri",
+})
+# Packaging / marketing words of product titles ("Vitamin D3 1000 I.E.
+# Tabletten", "Magnesium 400 mg Kapseln hochdosiert") are never a chemical form.
+_LABEL_PACKAGING_WORDS: frozenset[str] = frozenset({
+    "kapsel", "kapseln", "kps", "weichkapsel", "weichkapseln", "tablette", "tabletten", "tabl", "tabs", "tab",
+    "tablet", "tablets", "caps", "capsule", "capsules", "softgel", "softgels", "lutschtablette",
+    "lutschtabletten", "kautablette", "kautabletten", "brausetablette", "brausetabletten", "filmtablette",
+    "filmtabletten", "dragee", "dragees", "tropfen", "drops", "liquid", "flussig", "spray", "pulver", "powder",
+    "gummies", "gummy", "fruchtgummis", "sticks", "stick", "beutel", "sachets", "lozenge", "lozenges",
+    "chewable", "chewables", "gelules", "comprimes", "compresse", "depot", "retard", "hochdosiert",
+    "hochdosierte", "hochdosiertes", "hochdosierter", "high", "dose", "dosiert", "extra", "forte", "plus",
+    "mono", "premium", "vegan", "vegane", "veganes", "vegetarisch", "vegetarian", "laborgepruft", "ohne",
+    "zusatze", "zusatzstoffe", "jahresvorrat", "monatsvorrat", "vorrat", "stuck", "st", "packung", "pack",
+    "count", "ct", "supply", "months", "monate", "tage", "days", "time", "release", "sustained", "fast",
+    "pur", "pure", "aktiv", "active", "maximum", "max", "strength", "starke", "mit", "with", "for", "fur",
+    "tagesdosis", "tagesportion", "portion", "pro", "je", "nrv", "dv",
+})
+_LABEL_MAX_NAME_TO_DOSE_GAP = 40  # characters of unbracketed text between name and dose
+# Nutrients whose limits / IU factors depend on the form: when the line names
+# the form itself ("Nicotinic acid 20 mg", "Nicotinsäure", "Retinyl palmitate",
+# "d-alpha-Tocopherol 400 IU", "Methylfolat"), that name is kept as the form.
+_FORM_NAMED_NUTRIENT_KEYS: frozenset[str] = frozenset({"vitamin a", "vitamin e", "niacin", "folate"})
+
+
+def _bracket_depths(text: str) -> list[int]:
+    """Bracket nesting depth of every character (brackets themselves count as inside)."""
+    depth, out = 0, []
+    for ch in text:
+        if ch in "([":
+            depth += 1
+            out.append(depth)
+        elif ch in ")]":
+            out.append(depth)
+            depth = max(0, depth - 1)
+        else:
+            out.append(depth)
+    return out
+
+
+def _label_dose_unit(raw_unit: str) -> str:
+    return _LABEL_DOSE_UNITS.get(raw_unit.replace(" ", ""), "iu")
+
+
+def _label_dose_basis(raw_basis: str | None) -> str:
+    basis = re.sub(r"\s+", "", str(raw_basis or ""))
+    if not basis:
+        return ""
+    return _LABEL_DOSE_BASES.get(basis, "alpha-TE")
+
+
+def _label_segment_forms(segment: str, chosen: re.Match[str], offset: int = 0) -> list[str]:
+    """Form / basis notes of one label segment ("beta carotene", "DFE",
+    "400 mcg folic acid", "magnesium citrate", ...), in reading order.
+    `offset` is the segment's position in the line `chosen` was matched in."""
+    forms: list[str] = []
+    basis = _label_dose_basis(chosen.group("basis"))
+    if basis:
+        forms.append(basis)
+    for group in re.finditer(r"[(\[]([^()\[\]]*)[)\]]", segment):
+        content = group.group(1).strip(" ,.;:*")
+        if not content:
+            continue
+        prefix = _LABEL_FORM_PREFIX_RE.match(content)
+        dose = _LABEL_DOSE_RE.search(content)
+        share = re.fullmatch(r"(\d+(?:[.,]\d+)?)\s*%\s*(?:(?:as|als|from|aus)\s+(.+)|(.*carot.*))", content)
+        if share:
+            # "(50% as beta-carotene)": the share of the dose in that form.
+            forms.append(f"{format_float(_parse_float(share.group(1)) or 0.0)}% {(share.group(2) or share.group(3)).strip()}")
+        elif prefix:
+            forms.append(content[prefix.end():].strip())
+        elif dose:
+            # Secondary amounts: only the folic-acid share matters (DFE vs folic
+            # acid); "(1000 IU)" next to "25 mcg" is just the same dose again.
+            if re.search(r"\bfol(?:ic|saure)\b", content):
+                forms.append(f"{format_float(_parse_float(dose.group('num')) or 0.0)} {_label_dose_unit(dose.group('unit'))} folic acid")
+        elif "%" not in content and re.fullmatch(r"[a-z][a-z0-9 ,.+]*", content):
+            forms.append(content)
+    # Unbracketed words between the name and the dose ("Magnesium citrate 400
+    # mg"), and after the dose only when introduced by "as"/"als" ("Calcium 500
+    # mg as calcium carbonate"); other trailing words are marketing ("Unser
+    # Vitamin D3 liefert 2000 I.E. für Knochen und Immunsystem").
+    # (Bracket groups, read above, are blanked first, keeping positions.)
+    rest = re.sub(r"[(\[][^()\[\]]*[)\]]", lambda m: " " * len(m.group(0)), segment)
+    dose_start, dose_end = chosen.start() - offset, chosen.end() - offset
+    if 0 <= dose_start <= dose_end <= len(rest):
+        after = re.search(r"\b(?:as|als|from|aus)\b(.*)$", rest[dose_end:])
+        rest = rest[:dose_start] + " " + (after.group(1) if after else "")
+    rest = _LABEL_DOSE_RE.sub(" ", rest)
+    rest = re.sub(r"\d+(?:[.,]\d+)*\s*%|\d+(?:[.,]\d+)*|[%*:;,.]", " ", rest)
+    words = [w for w in rest.split() if w not in _LABEL_FILLER_WORDS and w not in _LABEL_PACKAGING_WORDS and len(w) > 1]
+    if words:
+        forms.append(" ".join(words))
+    return [f for f in forms if f]
+
+
+def _label_column_kinds(line: str) -> list[str]:
+    """Column descriptors ("day" / "hundred" / "unit") of one folded line, in order."""
+    spans = [(m.start(), m.end(), str(m.lastgroup)) for m in _LABEL_COLUMN_RE.finditer(line)]
+    if not spans:
+        return []
+    spans += [
+        (m.start(), m.end(), "day") for m in _LABEL_BARE_DAY_COLUMN_RE.finditer(line)
+        if not any(s <= m.start() < e for s, e, _k in spans)
+    ]
+    return [kind for _s, _e, kind in sorted(spans)]
+
+
+def _label_daily_dose_column(text: str) -> int | None:
+    """0-based index of the daily-dose column of a multi-column nutrient table,
+    or None to read the first dose column.
+
+    The header names the columns in order: the per-day column ("pro Tagesdosis",
+    "pro empfohlener Tagesverzehrmenge", "je Verzehrempfehlung", "per daily
+    serving") is the daily dose; without one, a per-portion column beats a
+    "pro 100 g" column. The first line naming two different kinds of column is
+    the header; otherwise the descriptors of all lines in reading order (a
+    header split over two OCR lines)."""
+    per_line = [kinds for kinds in (_label_column_kinds(_fold_label_text(raw)) for raw in str(text or "").splitlines()) if kinds]
+    header = next((kinds for kinds in per_line if len(set(kinds)) >= 2), None)
+    if header is None:
+        header = [kind for kinds in per_line for kind in kinds]
+    if len(header) < 2:
+        return None
+    if "day" in header:
+        return header.index("day")
+    if "hundred" in header and "unit" in header:
+        return header.index("unit")
+    return None
+
+
+def _parse_label_segment(
+    line: str,
+    depths: list[int],
+    name: re.Match[str],
+    end: int,
+    daily_column: int | None,
+) -> dict[str, Any] | None:
+    """One nutrient row from line[name.start():end], or None if no dose follows."""
+    start = name.end()
+    doses = [(d, depths[d.start()] > 0) for d in _LABEL_DOSE_RE.finditer(line, start, end)]
+    outside = [d for d, inside in doses if not inside]
+    if outside:
+        chosen = outside[0]
+        # Multi-column row ("Vitamin C 40 mg 80 mg 100%"): the daily-dose column.
+        first_unit = _label_dose_unit(chosen.group("unit"))
+        columns = [d for d in outside if _label_dose_unit(d.group("unit")) == first_unit]
+        if daily_column and len(columns) > 1:
+            chosen = columns[min(daily_column, len(columns) - 1)]
+    elif doses:
+        chosen = doses[0][0]  # "Vitamin D3 (25 µg)"
+    else:
+        return None
+    gap = "".join(ch for pos, ch in enumerate(line[start:chosen.start()], start=start) if depths[pos] == 0)
+    if len(gap.strip()) > _LABEL_MAX_NAME_TO_DOSE_GAP:
+        return None
+    value = _parse_float(chosen.group("num"))
+    if value is None or value <= 0:
+        return None
+
+    alias = re.sub(r"\s+", " ", name.group(0))
+    key, display = _NUTRIENT_ALIAS_INDEX[alias]
+    forms = _label_segment_forms(line[start:end], chosen, start)
+    if key in _FORM_NAMED_NUTRIENT_KEYS and alias not in (key, display) and not any(alias in f for f in forms):
+        forms.insert(0, alias)  # "Nicotinic acid 20 mg", "Retinyl palmitate 900 µg"
+    if display == "folic acid" and not any("folic" in f for f in forms):
+        forms.append("folic acid")  # "Folsäure 200 µg": the dose IS folic acid, not DFE
+    form_text = "; ".join(forms)
+    key, display = _refine_lexicon_hit(key, display, form_text)
+    return {
+        "component": display,
+        "dose_value": float(value),
+        "dose_unit": _label_dose_unit(chosen.group("unit")),
+        "form": form_text,
+        "nutrient_key": key,
+    }
+
+
+def label_row_preference(row: dict[str, Any]) -> tuple[int, int]:
+    """How authoritative a label row is, for choosing between rows of the same
+    nutrient: a nutrient-table line (with %NRV / %DV) beats a product title or
+    marketing line, and a row naming a chemical form beats one without."""
+    line = str(row.get("label_line", "") or "")
+    return (1 if re.search(r"\d\s*%", line) else 0, 1 if str(row.get("form", "") or "").strip() else 0)
+
+
+def _label_row_dose_mg(row: dict[str, Any], form: str) -> float | None:
+    try:
+        value = float(row.get("dose_value"))
+    except Exception:
+        return None
+    unit = str(row.get("dose_unit", "") or "")
+    factor = unit_to_mg(unit)
+    if factor is None and unit == "iu":
+        factor = _iu_unit_to_mg_for_component(str(row.get("component", "") or ""), form)
+    return value * factor if factor else None
+
+
+def _same_label_dose(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """True when two rows state the same amount of the same nutrient (after
+    unit / IU conversion). Vitamin A as retinyl AND as beta-carotene are two
+    real doses even when the numbers match."""
+    if a.get("nutrient_key") != b.get("nutrient_key"):
+        return False
+    kinds = {vitamin_a_form_kind(r.get("component"), r.get("form")) for r in (a, b)}
+    if kinds == {"preformed", "carotenoid"}:
+        return False
+    # IU rows are converted with the forms of both rows ("Vitamin E 400 I.E."
+    # in a title, "d-alpha-Tocopherol 268 mg (400 I.E.)" in the table).
+    form = f"{a.get('form', '') or ''}; {b.get('form', '') or ''}"
+    mg_a, mg_b = _label_row_dose_mg(a, form), _label_row_dose_mg(b, form)
+    if mg_a is None or mg_b is None:
+        return (a.get("dose_value"), a.get("dose_unit")) == (b.get("dose_value"), b.get("dose_unit"))
+    return abs(mg_a - mg_b) <= 0.01 * max(mg_a, mg_b)
+
+
+def _drop_repeated_label_doses(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A product title ("Vitamin D3 1000 I.E. Tabletten"), a marketing line or a
+    second-language line ("Vitamine C (acide L-ascorbique) 80 mg") repeats a
+    table line's dose. Keep ONE row per nutrient and dose — the most
+    authoritative (label_row_preference) — at the first row's position."""
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        for i, kept in enumerate(out):
+            if _same_label_dose(kept, row):
+                if label_row_preference(row) > label_row_preference(kept):
+                    out[i] = row
+                break
+        else:
+            out.append(row)
+    return out
+
+
+def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
+    """(rows read from nutrient-table lines, folded text those rows did NOT consume)."""
+    rows: list[dict[str, Any]] = []
+    unclaimed: list[str] = []
+    daily_column = _label_daily_dose_column(text)
+    for raw_line in str(text or "").splitlines():
+        line = _fold_label_text(raw_line)
+        if not line:
+            continue
+        depths = _bracket_depths(line)
+        names = [
+            m for m in _NUTRIENT_ALIAS_RE.finditer(line)
+            if depths[m.start()] == 0 and not _LABEL_FORM_LEAD_RE.search(line[: m.start()])
+        ]
+        if not names:
+            unclaimed.append(line)
+            continue
+        leftover = [line[: names[0].start()]]
+        i = 0
+        while i < len(names):
+            name = names[i]
+            key = _NUTRIENT_ALIAS_INDEX[re.sub(r"\s+", " ", name.group(0))][0]
+            j = i + 1
+            # "Vitamin D3 Cholecalciferol 25 µg": a second name of the SAME
+            # nutrient before any dose is part of this row, not a new one.
+            while (
+                j < len(names)
+                and _NUTRIENT_ALIAS_INDEX[re.sub(r"\s+", " ", names[j].group(0))][0] == key
+                and not _LABEL_DOSE_RE.search(line, name.end(), names[j].start())
+            ):
+                j += 1
+            end = names[j].start() if j < len(names) else len(line)
+            row = _parse_label_segment(line, depths, name, end, daily_column)
+            if row is None:
+                leftover.append(line[name.start():end])
+            else:
+                # Verbatim OCR repeats, titles and translations are collapsed
+                # by _drop_repeated_label_doses (keeping the table line).
+                row["label_line"] = raw_line.strip()
+                rows.append(row)
+            i = j
+        unclaimed.append(" ".join(part for part in leftover if part.strip()))
+    return _drop_repeated_label_doses(rows), "\n".join(unclaimed)
+
+
+def parse_label_nutrient_lines(text: str) -> list[dict[str, Any]]:
+    """Public entry point (parse_components uses _scan_label_nutrient_lines via
+    _reconcile_label_line_rows). Nutrient rows read from a label's nutrient
+    table lines (see above).
+
+    Each row: component (card name), dose_value, dose_unit (mg/mcg/g/iu), form
+    (the "(as ...)" form, dose basis such as DFE / NE / alpha-TE, a folic-acid
+    share, ...), nutrient_key (canonical lexicon key) and label_line."""
+    return _scan_label_nutrient_lines(text)[0]
+
+
+def _legacy_row_name_words(component: str) -> list[str]:
+    """A generic row's name in folded words, without the dose words some rows
+    carry ("magnesium 400 mg" -> ["magnesium"])."""
+    return [w for w in _fold_label_text(component).split() if not re.fullmatch(r"[\d.,%]*(?:mg|mcg|ug|iu|g)?", w)]
+
+
+def _legacy_row_name_pattern(component: str) -> re.Pattern[str] | None:
+    """Whole-word regex for a generic row's name in folded label text."""
+    words = _legacy_row_name_words(component)
+    if not words:
+        return None
+    return re.compile(r"(?<![a-z0-9])" + r"\s+".join(re.escape(w) for w in words) + r"(?![a-z0-9])")
+
+
+def _name_fuzzily_in(words: list[str], folded_text: str, cutoff: float = 0.8) -> bool:
+    """True when `words` appear in folded_text up to OCR typos ("magnesiurn")."""
+    if not words or len(" ".join(words)) < 5:
+        return False
+    target = " ".join(words)
+    tokens = re.findall(r"[a-z0-9]+", folded_text)
+    n = len(words)
+    return any(
+        difflib.SequenceMatcher(None, target, " ".join(tokens[i:i + n])).ratio() >= cutoff
+        for i in range(len(tokens) - n + 1)
+    )
+
+
+def _vitamin_code_named_in(component: str, folded_text: str) -> bool | None:
+    """For a "vitamin <code>" / "omega <n>" row: is that code on the label? None
+    for other names.
+
+    The generic pipeline turns a truncated "Vitamin B" ("Vitamin B 1,1 mg",
+    "Vitamin B-12" cut at the hyphen) into "vitamin b9", and an "Omega-3/6/9"
+    blend into "omega 3"; such a row is only real when the label actually
+    shows "B9" / a plain omega-3 (blends fold to "omega 369 blend")."""
+    # Strip a trailing dose only ("vitamin b9 1.1 mg"); the 3 of "omega 3" stays.
+    name = re.sub(r"\s+\d+(?:[.,]\d+)?\s*(?:mg|mcg|ug|iu|g)\b.*$", "", _fold_label_text(component)).strip()
+    omega = re.fullmatch(r"omega ?(\d)", name)
+    if omega:
+        return bool(re.search(rf"\bomega\s*{omega.group(1)}(?![0-9])", folded_text))
+    m = re.fullmatch(r"vitamin ([a-k])(\d{0,2})", name)
+    if not m:
+        return None
+    letter, number = m.groups()
+    if number:
+        return bool(re.search(rf"(?<![a-z0-9]){letter}{number}(?![a-z0-9])", folded_text))
+    return bool(re.search(rf"\bvit[a-z]*\.?\s*{letter}(?![a-z0-9])", folded_text))
+
+
+def _generic_row_named_in(component: str, folded_text: str, text_keys: set[str]) -> bool:
+    """True when a generic row's nutrient is named in folded_text: by a lexicon
+    name of the same nutrient (text_keys), its literal name, or — for
+    micronutrients — up to OCR typos. A "vitamin <code>" row needs its code."""
+    key = canonical_nutrient_key(component)
+    if key and key in text_keys:
+        return True
+    code_named = _vitamin_code_named_in(component, folded_text)
+    if code_named is not None:
+        return code_named
+    pattern = _legacy_row_name_pattern(component)
+    if pattern is not None and pattern.search(folded_text):
+        return True
+    return bool(key) and _name_fuzzily_in(_legacy_row_name_words(component), folded_text)
+
+
+def _dose_number_in(value: Any, folded_text: str) -> bool:
+    """True when a dose value (or the same amount in mg <-> µg) is written in
+    folded_text, in any decimal notation ("1,4" / "1.4", "1.000" / "1000")."""
+    try:
+        target = float(value)
+    except Exception:
+        return True  # no dose to check
+    if target <= 0:
+        return True
+    numbers = {_parse_float(n) for n in re.findall(r"\d+(?:[.,]\d+)*", folded_text)}
+    return any(
+        n is not None and abs(n - target * scale) <= 1e-6 * max(1.0, target * scale)
+        for n in numbers
+        for scale in (1.0, 1000.0, 0.001)
+    )
+
+
+def _lexicon_keys_in(folded_text: str) -> set[str]:
+    return {_NUTRIENT_ALIAS_INDEX[re.sub(r"\s+", " ", m.group(0))][0] for m in _NUTRIENT_ALIAS_RE.finditer(folded_text)}
+
+
+def _rename_salt_cation_rows(rows: list[dict[str, Any]], folded_text: str) -> list[dict[str, Any]]:
+    """Rename generic rows named after the cation of a salt to the nutrient the
+    salt supplies ("potassium" read from "potassium iodide" -> iodine) when the
+    name never appears on its own in the label text."""
+    hits = [(m.group(0), _NUTRIENT_ALIAS_INDEX[re.sub(r"\s+", " ", m.group(0))][0]) for m in _NUTRIENT_ALIAS_RE.finditer(folded_text)]
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        component = str(row.get("component", "") or "")
+        key = canonical_nutrient_key(component)
+        name = _fold_label_text(component)
+        if not key or any(hit_key == key for _text, hit_key in hits):
+            out.append(row)
+            continue
+        salts = {hit_key for text, hit_key in hits if text.startswith(name + " ")}
+        if len(salts) == 1:
+            salt_key = salts.pop()
+            row = {**row, "component": _NUTRIENT_LEXICON[salt_key]["display"]}
+        out.append(row)
+    return out
+
+
+def _reconcile_label_line_rows(rows: list[dict[str, Any]], input_text: str) -> list[dict[str, Any]]:
+    """Merge label-line rows (authoritative) with the generic pipeline's rows.
+
+    A generic row survives only if it adds something: its nutrient is not
+    already read from a label line, and its nutrient is named in the label text
+    the line parser left unread (by any lexicon name, its literal name, or —
+    allowing OCR typos such as "Magnesiurn" — fuzzily). That drops the
+    "potassium 150 mcg" taken from "Iodine (as potassium iodide) 150 mcg" and
+    the "vitamin b9" read from a truncated "Vitamin B" / "Vitamin B-12". Its
+    dose must also be written in that unread text (not taken from a line
+    already read); a dose that merely EQUALS another line's dose is fine (B2
+    and B6 are both 1.4 mg on many labels; "Coenzyme Q10 100 mg" next to
+    "Vitamin C 100 mg"). With no label lines read at all, only the "vitamin
+    <code>" / "omega <n>" phantoms are dropped.
+    """
+    folded_text = _fold_label_text(input_text)
+    rows = _rename_salt_cation_rows(rows, folded_text)
+    line_rows, unclaimed = _scan_label_nutrient_lines(input_text)
+    if not line_rows:
+        return [r for r in rows if _vitamin_code_named_in(str(r.get("component", "") or ""), folded_text) is not False]
+    covered = {r["nutrient_key"] for r in line_rows}
+    unclaimed_keys = _lexicon_keys_in(unclaimed)
+    kept = [
+        row for row in rows
+        if canonical_nutrient_key(str(row.get("component", "") or "")) not in covered
+        and _generic_row_named_in(str(row.get("component", "") or ""), unclaimed, unclaimed_keys)
+        # Its dose must be written in the unread text too: a dose taken from a
+        # line the label-line parser read belongs to that line's nutrient
+        # (a "Vitamin B12 2,5 [unreadable unit]" row must not get Biotin's 50).
+        and _dose_number_in(row.get("dose_value"), unclaimed)
+    ]
+    return [dict(r) for r in line_rows] + kept
+
+
 def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
     global LAST_TEXT_PROVIDER
 
@@ -9346,6 +10220,10 @@ def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
     # Stage 4: unit domain + energy sanity validation (non-destructive — adds warnings).
     best_rows, sanity_warnings = _validate_nutrition_label_sanity(best_rows)
     warnings.extend(sanity_warnings)
+
+    # Stage 5: nutrient-table lines read by the lexicon-based label-line parser
+    # replace the generic rows for those lines (doses, German names, forms).
+    best_rows = _reconcile_label_line_rows(best_rows, input_text)
 
     if best_rows:
         LAST_TEXT_PROVIDER = "Local deterministic parser"
