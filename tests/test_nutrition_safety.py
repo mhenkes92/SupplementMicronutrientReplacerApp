@@ -254,7 +254,9 @@ def test_app_renders_cards_and_results_with_ul_warnings():
     at.session_state["swipe_index"] = len(cards)
     at.run(timeout=60)
     assert not at.exception, [e.value for e in at.exception]
-    assert any("safe upper limit for vitamin B6" in c.value for c in at.caption)
+    # Listed in the results' heads-up box.
+    shown = [c.value for c in at.caption] + [m.value for m in at.markdown]
+    assert any("safe upper limit for vitamin B6" in text for text in shown)
 
 
 # --- Liver: vitamin A in the suggested portion ------------------------------------

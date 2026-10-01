@@ -8,7 +8,9 @@ time instead of being cached.
 
 `submit()` starts a generation on a small worker pool so a likely-needed answer
 (the default 3-meal plan) is already being written while the user is still
-looking at their results. Workers only do HTTP work — never Streamlit calls.
+looking at their results. Workers only do HTTP work — never Streamlit calls;
+a streaming worker reports its text so far with `set_partial()`, which the UI
+polls with `partial()` to show the answer as it is written.
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ _MAX_ENTRIES = 256
 _lock = threading.Lock()
 _cache: "OrderedDict[str, str]" = OrderedDict()
 _inflight: dict[str, Future] = {}
+_partial: dict[str, str] = {}
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="suppswipe-llm")
 
 
@@ -77,6 +80,7 @@ def submit(key: str, fn: Callable[[], str]) -> Future | None:
             put(key, text)
             with _lock:
                 _inflight.pop(key, None)
+                _partial.pop(key, None)
             return text
 
         future = _executor.submit(_job)
@@ -84,10 +88,24 @@ def submit(key: str, fn: Callable[[], str]) -> Future | None:
         return future
 
 
+def set_partial(key: str, text: str) -> None:
+    """Record the text a background generation has written so far."""
+    with _lock:
+        if key in _inflight:
+            _partial[key] = str(text or "")
+
+
+def partial(key: str) -> str:
+    """Text written so far by a running background generation ("" if none)."""
+    with _lock:
+        return _partial.get(key, "")
+
+
 def clear() -> None:
     with _lock:
         _cache.clear()
         _inflight.clear()
+        _partial.clear()
 
 
 def drop(key: str) -> None:

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import datetime
+import html
 import io
 import json
 import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -141,30 +143,94 @@ def _whole_food_icon(component_key: str) -> str:
     return TITLE_WHOLE_FOOD_ICON
 
 
+# Food-type icons, most specific first. Whole words only, so "eggplant" is not
+# an egg, "nutmeg" not a nut and a legume's "mature seeds" not a seed.
+_FOOD_ICON_RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\b(?:soy ?milk|soymilk|almond milk|oat milk|rice milk|plant[- ]based (?:milk|beverage))\b"), "🥛"),
+    (re.compile(r"\b(?:seaweed|kelp|nori|wakame|spirulina|agar|laver|irishmoss)\b"), "🌿"),
+    (re.compile(r"\bmushrooms?\b|\b(?:shiitake|maitake|chanterelle|morel|portabella|portobello)\b"), "🍄"),
+    (re.compile(
+        r"\b(?:beans?|lentils?|chickpeas?|garbanzo|cowpeas?|black-?eyed|blackeyes|peas|split peas|soybeans?|"
+        r"tofu|tempeh|edamame|natto|miso|legumes?|hummus|pulses|lupins?)\b"
+    ), "🫘"),
+    (re.compile(r"\b(?:oysters?|clams?|mussels?|scallops?|mollusks?|whelk|abalone|octopus|squid)\b"), "🦪"),
+    (re.compile(r"\b(?:shrimp|prawns?|crab|lobster|crayfish|crustaceans?|krill)\b"), "🦐"),
+    (re.compile(
+        r"\b(?:fish|salmon|sardines?|tuna|mackerel|anchov(?:y|ies)|herring|trout|cod|halibut|pollock|"
+        r"tilapia|caviar|roe|eel|carp|catfish|haddock|sprat|pike|perch|swordfish|snapper|bass|smelt)\b"
+    ), "🐟"),
+    (re.compile(r"\beggs?\b|\begg (?:yolk|white)\b"), "🥚"),
+    (re.compile(r"\b(?:cheese|cheddar|parmesan|mozzarella|gouda|emmental|ricotta|quark|cottage)\b"), "🧀"),
+    (re.compile(r"\b(?:milk|yogh?urt|kefir|buttermilk|whey)\b"), "🥛"),
+    (re.compile(r"\b(?:chicken|turkey|duck|goose|poultry)\b"), "🍗"),
+    (re.compile(
+        r"\b(?:beef|pork|lamb|veal|venison|mutton|goat|bison|liver|kidneys?|heart|ham|bacon|sausage|"
+        r"meat|game|rabbit|elk|moose|caribou)\b"
+    ), "🥩"),
+    (re.compile(r"\b(?:seeds?|sunflower|pumpkin seeds?|chia|flaxseeds?|linseeds?|sesame|hemp|tahini)\b"), "🌻"),
+    (re.compile(
+        r"\b(?:nuts?|almonds?|cashews?|walnuts?|pistachios?|hazelnuts?|filberts?|pecans?|peanuts?|"
+        r"brazilnuts?|brazil nuts?|macadamias?|pine nuts?|peanut butter)\b"
+    ), "🥜"),
+    (re.compile(
+        r"\b(?:oats?|oatmeal|wheat|bran|germ|rice|quinoa|amaranth|millet|buckwheat|barley|rye|spelt|"
+        r"teff|sorghum|cereals?|bread|pasta|flour|muesli|granola)\b"
+    ), "🌾"),
+    (re.compile(r"\b(?:avocados?)\b"), "🥑"),
+    (re.compile(r"\b(?:sweet potato(?:es)?|yams?)\b"), "🍠"),
+    (re.compile(r"\b(?:potato(?:es)?)\b"), "🥔"),
+    (re.compile(r"\b(?:carrots?|beets?|beetroot|turnips?|radish(?:es)?|parsnips?|celeriac)\b"), "🥕"),
+    (re.compile(r"\b(?:broccoli|cauliflower|brussels|cabbage|kohlrabi)\b"), "🥦"),
+    (re.compile(
+        r"\b(?:spinach|kale|chard|lettuce|collards?|leafy|greens|arugula|rocket|cress|watercress|"
+        r"parsley|dandelion|amaranth leaves|purslane|turnip greens|mustard greens)\b"
+    ), "🥬"),
+    (re.compile(r"\b(?:peppers?|paprika)\b"), "🫑"),
+    (re.compile(r"\b(?:eggplants?|aubergines?)\b"), "🍆"),
+    (re.compile(r"\btomato(?:es)?\b"), "🍅"),
+    (re.compile(r"\b(?:kiwi(?:fruit)?s?)\b"), "🥝"),
+    (re.compile(r"\b(?:oranges?|lemons?|limes?|grapefruit|citrus|mandarins?|tangerines?|clementines?)\b"), "🍊"),
+    (re.compile(r"\b(?:bananas?|plantains?)\b"), "🍌"),
+    (re.compile(r"\b(?:berry|berries|strawberr(?:y|ies)|blueberr(?:y|ies)|raspberr(?:y|ies)|currants?|"
+                r"blackberr(?:y|ies)|cranberr(?:y|ies)|acerola|cherries|grapes?)\b"), "🍓"),
+    (re.compile(r"\b(?:apricots?|mango(?:es)?|papayas?|guavas?|peach(?:es)?|figs?|dates?|prunes?|raisins?)\b"), "🥭"),
+    (re.compile(r"\b(?:apples?|pears?)\b"), "🍎"),
+    (re.compile(r"\b(?:spices?|herbs?|basil|thyme|oregano|dill|cumin|turmeric)\b"), "🌿"),
+]
+
+# Fallback by USDA category when the description names nothing specific.
+_FOOD_CATEGORY_ICONS: list[tuple[str, str]] = [
+    ("legume", "🫘"),
+    ("finfish and shellfish", "🐟"),
+    ("dairy and egg", "🧀"),
+    ("poultry", "🍗"),
+    ("beef", "🥩"),
+    ("pork", "🥩"),
+    ("lamb, veal", "🥩"),
+    ("sausages", "🥩"),
+    ("nut and seed", "🥜"),
+    ("breakfast cereals", "🥣"),
+    ("cereal grains", "🌾"),
+    ("baked", "🍞"),
+    ("vegetables", "🥦"),
+    ("fruits", "🍓"),
+    ("spices and herbs", "🌿"),
+    ("beverages", "🥤"),
+]
+
+
 def _whole_food_icon_from_food(food: dict[str, Any] | None, component_key: str = "") -> str:
     if not food:
         return _whole_food_icon(component_key)
 
     desc = str(food.get("food_description", "") or "").lower()
+    for pattern, icon in _FOOD_ICON_RULES:
+        if pattern.search(desc):
+            return icon
     category = str(food.get("food_category", "") or "").lower()
-    blob = f"{desc} {category}".strip()
-
-    if any(token in blob for token in ["salmon", "sardine", "tuna", "mackerel", "anchovy", "fish", "seafood"]):
-        return "🐟"
-    if any(token in blob for token in ["egg", "eggs"]):
-        return "🥚"
-    if any(token in blob for token in ["almond", "cashew", "walnut", "pistachio", "hazelnut", "pecan", "peanut", "nut", "seed"]):
-        return "🥜"
-    if any(token in blob for token in ["spinach", "kale", "broccoli", "cabbage", "lettuce", "chard", "leafy", "greens"]):
-        return "🥬"
-    if any(token in blob for token in ["carrot", "beet", "turnip", "radish", "root"]):
-        return "🥕"
-    if any(token in blob for token in ["sweet potato", "potato", "yam"]):
-        return "🍠"
-    if any(token in blob for token in ["berry", "berries", "strawberry", "blueberry", "raspberry", "fruit", "orange", "apple"]):
-        return "🍓"
-    if any(token in blob for token in ["bean", "lentil", "chickpea", "legume", "tofu", "soy"]):
-        return "🫘"
+    for needle, icon in _FOOD_CATEGORY_ICONS:
+        if needle in category:
+            return icon
     return _whole_food_icon(component_key)
 
 
@@ -462,10 +528,7 @@ def _stream_llm_text(
         return cached
     pending = llm_cache.inflight(cache_key)
     if pending is not None:
-        try:
-            text = str(pending.result(timeout=float(bb.BLOCKBRAIN_TOTAL_BUDGET_S)) or "").strip()
-        except Exception:
-            text = ""
+        text = _await_background_text(cache_key, pending, placeholder)
         if text:
             if placeholder is not None:
                 placeholder.markdown(text)
@@ -501,6 +564,22 @@ def _stream_llm_text(
     elif placeholder is not None:
         placeholder.empty()
     return text
+
+
+def _await_background_text(cache_key: str, pending: Any, placeholder: Any = None) -> str:
+    """Wait for a background generation, showing its partial text meanwhile."""
+    deadline = time.monotonic() + float(bb.BLOCKBRAIN_TOTAL_BUDGET_S)
+    shown = ""
+    while not pending.done() and time.monotonic() < deadline:
+        partial = llm_cache.partial(cache_key)
+        if placeholder is not None and partial and partial != shown:
+            placeholder.markdown(partial + " \u258c")
+            shown = partial
+        time.sleep(0.25)
+    try:
+        return str(pending.result(timeout=0) or "").strip()
+    except Exception:
+        return ""
 
 
 def _looks_like_extraction_json(text: str) -> bool:
@@ -667,72 +746,6 @@ def _answer_ask_ai_question(
     if sources:
         sources_line = "\n\nSources: " + ", ".join(sources[:4])
     return (answer or "No answer available."), sources_line
-
-
-def _render_rag_chat_popup(card: dict[str, Any], component_key: str, index: int) -> None:
-    with st.popover("💬 Ask AI", width="stretch"):
-        st.caption("Ask AI research questions about this micronutrient in chat form.")
-        chat_store: dict[str, list[dict[str, str]]] = st.session_state.get("swipe_rag_chats", {})
-        history = list(chat_store.get(component_key, []))
-
-        for msg in history[-12:]:
-            role = "user" if str(msg.get("role", "")).lower() == "user" else "assistant"
-            content = str(msg.get("content", "") or "")
-            if hasattr(st, "chat_message"):
-                with st.chat_message(role):
-                    st.write(content)
-            else:
-                st.markdown(f"**{role.title()}:** {content}")
-
-        question = st.text_input(
-            "Question",
-            placeholder="Example: Is this dose usually safe long-term?",
-            key=f"swipe_rag_chat_input_{component_key}_{index}",
-        )
-        send_col, clear_col = st.columns(2)
-        with send_col:
-            send_clicked = st.button(
-                "Send",
-                type="primary",
-                width="stretch",
-                key=f"swipe_rag_send_{component_key}_{index}",
-            )
-        with clear_col:
-            clear_clicked = st.button(
-                "Clear chat",
-                width="stretch",
-                key=f"swipe_rag_clear_{component_key}_{index}",
-            )
-
-        if clear_clicked:
-            chat_store[component_key] = []
-            st.session_state["swipe_rag_chats"] = chat_store
-            st.rerun()
-
-        if send_clicked:
-            if not question.strip():
-                st.warning("Enter a question first.")
-            else:
-                with st.spinner("Asking AI research assistant..."):
-                    component_name = str(card.get("display", "") or "") or _nutrient_title(card.get("component"))
-                    stream_box = st.empty()
-                    answer, sources_line = _answer_ask_ai_question(
-                        component_name,
-                        question.strip(),
-                        history=_ask_ai_history(component_key),
-                        placeholder=stream_box,
-                        dose_label=str(card.get("dose_label", "") or ""),
-                    )
-                    if answer is None:
-                        st.error("Ask AI is unavailable right now — please try again in a moment.")
-                    else:
-                        updated_history = history + [
-                            {"role": "user", "content": question.strip()},
-                            {"role": "assistant", "content": (answer or "No answer available.") + sources_line},
-                        ]
-                        chat_store[component_key] = updated_history
-                        st.session_state["swipe_rag_chats"] = chat_store
-                        st.rerun()
 
 
 def _dose_label(component: dict[str, Any]) -> str:
@@ -2284,7 +2297,12 @@ def _prefetch_meal_plan(replace_items: list[dict[str, Any]], diet_label: str, nu
     if not _consume_llm_quota("generate"):
         return
     model = _generation_model() or None
-    llm_cache.submit(key, lambda: bb.call_blockbrain_text(system_prompt, user_prompt, model=model))
+    llm_cache.submit(
+        key,
+        lambda: bb.call_blockbrain_text(
+            system_prompt, user_prompt, model=model, on_text=lambda t: llm_cache.set_partial(key, t)
+        ),
+    )
 
 
 def _benefits_prompts(replace_items: list[dict[str, Any]]) -> tuple[str, str, str] | None:
@@ -2306,7 +2324,7 @@ def _benefits_prompts(replace_items: list[dict[str, Any]]) -> tuple[str, str, st
         "briefly when the food also has a downside (e.g. liver is very high in vitamin A, Brazil nuts in "
         "selenium), and say plainly when the supplement remains the standard advice (vitamin B12 on a "
         "vegan diet, folic acid before and in early pregnancy, vitamin D in winter or with little sun, "
-        "iron or other nutrients prescribed for a diagnosed deficiency). For each item use this compact structure: a bold heading '<Nutrient> \→ <Food>', "
+        "iron or other nutrients prescribed for a diagnosed deficiency). For each item use this compact structure: a bold heading '<Nutrient> → <Food>', "
         "then '💊 Pill alone:' with one short line, then '🥗 Whole food also gives:' "
         "with 3-4 short bullets. Be concise and evidence-based. General guidance only; no individual "
         "medical advice."
@@ -2354,7 +2372,8 @@ def _build_share_text(
     if replace_items:
         for d in replace_items:
             food = _food_name(d.get("selected_food"))
-            out.append(f"  • {_nutrient_title(d.get('component'))}: {food} ({_amount_to_match_dose(d)})")
+            amount = _amount_to_match_dose(d)
+            out.append(f"  • {_nutrient_title(d.get('component'))}: {food}" + (f" — {amount}" if amount else ""))
     else:
         out.append("  • (none)")
     out.append("")
@@ -2531,132 +2550,8 @@ def _excluded_swaps_caption(excluded: list[dict[str, Any]], diet_label: str) -> 
     """Note which flagged swaps (no longer fitting the filter) are left out."""
     if not excluded:
         return
-    names = ", ".join(dict.fromkeys(str(d.get("component", "") or "") for d in excluded if d.get("component")))
+    names = ", ".join(dict.fromkeys(_nutrient_title(d.get("component")) for d in excluded if d.get("component")))
     st.caption(f"Not included until you choose another food: {names} (doesn't fit {diet_label}).")
-
-
-def _render_final_actions(
-    keep_items: list[dict[str, Any]],
-    replace_items: list[dict[str, Any]],
-    diet_label: str,
-    excluded: list[dict[str, Any]] | None = None,
-) -> None:
-    # Tabs instead of popovers: long answers (meal plans, the benefit
-    # comparison) scroll with the page instead of being clipped in a popover.
-    excluded = list(excluded or [])
-    plan_key = ""
-    tab_meals, tab_cost, tab_pills, tab_share, tab_why = st.tabs(
-        ["🍽️ Meals", "🛒 Cost", "💊 Kept pills", "📤 Share", "🌱 Why food"]
-    )
-    with tab_meals:
-        st.caption("Turn your whole-food swaps into meals that use all of them.")
-        _excluded_swaps_caption(excluded, diet_label)
-        if not replace_items:
-            st.info("Swipe right on at least one nutrient to build a meal plan.")
-        else:
-            num_meals = st.radio(
-                "How many meals?",
-                options=[1, 2, 3],
-                index=2,
-                horizontal=True,
-                key="swipe_meal_count",
-                format_func=lambda m: f"{m} meal" if m == 1 else f"{m} meals",
-            )
-            _sys, _usr, plan_key = _meal_plan_prompts(replace_items, diet_label, int(num_meals))
-            ready = llm_cache.get(plan_key)
-            plan_box = st.empty()
-            if ready:
-                plan_box.markdown(ready)
-                st.session_state["swipe_meal_plan"] = ready
-                st.session_state["swipe_meal_plan_key"] = plan_key
-                if st.button("🔄 Different meals", width="stretch", key="swipe_regen_meal"):
-                    llm_cache.drop(plan_key)
-                    with st.spinner("Cooking up new meals…"):
-                        st.session_state["swipe_meal_plan"] = _generate_meal_plan(
-                            replace_items, diet_label, int(num_meals), placeholder=plan_box
-                        )
-            elif st.button("Generate meals", type="primary", width="stretch", key="swipe_gen_meal"):
-                with st.spinner("Cooking up your meals…"):
-                    plan = _generate_meal_plan(replace_items, diet_label, int(num_meals), placeholder=plan_box)
-                st.session_state["swipe_meal_plan"] = plan
-                st.session_state["swipe_meal_plan_key"] = plan_key
-                if not plan:
-                    st.warning("Couldn't generate meals right now — please try again.")
-            elif llm_cache.inflight(plan_key) is not None:
-                st.caption("⚡ Already preparing your meals in the background — tap Generate to see them.")
-    with tab_cost:
-        st.caption("Rough daily cost of your swaps at German discounters (ALDI/Lidl/REWE average).")
-        _excluded_swaps_caption(excluded, diet_label)
-        basket = _basket_cost_breakdown(replace_items)
-        total, rows, unknown = basket["total"], basket["rows"], basket["unknown"]
-        impractical = basket["impractical"]
-        if not rows and not unknown and not impractical:
-            st.info("No whole-food swaps to price yet.")
-        else:
-            for name, cost in rows:
-                st.markdown(f"- {name}: ~€{cost:.2f}/day")
-            if total > 0:
-                st.markdown(f"**≈ €{total:.2f}/day · €{total * 7:.2f}/week**")
-            if impractical:
-                st.markdown(
-                    "**Not practical from food:** "
-                    + ", ".join(f"{name} (~{bb.format_float(grams / 1000.0, 1)} kg/day)" for name, grams in impractical)
-                    + " — more than 1 kg a day, so not priced; keeping the supplement may be the practical choice."
-                )
-            if unknown:
-                st.caption("No estimate for: " + ", ".join(unknown))
-            st.caption("Approximate 2025 shelf prices — actual prices vary by shop and season.")
-    with tab_pills:
-        st.caption("Find one all-in-one product covering the pills you kept.")
-        if not keep_items:
-            st.info("You didn't keep any supplements — nothing to buy!")
-        else:
-            _query, links = _supplement_search_links(keep_items)
-            covers = ", ".join(dict.fromkeys(_nutrient_title(d.get("component")) for d in keep_items if d.get("component")))
-            st.markdown(f"**Covers:** {covers}")
-            for label, url in links.items():
-                st.markdown(f"- [{label}]({url})")
-            st.caption("Links open a live search so you can compare real products and prices. Not medical or purchase advice.")
-    with tab_share:
-        st.caption("Copy or download your results.")
-        _excluded_swaps_caption(excluded, diet_label)
-        # Only a plan written for the current swaps (not one from before the
-        # filter or a choice changed) goes into the share text.
-        meal_plan = ""
-        if plan_key and st.session_state.get("swipe_meal_plan_key") == plan_key:
-            meal_plan = str(st.session_state.get("swipe_meal_plan", "") or "")
-        share_text = _build_share_text(keep_items, replace_items, meal_plan)
-        st.code(share_text)
-        st.download_button(
-            "Download as text",
-            data=share_text,
-            file_name="suppswipe_results.txt",
-            mime="text/plain",
-            width="stretch",
-            key="swipe_share_dl",
-        )
-    with tab_why:
-        st.caption(
-            "See how much MORE you get by eating the whole food instead of just the isolated pill."
-        )
-        if not replace_items:
-            st.info("Swipe right on at least one nutrient to compare benefits.")
-        else:
-            prompts = _benefits_prompts(replace_items)
-            ready = llm_cache.get(prompts[2]) if prompts else None
-            benefits_box = st.empty()
-            if ready:
-                benefits_box.markdown(ready)
-            elif st.button(
-                "Show benefit comparison",
-                type="primary",
-                width="stretch",
-                key="swipe_gen_benefits",
-            ):
-                with st.spinner("Gathering whole-food benefits…"):
-                    benefits = _generate_whole_food_benefits(replace_items, placeholder=benefits_box)
-                if not benefits:
-                    st.warning("Couldn't fetch the comparison right now — please try again.")
 
 
 # --- Micronutrient allow-list -------------------------------------------------
@@ -2981,6 +2876,224 @@ def _render_header() -> None:
             .stButton button [data-testid="stMarkdownContainer"],
             .stButton button [data-testid="stMarkdownContainer"] p {
                 white-space: normal;
+            }
+            /* Results dashboard ("Your plan"). */
+            .plan-hero {
+                background: linear-gradient(135deg, #065f46 0%, #047857 55%, #10b981 100%);
+                color: #ffffff;
+                border-radius: 20px;
+                padding: 18px 18px 16px 18px;
+                margin: 0.2rem 0 0.8rem 0;
+                box-shadow: 0 10px 24px rgba(4, 120, 87, 0.22);
+            }
+            .plan-kicker {
+                font-size: 0.72rem;
+                font-weight: 800;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                opacity: 0.9;
+            }
+            .plan-title {
+                font-size: 1.35rem;
+                font-weight: 900;
+                line-height: 1.2;
+                margin-top: 4px;
+            }
+            .plan-bar {
+                height: 8px;
+                border-radius: 999px;
+                background: rgba(255, 255, 255, 0.28);
+                margin: 12px 0 14px 0;
+                overflow: hidden;
+            }
+            .plan-bar > span {
+                display: block;
+                height: 100%;
+                border-radius: 999px;
+                background: #ffffff;
+            }
+            .plan-stats {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
+                gap: 8px;
+            }
+            .plan-stat {
+                background: rgba(255, 255, 255, 0.16);
+                border-radius: 12px;
+                padding: 8px 8px 7px 8px;
+                text-align: center;
+            }
+            .plan-stat b {
+                display: block;
+                font-size: 1.05rem;
+                font-weight: 900;
+            }
+            .plan-stat span {
+                display: block;
+                font-size: 0.7rem;
+                opacity: 0.92;
+            }
+            .plan-warn {
+                background: #fff7ed;
+                border: 1px solid #fed7aa;
+                border-radius: 14px;
+                padding: 10px 12px;
+                margin-bottom: 0.8rem;
+                color: #7c2d12;
+                font-size: 0.84rem;
+                line-height: 1.4;
+            }
+            .plan-warn-h {
+                font-weight: 900;
+                margin-bottom: 4px;
+            }
+            .plan-warn-i + .plan-warn-i {
+                margin-top: 6px;
+            }
+            .plan-h {
+                font-size: 0.78rem;
+                font-weight: 900;
+                letter-spacing: 0.05em;
+                text-transform: uppercase;
+                color: #334155;
+                margin: 0.9rem 0 0.4rem 0;
+            }
+            .plan-list {
+                background: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 16px;
+                overflow: hidden;
+            }
+            .plan-row {
+                display: flex;
+                gap: 12px;
+                align-items: flex-start;
+                padding: 11px 12px;
+            }
+            .plan-row + .plan-row {
+                border-top: 1px solid #f1f5f9;
+            }
+            .plan-ico {
+                font-size: 1.5rem;
+                line-height: 1;
+                width: 34px;
+                text-align: center;
+                flex: 0 0 34px;
+            }
+            .plan-main {
+                flex: 1 1 auto;
+                min-width: 0;
+            }
+            .plan-name {
+                font-weight: 800;
+                color: #0f172a;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+                align-items: center;
+            }
+            .plan-amt {
+                font-size: 0.75rem;
+                font-weight: 800;
+                color: #065f46;
+                background: #d1fae5;
+                border-radius: 999px;
+                padding: 2px 8px;
+            }
+            .plan-dose {
+                font-size: 0.75rem;
+                font-weight: 800;
+                color: #7f1d1d;
+                background: #fee2e2;
+                border-radius: 999px;
+                padding: 2px 8px;
+            }
+            .plan-sub {
+                font-size: 0.8rem;
+                color: #475569;
+                margin-top: 2px;
+            }
+            .plan-bonus {
+                font-size: 0.78rem;
+                color: #047857;
+                margin-top: 2px;
+            }
+            .plan-idea {
+                font-size: 0.86rem;
+                color: #1e293b;
+                padding: 8px 0;
+                border-bottom: 1px solid #f1f5f9;
+            }
+            .plan-writing {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                color: #475569;
+                font-size: 0.88rem;
+                padding: 12px 14px;
+                background: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 14px;
+            }
+            .plan-dots {
+                display: inline-flex;
+                gap: 4px;
+            }
+            .plan-dots i {
+                width: 6px;
+                height: 6px;
+                border-radius: 50%;
+                background: #10b981;
+                animation: plan-dot 1.2s infinite ease-in-out;
+            }
+            .plan-dots i:nth-child(2) {
+                animation-delay: 0.15s;
+            }
+            .plan-dots i:nth-child(3) {
+                animation-delay: 0.3s;
+            }
+            @keyframes plan-dot {
+                0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+                40% { opacity: 1; transform: translateY(-3px); }
+            }
+            .shop-list {
+                background: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 16px;
+                padding: 4px 12px;
+            }
+            .shop-row {
+                display: flex;
+                gap: 8px;
+                padding: 9px 0;
+                font-size: 0.88rem;
+                color: #0f172a;
+            }
+            .shop-row + .shop-row {
+                border-top: 1px solid #f1f5f9;
+            }
+            .shop-name {
+                flex: 1 1 auto;
+                font-weight: 700;
+            }
+            .shop-qty {
+                color: #475569;
+                min-width: 64px;
+                text-align: right;
+            }
+            .shop-cost {
+                min-width: 60px;
+                text-align: right;
+                font-weight: 800;
+            }
+            .shop-total {
+                display: flex;
+                gap: 8px;
+                padding: 10px 0 9px 0;
+                border-top: 2px solid #e2e8f0;
+                font-size: 0.92rem;
+                font-weight: 900;
+                color: #0f172a;
             }
             .diet-strip-label {
                 font-size: 0.72rem;
@@ -3529,10 +3642,34 @@ def _confirm_restart_dialog() -> None:
             st.rerun()
 
 
-def _render_analyze_bar() -> None:
-    label = f"Analyze my Supplement {LEFT_SWIPE_ICON} → {TITLE_WHOLE_FOOD_ICON}"
-    if st.button(label, type="primary", width="stretch", key="swipe_analyze_btn"):
-        if _selected_session_in_progress():
+def _on_results_screen() -> bool:
+    """True once every card is decided and the plan dashboard is showing."""
+    cards = st.session_state.get("swipe_cards") or []
+    return bool(cards) and int(st.session_state.get("swipe_index", 0) or 0) >= len(cards)
+
+
+def _render_results_settings() -> None:
+    """The diet filter and pregnancy toggle, folded away under the plan.
+
+    Changing them still re-checks the swaps and the plan updates above."""
+    diet = _active_diet_label(_selected_dietary_profile()) or "no restriction"
+    label = f"Diet: {diet}" + (" · pregnant / breastfeeding" if _pregnancy_mode() else "")
+    with st.expander(label, icon="⚙️", key="swipe_results_settings"):
+        _render_dietary_pills()
+
+
+def _render_analyze_bar(results: bool = False) -> None:
+    if results:
+        label, kind = "📸 Scan another supplement", "secondary"
+    else:
+        label, kind = f"Analyze my Supplement {LEFT_SWIPE_ICON} → {TITLE_WHOLE_FOOD_ICON}", "primary"
+    if st.button(label, type=kind, width="stretch", key="swipe_analyze_btn"):
+        if results:
+            # A finished plan is already in Recent scans: nothing to lose.
+            _reset_swipe_state()
+            _forget_saved_scan()
+            st.session_state["swipe_open_analyze"] = True
+        elif _selected_session_in_progress():
             st.session_state["swipe_confirm_restart"] = True
         else:
             st.session_state["swipe_open_analyze"] = True
@@ -4165,6 +4302,527 @@ def _render_card() -> None:
             )
 
 
+# --- Results dashboard ---------------------------------------------------------
+# The last screen is one plan instead of a stack of buttons and popovers: a hero
+# summary (how much now comes from food, grams / kcal / cost per day), one
+# heads-up box for every warning, and tabs for the plan, meals, shopping, Ask AI
+# and sharing. Everything in "Plan", "Shopping" and the quick meal ideas is
+# computed locally (USDA data, price table) so it shows instantly; only the
+# personal meal plan, the benefit write-up and Ask AI use the LLM.
+
+_RESULT_TABS = ["🥗 Plan", "🍽️ Meals", "🛒 Shopping", "💬 Ask AI", "📤 Share"]
+
+# Other nutrients a swapped food brings, shown as % of the EU NRV under the food.
+_BONUS_NUTRIENTS = [
+    "vitamin a", "vitamin c", "vitamin d", "vitamin e", "vitamin k", "thiamin", "riboflavin", "niacin",
+    "vitamin b6", "folate", "vitamin b12", "calcium", "magnesium", "iron", "zinc", "selenium", "iodine",
+    "potassium", "copper", "omega 3",
+]
+_BONUS_MIN_PCT = 15
+# EPA+DHA has no EU NRV; EFSA's adequate intake (250 mg/day) stands in for it.
+_OMEGA3_REFERENCE_G = 0.25
+
+# Instant serving ideas by food type (no LLM), first match wins.
+_SERVING_IDEAS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\b(liver|kidneys?|heart)\b"), "a small portion about once a week, e.g. pan-fried with onions"),
+    (re.compile(r"\b(oysters?|mussels?|clams?|shrimps?|prawns?|scallops?)\b"), "in pasta or risotto, or steamed with garlic"),
+    (re.compile(r"\b(salmon|mackerel|herring|sardines?|trout|tuna|anchov\w*|cod|pollock|haddock|fish)\b"),
+     "baked or pan-fried twice a week, or canned on rye bread"),
+    (re.compile(r"\b(beef|pork|lamb|chicken|turkey|veal|venison)\b"), "grilled or in a stir-fry with vegetables"),
+    (re.compile(r"\b(eggs?|egg yolks?)\b"), "boiled, scrambled or as an omelette"),
+    (re.compile(r"\b(milk|yogh?urt|quark|cheese|kefir|skyr)\b"), "with breakfast or as a snack"),
+    (re.compile(r"\b(peas|cowpeas|black-?eyed|blackeyes|beans?|lentils?|chickpeas?|soybeans?|tofu|tempeh|edamame|"
+                r"kidney|pinto|navy|lima|mung|adzuki|fava|pulses|mature seeds)\b"),
+     "in a curry, soup or salad (soak dry beans overnight)"),
+    (re.compile(r"\b(nuts?|almonds?|cashews?|walnuts?|hazelnuts?|pistachios?|pecans?|peanuts?|macadamias?)\b"),
+     "as a snack or chopped over muesli"),
+    (re.compile(r"\b(seeds?|flaxseeds?|linseeds?|chia|hemp|sesame|tahini)\b"), "sprinkled over yogurt, muesli or salad"),
+    (re.compile(r"\b(oats?|oatmeal|wheat germ|bran|rice|quinoa|buckwheat|millet|bread|muesli|cereals?)\b"),
+     "as porridge, muesli or a grain bowl"),
+    (re.compile(r"\b(seaweed|nori|kelp|wakame|algae)\b"), "only in small amounts (iodine varies a lot)"),
+    (re.compile(r"\b(mushrooms?)\b"), "fried with eggs or in a pasta sauce"),
+    (re.compile(r"\b(spinach|kale|chard|collards?|greens|lettuce|parsley|cress|grape leaves|herbs?|basil|dill)\b"),
+     "in a salad or smoothie, or sautéed with garlic"),
+    (re.compile(r"\b(broccoli|cabbage|sprouts|peppers?|carrots?|pumpkin|squash|sweet potato(es)?|potato(es)?|tomato(es)?)\b"),
+     "roasted, steamed, or raw as a snack"),
+    (re.compile(r"\b(kiwi\w*|oranges?|berries|blueberries|strawberries|acerola|guavas?|mangos?|papayas?|lemons?|"
+                r"grapefruits?|bananas?|apples?|cherr(y|ies)|apricots?|figs?|dates?|raisins?|fruits?)\b"),
+     "fresh as a snack or in muesli"),
+]
+
+
+def _serving_idea(food: dict[str, Any] | None) -> str:
+    text = " ".join(
+        [_food_name(food), str((food or {}).get("food_description", "") or "")]
+    ).lower()
+    for pattern, idea in _SERVING_IDEAS:
+        if pattern.search(text):
+            return idea
+    return "as part of a regular meal"
+
+
+def _food_bonus(food: dict[str, Any] | None, grams: float | None, exclude: str = "", limit: int = 3) -> list[tuple[str, int]]:
+    """Other nutrients this portion supplies: [(name, % of EU NRV)], best first.
+
+    Read from the bundled USDA data (bb.food_nutrient_amount), so it is instant
+    and factual; only nutrients reaching _BONUS_MIN_PCT are listed."""
+    desc = str((food or {}).get("food_description", "") or "")
+    if not desc or not grams or grams <= 0:
+        return []
+    skip = bb.canonical_nutrient_key(exclude) if exclude else ""
+    out: list[tuple[str, int]] = []
+    for key in _BONUS_NUTRIENTS:
+        if key == skip or (skip in ("omega 3", "epa", "dha", "fish oil") and key == "omega 3"):
+            continue
+        try:
+            per_100g = bb.food_nutrient_amount(desc, key)
+        except Exception:
+            per_100g = None
+        if not per_100g:
+            continue
+        unit = str(bb._NUTRIENT_LEXICON.get(key, {}).get("unit", "") or "")
+        if key == "omega 3":
+            ref_value, ref_unit = _OMEGA3_REFERENCE_G, "g"
+        elif key in _EU_NRV:
+            ref_value, ref_unit = _EU_NRV[key]
+        else:
+            continue
+        src, dst = bb.unit_to_mg(unit), bb.unit_to_mg(ref_unit)
+        if not src or not dst or ref_value <= 0:
+            continue
+        pct = (grams * float(per_100g) / 100.0) * src / dst / ref_value * 100.0
+        if pct >= _BONUS_MIN_PCT:
+            out.append((_nutrient_title(key), int(round(pct))))
+    out.sort(key=lambda item: -item[1])
+    return out[:limit]
+
+
+def _format_plan_grams(grams: float | None) -> str:
+    if grams is None or grams <= 0:
+        return ""
+    if grams >= 1000:
+        return f"{bb.format_float(grams / 1000.0, 1)} kg"
+    if grams >= 10:
+        return f"{int(round(grams))} g"
+    return f"{bb.format_float(grams, 1)} g"
+
+
+def _plan_rows(replace_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One row per swapped food (a food chosen for several nutrients is listed
+    once, at its largest daily amount, with all the nutrients it covers)."""
+    rows: dict[str, dict[str, Any]] = {}
+    for d in replace_items:
+        food = d.get("selected_food") or {}
+        desc = str(food.get("food_description", "") or "")
+        if not desc:
+            continue
+        grams = _grams_to_match_dose(d)
+        key = bb.normalize_lookup_key(desc)
+        row = rows.setdefault(key, {"food": food, "grams": grams, "nutrients": [], "items": []})
+        row["nutrients"].append(_nutrient_title(d.get("component")))
+        row["items"].append(d)
+        if grams is not None and (row["grams"] is None or grams > row["grams"]):
+            row["grams"] = grams
+    out = list(rows.values())
+    for row in out:
+        first = row["items"][0]
+        row["practicality"] = _portion_practicality(row["grams"]) if row["grams"] else "ok"
+        row["bonus"] = _food_bonus(row["food"], row["grams"], exclude=str(first.get("component", "") or ""))
+    return out
+
+
+def _render_plan_hero(
+    cards: list[dict[str, Any]], replace_items: list[dict[str, Any]], keep_items: list[dict[str, Any]]
+) -> None:
+    total = max(1, len(cards))
+    swapped = len(replace_items)
+    totals = _swap_totals(replace_items)
+    basket = _basket_cost_breakdown(replace_items)
+    pct = int(round(100.0 * swapped / total))
+    if swapped:
+        title = f"{swapped} of {len(cards)} nutrients now come from food"
+    else:
+        title = "You kept all your supplements"
+    stats: list[tuple[str, str]] = []
+    if totals["foods"]:
+        stats.append((f"{_round_total(totals['grams'])} g", "food / day"))
+        if len(totals["no_energy"]) < len(totals["foods"]):
+            stats.append((f"~{_round_total(totals['kcal'])}", "kcal / day"))
+    if basket["total"] > 0:
+        stats.append((f"€{basket['total']:.2f}", "per day"))
+    stats.append((str(len(keep_items)), "pills kept" if len(keep_items) != 1 else "pill kept"))
+    tiles = "".join(
+        f"<div class='plan-stat'><b>{html.escape(value)}</b><span>{html.escape(label)}</span></div>"
+        for value, label in stats[:4]
+    )
+    st.markdown(
+        "<div class='plan-hero'>"
+        "<div class='plan-kicker'>Your plan</div>"
+        f"<div class='plan-title'>{html.escape(title)}</div>"
+        f"<div class='plan-bar' role='progressbar' aria-valuenow='{pct}' aria-valuemin='0' aria-valuemax='100'>"
+        f"<span style='width:{pct}%'></span></div>"
+        f"<div class='plan-stats'>{tiles}</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _plan_warnings(
+    replace_items: list[dict[str, Any]], keep_items: list[dict[str, Any]]
+) -> list[str]:
+    warnings: list[str] = []
+    warnings += _final_upper_limit_warnings(keep_items)
+    warnings += _final_food_warnings(replace_items)
+    warnings += _pregnancy_food_warnings(replace_items)
+    for kind, text in _swap_totals_lines(replace_items):
+        if kind == "warning":
+            warnings.append(text)
+    return list(dict.fromkeys(w for w in warnings if w))
+
+
+def _render_plan_tab(
+    cards: list[dict[str, Any]],
+    replace_items: list[dict[str, Any]],
+    misfit_items: list[dict[str, Any]],
+    keep_items: list[dict[str, Any]],
+    diet_name: str,
+) -> None:
+    rows = _plan_rows(replace_items)
+    if rows:
+        st.markdown("<div class='plan-h'>🥗 Eat this</div>", unsafe_allow_html=True)
+        parts = []
+        for row in rows:
+            food = row["food"]
+            name = _food_name(food) or "Whole food"
+            icon = _whole_food_icon_from_food(food, "")
+            grams = row["grams"]
+            if row["practicality"] == "impractical":
+                amount = "not practical from food"
+            else:
+                amount = f"{_format_plan_grams(grams)}/day" if grams else ""
+            sub = "for " + ", ".join(dict.fromkeys(n for n in row["nutrients"] if n))
+            bonus = ", ".join(f"{pct}% {nutrient}" for nutrient, pct in row["bonus"])
+            bonus_html = f"<div class='plan-bonus'>+ also {html.escape(bonus)} of your daily needs</div>" if bonus else ""
+            parts.append(
+                "<div class='plan-row'>"
+                f"<div class='plan-ico' aria-hidden='true'>{html.escape(icon)}</div>"
+                "<div class='plan-main'>"
+                f"<div class='plan-name'>{html.escape(name)}"
+                + (f"<span class='plan-amt'>{html.escape(amount)}</span>" if amount else "")
+                + "</div>"
+                f"<div class='plan-sub'>{html.escape(sub)}</div>{bonus_html}"
+                "</div></div>"
+            )
+        st.markdown("<div class='plan-list'>" + "".join(parts) + "</div>", unsafe_allow_html=True)
+    if misfit_items:
+        st.markdown(
+            f"<div class='plan-h'>⚠️ Needs a new food ({html.escape(diet_name)})</div>", unsafe_allow_html=True
+        )
+        for d in misfit_items:
+            component_key = str(d.get("component_key", "") or "")
+            food_name = _food_name(d.get("selected_food")) or "this food"
+            st.button(
+                f"⚠️ {_nutrient_title(d.get('component')) or 'Unknown'} → {food_name} doesn't fit {diet_name} — tap to choose another",
+                width="stretch",
+                key=f"final_misfit_{component_key}",
+                on_click=_open_card,
+                args=(int(d.get("card_index", 0)), True),
+            )
+    if keep_items:
+        st.markdown("<div class='plan-h'>💊 Keep taking</div>", unsafe_allow_html=True)
+        parts = []
+        for d in keep_items:
+            dose = str(d.get("dose_label", "") or "")
+            parts.append(
+                "<div class='plan-row'>"
+                "<div class='plan-ico' aria-hidden='true'>💊</div>"
+                "<div class='plan-main'>"
+                f"<div class='plan-name'>{html.escape(_nutrient_title(d.get('component')) or 'Supplement')}"
+                + (f"<span class='plan-dose'>{html.escape(dose)}</span>" if dose else "")
+                + "</div></div></div>"
+            )
+        st.markdown("<div class='plan-list'>" + "".join(parts) + "</div>", unsafe_allow_html=True)
+    if not rows and not keep_items and not misfit_items:
+        st.info("Swipe through your cards to build your plan.")
+
+    # Editing: one compact menu instead of a button per row.
+    with st.popover("✎ Change a choice", width="stretch"):
+        st.caption("Reopen a card — after you decide, you come straight back here.")
+        for d in sorted(list(replace_items) + list(keep_items), key=lambda x: int(x.get("card_index", 0))):
+            component_key = str(d.get("component_key", "") or "")
+            kept = d.get("decision") == "keep"
+            label = f"{'💊' if kept else '🥗'} {_nutrient_title(d.get('component')) or 'Unknown'}"
+            if not kept:
+                label += f" → {_food_name(d.get('selected_food'))}"
+            st.button(
+                label,
+                width="stretch",
+                key=f"final_{'keep' if kept else 'repl'}_{component_key}",
+                on_click=_open_card,
+                args=(int(d.get("card_index", 0)), True),
+            )
+
+    with st.expander("🌱 Why whole food beats the pill (AI)"):
+        if not replace_items:
+            st.info("Swipe right on at least one nutrient to compare benefits.")
+        else:
+            prompts = _benefits_prompts(replace_items)
+            ready = llm_cache.get(prompts[2]) if prompts else None
+            benefits_box = st.empty()
+            if ready:
+                benefits_box.markdown(ready)
+            elif st.button("Show the comparison", type="primary", width="stretch", key="swipe_gen_benefits"):
+                with st.spinner("Gathering whole-food benefits…"):
+                    benefits = _generate_whole_food_benefits(replace_items, placeholder=benefits_box)
+                if not benefits:
+                    st.warning("Couldn't fetch the comparison right now — please try again.")
+    _render_athlete_rda_popup()
+
+
+def _render_meals_tab(replace_items: list[dict[str, Any]], diet_label: str, excluded: list[dict[str, Any]]) -> str:
+    """Instant serving ideas + the AI meal plan. Returns the plan's cache key."""
+    plan_key = ""
+    _excluded_swaps_caption(excluded, diet_label)
+    if not replace_items:
+        st.info("Swipe right on at least one nutrient to get meal ideas.")
+        return plan_key
+    st.markdown("<div class='plan-h'>⚡ Quick ideas</div>", unsafe_allow_html=True)
+    lines = []
+    for row in _plan_rows(replace_items):
+        if row["practicality"] == "impractical":
+            continue
+        name = _food_name(row["food"]) or "Whole food"
+        amount = _format_plan_grams(row["grams"])
+        lines.append(
+            "<div class='plan-idea'>"
+            f"<b>{html.escape(name)}</b>{' · ' + html.escape(amount) if amount else ''} — "
+            f"{html.escape(_serving_idea(row['food']))}</div>"
+        )
+    if lines:
+        st.markdown("".join(lines), unsafe_allow_html=True)
+
+    st.markdown("<div class='plan-h'>✨ Your meal plan</div>", unsafe_allow_html=True)
+    num_meals = st.radio(
+        "How many meals?",
+        options=[1, 2, 3],
+        index=2,
+        horizontal=True,
+        key="swipe_meal_count",
+        format_func=lambda m: f"{m} meal" if m == 1 else f"{m} meals",
+        label_visibility="collapsed",
+    )
+    _sys, _usr, plan_key = _meal_plan_prompts(replace_items, diet_label, int(num_meals))
+    ready = llm_cache.get(plan_key)
+    plan_box = st.empty()
+    if ready:
+        plan_box.markdown(ready)
+        st.session_state["swipe_meal_plan"] = ready
+        st.session_state["swipe_meal_plan_key"] = plan_key
+        if st.button("🔄 Different meals", width="stretch", key="swipe_regen_meal"):
+            llm_cache.drop(plan_key)
+            with st.spinner("Cooking up new meals…"):
+                st.session_state["swipe_meal_plan"] = _generate_meal_plan(
+                    replace_items, diet_label, int(num_meals), placeholder=plan_box
+                )
+    elif llm_cache.inflight(plan_key) is not None:
+        with plan_box.container():
+            _live_meal_plan(plan_key)
+    elif st.button("Generate my meals", type="primary", width="stretch", key="swipe_gen_meal"):
+        with st.spinner("Cooking up your meals…"):
+            plan = _generate_meal_plan(replace_items, diet_label, int(num_meals), placeholder=plan_box)
+        st.session_state["swipe_meal_plan"] = plan
+        st.session_state["swipe_meal_plan_key"] = plan_key
+        if not plan:
+            st.warning("Couldn't generate meals right now — please try again.")
+    return plan_key
+
+
+@st.fragment(run_every=1.0)
+def _live_meal_plan(plan_key: str) -> None:
+    """The meal plan being written in the background, refreshed every second.
+
+    Only this fragment re-runs while it streams; one full re-run when it is done
+    shows the finished plan with its buttons (and stops the polling)."""
+    if llm_cache.inflight(plan_key) is None:
+        st.rerun()
+    partial = llm_cache.partial(plan_key)
+    if partial:
+        st.markdown(partial + " \u258c")
+    else:
+        st.markdown(
+            "<div class='plan-writing'><span class='plan-dots'><i></i><i></i><i></i></span>"
+            "Writing your meal plan…</div>",
+            unsafe_allow_html=True,
+        )
+
+
+def _render_shopping_tab(
+    replace_items: list[dict[str, Any]], keep_items: list[dict[str, Any]], diet_label: str, excluded: list[dict[str, Any]]
+) -> None:
+    _excluded_swaps_caption(excluded, diet_label)
+    rows = [row for row in _plan_rows(replace_items) if row["grams"]]
+    practical = [row for row in rows if row["practicality"] != "impractical"]
+    if practical:
+        st.markdown("<div class='plan-h'>🛒 Groceries for one week</div>", unsafe_allow_html=True)
+        parts, total, unpriced = [], 0.0, []
+        for row in practical:
+            name = _food_name(row["food"]) or "Whole food"
+            week_g = row["grams"] * 7
+            price = _german_price_per_kg(str(row["food"].get("food_description", "") or ""))
+            cost = price[0] * week_g / 1000.0 if price else None
+            if cost is not None:
+                total += cost
+            else:
+                unpriced.append(name)
+            parts.append(
+                "<div class='shop-row'>"
+                f"<span class='shop-name'>{html.escape(name)}</span>"
+                f"<span class='shop-qty'>{html.escape(_format_plan_grams(week_g))}</span>"
+                f"<span class='shop-cost'>{'~€' + format(cost, '.2f') if cost is not None else '–'}</span>"
+                "</div>"
+            )
+        if total > 0:
+            parts.append(
+                "<div class='shop-total'><span class='shop-name'>Total per week</span>"
+                f"<span class='shop-cost'>~€{total:.2f}</span></div>"
+            )
+        st.markdown("<div class='shop-list'>" + "".join(parts) + "</div>", unsafe_allow_html=True)
+        st.caption(
+            "Approximate 2025 German discounter prices (ALDI/Lidl/REWE)"
+            + (f"; no price for {', '.join(unpriced)}" if unpriced else "")
+            + "."
+        )
+    impractical = [row for row in rows if row["practicality"] == "impractical"]
+    if impractical:
+        st.caption(
+            "Not on the list (more than 1 kg a day — keeping the supplement is the practical choice): "
+            + ", ".join(_food_name(row["food"]) for row in impractical)
+            + "."
+        )
+    if not practical and not impractical:
+        st.info("No whole-food swaps to shop for yet.")
+    if keep_items:
+        st.markdown("<div class='plan-h'>💊 For the pills you keep</div>", unsafe_allow_html=True)
+        covers = ", ".join(dict.fromkeys(_nutrient_title(d.get("component")) for d in keep_items if d.get("component")))
+        st.caption(f"One combined product covering {covers} is usually cheapest:")
+        _query, links = _supplement_search_links(keep_items)
+        cols = st.columns(len(links)) if links else []
+        for col, (label, url) in zip(cols, links.items()):
+            with col:
+                st.link_button(label.replace("Compare prices on ", "").replace("Search on ", ""), url, width="stretch")
+
+
+_ASK_AI_SUGGESTIONS = [
+    "Is my plan balanced?",
+    "Which pills should I still keep?",
+    "Quick recipes with these foods?",
+]
+
+
+def _queue_ask_ai_suggestion(pills_key: str, pending_key: str) -> None:
+    choice = st.session_state.get(pills_key)
+    if choice:
+        st.session_state[pending_key] = str(choice)
+    st.session_state[pills_key] = None
+
+
+def _render_ask_ai_chat(
+    card: dict[str, Any], component_key: str, index: int, suggestions: list[str] | None = None
+) -> None:
+    """Chat about a card (or the whole plan): history, one-tap suggestions, input."""
+    chat_store: dict[str, list[dict[str, str]]] = st.session_state.get("swipe_rag_chats", {})
+    history = list(chat_store.get(component_key, []))
+    for msg in history[-12:]:
+        role = "user" if str(msg.get("role", "")).lower() == "user" else "assistant"
+        with st.chat_message(role):
+            st.write(str(msg.get("content", "") or ""))
+
+    pending_key = f"swipe_rag_pending_{component_key}_{index}"
+    if suggestions:
+        pills_key = f"swipe_rag_suggest_{component_key}_{index}"
+        st.pills(
+            "Suggestions",
+            options=suggestions,
+            selection_mode="single",
+            key=pills_key,
+            on_change=_queue_ask_ai_suggestion,
+            args=(pills_key, pending_key),
+            label_visibility="collapsed",
+        )
+    question = st.text_input(
+        "Question",
+        placeholder="Example: Is this dose usually safe long-term?",
+        key=f"swipe_rag_chat_input_{component_key}_{index}",
+    )
+    send_col, clear_col = st.columns(2)
+    with send_col:
+        send_clicked = st.button("Send", type="primary", width="stretch", key=f"swipe_rag_send_{component_key}_{index}")
+    with clear_col:
+        clear_clicked = st.button("Clear chat", width="stretch", key=f"swipe_rag_clear_{component_key}_{index}")
+
+    if clear_clicked:
+        chat_store[component_key] = []
+        st.session_state["swipe_rag_chats"] = chat_store
+        st.rerun()
+
+    pending = str(st.session_state.pop(pending_key, "") or "")
+    asked = pending or (question.strip() if send_clicked else "")
+    if send_clicked and not asked:
+        st.warning("Enter a question first.")
+    if asked:
+        with st.chat_message("user"):
+            st.write(asked)
+        with st.chat_message("assistant"):
+            stream_box = st.empty()
+            with st.spinner("Asking AI research assistant..."):
+                component_name = str(card.get("display", "") or "") or _nutrient_title(card.get("component"))
+                answer, sources_line = _answer_ask_ai_question(
+                    component_name,
+                    asked,
+                    history=_ask_ai_history(component_key),
+                    placeholder=stream_box,
+                    dose_label=str(card.get("dose_label", "") or ""),
+                )
+        if answer is None:
+            st.error("Ask AI is unavailable right now — please try again in a moment.")
+        else:
+            chat_store[component_key] = history + [
+                {"role": "user", "content": asked},
+                {"role": "assistant", "content": (answer or "No answer available.") + sources_line},
+            ]
+            st.session_state["swipe_rag_chats"] = chat_store
+            st.rerun()
+
+
+def _render_rag_chat_popup(card: dict[str, Any], component_key: str, index: int) -> None:
+    with st.popover("💬 Ask AI", width="stretch"):
+        st.caption("Ask AI research questions about this micronutrient in chat form.")
+        _render_ask_ai_chat(card, component_key, index)
+
+
+def _render_share_tab(
+    keep_items: list[dict[str, Any]], replace_items: list[dict[str, Any]], plan_key: str,
+    diet_label: str, excluded: list[dict[str, Any]],
+) -> None:
+    _excluded_swaps_caption(excluded, diet_label)
+    # Only a plan written for the current swaps (not one from before the filter
+    # or a choice changed) goes into the share text.
+    meal_plan = ""
+    if plan_key and st.session_state.get("swipe_meal_plan_key") == plan_key:
+        meal_plan = str(st.session_state.get("swipe_meal_plan", "") or "")
+    share_text = _build_share_text(keep_items, replace_items, meal_plan)
+    st.caption("Tap the copy icon on the box, or download the plan.")
+    st.code(share_text, language=None, wrap_lines=True)
+    st.download_button(
+        "⬇️ Download as text",
+        data=share_text,
+        file_name="suppswipe_plan.txt",
+        mime="text/plain",
+        width="stretch",
+        key="swipe_share_dl",
+    )
+
+
 def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[str, Any]]) -> None:
     profile = _selected_dietary_profile()
     diet_name = _active_diet_label(profile)
@@ -4173,93 +4831,42 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
     # stay listed (flagged) but are left out of meals, cost and share text.
     replace_items, misfit_items = _split_replacements_by_diet(all_replace_items, profile)
     keep_items = [d for d in decisions.values() if d.get("decision") == "keep"]
+    diet_label = str((profile or {}).get("label", "") or "")
 
-    with st.container(border=True):
-        st.subheader("Your results")
-        st.caption("Tap any nutrient to change your choice — you'll come straight back here.")
-        if cards:
-            # Callbacks (not st.rerun()) so one tap is one script run.
-            st.button("↩ Back to the last card", key="final_back_last", on_click=_open_card, args=(len(cards) - 1,))
-
-        # Two columns of tappable nutrients: kept supplements (left) vs
-        # whole-food swaps (right). Tapping one reopens that micronutrient's card.
-        col_keep, col_replace = st.columns(2)
-        with col_keep:
-            st.markdown(f"**{LEFT_SWIPE_ICON} Kept ({len(keep_items)})**")
-            if keep_items:
-                for d in keep_items:
-                    component_key = str(d.get("component_key", "") or "")
-                    dose = str(d.get("dose_label", "") or "")
-                    label = f"{LEFT_SWIPE_ICON} {_nutrient_title(d.get('component')) or 'Unknown'}"
-                    if dose:
-                        label += f" · {dose}"
-                    st.button(
-                        label,
-                        width="stretch",
-                        key=f"final_keep_{component_key}",
-                        on_click=_open_card,
-                        args=(int(d.get("card_index", 0)), True),
-                    )
-                # Kept pills above the safe upper limit stay flagged on the results.
-                for warning in _final_upper_limit_warnings(keep_items):
-                    st.caption(warning)
-            else:
-                st.caption("Nothing swiped left.")
-        with col_replace:
-            st.markdown(f"**{TITLE_WHOLE_FOOD_ICON} Replaced ({len(all_replace_items)})**")
-            if all_replace_items:
-                for d in replace_items:
-                    component_key = str(d.get("component_key", "") or "")
-                    food = d.get("selected_food") or {}
-                    food_name = _food_name(food)
-                    icon = _whole_food_icon_from_food(food, component_key)
-                    amount_txt = _amount_to_match_dose(d)
-                    detail = food_name + (f" ({amount_txt})" if (food_name and amount_txt) else "")
-                    label = f"{icon} {_nutrient_title(d.get('component')) or 'Unknown'}"
-                    if detail:
-                        label += f" → {detail}"
-                    st.button(
-                        label,
-                        width="stretch",
-                        key=f"final_repl_{component_key}",
-                        help=f"USDA: {food.get('food_description', '')}" if food.get("food_description") else None,
-                        on_click=_open_card,
-                        args=(int(d.get("card_index", 0)), True),
-                    )
-                for d in misfit_items:
-                    component_key = str(d.get("component_key", "") or "")
-                    food_name = _food_name(d.get("selected_food")) or "this food"
-                    st.button(
-                        f"⚠️ {_nutrient_title(d.get('component')) or 'Unknown'} → {food_name} doesn't fit {diet_name} — tap to choose another",
-                        width="stretch",
-                        key=f"final_misfit_{component_key}",
-                        on_click=_open_card,
-                        args=(int(d.get("card_index", 0)), True),
-                    )
-                for warning in _final_food_warnings(replace_items) + _pregnancy_food_warnings(replace_items):
-                    st.caption(warning)
-            else:
-                st.caption("Nothing swiped right.")
-        # Daily food amount and energy of the swaps.
-        _render_swap_totals(replace_items)
+    if cards:
+        # Callbacks (not st.rerun()) so one tap is one script run.
+        st.button(
+            "↩ Back to the cards", type="tertiary", key="final_back_last", on_click=_open_card, args=(len(cards) - 1,)
+        )
+    _render_plan_hero(cards, replace_items, keep_items)
+    warnings = _plan_warnings(replace_items, keep_items)
+    if warnings:
+        st.markdown(
+            "<div class='plan-warn'><div class='plan-warn-h'>Heads-up</div>"
+            + "".join(f"<div class='plan-warn-i'>{html.escape(w)}</div>" for w in warnings)
+            + "</div>",
+            unsafe_allow_html=True,
+        )
 
     # Record this completed scan to the on-device history (once per analysis).
-    diet_label = str((_selected_dietary_profile() or {}).get("label", "") or "")
     _record_scan_to_history(decisions, diet_label)
-
     # Start writing the default (3-meal) plan in the background right away.
     _prefetch_meal_plan(replace_items, diet_label, 3)
 
-    # Action tabs: meal plan, German grocery cost, kept pills, share, why food.
-    _render_final_actions(keep_items, replace_items, diet_label, excluded=misfit_items)
-
-    # A single Ask AI chat for the whole summary, shown once below the card.
-    all_components = [_nutrient_title(d.get("component")) for d in decisions.values() if d.get("component")]
-    summary_context = {"component": ", ".join(all_components), "display": ", ".join(all_components)}
-    _render_rag_chat_popup(summary_context, "summary", 0)
-
-    # Athlete RDA reference guide, shown once directly below Ask AI on the results screen.
-    _render_athlete_rda_popup()
+    tab_plan, tab_meals, tab_shop, tab_ai, tab_share = st.tabs(_RESULT_TABS, key="swipe_result_tabs")
+    with tab_plan:
+        _render_plan_tab(cards, replace_items, misfit_items, keep_items, diet_name)
+    with tab_meals:
+        plan_key = _render_meals_tab(replace_items, diet_label, misfit_items)
+    with tab_shop:
+        _render_shopping_tab(replace_items, keep_items, diet_label, misfit_items)
+    with tab_ai:
+        all_components = [_nutrient_title(d.get("component")) for d in decisions.values() if d.get("component")]
+        summary_context = {"component": ", ".join(all_components), "display": ", ".join(all_components)}
+        st.caption("Ask about your whole plan — answers use your nutrients and doses.")
+        _render_ask_ai_chat(summary_context, "summary", 0, suggestions=_ASK_AI_SUGGESTIONS)
+    with tab_share:
+        _render_share_tab(keep_items, replace_items, plan_key, diet_label, misfit_items)
 
 
 def _format_eu_nrv(entry: dict[str, Any]) -> str:
@@ -4327,8 +4934,12 @@ def _build_mobile_ui() -> None:
     if bool(st.session_state.get("swipe_is_analyzing", False)) and isinstance(st.session_state.get("swipe_pending_request"), dict):
         _run_pending_analysis()
     _render_card()
-    _render_dietary_pills()
-    _render_analyze_bar()
+    if _on_results_screen():
+        _render_results_settings()
+        _render_analyze_bar(results=True)
+    else:
+        _render_dietary_pills()
+        _render_analyze_bar()
     if st.session_state.pop("swipe_confirm_restart", False):
         _confirm_restart_dialog()
     if st.session_state.pop("swipe_open_analyze", False):

@@ -124,15 +124,22 @@ def iframe_kept(page) -> bool:
 
 
 def results_heading(page):
-    return page.get_by_text("Your results", exact=True)
+    return page.locator(".plan-kicker", has_text="Your plan")
 
 
-def finish_all_cards(page) -> None:
+def change_choice(page, text: str) -> None:
+    """Reopen a decided card from the results' "Change a choice" menu."""
+    page.get_by_role("button", name="✎ Change a choice").click()
+    page.locator('[data-testid="stPopoverBody"] button', has_text=text).first.click()
+
+
+def finish_all_cards(page, replace: bool = False) -> None:
     for _ in range(20):
         if results_heading(page).count():
             return
         name = card_name(page)
-        card(page).locator("#btnKeep").click()
+        repl = card(page).locator("#btnRepl")
+        (repl if replace and not repl.is_disabled() else card(page).locator("#btnKeep")).click()
         for _ in range(100):
             if results_heading(page).count():
                 break
@@ -205,8 +212,7 @@ def test_edit_from_results_returns_to_results(page):
     start_sample(page)
     finish_all_cards(page)
     shot(page, "ux_results_tabs")
-    button = page.locator('[data-testid="stButton"] button', has_text="Vitamin B12").first
-    button.click()
+    change_choice(page, "Vitamin B12")
     card(page).locator("#card .name").wait_for(timeout=20000)
     settle(page)
     assert "Editing from your results" in card(page).locator("#card").inner_text()
@@ -215,9 +221,13 @@ def test_edit_from_results_returns_to_results(page):
     card(page).locator("#btnRepl").click()
     results_heading(page).wait_for(timeout=20000)
     settle(page)
-    assert page.locator('[data-testid="stButton"] button', has_text="Vitamin B12").first.inner_text().count("→") == 1
+    page.get_by_role("button", name="✎ Change a choice").click()
+    b12 = page.locator('[data-testid="stPopoverBody"] button', has_text="Vitamin B12").first
+    assert b12.inner_text().count("→") == 1
+    page.keyboard.press("Escape")
+    settle(page)
     # Back in edit mode also returns to the results, unchanged.
-    page.locator('[data-testid="stButton"] button', has_text="zinc").first.click()
+    change_choice(page, "Zinc")
     card(page).locator("#card .name").wait_for(timeout=20000)
     settle(page)
     card(page).locator("#btnBack").click()
@@ -226,11 +236,23 @@ def test_edit_from_results_returns_to_results(page):
 
 def test_results_tabs_show_their_content(page):
     start_sample(page)
-    finish_all_cards(page)
+    name = card_name(page)
+    card(page).locator("#btnKeep").click()  # one kept pill, the rest swapped
+    wait_name_change(page, name)
+    settle(page)
+    finish_all_cards(page, replace=True)
     tabs = page.get_by_role("tab")
-    assert [t.strip() for t in tabs.all_inner_texts()] == ["🍽️ Meals", "🛒 Cost", "💊 Kept pills", "📤 Share", "🌱 Why food"]
-    page.get_by_role("tab", name="💊 Kept pills").click()
-    page.get_by_text("Compare prices on idealo.de").wait_for(timeout=5000)
+    assert [t.strip() for t in tabs.all_inner_texts()] == ["🥗 Plan", "🍽️ Meals", "🛒 Shopping", "💬 Ask AI", "📤 Share"]
+    page.locator(".plan-hero").wait_for(timeout=5000)
+    assert page.get_by_role("button", name="Athlete RDA guide").count() == 1
+    assert page.get_by_role("button", name="✎ Change a choice").count() == 1
+    page.get_by_role("tab", name="🍽️ Meals").click()
+    page.get_by_text("Quick ideas").wait_for(timeout=5000)
+    page.get_by_role("tab", name="🛒 Shopping").click()
+    page.get_by_text("Total per week").wait_for(timeout=5000)
+    page.get_by_role("link", name="idealo.de").wait_for(timeout=5000)
+    page.get_by_role("tab", name="💬 Ask AI").click()
+    page.locator('[data-testid="stButtonGroup"] button', has_text="Is my plan balanced?").wait_for(timeout=5000)
     page.get_by_role("tab", name="📤 Share").click()
     page.get_by_text("SuppSwipe — my results").first.wait_for(timeout=5000)
     # The page scrolls again (no "page lock"): long tab content is reachable.
@@ -238,9 +260,11 @@ def test_results_tabs_show_their_content(page):
     assert page.evaluate("document.querySelector('[data-testid=stMain]').scrollTop") > 0
     assert page.evaluate("document.scrollingElement.scrollWidth") <= 390  # no sideways scroll
     shot(page, "ux_results_share_tab")
-    assert page.get_by_role("button", name="💬 Ask AI").count() == 1
-    assert page.get_by_role("button", name="Athlete RDA guide").count() == 1
-    assert page.get_by_role("button", name="↩ Back to the last card").count() == 1
+    assert page.get_by_role("button", name="↩ Back to the cards").count() == 1
+    # Settings fold away under the plan; scanning again needs no confirmation.
+    assert page.locator('[data-testid="stExpander"]', has_text="Diet: no restriction").count() == 1
+    page.get_by_role("button", name="📸 Scan another supplement").click()
+    page.get_by_role("dialog").wait_for(timeout=10000)
 
 
 def test_filter_line_and_misfit_flag(page):
@@ -268,6 +292,7 @@ def test_filter_line_and_misfit_flag(page):
     share = page.locator('[data-testid="stCode"]').first.inner_text()
     assert "Vitamin B12" not in share.split("Kept as a supplement")[0]
     shot(page, "ux_results_misfit_flag")
+    page.get_by_role("tab", name="🥗 Plan").click()
     flag.first.click()
     card(page).locator("#card .name").wait_for(timeout=20000)
     settle(page)

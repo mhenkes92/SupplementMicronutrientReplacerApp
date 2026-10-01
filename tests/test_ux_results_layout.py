@@ -1,5 +1,6 @@
-"""Results screen layout: tabs instead of a stack of action popovers, with the
-Ask AI chat, the Athlete RDA guide and the per-item / back buttons kept."""
+"""Results screen layout: a plan dashboard with tabs (plan, meals, shopping,
+Ask AI, share) instead of a stack of action popovers; edit and back buttons
+and the Athlete RDA guide stay reachable."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,7 +9,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 APP = str(Path(__file__).resolve().parent.parent / "swipe_mobile_app" / "app.py")
-TABS = ["🍽️ Meals", "🛒 Cost", "💊 Kept pills", "📤 Share", "🌱 Why food"]
+TABS = ["🥗 Plan", "🍽️ Meals", "🛒 Shopping", "💬 Ask AI", "📤 Share"]
 OLD_POPOVERS = ["🍽️ Meal plan", "🛒 Grocery cost", "💊 Cheapest combo", "📤 Share", "🌱 Pill vs whole-food benefits"]
 
 
@@ -53,8 +54,10 @@ def test_results_use_tabs_not_popovers(results_app):
     assert [t.label for t in at.tabs] == TABS
     popovers = _labels(at.main, "popover")
     assert not set(OLD_POPOVERS) & set(popovers), popovers
-    # Ask AI and the Athlete RDA guide stay reachable below the tabs.
-    assert "💬 Ask AI" in popovers and "\U0001F3C3 Athlete RDA guide" in popovers
+    # Editing and the Athlete RDA guide are compact menus inside the plan tab.
+    assert "✎ Change a choice" in popovers and "\U0001F3C3 Athlete RDA guide" in popovers
+    text = " ".join(m.value for m in at.markdown)
+    assert "plan-hero" in text and "nutrients now come from food" in text
 
 
 def test_results_keep_back_and_per_item_buttons():

@@ -85,7 +85,8 @@ def test_results_screen_shows_the_daily_totals(monkeypatch):
     at.session_state["swipe_index"] = len(cards)
     _run(at)
     text = " ".join(m.value for m in at.markdown)
-    assert "Your swaps add about" in text and "kcal a day" in text
+    # The results hero shows the daily food amount and energy as stat tiles.
+    assert "food / day" in text and "kcal / day" in text
     labels = " ".join(b.label for b in at.button)
     assert "Vitamin B12 →" in labels and "Folic acid →" in labels
 
