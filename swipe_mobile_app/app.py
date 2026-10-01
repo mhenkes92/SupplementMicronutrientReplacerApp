@@ -816,42 +816,42 @@ def _portion_for_target(
 # representative daily target for active people (ISSN 2017; ACSM/AND/DC 2016),
 # raised where training increases needs or sweat losses. Units are chosen so
 # they normalise cleanly against USDA food units for the portion math. "keys"
-# are bb canonical nutrient keys; "match" words are a whole-word fallback for
-# names the lexicon does not know. General guidance only — not individualised
-# medical advice.
+# are bb canonical nutrient keys; optional "match" words are a whole-word fallback
+# only for partial names the lexicon does not know ("ascorbic", "folic").
+# General guidance only — not individualised medical advice.
 _MICRONUTRIENT_RDA: list[dict[str, Any]] = [
-    {"display": "Vitamin B12", "unit": "mcg", "rda": 2.4, "athlete": 4.0, "keys": ["vitamin b12"], "match": ["vitamin b12", "cobalamin"]},
-    {"display": "Vitamin B9 (Folate)", "unit": "mcg", "rda": 400, "athlete": 600, "keys": ["folate"], "match": ["vitamin b9", "folate", "folic", "folacin", "methylfolate"]},
-    {"display": "Vitamin B7 (Biotin)", "unit": "mcg", "rda": 30, "athlete": 30, "keys": ["biotin"], "match": ["vitamin b7", "biotin"]},
-    {"display": "Vitamin B6", "unit": "mg", "rda": 1.3, "athlete": 2.0, "keys": ["vitamin b6"], "match": ["vitamin b6", "pyridoxine"]},
-    {"display": "Vitamin B5 (Pantothenic)", "unit": "mg", "rda": 5, "athlete": 7, "keys": ["pantothenic acid"], "match": ["vitamin b5", "pantothenic", "panthenol"]},
-    {"display": "Vitamin B3 (Niacin)", "unit": "mg", "rda": 16, "athlete": 20, "keys": ["niacin"], "match": ["vitamin b3", "niacin", "nicotinamide", "nicotinic"]},
-    {"display": "Vitamin B2 (Riboflavin)", "unit": "mg", "rda": 1.3, "athlete": 2.0, "keys": ["riboflavin"], "match": ["vitamin b2", "riboflavin"]},
-    {"display": "Vitamin B1 (Thiamin)", "unit": "mg", "rda": 1.2, "athlete": 2.0, "keys": ["thiamin"], "match": ["vitamin b1", "thiamin", "thiamine"]},
-    {"display": "Vitamin A", "unit": "mcg", "rda": 900, "athlete": 1000, "keys": ["vitamin a"], "match": ["vitamin a", "retinol", "retinyl"]},
-    {"display": "Vitamin C", "unit": "mg", "rda": 90, "athlete": 200, "keys": ["vitamin c"], "match": ["vitamin c", "ascorbic"]},
-    {"display": "Vitamin D", "unit": "mcg", "rda": 15, "athlete": 25, "keys": ["vitamin d"], "match": ["vitamin d", "cholecalciferol", "ergocalciferol"]},
-    {"display": "Vitamin E", "unit": "mg", "rda": 15, "athlete": 20, "keys": ["vitamin e"], "match": ["vitamin e", "tocopherol", "tocopheryl", "tocotrienol"]},
-    {"display": "Vitamin K", "unit": "mcg", "rda": 120, "athlete": 120, "keys": ["vitamin k", "vitamin k2"], "match": ["vitamin k", "phylloquinone", "menaquinone", "phytonadione"]},
-    {"display": "Calcium", "unit": "mg", "rda": 1000, "athlete": 1300, "keys": ["calcium"], "match": ["calcium"]},
-    {"display": "Phosphorus", "unit": "mg", "rda": 700, "athlete": 1000, "keys": ["phosphorus"], "match": ["phosphorus", "phosphate"]},
-    {"display": "Magnesium", "unit": "mg", "rda": 400, "athlete": 500, "keys": ["magnesium"], "match": ["magnesium"]},
-    {"display": "Potassium", "unit": "mg", "rda": 3400, "athlete": 3500, "keys": ["potassium"], "match": ["potassium"]},
-    {"display": "Sodium", "unit": "mg", "rda": 1500, "athlete": 2300, "keys": ["sodium"], "match": ["sodium"]},
-    {"display": "Chloride", "unit": "mg", "rda": 2300, "athlete": 2300, "keys": ["chloride"], "match": ["chloride"]},
-    {"display": "Iron", "unit": "mg", "rda": 8, "athlete": 18, "keys": ["iron"], "match": ["iron", "ferrous", "ferric"]},
-    {"display": "Zinc", "unit": "mg", "rda": 11, "athlete": 15, "keys": ["zinc"], "match": ["zinc"]},
-    {"display": "Copper", "unit": "mg", "rda": 0.9, "athlete": 1.2, "keys": ["copper"], "match": ["copper", "cupric"]},
-    {"display": "Manganese", "unit": "mg", "rda": 2.3, "athlete": 2.3, "keys": ["manganese"], "match": ["manganese"]},
-    {"display": "Iodine", "unit": "mcg", "rda": 150, "athlete": 150, "keys": ["iodine"], "match": ["iodine", "iodide"]},
-    {"display": "Selenium", "unit": "mcg", "rda": 55, "athlete": 70, "keys": ["selenium"], "match": ["selenium", "selenite", "selenomethionine"]},
-    {"display": "Molybdenum", "unit": "mcg", "rda": 45, "athlete": 45, "keys": ["molybdenum"], "match": ["molybdenum"]},
-    {"display": "Chromium", "unit": "mcg", "rda": 35, "athlete": 35, "keys": ["chromium"], "match": ["chromium"]},
-    {"display": "Fluoride", "unit": "mg", "rda": 4, "athlete": 4, "keys": ["fluoride"], "match": ["fluoride", "fluorine"]},
-    {"display": "Choline", "unit": "mg", "rda": 550, "athlete": 550, "keys": ["choline"], "match": ["choline"]},
+    {"display": "Vitamin B12", "unit": "mcg", "rda": 2.4, "athlete": 4.0, "keys": ["vitamin b12"]},
+    {"display": "Vitamin B9 (Folate)", "unit": "mcg", "rda": 400, "athlete": 600, "keys": ["folate"], "match": ["folic"]},
+    {"display": "Vitamin B7 (Biotin)", "unit": "mcg", "rda": 30, "athlete": 30, "keys": ["biotin"]},
+    {"display": "Vitamin B6", "unit": "mg", "rda": 1.3, "athlete": 2.0, "keys": ["vitamin b6"]},
+    {"display": "Vitamin B5 (Pantothenic)", "unit": "mg", "rda": 5, "athlete": 7, "keys": ["pantothenic acid"], "match": ["pantothenic"]},
+    {"display": "Vitamin B3 (Niacin)", "unit": "mg", "rda": 16, "athlete": 20, "keys": ["niacin"], "match": ["nicotinic"]},
+    {"display": "Vitamin B2 (Riboflavin)", "unit": "mg", "rda": 1.3, "athlete": 2.0, "keys": ["riboflavin"]},
+    {"display": "Vitamin B1 (Thiamin)", "unit": "mg", "rda": 1.2, "athlete": 2.0, "keys": ["thiamin"]},
+    {"display": "Vitamin A", "unit": "mcg", "rda": 900, "athlete": 1000, "keys": ["vitamin a"]},
+    {"display": "Vitamin C", "unit": "mg", "rda": 90, "athlete": 200, "keys": ["vitamin c"], "match": ["ascorbic"]},
+    {"display": "Vitamin D", "unit": "mcg", "rda": 15, "athlete": 25, "keys": ["vitamin d"]},
+    {"display": "Vitamin E", "unit": "mg", "rda": 15, "athlete": 20, "keys": ["vitamin e"]},
+    {"display": "Vitamin K", "unit": "mcg", "rda": 120, "athlete": 120, "keys": ["vitamin k", "vitamin k2"]},
+    {"display": "Calcium", "unit": "mg", "rda": 1000, "athlete": 1300, "keys": ["calcium"]},
+    {"display": "Phosphorus", "unit": "mg", "rda": 700, "athlete": 1000, "keys": ["phosphorus"], "match": ["phosphate"]},
+    {"display": "Magnesium", "unit": "mg", "rda": 400, "athlete": 500, "keys": ["magnesium"]},
+    {"display": "Potassium", "unit": "mg", "rda": 3400, "athlete": 3500, "keys": ["potassium"]},
+    {"display": "Sodium", "unit": "mg", "rda": 1500, "athlete": 2300, "keys": ["sodium"]},
+    {"display": "Chloride", "unit": "mg", "rda": 2300, "athlete": 2300, "keys": ["chloride"]},
+    {"display": "Iron", "unit": "mg", "rda": 8, "athlete": 18, "keys": ["iron"]},
+    {"display": "Zinc", "unit": "mg", "rda": 11, "athlete": 15, "keys": ["zinc"]},
+    {"display": "Copper", "unit": "mg", "rda": 0.9, "athlete": 1.2, "keys": ["copper"]},
+    {"display": "Manganese", "unit": "mg", "rda": 2.3, "athlete": 2.3, "keys": ["manganese"]},
+    {"display": "Iodine", "unit": "mcg", "rda": 150, "athlete": 150, "keys": ["iodine"]},
+    {"display": "Selenium", "unit": "mcg", "rda": 55, "athlete": 70, "keys": ["selenium"]},
+    {"display": "Molybdenum", "unit": "mcg", "rda": 45, "athlete": 45, "keys": ["molybdenum"]},
+    {"display": "Chromium", "unit": "mcg", "rda": 35, "athlete": 35, "keys": ["chromium"]},
+    {"display": "Fluoride", "unit": "mg", "rda": 4, "athlete": 4, "keys": ["fluoride"]},
+    {"display": "Choline", "unit": "mg", "rda": 550, "athlete": 550, "keys": ["choline"]},
     # EPA+DHA target; single EPA or DHA cards have no matching target of their own.
-    {"display": "Omega-3 (EPA+DHA)", "unit": "g", "rda": 0.25, "athlete": 2.0, "keys": ["omega 3", "fish oil"], "match": ["omega 3", "fish oil"]},
-    {"display": "Omega-3 ALA", "unit": "g", "rda": 1.6, "athlete": 1.6, "keys": ["ala"], "match": ["alpha linolenic"]},
+    {"display": "Omega-3 (EPA+DHA)", "unit": "g", "rda": 0.25, "athlete": 2.0, "keys": ["omega 3", "fish oil"]},
+    {"display": "Omega-3 ALA", "unit": "g", "rda": 1.6, "athlete": 1.6, "keys": ["ala"]},
 ]
 _RDA_BY_NUTRIENT_KEY: dict[str, dict[str, Any]] = {
     key: entry for entry in _MICRONUTRIENT_RDA for key in entry["keys"]
@@ -878,7 +878,7 @@ def _rda_for_component(component_key: str) -> dict[str, Any] | None:
     if not head:
         return None
     for entry in _MICRONUTRIENT_RDA:
-        if any(_whole_word_in(m, head) for m in entry["match"]):
+        if any(_whole_word_in(m, head) for m in entry.get("match", ())):
             return entry
     return None
 

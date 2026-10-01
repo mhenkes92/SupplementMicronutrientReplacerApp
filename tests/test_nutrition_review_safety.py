@@ -138,3 +138,24 @@ def test_partial_beta_carotene_share_ul_counts_only_the_preformed_part(sw):
 
 def test_vitamin_k_spaced_2_is_k2():
     assert [(c["component"], c["dose_value"]) for c in bb.parse_components("Vitamin K 2 100 µg")] == [("vitamin k2", 100.0)]
+
+
+# --- RDA lookup ------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "name, display",
+    [
+        ("Iodine (as potassium iodide)", "Iodine"),
+        ("Vitamin B-12", "Vitamin B12"),
+        ("Cholecalciferol", "Vitamin D"),
+        ("Folsäure", "Vitamin B9 (Folate)"),
+        ("ascorbic", "Vitamin C"),  # partial name: whole-word fallback
+        ("folic", "Vitamin B9 (Folate)"),
+    ],
+)
+def test_rda_lookup_via_lexicon_and_fallback(sw, name, display):
+    assert sw._rda_for_component(name)["display"] == display
+
+
+def test_omega_blend_has_no_epa_dha_rda_entry(sw):
+    assert sw._rda_for_component("Omega 3-6-9") is None
