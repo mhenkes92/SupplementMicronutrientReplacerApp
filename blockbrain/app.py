@@ -29,6 +29,9 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 import requests
+import requests.adapters
+import urllib3
+import urllib3.connection
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from PIL import Image, ImageFilter, ImageOps
@@ -54,8 +57,72 @@ _HTTP_SESSION.headers.update({
 
 
 def _http_get(url: str, **kwargs) -> requests.Response:
+    """GET via the shared session, or via `session=` (e.g. _PUBLIC_FETCH_SESSION)."""
     kwargs.setdefault("timeout", HTTP_TIMEOUT)
-    return _HTTP_SESSION.get(url, **kwargs)
+    session = kwargs.pop("session", None) or _HTTP_SESSION
+    return session.get(url, **kwargs)
+
+
+# -- Fetching user-supplied URLs: public addresses only, checked on connect --
+# _is_public_http_url vets the host's addresses before a request, but the
+# connection does its own DNS lookup, so a rebinding host (public answer,
+# then 127.0.0.1) could slip through. These connections check the address
+# they actually reached, right after the TCP connect and before TLS or any
+# request byte is sent. (Through a configured proxy the peer is the proxy,
+# which resolves the target itself; nothing to check there.)
+class NonPublicAddressError(OSError):
+    """A user-supplied URL's connection reached a non-public address."""
+
+
+def _assert_public_peer(sock: Any) -> None:
+    try:
+        ip = ipaddress.ip_address(str(sock.getpeername()[0]).split("%", 1)[0])
+    except Exception as exc:
+        raise NonPublicAddressError("could not verify the connected address") from exc
+    if not ip.is_global or ip.is_multicast:
+        try:
+            sock.close()
+        finally:
+            raise NonPublicAddressError(f"refusing a connection to the non-public address {ip}")
+
+
+class _PublicPeerMixin:
+    def _new_conn(self):  # type: ignore[no-untyped-def]
+        sock = super()._new_conn()  # type: ignore[misc]
+        if not (getattr(self, "_tunnel_host", None) or getattr(self, "proxy", None)):
+            _assert_public_peer(sock)
+        return sock
+
+
+class _PublicHTTPConnection(_PublicPeerMixin, urllib3.connection.HTTPConnection):
+    pass
+
+
+class _PublicHTTPSConnection(_PublicPeerMixin, urllib3.connection.HTTPSConnection):
+    pass
+
+
+class _PublicHTTPConnectionPool(urllib3.HTTPConnectionPool):
+    ConnectionCls = _PublicHTTPConnection
+
+
+class _PublicHTTPSConnectionPool(urllib3.HTTPSConnectionPool):
+    ConnectionCls = _PublicHTTPSConnection
+
+
+class _PublicOnlyAdapter(requests.adapters.HTTPAdapter):
+    def init_poolmanager(self, *args: Any, **kwargs: Any) -> None:
+        super().init_poolmanager(*args, **kwargs)
+        self.poolmanager.pool_classes_by_scheme = {
+            "http": _PublicHTTPConnectionPool,
+            "https": _PublicHTTPSConnectionPool,
+        }
+
+
+_PUBLIC_FETCH_SESSION = requests.Session()
+_PUBLIC_FETCH_SESSION.cookies.set_policy(http.cookiejar.DefaultCookiePolicy(allowed_domains=[]))
+_PUBLIC_FETCH_SESSION.mount("http://", _PublicOnlyAdapter())
+_PUBLIC_FETCH_SESSION.mount("https://", _PublicOnlyAdapter())
 
 
 def _http_post(url: str, **kwargs) -> requests.Response:
@@ -10572,6 +10639,9 @@ def validate_parsed_components(rows: list[dict[str, Any]]) -> tuple[list[dict[st
 
 _PAGE_FETCH_MAX_BYTES = 2_000_000
 _PAGE_FETCH_MAX_REDIRECTS = 4
+# Wall-clock cap for one page fetch (all redirect hops and the body): the
+# per-read timeout alone let a slow-drip server hold a session for ages.
+_PAGE_FETCH_DEADLINE_S = 20.0
 
 
 def _is_public_http_url(url: str) -> bool:
@@ -10606,19 +10676,25 @@ def _is_public_http_url(url: str) -> bool:
 def _safe_public_get(
     url: str, headers: dict[str, str] | None = None, timeout: Any = None
 ) -> tuple[int, dict[str, str], str] | None:
-    """GET a user-supplied URL: public hosts only, redirects re-checked hop by
-    hop, body capped at _PAGE_FETCH_MAX_BYTES. Returns (status, headers, text),
-    or None when the URL (or a redirect target) is refused."""
+    """GET a user-supplied URL: public hosts only (vetted before the request
+    and again on the connected address, see _PublicOnlyAdapter), redirects
+    re-checked hop by hop, body capped at _PAGE_FETCH_MAX_BYTES, everything
+    within _PAGE_FETCH_DEADLINE_S. Returns (status, headers, text), or None
+    when the URL (or a redirect target) is refused or the deadline passes."""
     current = str(url or "").strip()
+    deadline = time.monotonic() + _PAGE_FETCH_DEADLINE_S
     for _hop in range(_PAGE_FETCH_MAX_REDIRECTS + 1):
-        if not _is_public_http_url(current):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not _is_public_http_url(current):
             return None
+        connect_timeout = min(float(BLOCKBRAIN_CONNECT_TIMEOUT_S), remaining)
         response = _http_get(
             current,
             headers=headers,
-            timeout=timeout or (BLOCKBRAIN_CONNECT_TIMEOUT_S, 30),
+            timeout=timeout or (connect_timeout, min(30.0, remaining)),
             allow_redirects=False,
             stream=True,
+            session=_PUBLIC_FETCH_SESSION,
         )
         if response.is_redirect or response.status_code in {301, 302, 303, 307, 308}:
             location = str(response.headers.get("Location", "") or "")
@@ -10627,12 +10703,26 @@ def _safe_public_get(
                 return None
             current = requests.compat.urljoin(current, location)
             continue
+        # A watchdog closes the response at the deadline, which also ends a
+        # read that is blocked on a slow-drip server.
+        watchdog = threading.Timer(max(0.0, deadline - time.monotonic()), response.close)
+        watchdog.daemon = True
+        watchdog.start()
         body = b""
-        for chunk in response.iter_content(chunk_size=65536):
-            body += chunk
-            if len(body) > _PAGE_FETCH_MAX_BYTES:
-                break
-        response.close()
+        try:
+            for chunk in response.iter_content(chunk_size=16384):
+                body += chunk
+                if len(body) > _PAGE_FETCH_MAX_BYTES or time.monotonic() > deadline:
+                    break
+        except Exception:
+            if time.monotonic() >= deadline:
+                return None
+            raise
+        finally:
+            watchdog.cancel()
+            response.close()
+        if time.monotonic() > deadline and len(body) <= _PAGE_FETCH_MAX_BYTES:
+            return None  # cut off by the deadline: an incomplete page
         encoding = str(getattr(response, "encoding", "") or "utf-8")
         try:
             text = body[:_PAGE_FETCH_MAX_BYTES].decode(encoding, errors="replace")

@@ -76,3 +76,120 @@ def test_public_page_is_fetched_and_capped(monkeypatch):
     monkeypatch.setattr(bb, "_http_get", lambda url, **k: FakeResp(200, {"content-TYPE": "text/html; charset=utf-8"}, html))
     text = bb.fetch_clean_page_text("https://shop.test/product")
     assert "Vitamin C 90 mg" in text and "x()" not in text
+
+
+# --- Final review (LLM security) F9: DNS rebinding and a wall-clock deadline -------------
+
+def _no_proxy(monkeypatch):
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_dns_rebinding_to_localhost_is_refused_on_connect(monkeypatch):
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            body = b"INTERNAL-ONLY Vitamin C 80 mg Zinc 10 mg Supplement Facts serving size 1"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    real_getaddrinfo = socket.getaddrinfo
+    lookups = []
+
+    def rebinding_getaddrinfo(host, port_, *args, **kwargs):
+        if host != "rebind.attacker.example":
+            return real_getaddrinfo(host, port_, *args, **kwargs)
+        lookups.append(host)
+        ip = "93.184.215.14" if len(lookups) == 1 else "127.0.0.1"  # TTL-0 rebinding
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port_))]
+
+    _no_proxy(monkeypatch)
+    monkeypatch.setattr(bb.socket, "getaddrinfo", rebinding_getaddrinfo)
+    try:
+        # Sanity: the local server is reachable without the guard ...
+        assert b"INTERNAL-ONLY" in bb._HTTP_SESSION.get(f"http://127.0.0.1:{port}/", timeout=5, proxies={}).content
+        # ... but the rebinding host never gets it through the guarded fetch.
+        assert bb.fetch_clean_page_text(f"http://rebind.attacker.example:{port}/") == ""
+        assert len(lookups) >= 2  # the vetting lookup passed; the connect-time one was caught
+    finally:
+        server.shutdown()
+
+
+class _FakeSock:
+    def __init__(self, ip):
+        self.ip = ip
+        self.closed = False
+
+    def getpeername(self):
+        return (self.ip, 80)
+
+    def close(self):
+        self.closed = True
+
+
+@pytest.mark.parametrize("ip, public", [("93.184.215.14", True), ("127.0.0.1", False), ("169.254.169.254", False),
+                                         ("10.0.0.5", False), ("::1", False), ("2606:4700::1111", True)])
+def test_connected_peer_must_be_public(ip, public):
+    sock = _FakeSock(ip)
+    if public:
+        bb._assert_public_peer(sock)
+        assert not sock.closed
+    else:
+        with pytest.raises(bb.NonPublicAddressError):
+            bb._assert_public_peer(sock)
+        assert sock.closed
+
+
+def test_page_fetch_has_a_wall_clock_deadline(monkeypatch):
+    import threading
+    import time as _time
+
+    _resolve_to(monkeypatch, {"slow.test": "93.184.216.34"})
+    monkeypatch.setattr(bb, "_PAGE_FETCH_DEADLINE_S", 0.4)
+
+    class BlockingResp(FakeResp):
+        """A slow-drip body: the read blocks until the response is closed."""
+
+        def __init__(self):
+            super().__init__(200, {"content-type": "text/html"})
+            self._closed = threading.Event()
+
+        def iter_content(self, chunk_size=1):
+            yield b"<html>Vitamin C"
+            if not self._closed.wait(10):
+                yield b" 80 mg</html>"
+            raise ConnectionError("closed")
+
+        def close(self):
+            self._closed.set()
+
+    monkeypatch.setattr(bb, "_http_get", lambda url, **k: BlockingResp())
+    started = _time.monotonic()
+    assert bb._safe_public_get("https://slow.test/p") is None
+    assert _time.monotonic() - started < 3.0
+
+
+def test_page_fetch_uses_the_guarded_session(monkeypatch):
+    _resolve_to(monkeypatch, {"shop.test": "93.184.216.34"})
+    seen = {}
+
+    def fake_get(url, **kwargs):
+        seen.update(kwargs)
+        return FakeResp(200, {"content-type": "text/html"}, b"<p>Vitamin C 90 mg</p>")
+
+    monkeypatch.setattr(bb, "_http_get", fake_get)
+    assert "Vitamin C 90 mg" in bb.fetch_clean_page_text("https://shop.test/p")
+    assert seen["session"] is bb._PUBLIC_FETCH_SESSION and seen["allow_redirects"] is False
+    adapter = bb._PUBLIC_FETCH_SESSION.get_adapter("https://shop.test/")
+    assert isinstance(adapter, bb._PublicOnlyAdapter)
