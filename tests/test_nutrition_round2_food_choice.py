@@ -113,6 +113,12 @@ def test_vitamin_d_default_is_an_everyday_d3_fish_not_a_uv_mushroom(sw, profiles
     )
 
 
+def test_high_dose_vitamin_d_default_is_still_a_fish(sw, profiles):
+    # 100 µg: mackerel would be ~620 g, but another fish (~365 g) beats ~313 g of UV mushrooms.
+    food, _card_, _foods = _default(sw, "Vitamin D3 100 µg", profiles["none"])
+    assert food["food_description"].startswith("Fish,") and "mushroom" not in food["food_description"].lower()
+
+
 def test_vegan_vitamin_d_default_is_a_labelled_uv_mushroom(sw, profiles):
     food, card, _foods = _default(sw, "Vitamin D3 25 µg", profiles["vegan"])
     assert sw._is_uv_mushroom(food)
