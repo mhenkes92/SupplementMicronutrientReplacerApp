@@ -1023,7 +1023,8 @@ def estimate_whole_food_units(food_description: str, grams_needed: float | None)
         if any(bad in text for bad in WHOLE_FOOD_UNIT_EXCLUSIONS.get(keyword.split()[0], ())):
             continue
         units = float(grams_needed) / float(avg_weight_g)
-        if units <= 0:
+        if units < 0.1:
+            # "~3.7 g (~0 bananas)": a sliver of one unit is no useful hint.
             return ""
 
         if units >= 2:
@@ -6443,7 +6444,7 @@ _NUTRIENT_LEXICON: dict[str, dict[str, Any]] = {
     },
     "vitamin d": {
         "display": "vitamin d", "unit": "mcg", "usda": ((1114, 1.0), (1110, 0.025)),
-        "aliases": ["vitamin d", ("vitamin d3", "vitamin d3"), ("cholecalciferol", "vitamin d3"),
+        "aliases": ["vitamin d", ("vitamin d3", "vitamin d3"), ("d3", "vitamin d3"), ("cholecalciferol", "vitamin d3"),
                     ("colecalciferol", "vitamin d3"), ("vitamin d2", "vitamin d2"), ("ergocalciferol", "vitamin d2"),
                     "calciferol"],
     },
@@ -6463,7 +6464,7 @@ _NUTRIENT_LEXICON: dict[str, dict[str, Any]] = {
         # USDA FDC has no usable K2 (menaquinone) data — only 16 trace MK-4 rows —
         # so K2 cards use the curated literature list, never K1 (leafy-green) foods.
         "display": "vitamin k2", "unit": "mcg", "usda": (),
-        "aliases": ["vitamin k2", "menaquinone", "menaquinone 7", "menaquinone 4", "menachinon", "menachinon 7",
+        "aliases": ["vitamin k2", "k2", "menaquinone", "menaquinone 7", "menaquinone 4", "menachinon", "menachinon 7",
                     "mk 7", "mk7", "mk 4", "mk4", "menatetrenone"],
     },
     "thiamin": {
@@ -6586,8 +6587,14 @@ _NUTRIENT_LEXICON: dict[str, dict[str, Any]] = {
             "aliases": ["alpha linolenic acid", "alpha linolenic", "a linolenic acid", "alpha linolensaure"]},
     # Recognised (they become cards) but without whole-food data.
     "inositol": {"display": "inositol", "unit": "mg", "usda": (), "aliases": ["inositol", "myo inositol"]},
+    # An umbrella name, not a nutrient: never a card or a dose of its own; a label
+    # naming only the complex gets one (dose-less) card per B vitamin.
     "vitamin b complex": {"display": "vitamin b complex", "unit": "mg", "usda": (),
-                          "aliases": ["vitamin b complex", "b complex", "vitamin b komplex", "b komplex"]},
+                          "aliases": ["vitamin b complex", "b complex", "vitamin b komplex", "b komplex"],
+                          "umbrella": (("vitamin b1", "thiamin"), ("vitamin b2", "riboflavin"),
+                                       ("vitamin b3", "niacin"), ("vitamin b5", "pantothenic acid"),
+                                       ("vitamin b6", "vitamin b6"), ("vitamin b7", "biotin"),
+                                       ("vitamin b9", "folate"), ("vitamin b12", "vitamin b12"))},
 }
 
 # Form words in "(as ...)" that change WHICH nutrient a generic name means.
@@ -6616,6 +6623,45 @@ _OMEGA_BLEND_RE = re.compile(
     r"\bomega\s*-?\s*3(?:\s*(?:[-/,+&]|und|and)\s*(?:omega\s*)?-?\s*[69](?![0-9]))+"
     r"|\bomega\s*-?\s*3\s+6\s+9(?![0-9])"
 )
+_VITAMIN_FOREIGN_WORD_RE = re.compile(r"\bvitamin(?:a|as|e|es)\b(?=\s*[a-k](?:\s*-?\s*\d{1,2})?(?![a-z0-9]))")
+_VITAMIN_LETTER_GLUED_DOSE_RE = re.compile(
+    r"\b(vitamin\s*[ace])(\d+(?:[.,]\d+)*)(?=\s*(?:mcg|mg|ug|g|iu|ie|i\.\s?e|ui)(?![a-z]))"
+)
+# The lower bound must stand on its own: in "Vitamin D3 - 1000 I.E.",
+# "Vitamin B12 - 1000 µg", "Coenzym Q10 - 100 mg", "MK-7 - 200 µg" or
+# "Omega-3 - 1000 mg" the digit before the dash is the nutrient's own code
+# (see _dose_range_lower_is_code), never a dose.
+_LABEL_DOSE_RANGE_RE = re.compile(
+    r"(?<![a-z\d.,])(\d+(?:[.,]\d+)*)\s*-\s*(\d+(?:[.,]\d+)*)(?=\s*(?:mcg|meg|mg|ug|pg|g|iu|ie|i\.\s?e|ui)(?![a-z]))"
+)
+# Text right before a dose range's lower bound that makes that number a code:
+# a hyphen-glued code ("MK-7", "Omega-3", "Co-Q10"), a spaced "Omega 3" /
+# "Q 10" / "MK 7", or a vitamin letter that takes numeric codes ("B 12",
+# "D 3", "K 2"; checked against the code numbers in _dose_range_lower_is_code).
+_DOSE_RANGE_CODE_LEAD_RE = re.compile(r"(?:[a-z]-|\b(?:omega|q|mk|coq|menachinon|menaquinone))\s*$")
+_DOSE_RANGE_VITAMIN_LETTER_RE = re.compile(r"\b([bdk])\s*$")
+_DOSE_RANGE_VITAMIN_CODES: dict[str, frozenset[str]] = {
+    "b": frozenset(str(n) for n in range(1, 13)),
+    "d": frozenset({"2", "3"}),
+    "k": frozenset({"1", "2"}),
+}
+
+
+def _dose_range_lower_is_code(before: str, low: str) -> bool:
+    """True when `low`, the number before the dash of an apparent dose range,
+    is the code of the nutrient written right before it ("Omega-3 - 1000 mg",
+    "MK-7 - 200 µg", "B 12 - 1000 µg"). `before` is the text before `low`."""
+    pre = str(before or "")[-24:].lower()
+    if re.search(r"[a-z\d.,]$", pre) or _DOSE_RANGE_CODE_LEAD_RE.search(pre):
+        return True
+    letter = _DOSE_RANGE_VITAMIN_LETTER_RE.search(pre)
+    return bool(letter and low in _DOSE_RANGE_VITAMIN_CODES[letter.group(1)])
+
+
+def _label_dose_range_sub(match: re.Match[str]) -> str:
+    if _dose_range_lower_is_code(match.string[: match.start()], match.group(1)):
+        return match.group(0)
+    return f"{match.group(1)} to {match.group(2)}"
 # German salt compounds written as one word ("Magnesiumcitrat", "Kaliumiodid").
 _GERMAN_SALT_COMPOUND_RE = re.compile(
     r"\b(magnesium|zink|zinc|calcium|kalzium|kalium|natrium|eisen|kupfer|mangan|chrom|selen)"
@@ -6639,14 +6685,29 @@ def _fold_label_text(text: str) -> str:
     t = t.encode("ascii", "ignore").decode("ascii")
     t = re.sub(r"(\d)\s*u\s+g(?![a-z])", r"\1 ug", t)  # OCR: "2,5 µ g"
     t = re.sub(r"\bb\s*-?\s*l2\b", "b12", t)  # OCR: "Bl2"
+    # Italian / Spanish / Portuguese "Vitamina C", "Vitaminas B": the word for
+    # vitamin, never "vitamin A" (a glued OCR "VitaminA 800 µg" is followed by
+    # the dose, not by a vitamin letter).
+    t = _VITAMIN_FOREIGN_WORD_RE.sub("vitamin", t)
+    t = re.sub(r"\bvitamina(?=\s*\d)", "vitamin a", t)
     t = _VITAMIN_GLUED_RE.sub("vitamin ", t)
     t = re.sub(r"\bvit(?:amine?|main|arnin|amln)?\b\.?", "vitamin", t)
     t = _VITAMIN_SPACED_CODE_RE.sub(lambda m: m.group(1) + re.sub(r"[\s-]+", "", m.group(2)), t)
     t = re.sub(r"\b([bdk])\s*-\s*(\d{1,2})\b", r"\1\2", t)
+    t = re.sub(r"\bd3\s*-?\s*k2\b", "d3 + k2", t)  # "Vitamin D3K2", "D3-K2"
+
+    # OCR glues a letter-only vitamin to its dose ("Vitamin C1000 mg", "Vitamin
+    # E13.5 mg"): A, C and E never take a numeric code, so the digits are the dose.
+    t = _VITAMIN_LETTER_GLUED_DOSE_RE.sub(r"\1 \2", t)
     t = _GERMAN_SALT_COMPOUND_RE.sub(r"\1 \2", t)
     # "Omega 3-6-9", "Omega-3/6/9", "Omega-3, -6 und -9", "Omega 3 + Omega 6" are
     # blends (mostly ALA / linoleic / oleic acid), never an EPA+DHA omega-3.
     t = _OMEGA_BLEND_RE.sub("omega 369 blend", t)
+    # A dose range ("Vitamin C 100-200 mg", "Magnesium 200–400 mg") keeps both
+    # numbers: "100 to 200 mg" (the hyphen alone would be dropped below).
+    t = _LABEL_DOSE_RANGE_RE.sub(_label_dose_range_sub, t)
+    # Joiners of product titles ("Vitamin D3/K2", "Calcium & D3"): " + ".
+    t = re.sub(r"(?<=[a-z0-9])\s*/\s*(?=[a-z])|(?<=[a-z])\s*/\s*(?=[0-9])|\s*&\s*", " + ", t)
     t = re.sub(r"\s*\+\s*", " + ", t)
     t = re.sub(r"[^a-z0-9.,%()\[\]+:;*\s]", " ", t)
     return re.sub(r"\s+", " ", t).strip()
@@ -6873,6 +6934,107 @@ _CURATED_SOURCE_LABELS: dict[str, str] = {
     "vitamin k2": "Literature (Schurgers & Vermeer 2000) - USDA has no K2 data",
 }
 
+# Foods that never count as a source of a nutrient although USDA lists an
+# amount: algae (nori, spirulina, chlorella, seaweed) hold mostly inactive B12
+# analogues that do not cover B12 needs (EFSA 2015; Watanabe 2014; DGE 2016).
+_NUTRIENT_FOOD_EXCLUSIONS: dict[str, re.Pattern[str]] = {
+    "vitamin b12": re.compile(
+        r"\b(?:seaweeds?|algae?|algal|nori|laver|spirulina|chlorella|kelp|wakame|kombu|dulse|agar|irishmoss|"
+        r"hijiki|arame|klamath)\b",
+        re.IGNORECASE,
+    ),
+}
+
+# B12-fortified plant foods, listed with the B12 foods (marked "fortified";
+# the swipe app offers them on vegan / vegetarian cards only): on those diets
+# whole foods cannot supply B12 (DGE), fortified foods can. Amounts are typical EU fortification levels per 100 g / 100 ml
+# (plant drinks: 0.38 µg = 15% NRV; nutritional yeast flakes vary widely by
+# brand, ~10 µg is a conservative typical value) — always "check the pack".
+# "max_daily_g" is a realistic daily amount (a few spoons of flakes, three
+# glasses of drink): a larger portion counts as not practical.
+FORTIFIED_FOOD_OPTIONS: dict[str, list[dict[str, Any]]] = {
+    "vitamin b12": [
+        # "B12-fortified" leads the name so every short display name keeps it.
+        {"food_description": "B12-fortified nutritional yeast flakes", "food_category": "Fortified foods",
+         "amount_per_100g": 10.0, "unit": "mcg", "max_daily_g": 30.0},
+        {"food_description": "B12-fortified soy drink", "food_category": "Fortified foods",
+         "amount_per_100g": 0.38, "unit": "mcg", "max_daily_g": 750.0},
+        {"food_description": "B12-fortified oat drink", "food_category": "Fortified foods",
+         "amount_per_100g": 0.38, "unit": "mcg", "max_daily_g": 750.0},
+    ],
+}
+
+
+def fortified_food_options(component_key: str) -> list[dict[str, Any]]:
+    """Curated fortified foods for a nutrient (vegan / vegetarian B12), marked
+    "fortified": True; [] for other nutrients."""
+    key = canonical_nutrient_key(component_key)
+    return [
+        {**row, "rank": 0, "unit": _normalize_component_unit_token(str(row["unit"])), "fortified": True,
+         "source_db": "Typical EU fortification - check the pack"}
+        for row in FORTIFIED_FOOD_OPTIONS.get(key, [])
+    ]
+
+
+_ANIMAL_FOOD_CATEGORY_RE = re.compile(r"beef|pork|poultry|lamb|veal|game|finfish|shellfish|sausage|dairy|egg", re.IGNORECASE)
+_ORGAN_MEAT_NAME_RE = re.compile(
+    r"\b(?:liver|livers|kidney|kidneys|heart|hearts|giblets|spleen|brains?|sweetbreads?|thymus|pancreas|tripe|"
+    r"tongue|lungs?|gizzards?|offal|chitterlings|leber|nieren?|herz)\b",
+    re.IGNORECASE,
+)
+_ORGAN_WORD_PLANT_RE = re.compile(r"\b(?:beans?|palm|artichokes?|lettuce|celery|romaine|cabbage|chicory)\b", re.IGNORECASE)
+
+
+def food_is_organ_meat(food_description: str, food_category: str = "") -> bool:
+    """Liver, kidney, heart, giblets, ... (not kidney beans, hearts of palm)."""
+    name = str(food_description or "")
+    if not _ORGAN_MEAT_NAME_RE.search(name) or _ORGAN_WORD_PLANT_RE.search(name):
+        return False
+    category = str(food_category or "")
+    return not category or bool(_ANIMAL_FOOD_CATEGORY_RE.search(category)) or "alaska native" in category.lower()
+
+
+@functools.lru_cache(maxsize=1)
+def _vitamin_a_food_index() -> dict[str, dict[int, float]]:
+    """{food key: {1104 IU, 1105 retinol µg, 1106 RAE µg}} including zero rows."""
+    conn = try_open_usda_db()
+    if conn is None:
+        return {}
+    try:
+        rows = conn.execute(
+            "SELECT nutrient_id, food_description, amount_per_100g FROM nutrient_rankings "
+            "WHERE nutrient_id IN (1104, 1105, 1106) AND amount_per_100g IS NOT NULL"
+        ).fetchall()
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+    out: dict[str, dict[int, float]] = {}
+    for nid, desc, amount in rows:
+        try:
+            out.setdefault(normalize_lookup_key(str(desc or "")), {})[int(nid)] = float(amount)
+        except Exception:
+            continue
+    return out
+
+
+def food_preformed_vitamin_a(food_description: str, food_category: str = "") -> float | None:
+    """µg of PREFORMED vitamin A (retinol, the form the 3000 µg upper limit is
+    about) per 100 g of a food, or None when unknown. USDA retinol when listed;
+    otherwise, for animal foods (where vitamin A is retinol), RAE or IU x 0.3
+    (fish livers only have an IU row); plant foods hold carotenoids only (0)."""
+    values = _vitamin_a_food_index().get(normalize_lookup_key(food_description), {})
+    if 1105 in values:
+        return values[1105]
+    animal = food_is_organ_meat(food_description, food_category) or bool(_ANIMAL_FOOD_CATEGORY_RE.search(str(food_category or "")))
+    if not animal:
+        return 0.0 if values or food_category else None
+    if 1106 in values:
+        return values[1106]
+    if 1104 in values:
+        return values[1104] * 0.3
+    return None
+
 # Per-food corrections where the local DB sample is far off the USDA reference
 # value. Brazil-nut selenium varies >10x with soil; this DB's Foundation-Foods
 # sample (280 µg/100 g) understates USDA SR Legacy #12078 and NIH ODS (544 µg
@@ -6950,9 +7112,10 @@ def _lexicon_food_rows(key: str, limit: int) -> tuple[dict[str, Any], ...]:
     unit = _normalize_component_unit_token(str(spec["unit"]))
 
     per_food: dict[str, dict[str, Any]] = {}
+    excluded = _NUTRIENT_FOOD_EXCLUSIONS.get(key)
     for nid, desc, category, amount in _query_usda_food_amounts(list(factors)):
         fkey = normalize_lookup_key(desc)
-        if not fkey:
+        if not fkey or (excluded is not None and excluded.search(desc)):
             continue
         entry = per_food.setdefault(fkey, {"desc": desc, "category": category, "by_id": {}})
         # Keep the highest value if the DB repeats a food for the same nutrient.
@@ -6979,6 +7142,11 @@ def _lexicon_food_rows(key: str, limit: int) -> tuple[dict[str, Any], ...]:
             }
         )
     foods = filter_and_rank_common_foods(foods, limit)
+    fortified = fortified_food_options(key)
+    if foods and fortified:
+        # Always listed (they are the only vegan B12 option), ranked by amount.
+        foods = list(foods[: max(0, limit - len(fortified))]) + fortified
+        foods.sort(key=lambda f: float(f.get("amount_per_100g", 0) or 0), reverse=True)
     for idx, food in enumerate(foods, start=1):
         food["rank"] = idx
     if not foods:
@@ -7542,10 +7710,26 @@ def _has_structured_table_cues(text: str) -> bool:
     )
 
 
+_RAW_DOSE_RANGE_RE = re.compile(
+    r"(?<![A-Za-z\d.,])(\d+(?:[.,]\d+)*)\s*[-\u2013\u2014]\s*\d+(?:[.,]\d+)*(?=\s*(?:mcg|mg|µg|μg|ug|g|iu|i\.\s?e\.?|ie)(?![a-z]))",
+    re.I,
+)
+
+
+def _raw_dose_range_sub(match: re.Match[str]) -> str:
+    # "Vitamin D3 - 1000 I.E.", "Omega-3 - 1000 mg": a code, not a range.
+    if _dose_range_lower_is_code(match.string[: match.start()], match.group(1)):
+        return match.group(0)
+    return match.group(1)
+
+
 def _prepare_text_for_structured_parsing(input_text: str) -> str:
     text = str(input_text or "")
     if not text.strip():
         return ""
+    # A dose range ("Vitamin C 100-200 mg"): the generic parsers read the lower
+    # bound, like the label-line parser (which also keeps the upper bound).
+    text = _RAW_DOSE_RANGE_RE.sub(_raw_dose_range_sub, text)
     if not _has_structured_table_cues(text):
         return text
 
@@ -7682,7 +7866,12 @@ def _apply_contextual_vitamin_dose_corrections(
     rows: list[dict[str, Any]],
     source_text: str,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Use regex-extracted OCR anchors to correct obviously mismatched vitamin doses."""
+    """Fill a MISSING vitamin dose from a regex-extracted OCR anchor.
+
+    It no longer overwrites a dose the row already has: the lexicon-based
+    label-line parser (_reconcile_label_line_rows) is authoritative for every
+    line it reads, and an anchor that disagrees with the generic row is as
+    likely to be the wrong one (a title, a second column, another vitamin)."""
     anchors = _extract_vitamin_dose_candidates_from_text(source_text)
     if not anchors:
         return rows, []
@@ -7711,20 +7900,6 @@ def _apply_contextual_vitamin_dose_corrections(
             corrected.append(out)
             continue
 
-        if cur_unit != anc_unit:
-            corrected.append(out)
-            continue
-
-        larger = max(cur_val, anc_val)
-        smaller = max(1e-9, min(cur_val, anc_val))
-        ratio = larger / smaller
-        # Correct only clear mismatches to avoid overfitting.
-        if ratio >= 1.5:
-            out["dose_value"] = anc_val
-            warnings.append(
-                f"context_correction: replaced {comp} {format_float(cur_val)} {cur_unit} with "
-                f"{format_float(anc_val)} {anc_unit}"
-            )
         corrected.append(out)
 
     return corrected, warnings
@@ -10769,17 +10944,25 @@ _LABEL_COLUMN_UNIT_WORDS = (
     r"tablet|capsule|softgel|portion|serving|riegel|beutel|stick|sachet|messloffel|scoop|tropfen|drop|"
     r"dragee|ampulle|trinkampulle|gummi|gummy)"
 )
+# "pro 2 Kapseln" / "per 3 tablets": a column of SEVERAL units, i.e. the daily
+# amount next to a "pro Kapsel" column (no label states two capsules otherwise).
+_LABEL_COLUMN_MULTI_WORDS = (
+    r"(?:[2-9]|1[0-9])\s+(?:kapseln|weichkapseln|tabletten|kautabletten|lutschtabletten|brausetabletten|"
+    r"tablets|capsules|softgels|portionen|servings|riegel|beutel|sticks|sachets|messloffel|scoops|tropfen|"
+    r"drops|dragees|ampullen|gummis|gummies)"
+)
 _LABEL_COLUMN_RE = re.compile(
     r"\b(?:pro|je|per)\s+(?:(?:empfohlene[nrm]?|recommended)\s+)?"
-    r"(?:(?P<day>" + _LABEL_COLUMN_DAY_WORDS + r"|day|tag)|(?P<hundred>100\s*(?:g|ml))|(?P<unit>"
-    + _LABEL_COLUMN_UNIT_WORDS + r"))(?![a-z])"
+    r"(?:(?P<day>" + _LABEL_COLUMN_DAY_WORDS + r"|day|tag)|(?P<hundred>100\s*(?:g|ml))|(?P<multi>"
+    + _LABEL_COLUMN_MULTI_WORDS + r")|(?P<unit>" + _LABEL_COLUMN_UNIT_WORDS + r"))(?![a-z])"
 )
-# In a header line that has a "pro ..." descriptor, a bare "Tagesdosis" is a column too.
+# In a header line that has a "pro ..." descriptor, a bare "Tagesdosis" is a column too
+# (but not "pro Kapsel (= Tagesdosis)": a bracketed equivalence of that column).
 _LABEL_BARE_DAY_COLUMN_RE = re.compile(r"\b(?:" + _LABEL_COLUMN_DAY_WORDS + r")(?![a-z])")
 # Words between the name and the dose that are table layout, not a form.
 _LABEL_FILLER_WORDS: frozenset[str] = frozenset({
     "total", "per", "serving", "pro", "je", "davon", "of", "which", "amount", "content", "gehalt", "as", "from",
-    "als", "aus", "and", "und", "nrv", "dv", "rda", "rm", "ri",
+    "als", "aus", "and", "und", "nrv", "dv", "rda", "rm", "ri", "to", "bis",
 })
 # Packaging / marketing words of product titles ("Vitamin D3 1000 I.E.
 # Tabletten", "Magnesium 400 mg Kapseln hochdosiert") are never a chemical form.
@@ -10880,9 +11063,10 @@ def _label_column_kinds(line: str) -> list[str]:
     spans = [(m.start(), m.end(), str(m.lastgroup)) for m in _LABEL_COLUMN_RE.finditer(line)]
     if not spans:
         return []
+    depths = _bracket_depths(line)
     spans += [
         (m.start(), m.end(), "day") for m in _LABEL_BARE_DAY_COLUMN_RE.finditer(line)
-        if not any(s <= m.start() < e for s, e, _k in spans)
+        if not any(s <= m.start() < e for s, e, _k in spans) and depths[m.start()] == 0
     ]
     return [kind for _s, _e, kind in sorted(spans)]
 
@@ -10905,64 +11089,297 @@ def _label_daily_dose_column(text: str) -> int | None:
         return None
     if "day" in header:
         return header.index("day")
+    if "multi" in header:
+        return header.index("multi")  # "pro Kapsel | pro 2 Kapseln"
     if "hundred" in header and "unit" in header:
         return header.index("unit")
     return None
 
 
-def _parse_label_segment(
+# Salt / anion words. A mineral name followed only by these ("Magnesiumcitrat
+# 1500 mg", "Zinc gluconate 50 mg") states the weight of the COMPOUND, not of
+# the mineral: such a row loses to a plain or "davon" row of the same mineral.
+_LABEL_SALT_WORDS: frozenset[str] = frozenset({
+    "citrat", "citrate", "oxid", "oxide", "gluconat", "gluconate", "carbonat", "carbonate", "bisglycinat",
+    "bisglycinate", "diglycinat", "diglycinate", "glycinat", "glycinate", "sulfat", "sulfate", "sulphate",
+    "chlorid", "chloride", "picolinat", "picolinate", "fumarat", "fumarate", "orotat", "orotate", "malat",
+    "malate", "lactat", "lactate", "aspartat", "aspartate", "threonat", "threonate", "taurat", "taurate",
+    "hydroxid", "hydroxide", "phosphat", "phosphate", "selenit", "selenite", "selenat", "selenate", "iodid",
+    "iodide", "jodid", "iodat", "iodate", "jodat", "molybdat", "molybdate", "amino", "acid", "chelate",
+    "chelat", "ii", "iii", "ferrous", "ferric", "cupric", "potassium", "kalium", "sodium", "natrium",
+})
+_LABEL_MINERAL_KEYS: frozenset[str] = frozenset({
+    "calcium", "phosphorus", "magnesium", "potassium", "sodium", "iron", "zinc", "copper", "manganese",
+    "iodine", "selenium", "molybdenum", "chromium", "fluoride", "boron",
+})
+# Excipients that name a mineral ("Magnesium stearate 5 mg", "Calcium stearate")
+# are not a nutrient row at all.
+_LABEL_EXCIPIENT_FORM_RE = re.compile(r"\b(?:stearat\w*|stearic|silicat\w*|silicate|dioxid\w*|benzoat\w*|sorbat\w*|lauryl\w*)\b")
+# "davon (elementares) Magnesium 240 mg", "of which elemental zinc", "(davon Zink 10 mg)".
+_LABEL_ELEMENTAL_RE = re.compile(
+    r"\b(?:davon|of which|providing|provides|entspricht|entsprechend|equivalent to|equals|elementar\w*|elemental)\b"
+)
+_LABEL_ELEMENTAL_LEAD_RE = re.compile(
+    r"\b(?:davon|of which|providing|provides|entspricht|entsprechend|equivalent to|equals|elementar\w*|elemental)"
+    r"(?:\s+[a-z]+){0,2}\s*$"
+)
+# A dose after "aus Magnesiumcitrat", "from", "davon", "entsprechend" is a
+# compound / share / elemental weight, never another dose column.
+_LABEL_COLUMN_STOP_RE = re.compile(
+    r"\b(?:aus|from|as|als|davon|entspricht|entsprechend|equivalent|equals|providing|provides)\b"
+)
+# "natürliches Vitamin E 400 I.E.", "Natural Vitamin E": the form comes first.
+_LABEL_FORM_ADJECTIVE_RE = re.compile(
+    r"\b(natural|naturliche[nmrs]?|naturlich|natuerlich\w*|synthetic|synthetische[nmrs]?|synthetisch)\s*$"
+)
+# Product-title joiners between nutrient names ("Vitamin D3 + K2", "Calcium &
+# Vitamin D3", "Zink und Vitamin C", "B-Komplex mit B12").
+_LABEL_JOINER_GAP_RE = re.compile(r"^\s*(?:\+|,|und|and|mit|with|sowie|plus)\s*$")
+# "Vitamin B1, B2 und B6 je 1,4 mg": one dose for each name.
+_LABEL_EACH_RE = re.compile(r"\b(?:je|jeweils|each|ea)\s*$")
+# A dose written before its name ("mit 500 µg Vitamin B12", "1000 I.E. Vitamin D3").
+_LABEL_DOSE_BEFORE_NAME_GAP_RE = re.compile(r"^\s*(?:of|von|an|mit|with)?\s*$")
+# Units a nutrient is never labelled in (they make a dose belong to another name).
+_LABEL_IU_KEYS: frozenset[str] = frozenset({"vitamin a", "vitamin d", "vitamin e", "beta carotene"})
+_LABEL_MICROGRAM_ONLY_KEYS: frozenset[str] = frozenset({"vitamin d", "vitamin k", "vitamin k2"})
+_LABEL_MILLIGRAM_KEYS: frozenset[str] = frozenset({
+    "calcium", "magnesium", "potassium", "phosphorus", "sodium", "chloride", "omega 3", "fish oil", "epa", "dha", "ala",
+})
+
+
+def _label_unit_plausible(key: str, unit: str) -> bool:
+    """False when `unit` is never used for nutrient `key` on a label (vitamin D
+    in mg, vitamin K in IU, calcium in µg); umbrella names take no dose at all."""
+    if _NUTRIENT_LEXICON.get(key, {}).get("umbrella"):
+        return False
+    if unit == "iu":
+        return key in _LABEL_IU_KEYS
+    if unit in ("mg", "g"):
+        return key not in _LABEL_MICROGRAM_ONLY_KEYS
+    if unit == "mcg":
+        return key not in _LABEL_MILLIGRAM_KEYS
+    return True
+
+
+def _label_clean_raw_line(raw_line: str) -> str:
+    """A JSON / list-wrapped table ('{"name": "Zink", "amount": "10 mg"}') read as
+    plain text: its brackets are punctuation, not "(as ...)" form brackets."""
+    line = str(raw_line or "")
+    if "{" in line or '":' in line or "':" in line:
+        line = re.sub(r"[\[\]{}\"]", " ", line)
+    return line
+
+
+def _label_items(line: str, names: list[re.Match[str]]) -> list[dict[str, Any]]:
+    """Nutrient names of one folded line grouped into items: a second name of
+    the SAME nutrient before any dose ("Vitamin D3 Cholecalciferol 25 µg") and
+    "Vitamin A Beta-Carotin 800 µg" (beta-carotene as the form of vitamin A)
+    belong to the first name's item."""
+    items: list[dict[str, Any]] = []
+    i = 0
+    while i < len(names):
+        name = names[i]
+        alias = re.sub(r"\s+", " ", name.group(0))
+        key = _NUTRIENT_ALIAS_INDEX[alias][0]
+        j = i + 1
+        while j < len(names) and not _LABEL_DOSE_RE.search(line, name.end(), names[j].start()):
+            next_key = _NUTRIENT_ALIAS_INDEX[re.sub(r"\s+", " ", names[j].group(0))][0]
+            if next_key != key and not (key == "vitamin a" and next_key == "beta carotene"):
+                break
+            j += 1
+        items.append({
+            "name": name, "alias": alias, "key": key, "start": name.start(),
+            "names_end": names[j - 1].end(), "end": names[j].start() if j < len(names) else len(line),
+        })
+        i = j
+    return items
+
+
+def _label_candidate_doses(line: str, depths: list[int], start: int, end: int) -> tuple[list[re.Match[str]], list[re.Match[str]]]:
+    """(dose matches outside brackets that can be dose columns, bracketed dose
+    matches) in line[start:end]. Doses after "aus Magnesiumcitrat" / "from" /
+    "davon" are compound or share weights, never another column."""
+    outside: list[re.Match[str]] = []
+    inside: list[re.Match[str]] = []
+    for d in _LABEL_DOSE_RE.finditer(line, start, end):
+        if depths[d.start()] > 0:
+            inside.append(d)
+            continue
+        if outside:
+            between = "".join(ch for pos, ch in enumerate(line[outside[-1].end():d.start()], start=outside[-1].end()) if depths[pos] == 0)
+            if _LABEL_COLUMN_STOP_RE.search(between):
+                break
+        outside.append(d)
+    return outside, inside
+
+
+@functools.lru_cache(maxsize=64)
+def _mineral_own_words(key: str) -> frozenset[str]:
+    """One-word names of a mineral in any language ("kalium", "jod", "zink"):
+    never a salt word when they name the mineral itself."""
+    return frozenset(
+        alias for alias, (alias_key, _display) in _NUTRIENT_ALIAS_INDEX.items() if alias_key == key and " " not in alias
+    ) | frozenset(key.split())
+
+
+def _label_item_names_compound(line: str, item: dict[str, Any], end: int) -> bool:
+    """True when a mineral item is named with its salt ("Magnesiumcitrat",
+    "Zinc gluconate", "Ferrous fumarate", "Kaliumiodid"): every word of the
+    name besides the mineral, and every unbracketed word up to `end`, is a salt
+    word — the dose is then the weight of the COMPOUND. "Magnesium (als
+    Magnesiumcitrat) 300 mg" names the mineral itself."""
+    alias = item["alias"]
+    key, display = _NUTRIENT_ALIAS_INDEX[alias]
+    if key not in _LABEL_MINERAL_KEYS:
+        return False
+    own = _mineral_own_words(key) | set(display.split())
+    alias_words = [w for w in alias.split() if w not in own]
+    glued = [
+        w for w in re.sub(r"[(\[][^()\[\]]*[)\]]", " ", line[item["name"].end():max(item["name"].end(), end)]).split()
+        if not re.fullmatch(r"[\d.,%*:;+]+", w) and w not in _LABEL_FILLER_WORDS and w not in _LABEL_PACKAGING_WORDS
+    ]
+    salt_words = alias_words + glued
+    return bool(salt_words) and all(w in _LABEL_SALT_WORDS for w in salt_words)
+
+
+def _label_elemental_bracket_dose(
+    line: str, inside: list[re.Match[str]], outside: list[re.Match[str]], item: dict[str, Any]
+) -> re.Match[str] | None:
+    """The bracketed mineral dose of a row that states a COMPOUND weight
+    ("Zinkgluconat 70 mg (davon Zink 10 mg)", "Magnesiumcitrat 1500 mg (davon
+    240 mg elementar)", "Ferrous fumarate 200 mg (providing 65 mg iron)",
+    "Kaliumiodid 196 µg (davon Jod 150 µg)"): the mineral itself.
+
+    Never for a row naming the mineral itself: in "Magnesium 400 mg (davon 200
+    mg aus Magnesiumcitrat ...)", "Zinc 15 mg (of which 5 mg as zinc
+    picolinate)" or "Magnesium 400 mg (entspricht 1000 mg Magnesiumcitrat)" the
+    bracket holds a share or the compound weight, and the row keeps its dose.
+    The bracket must name only this mineral (or none) and the bracketed dose
+    must not be described as a salt ("entspricht 1000 mg Magnesiumcitrat")."""
+    key = item["key"]
+    if key not in _LABEL_MINERAL_KEYS or not inside:
+        return None
+    first = inside[0]
+    end = outside[0].start() if outside else max(line.rfind("(", 0, first.start()), line.rfind("[", 0, first.start()))
+    if not _label_item_names_compound(line, item, end):
+        return None
+    own = _mineral_own_words(key)
+    for n, d in enumerate(inside):
+        open_pos = max(line.rfind("(", 0, d.start()), line.rfind("[", 0, d.start()))
+        if open_pos < 0:
+            continue
+        lead = line[open_pos:d.start()]
+        elemental = _LABEL_ELEMENTAL_RE.search(lead)
+        if not elemental:
+            continue
+        stops = [x for x in (line.find(")", d.end()), line.find("]", d.end())) if x >= 0]
+        if n + 1 < len(inside):
+            stops.append(inside[n + 1].start())
+        tail = line[d.end():min(stops, default=len(line))]
+        # The source after "aus" / "from" ("davon 150 µg Jod aus Kaliumiodid")
+        # does not describe the dose; "als" / "as" + a salt does.
+        tail = re.split(r"\b(?:aus|from)\b", tail, maxsplit=1)[0]
+        subject = lead[elemental.end():] + " " + tail
+        if any(w in _LABEL_SALT_WORDS and w not in own for w in re.findall(r"[a-z]+", subject)):
+            continue
+        named = _lexicon_keys_in(lead + " " + tail)
+        if not named or named == {key}:
+            return d
+    return None
+
+
+def _label_row(
     line: str,
     depths: list[int],
-    name: re.Match[str],
-    end: int,
-    daily_column: int | None,
+    item: dict[str, Any],
+    chosen: re.Match[str] | None,
+    form_end: int,
+    lead_text: str = "",
 ) -> dict[str, Any] | None:
-    """One nutrient row from line[name.start():end], or None if no dose follows."""
-    start = name.end()
-    doses = [(d, depths[d.start()] > 0) for d in _LABEL_DOSE_RE.finditer(line, start, end)]
-    outside = [d for d, inside in doses if not inside]
-    if outside:
-        chosen = outside[0]
-        # Multi-column row ("Vitamin C 40 mg 80 mg 100%"): the daily-dose column.
-        first_unit = _label_dose_unit(chosen.group("unit"))
-        columns = [d for d in outside if _label_dose_unit(d.group("unit")) == first_unit]
-        if daily_column and len(columns) > 1:
-            chosen = columns[min(daily_column, len(columns) - 1)]
-    elif doses:
-        chosen = doses[0][0]  # "Vitamin D3 (25 µg)"
-    else:
-        return None
-    gap = "".join(ch for pos, ch in enumerate(line[start:chosen.start()], start=start) if depths[pos] == 0)
-    if len(gap.strip()) > _LABEL_MAX_NAME_TO_DOSE_GAP:
-        return None
-    value = _parse_float(chosen.group("num"))
-    if value is None or value <= 0:
-        return None
-
-    alias = re.sub(r"\s+", " ", name.group(0))
+    """The row of one item with dose `chosen` (None: a name without a dose,
+    e.g. the second nutrient of "Vitamin D3 + K2 2000 I.E."); forms are read from
+    line[item names end:form_end]. None for an excipient ("Magnesium stearate")."""
+    start = item["names_end"]
+    alias = item["alias"]
     key, display = _NUTRIENT_ALIAS_INDEX[alias]
-    forms = _label_segment_forms(line[start:end], chosen, start)
+    if chosen is not None:
+        forms = _label_segment_forms(line[start:form_end], chosen, start)
+    else:
+        rest = re.sub(r"[(\[][^()\[\]]*[)\]]", " ", line[start:form_end])
+        words = [w for w in re.sub(r"[\d.,%*:;+]", " ", rest).split()
+                 if w not in _LABEL_FILLER_WORDS and w not in _LABEL_PACKAGING_WORDS and len(w) > 1]
+        forms = [" ".join(words)] if words else []
+    # Later names of the item that say more than the first one: "Vitamin A
+    # Beta-Carotin", "Vitamin D Cholecalciferol" (-> D3). Repeats and
+    # translations ("Vitamin C / Vitamine C", "Zink / Zinc") add nothing.
+    first = _NUTRIENT_ALIAS_INDEX[alias]
+    inner = [
+        later.group(0) for later in _NUTRIENT_ALIAS_RE.finditer(line, item["name"].end(), item["names_end"])
+        if _NUTRIENT_ALIAS_INDEX[re.sub(r"\s+", " ", later.group(0))] != first
+        and _NUTRIENT_ALIAS_INDEX[re.sub(r"\s+", " ", later.group(0))][1] != display
+    ]
+    if inner:
+        forms.insert(0, " ".join(inner))
+    if _LABEL_EXCIPIENT_FORM_RE.search(" ".join(forms)):
+        return None
+    adjective = _LABEL_FORM_ADJECTIVE_RE.search(lead_text)
+    if adjective and key == "vitamin e":
+        forms.insert(0, adjective.group(1))  # "natürliches Vitamin E 400 I.E."
     if key in _FORM_NAMED_NUTRIENT_KEYS and alias not in (key, display) and not any(alias in f for f in forms):
         forms.insert(0, alias)  # "Nicotinic acid 20 mg", "Retinyl palmitate 900 µg"
     if display == "folic acid" and not any("folic" in f for f in forms):
         forms.append("folic acid")  # "Folsäure 200 µg": the dose IS folic acid, not DFE
     form_text = "; ".join(forms)
     key, display = _refine_lexicon_hit(key, display, form_text)
-    return {
+    row: dict[str, Any] = {
         "component": display,
-        "dose_value": float(value),
-        "dose_unit": _label_dose_unit(chosen.group("unit")),
+        "dose_value": None,
+        "dose_unit": "",
         "form": form_text,
         "nutrient_key": key,
     }
+    if chosen is not None:
+        value = _parse_float(chosen.group("num"))
+        if value is None or value <= 0:
+            return None
+        row["dose_value"] = float(value)
+        row["dose_unit"] = _label_dose_unit(chosen.group("unit"))
+        # "Vitamin C 100-200 mg" (folded "100 to 200 mg"): the lower bound is the
+        # dose the portions are sized to; the upper bound is kept for the limits.
+        window = line[max(0, chosen.start() - 48):chosen.start()]
+        low = re.search(r"(?<![a-z\d.,])(\d+(?:[.,]\d+)*)\s+(?:to|bis)\s+$", window)
+        if low and _dose_range_lower_is_code(window[: low.start()], low.group(1)):
+            low = None  # "Vitamin D3 bis 1000 I.E.", "Omega 3 bis 1000 mg"
+        low_value = _parse_float(low.group(1)) if low else None
+        if low_value is not None and 0 < low_value < value:
+            row["dose_value"] = float(low_value)
+            row["dose_max"] = float(value)
+    # A mineral named with its salt ("Magnesiumcitrat 1500 mg", "Zinc gluconate",
+    # "Ferrous fumarate", "mit 500 mg Magnesiumcitrat") states the compound weight.
+    if key in _LABEL_MINERAL_KEYS and not item.get("elemental"):
+        salt_end = chosen.start() if chosen is not None and chosen.start() >= item["name"].end() else form_end
+        if _label_item_names_compound(line, item, min(salt_end, form_end)):
+            row["compound_weight"] = True
+    return row
 
 
-def label_row_preference(row: dict[str, Any]) -> tuple[int, int]:
+@functools.lru_cache(maxsize=256)
+def _line_has_percent(line: str) -> bool:
+    # Cached: every row of a long line shares its label_line (no re-scan per row).
+    return re.search(r"\d\s*%", line) is not None
+
+
+def label_row_preference(row: dict[str, Any]) -> tuple[int, int, int]:
     """How authoritative a label row is, for choosing between rows of the same
     nutrient: a nutrient-table line (with %NRV / %DV) beats a product title or
-    marketing line, and a row naming a chemical form beats one without."""
+    marketing line, a compound weight ("Magnesiumcitrat 1500 mg") loses to the
+    mineral's own dose, and a row naming a chemical form beats one without."""
     line = str(row.get("label_line", "") or "")
-    return (1 if re.search(r"\d\s*%", line) else 0, 1 if str(row.get("form", "") or "").strip() else 0)
+    return (
+        1 if _line_has_percent(line) else 0,
+        0 if row.get("compound_weight") else 1,
+        1 if str(row.get("form", "") or "").strip() else 0,
+    )
 
 
 def _label_row_dose_mg(row: dict[str, Any], form: str) -> float | None:
@@ -10999,9 +11416,21 @@ def _drop_repeated_label_doses(rows: list[dict[str, Any]]) -> list[dict[str, Any
     """A product title ("Vitamin D3 1000 I.E. Tabletten"), a marketing line or a
     second-language line ("Vitamine C (acide L-ascorbique) 80 mg") repeats a
     table line's dose. Keep ONE row per nutrient and dose — the most
-    authoritative (label_row_preference) — at the first row's position."""
+    authoritative (label_row_preference) — at the first row's position.
+
+    Before that, a compound weight ("Magnesiumcitrat 1500 mg") is dropped when
+    the label also states the mineral itself ("davon Magnesium 240 mg"), and a
+    name without a dose (the "K2" of a "Vitamin D3 + K2 2000 I.E." title) when
+    another row gives that nutrient's dose."""
+    dosed = {r["nutrient_key"] for r in rows if r.get("dose_value") is not None}
+    plain = {r["nutrient_key"] for r in rows if r.get("dose_value") is not None and not r.get("compound_weight")}
     out: list[dict[str, Any]] = []
     for row in rows:
+        key = row["nutrient_key"]
+        if row.get("dose_value") is None and key in dosed:
+            continue
+        if row.get("compound_weight") and key in plain:
+            continue
         for i, kept in enumerate(out):
             if _same_label_dose(kept, row):
                 if label_row_preference(row) > label_row_preference(kept):
@@ -11012,48 +11441,197 @@ def _drop_repeated_label_doses(rows: list[dict[str, Any]]) -> list[dict[str, Any
     return out
 
 
+def _label_group_doses(
+    items: list[dict[str, Any]], doses: list[re.Match[str]], line: str, title_joiner: bool = True
+) -> list[re.Match[str] | None] | None:
+    """The dose of each name of a joined title group ("Vitamin D3 + K2 MK-7 1000
+    IE + 20 µg", "Calcium + Vitamin D3 600 mg / 400 IE"): in order when there is
+    one plausible dose per name, the same dose for all after "je" / "each", else
+    only doses whose unit fits exactly one of the names ("Vitamin D3 + K2 2000
+    I.E." -> D3); the rest get none. A list joined only by commas ("Calcium,
+    Vitamin D3, Magnesium 400 mg") is not a title: None (each name is read on
+    its own, the dose going to the name it follows)."""
+    keys = [item["key"] for item in items]
+    assigned: list[re.Match[str] | None] = [None] * len(items)
+    if not doses:
+        return assigned
+    units = [_label_dose_unit(d.group("unit")) for d in doses]
+    # (a short window before the dose: no re-scan of a long line's prefix)
+    if len(doses) == 1 and _LABEL_EACH_RE.search(line, max(0, doses[0].start() - 24), doses[0].start()):
+        return [doses[0] if _label_unit_plausible(k, units[0]) else None for k in keys]
+    if len(doses) >= len(items) and all(_label_unit_plausible(k, u) for k, u in zip(keys, units)):
+        return list(doses[: len(items)])
+    if not title_joiner:
+        return None
+    for dose, unit in zip(doses, units):
+        fits = [i for i, k in enumerate(keys) if assigned[i] is None and _label_unit_plausible(k, unit)]
+        if len(fits) == 1:
+            assigned[fits[0]] = dose
+    return assigned
+
+
 def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
     """(rows read from nutrient-table lines, folded text those rows did NOT consume)."""
     rows: list[dict[str, Any]] = []
     unclaimed: list[str] = []
     daily_column = _label_daily_dose_column(text)
     for raw_line in str(text or "").splitlines():
-        line = _fold_label_text(raw_line)
+        line = _fold_label_text(_label_clean_raw_line(raw_line))
         if not line:
             continue
+        label_line = raw_line.strip()  # one string shared by the line's rows
         depths = _bracket_depths(line)
         names = [
             m for m in _NUTRIENT_ALIAS_RE.finditer(line)
-            if depths[m.start()] == 0 and not _LABEL_FORM_LEAD_RE.search(line[: m.start()])
+            # (search with pos/endpos: no quadratic re-scan of the line prefix)
+            if depths[m.start()] == 0 and not _LABEL_FORM_LEAD_RE.search(line, max(0, m.start() - 16), m.start())
         ]
         if not names:
             unclaimed.append(line)
             continue
-        leftover = [line[: names[0].start()]]
-        i = 0
-        while i < len(names):
-            name = names[i]
-            key = _NUTRIENT_ALIAS_INDEX[re.sub(r"\s+", " ", name.group(0))][0]
-            j = i + 1
-            # "Vitamin D3 Cholecalciferol 25 µg": a second name of the SAME
-            # nutrient before any dose is part of this row, not a new one.
-            while (
-                j < len(names)
-                and _NUTRIENT_ALIAS_INDEX[re.sub(r"\s+", " ", names[j].group(0))][0] == key
-                and not _LABEL_DOSE_RE.search(line, name.end(), names[j].start())
+        items = _label_items(line, names)
+        for item in items:
+            # "davon Magnesium 240 mg" is the mineral itself; "entspricht
+            # Magnesiumcitrat 2000 mg" names the compound, not the mineral.
+            lead = _LABEL_ELEMENTAL_LEAD_RE.search(line[max(0, item["start"] - 40):item["start"]])
+            first = _LABEL_DOSE_RE.search(line, item["names_end"], item["end"]) if lead else None
+            item["elemental"] = bool(lead) and not _label_item_names_compound(line, item, first.start() if first else item["end"])
+        claimed = [False] * len(line)
+        line_rows: list[dict[str, Any]] = []
+        used_doses: set[int] = set()
+        prev_end = 0  # end of the text the previous item's row consumed
+
+        def _claim(a: int, b: int) -> None:
+            for pos in range(max(0, a), min(len(line), b)):
+                claimed[pos] = True
+
+        def _lead(item: dict[str, Any]) -> str:
+            return line[prev_end:item["start"]]
+
+        def _dose_before(i: int) -> re.Match[str] | None:
+            """The dose written right before name i ("mit 500 µg Vitamin B12").
+            Only the text since the previous name can hold it (a dose further
+            back belongs to, or is cut off by, that name)."""
+            item = items[i]
+            window_start = max(prev_end, items[i - 1]["names_end"] if i > 0 else 0)
+            before = [
+                d for d in _LABEL_DOSE_RE.finditer(line, window_start, item["start"])
+                if depths[d.start()] == 0 and d.start() not in used_doses
+            ]
+            if not before:
+                return None
+            last = before[-1]
+            if (
+                _LABEL_DOSE_BEFORE_NAME_GAP_RE.match(line[last.end():item["start"]])
+                and not re.search(r"\b(?:pro|je|per)\s*$", line[:last.start()])
+                and _label_unit_plausible(item["key"], _label_dose_unit(last.group("unit")))
             ):
-                j += 1
-            end = names[j].start() if j < len(names) else len(line)
-            row = _parse_label_segment(line, depths, name, end, daily_column)
-            if row is None:
-                leftover.append(line[name.start():end])
+                return last
+            return None
+
+        i = 0
+        singles_until = -1  # items of a joined group without doses: read one by one
+        while i < len(items):
+            item = items[i]
+            # A joined title group: "Vitamin D3 + K2 ...", "Calcium + Vitamin D3 ...".
+            k = i
+            while (
+                i > singles_until
+                and k + 1 < len(items)
+                and depths[items[k + 1]["start"]] == 0
+                and _LABEL_JOINER_GAP_RE.match(line[items[k]["names_end"]:items[k + 1]["start"]])
+            ):
+                k += 1
+            if k > i:
+                group = items[i:k + 1]
+                outside, _inside = _label_candidate_doses(line, depths, group[-1]["names_end"], group[-1]["end"])
+                title_joiner = any(
+                    line[a["names_end"]:b["start"]].strip() not in ("", ",") for a, b in zip(group, group[1:])
+                )
+                group_doses = _label_group_doses(group, outside, line, title_joiner) if outside else None
+                if group_doses is not None:
+                    for member, dose in zip(group, group_doses):
+                        if _NUTRIENT_LEXICON.get(member["key"], {}).get("umbrella"):
+                            continue
+                        form_end = member["end"] if member is not group[-1] else group[-1]["end"]
+                        row = _label_row(line, depths, member, dose, form_end, _lead(member) if member is group[0] else "")
+                        if row is not None:
+                            row["label_line"] = label_line
+                            line_rows.append(row)
+                    _claim(group[0]["start"], group[-1]["end"])
+                    prev_end = group[-1]["end"]
+                    i = k + 1
+                    continue
+                singles_until = k
+            # One name: its dose follows it (the daily-dose column of a
+            # multi-column row), else a bracketed one ("Vitamin D3 (25 µg)"),
+            # else one written right before it ("mit 500 µg Vitamin B12").
+            if _NUTRIENT_LEXICON.get(item["key"], {}).get("umbrella"):
+                i += 1  # "Vitamin-B-Komplex": never a row of its own (see _reconcile_label_line_rows)
+                continue
+            outside, inside = _label_candidate_doses(line, depths, item["names_end"], item["end"])
+            chosen = _label_elemental_bracket_dose(line, inside, outside, item)
+            if chosen is not None:
+                item["elemental"] = True
+            elif outside:
+                first_unit = _label_dose_unit(outside[0].group("unit"))
+                columns = [d for d in outside if _label_dose_unit(d.group("unit")) == first_unit]
+                chosen = columns[min(daily_column, len(columns) - 1)] if daily_column and len(columns) > 1 else outside[0]
+                if not _label_unit_plausible(item["key"], _label_dose_unit(chosen.group("unit"))):
+                    # "Vitamin D3 600 mg / 400 IE": the vitamin D dose is the IU one.
+                    chosen = next((d for d in outside if _label_unit_plausible(item["key"], _label_dose_unit(d.group("unit")))), chosen)
+            elif inside:
+                chosen = inside[0]
             else:
+                chosen = _dose_before(i)
+            # Prose that writes every dose before its name ("mit 2000 I.E.
+            # Vitamin D3 und 100 µg Vitamin K2", "500 µg Vitamin B12, 400 µg
+            # Folsäure"): a dose right before the NEXT name is that name's.
+            hand_over = (
+                chosen is not None
+                and chosen.start() >= item["names_end"]
+                and i + 1 < len(items)
+                and bool(outside) and chosen is outside[0]
+                and _LABEL_DOSE_BEFORE_NAME_GAP_RE.match(line[chosen.end():items[i + 1]["start"]]) is not None
+            )
+            if hand_over:
+                own_before = _dose_before(i)
+                if own_before is not None:
+                    chosen = own_before
+                else:
+                    hand_over = False
+            if chosen is not None and chosen.start() >= item["names_end"]:
+                gap = "".join(ch for pos, ch in enumerate(line[item["names_end"]:chosen.start()], start=item["names_end"]) if depths[pos] == 0)
+                if len(gap.strip()) > _LABEL_MAX_NAME_TO_DOSE_GAP:
+                    chosen = None
+            if chosen is None:
+                i += 1
+                continue
+            # After a hand-over the rest of the segment is the next name's;
+            # likewise a dose after "entsprechend" / "davon" right before the
+            # next name ("Magnesiumcitrat 2000 mg entsprechend 320 mg Magnesium").
+            item_end = item["names_end"] if hand_over else item["end"]
+            if not hand_over and chosen.start() >= item["names_end"] and i + 1 < len(items):
+                next_start = items[i + 1]["start"]
+                trailing = [d for d in _LABEL_DOSE_RE.finditer(line, chosen.end(), next_start) if depths[d.start()] == 0]
+                if (
+                    trailing
+                    and _LABEL_DOSE_BEFORE_NAME_GAP_RE.match(line[trailing[-1].end():next_start])
+                    and _LABEL_ELEMENTAL_RE.search(line, chosen.end(), trailing[-1].start())
+                ):
+                    item_end = trailing[-1].start()
+            row = _label_row(line, depths, item, chosen, item_end, _lead(item))
+            used_doses.add(chosen.start())
+            _claim(min(item["start"], chosen.start()), item_end)
+            prev_end = item_end
+            if row is not None:
                 # Verbatim OCR repeats, titles and translations are collapsed
                 # by _drop_repeated_label_doses (keeping the table line).
-                row["label_line"] = raw_line.strip()
-                rows.append(row)
-            i = j
-        unclaimed.append(" ".join(part for part in leftover if part.strip()))
+                row["label_line"] = label_line
+                line_rows.append(row)
+            i += 1
+        rows.extend(line_rows)
+        unclaimed.append(re.sub(r"\s+", " ", "".join(" " if claimed[p] else ch for p, ch in enumerate(line))).strip())
     return _drop_repeated_label_doses(rows), "\n".join(unclaimed)
 
 
@@ -11130,7 +11708,10 @@ def _generic_row_named_in(component: str, folded_text: str, text_keys: set[str])
     pattern = _legacy_row_name_pattern(component)
     if pattern is not None and pattern.search(folded_text):
         return True
-    return bool(key) and _name_fuzzily_in(_legacy_row_name_words(component), folded_text)
+    # Up to OCR typos ("Magnesiurn") — and for names outside the lexicon up to
+    # the generic pipeline's own spelling repair ("L-Carnitin" -> "l-carnitine",
+    # "Coenzym Q10" -> "coenzyme q10").
+    return _name_fuzzily_in(_legacy_row_name_words(component), folded_text, 0.8 if key else 0.85)
 
 
 def _dose_number_in(value: Any, folded_text: str) -> bool:
@@ -11192,21 +11773,60 @@ def _reconcile_label_line_rows(rows: list[dict[str, Any]], input_text: str) -> l
     """
     folded_text = _fold_label_text(input_text)
     rows = _rename_salt_cation_rows(rows, folded_text)
+    umbrellas = _named_umbrella_members(folded_text)
+    member_keys = {key for _name, key in umbrellas}
+    rows = [r for r in rows if not _is_umbrella_key(canonical_nutrient_key(str(r.get("component", "") or "")))]
     line_rows, unclaimed = _scan_label_nutrient_lines(input_text)
     if not line_rows:
-        return [r for r in rows if _vitamin_code_named_in(str(r.get("component", "") or ""), folded_text) is not False]
-    covered = {r["nutrient_key"] for r in line_rows}
-    unclaimed_keys = _lexicon_keys_in(unclaimed)
-    kept = [
-        row for row in rows
-        if canonical_nutrient_key(str(row.get("component", "") or "")) not in covered
-        and _generic_row_named_in(str(row.get("component", "") or ""), unclaimed, unclaimed_keys)
-        # Its dose must be written in the unread text too: a dose taken from a
-        # line the label-line parser read belongs to that line's nutrient
-        # (a "Vitamin B12 2,5 [unreadable unit]" row must not get Biotin's 50).
-        and _dose_number_in(row.get("dose_value"), unclaimed)
-    ]
-    return [dict(r) for r in line_rows] + kept
+        kept = [r for r in rows if _vitamin_code_named_in(str(r.get("component", "") or ""), folded_text) is not False]
+    else:
+        covered = {r["nutrient_key"] for r in line_rows}
+        unclaimed_keys = _lexicon_keys_in(unclaimed)
+        kept = [
+            row for row in rows
+            if canonical_nutrient_key(str(row.get("component", "") or "")) not in covered
+            and _generic_row_named_in(str(row.get("component", "") or ""), unclaimed, unclaimed_keys)
+            # Its dose must be written in the unread text too: a dose taken from a
+            # line the label-line parser read belongs to that line's nutrient
+            # (a "Vitamin B12 2,5 [unreadable unit]" row must not get Biotin's 50).
+            and _dose_number_in(row.get("dose_value"), unclaimed)
+        ]
+    out = [dict(r) for r in line_rows] + [_with_lexicon_card_name(r) for r in kept]
+    # A label naming "Vitamin-B-Komplex" without the dose of any B vitamin: one
+    # dose-less card per B vitamin (replacing the generic pipeline's own partial
+    # dose-less expansion), as the umbrella has no foods or dose itself.
+    def _key(r: dict[str, Any]) -> str:
+        return str(r.get("nutrient_key", "") or "") or canonical_nutrient_key(str(r.get("component", "") or ""))
+
+    if umbrellas and not any(r.get("dose_value") is not None and _key(r) in member_keys for r in out):
+        out = [r for r in out if _key(r) not in member_keys]
+        out += [{"component": name, "dose_value": None, "dose_unit": "", "nutrient_key": key} for name, key in umbrellas]
+    return out
+
+
+def _is_umbrella_key(key: str) -> bool:
+    return bool(key) and bool(_NUTRIENT_LEXICON.get(key, {}).get("umbrella"))
+
+
+def _named_umbrella_members(folded_text: str) -> list[tuple[str, str]]:
+    """(card name, key) of every member of the umbrella names ("Vitamin B
+    Komplex") in folded_text, in order, once each."""
+    out: list[tuple[str, str]] = []
+    for key in _lexicon_keys_in(folded_text):
+        for name, member in _NUTRIENT_LEXICON[key].get("umbrella", ()):
+            if all(member != k for _n, k in out):
+                out.append((name, member))
+    return out
+
+
+def _with_lexicon_card_name(row: dict[str, Any]) -> dict[str, Any]:
+    """A generic row named with extra words ("name zink amount" read from a
+    JSON table) gets the lexicon's card name ("zinc")."""
+    component = str(row.get("component", "") or "")
+    key, display = _lexicon_match(component)
+    if not key or _fold_label_text(component) in _NUTRIENT_ALIAS_INDEX:
+        return row
+    return {**row, "component": display}
 
 
 def build_structured_nutrients_json(input_text: str) -> dict[str, Any]:
