@@ -171,3 +171,42 @@ def test_cation_names_in_a_title_group_are_not_salt_words():
 def test_salt_named_after_a_dose_is_a_compound_weight():
     [row] = bb.parse_label_nutrient_lines("mit 500 mg Magnesiumcitrat")
     assert (row["component"], row["dose_value"], row.get("compound_weight")) == ("magnesium", 500.0, True)
+
+
+# --- R1-PROSE-DOSE-BEFORE: prose that writes each dose before its name ----------
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (
+            "Hochdosiert mit 2000 I.E. Vitamin D3 und 100 µg Vitamin K2",
+            [("vitamin d3", 2000.0, "iu", None), ("vitamin k2", 100.0, "mcg", None)],
+        ),
+        ("500 µg Vitamin B12, 400 µg Folsäure", [("vitamin b12", 500.0, "mcg", None), ("folic acid", 400.0, "mcg", None)]),
+        (
+            "Pro Tagesdosis (1 Kapsel): 25 µg Vitamin D3 (1000 I.E.), 100 µg Vitamin K2 (MK-7)",
+            [("vitamin d3", 25.0, "mcg", None), ("vitamin k2", 100.0, "mcg", None)],
+        ),
+        ("Tagesdosis 2 Kapseln: 400 mg Magnesium 10 mg Zink", [("magnesium", 400.0, "mg", None), ("zinc", 10.0, "mg", None)]),
+        (
+            "Enthält 25 µg Vitamin D3 sowie 100 µg Vitamin K2 pro Tablette",
+            [("vitamin d3", 25.0, "mcg", None), ("vitamin k2", 100.0, "mcg", None)],
+        ),
+    ],
+)
+def test_dose_right_before_the_next_name_is_that_names_dose(text, expected):
+    assert _rows(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # Name-then-dose lines keep each dose with the name before it.
+        ("Vitamin D3 20 µg Vitamin K2 50 µg", [("vitamin d3", 20.0, "mcg", None), ("vitamin k2", 50.0, "mcg", None)]),
+        ("Vitamin B12 500 µg Folsäure 400 µg", [("vitamin b12", 500.0, "mcg", None), ("folic acid", 400.0, "mcg", None)]),
+        ("mit 500 µg Vitamin B12", [("vitamin b12", 500.0, "mcg", None)]),
+        ("1000 I.E. Vitamin D3 20 µg", [("vitamin d3", 20.0, "mcg", None)]),
+    ],
+)
+def test_name_then_dose_lines_are_unchanged(text, expected):
+    assert _rows(text) == expected

@@ -10385,6 +10385,27 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
         def _lead(item: dict[str, Any]) -> str:
             return line[prev_end:item["start"]]
 
+        def _dose_before(i: int) -> re.Match[str] | None:
+            """The dose written right before name i ("mit 500 µg Vitamin B12").
+            Only the text since the previous name can hold it (a dose further
+            back belongs to, or is cut off by, that name)."""
+            item = items[i]
+            window_start = max(prev_end, items[i - 1]["names_end"] if i > 0 else 0)
+            before = [
+                d for d in _LABEL_DOSE_RE.finditer(line, window_start, item["start"])
+                if depths[d.start()] == 0 and d.start() not in used_doses
+            ]
+            if not before:
+                return None
+            last = before[-1]
+            if (
+                _LABEL_DOSE_BEFORE_NAME_GAP_RE.match(line[last.end():item["start"]])
+                and not re.search(r"\b(?:pro|je|per)\s*$", line[:last.start()])
+                and _label_unit_plausible(item["key"], _label_dose_unit(last.group("unit")))
+            ):
+                return last
+            return None
+
         i = 0
         singles_until = -1  # items of a joined group without doses: read one by one
         while i < len(items):
@@ -10439,21 +10460,23 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
             elif inside:
                 chosen = inside[0]
             else:
-                # Only the text since the previous name can hold it (a dose
-                # further back belongs to, or is cut off by, that name).
-                window_start = max(prev_end, items[i - 1]["names_end"] if i > 0 else 0)
-                before = [
-                    d for d in _LABEL_DOSE_RE.finditer(line, window_start, item["start"])
-                    if depths[d.start()] == 0 and d.start() not in used_doses
-                ]
-                if before:
-                    last = before[-1]
-                    if (
-                        _LABEL_DOSE_BEFORE_NAME_GAP_RE.match(line[last.end():item["start"]])
-                        and not re.search(r"\b(?:pro|je|per)\s*$", line[:last.start()])
-                        and _label_unit_plausible(item["key"], _label_dose_unit(last.group("unit")))
-                    ):
-                        chosen = last
+                chosen = _dose_before(i)
+            # Prose that writes every dose before its name ("mit 2000 I.E.
+            # Vitamin D3 und 100 µg Vitamin K2", "500 µg Vitamin B12, 400 µg
+            # Folsäure"): a dose right before the NEXT name is that name's.
+            hand_over = (
+                chosen is not None
+                and chosen.start() >= item["names_end"]
+                and i + 1 < len(items)
+                and bool(outside) and chosen is outside[0]
+                and _LABEL_DOSE_BEFORE_NAME_GAP_RE.match(line[chosen.end():items[i + 1]["start"]]) is not None
+            )
+            if hand_over:
+                own_before = _dose_before(i)
+                if own_before is not None:
+                    chosen = own_before
+                else:
+                    hand_over = False
             if chosen is not None and chosen.start() >= item["names_end"]:
                 gap = "".join(ch for pos, ch in enumerate(line[item["names_end"]:chosen.start()], start=item["names_end"]) if depths[pos] == 0)
                 if len(gap.strip()) > _LABEL_MAX_NAME_TO_DOSE_GAP:
@@ -10461,10 +10484,12 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
             if chosen is None:
                 i += 1
                 continue
-            row = _label_row(line, depths, item, chosen, item["end"], _lead(item))
+            row = _label_row(line, depths, item, chosen, item["names_end"] if hand_over else item["end"], _lead(item))
             used_doses.add(chosen.start())
-            _claim(min(item["start"], chosen.start()), item["end"])
-            prev_end = item["end"]
+            # (after a hand-over, the rest of the segment is the next name's)
+            item_end = item["names_end"] if hand_over else item["end"]
+            _claim(min(item["start"], chosen.start()), item_end)
+            prev_end = item_end
             if row is not None:
                 # Verbatim OCR repeats, titles and translations are collapsed
                 # by _drop_repeated_label_doses (keeping the table line).
