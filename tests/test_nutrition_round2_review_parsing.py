@@ -131,6 +131,23 @@ def test_bracket_share_or_compound_weight_never_replaces_a_plain_mineral_dose(te
     assert _rows(text) == [expected]
 
 
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # "entspricht / equivalent to" + a salt is the compound weight ...
+        ("Magnesium 400 mg, entspricht Magnesiumcitrat 2000 mg", ("magnesium", 400.0, "mg", None)),
+        ("Magnesium 400 mg\nentspricht Magnesiumcitrat 2000 mg", ("magnesium", 400.0, "mg", None)),
+        ("Calcium 500 mg, equivalent to calcium carbonate 1250 mg", ("calcium", 500.0, "mg", None)),
+        # ... + the bare mineral is the mineral itself.
+        ("Magnesiumcitrat 2000 mg, entspricht Magnesium 320 mg", ("magnesium", 320.0, "mg", None)),
+        ("Magnesiumcitrat 2000 mg entsprechend 320 mg Magnesium", ("magnesium", 320.0, "mg", None)),
+        ("Calciumcarbonat 1250 mg, equivalent to calcium 500 mg", ("calcium", 500.0, "mg", None)),
+    ],
+)
+def test_unbracketed_equivalent_reads_compound_and_mineral_apart(text, expected):
+    assert _rows(text) == [expected]
+
+
 def test_compound_equivalent_in_brackets_gives_no_false_upper_limit_warning(sw):
     card = _card(sw, "Magnesium 400 mg (entspricht 1000 mg Magnesiumcitrat)")
     assert card["dose_label"] == "400 mg"

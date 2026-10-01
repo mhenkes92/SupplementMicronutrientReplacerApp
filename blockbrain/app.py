@@ -10006,9 +10006,11 @@ _LABEL_ELEMENTAL_LEAD_RE = re.compile(
     r"\b(?:davon|of which|providing|provides|entspricht|entsprechend|equivalent to|equals|elementar\w*|elemental)"
     r"(?:\s+[a-z]+){0,2}\s*$"
 )
-# A dose after "aus Magnesiumcitrat", "from", "davon" is a compound / share
-# weight, never another dose column.
-_LABEL_COLUMN_STOP_RE = re.compile(r"\b(?:aus|from|as|als|davon)\b")
+# A dose after "aus Magnesiumcitrat", "from", "davon", "entsprechend" is a
+# compound / share / elemental weight, never another dose column.
+_LABEL_COLUMN_STOP_RE = re.compile(
+    r"\b(?:aus|from|as|als|davon|entspricht|entsprechend|equivalent|equals|providing|provides)\b"
+)
 # "natürliches Vitamin E 400 I.E.", "Natural Vitamin E": the form comes first.
 _LABEL_FORM_ADJECTIVE_RE = re.compile(
     r"\b(natural|naturliche[nmrs]?|naturlich|natuerlich\w*|synthetic|synthetische[nmrs]?|synthetisch)\s*$"
@@ -10372,7 +10374,11 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
             continue
         items = _label_items(line, names)
         for item in items:
-            item["elemental"] = bool(_LABEL_ELEMENTAL_LEAD_RE.search(line[max(0, item["start"] - 40):item["start"]]))
+            # "davon Magnesium 240 mg" is the mineral itself; "entspricht
+            # Magnesiumcitrat 2000 mg" names the compound, not the mineral.
+            lead = _LABEL_ELEMENTAL_LEAD_RE.search(line[max(0, item["start"] - 40):item["start"]])
+            first = _LABEL_DOSE_RE.search(line, item["names_end"], item["end"]) if lead else None
+            item["elemental"] = bool(lead) and not _label_item_names_compound(line, item, first.start() if first else item["end"])
         claimed = [False] * len(line)
         line_rows: list[dict[str, Any]] = []
         used_doses: set[int] = set()
@@ -10484,10 +10490,21 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
             if chosen is None:
                 i += 1
                 continue
-            row = _label_row(line, depths, item, chosen, item["names_end"] if hand_over else item["end"], _lead(item))
-            used_doses.add(chosen.start())
-            # (after a hand-over, the rest of the segment is the next name's)
+            # After a hand-over the rest of the segment is the next name's;
+            # likewise a dose after "entsprechend" / "davon" right before the
+            # next name ("Magnesiumcitrat 2000 mg entsprechend 320 mg Magnesium").
             item_end = item["names_end"] if hand_over else item["end"]
+            if not hand_over and chosen.start() >= item["names_end"] and i + 1 < len(items):
+                next_start = items[i + 1]["start"]
+                trailing = [d for d in _LABEL_DOSE_RE.finditer(line, chosen.end(), next_start) if depths[d.start()] == 0]
+                if (
+                    trailing
+                    and _LABEL_DOSE_BEFORE_NAME_GAP_RE.match(line[trailing[-1].end():next_start])
+                    and _LABEL_ELEMENTAL_RE.search(line, chosen.end(), trailing[-1].start())
+                ):
+                    item_end = trailing[-1].start()
+            row = _label_row(line, depths, item, chosen, item_end, _lead(item))
+            used_doses.add(chosen.start())
             _claim(min(item["start"], chosen.start()), item_end)
             prev_end = item_end
             if row is not None:
