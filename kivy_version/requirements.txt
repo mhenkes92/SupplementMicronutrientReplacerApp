@@ -1,4 +1,0 @@
-kivy
-pillow
-pytesseract
-llama-cpp-python

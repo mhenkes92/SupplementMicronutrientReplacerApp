@@ -700,7 +700,7 @@ def _render_rag_chat_popup(card: dict[str, Any], component_key: str, index: int)
                         dose_label=str(card.get("dose_label", "") or ""),
                     )
                     if answer is None:
-                        st.error("AI research is not available in this environment.")
+                        st.error("Ask AI is unavailable right now — please try again in a moment.")
                     else:
                         updated_history = history + [
                             {"role": "user", "content": question.strip()},
