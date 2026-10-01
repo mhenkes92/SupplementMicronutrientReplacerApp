@@ -1001,7 +1001,8 @@ def estimate_whole_food_units(food_description: str, grams_needed: float | None)
         if any(bad in text for bad in WHOLE_FOOD_UNIT_EXCLUSIONS.get(keyword.split()[0], ())):
             continue
         units = float(grams_needed) / float(avg_weight_g)
-        if units <= 0:
+        if units < 0.1:
+            # "~3.7 g (~0 bananas)": a sliver of one unit is no useful hint.
             return ""
 
         if units >= 2:
@@ -5792,6 +5793,104 @@ _CURATED_SOURCE_LABELS: dict[str, str] = {
     "vitamin k2": "Literature (Schurgers & Vermeer 2000) - USDA has no K2 data",
 }
 
+# Foods that never count as a source of a nutrient although USDA lists an
+# amount: algae (nori, spirulina, chlorella, seaweed) hold mostly inactive B12
+# analogues that do not cover B12 needs (EFSA 2015; Watanabe 2014; DGE 2016).
+_NUTRIENT_FOOD_EXCLUSIONS: dict[str, re.Pattern[str]] = {
+    "vitamin b12": re.compile(
+        r"\b(?:seaweeds?|algae?|algal|nori|laver|spirulina|chlorella|kelp|wakame|kombu|dulse|agar|irishmoss|"
+        r"hijiki|arame|klamath)\b",
+        re.IGNORECASE,
+    ),
+}
+
+# B12-fortified plant foods, listed with the B12 foods (marked "fortified"):
+# on vegan / vegetarian diets whole foods cannot supply B12 (DGE), fortified
+# foods can. Amounts are typical EU fortification levels per 100 g / 100 ml
+# (plant drinks: 0.38 µg = 15% NRV; nutritional yeast flakes vary widely by
+# brand, ~10 µg is a conservative typical value) — always "check the pack".
+FORTIFIED_FOOD_OPTIONS: dict[str, list[dict[str, Any]]] = {
+    "vitamin b12": [
+        {"food_description": "Nutritional yeast flakes, fortified with vitamin B12 (amount varies by brand)",
+         "food_category": "Fortified foods", "amount_per_100g": 10.0, "unit": "mcg"},
+        {"food_description": "Soy drink, fortified with vitamin B12", "food_category": "Fortified foods",
+         "amount_per_100g": 0.38, "unit": "mcg"},
+        {"food_description": "Oat drink, fortified with vitamin B12", "food_category": "Fortified foods",
+         "amount_per_100g": 0.38, "unit": "mcg"},
+    ],
+}
+
+
+def fortified_food_options(component_key: str) -> list[dict[str, Any]]:
+    """Curated fortified foods for a nutrient (vegan / vegetarian B12), marked
+    "fortified": True; [] for other nutrients."""
+    key = canonical_nutrient_key(component_key)
+    return [
+        {**row, "rank": 0, "unit": _normalize_component_unit_token(str(row["unit"])), "fortified": True,
+         "source_db": "Typical EU fortification - check the pack"}
+        for row in FORTIFIED_FOOD_OPTIONS.get(key, [])
+    ]
+
+
+_ANIMAL_FOOD_CATEGORY_RE = re.compile(r"beef|pork|poultry|lamb|veal|game|finfish|shellfish|sausage|dairy|egg", re.IGNORECASE)
+_ORGAN_MEAT_NAME_RE = re.compile(
+    r"\b(?:liver|livers|kidney|kidneys|heart|hearts|giblets|spleen|brains?|sweetbreads?|thymus|pancreas|tripe|"
+    r"tongue|lungs?|gizzards?|offal|chitterlings|leber|nieren?|herz)\b",
+    re.IGNORECASE,
+)
+_ORGAN_WORD_PLANT_RE = re.compile(r"\b(?:beans?|palm|artichokes?|lettuce|celery|romaine|cabbage|chicory)\b", re.IGNORECASE)
+
+
+def food_is_organ_meat(food_description: str, food_category: str = "") -> bool:
+    """Liver, kidney, heart, giblets, ... (not kidney beans, hearts of palm)."""
+    name = str(food_description or "")
+    if not _ORGAN_MEAT_NAME_RE.search(name) or _ORGAN_WORD_PLANT_RE.search(name):
+        return False
+    category = str(food_category or "")
+    return not category or bool(_ANIMAL_FOOD_CATEGORY_RE.search(category)) or "alaska native" in category.lower()
+
+
+@functools.lru_cache(maxsize=1)
+def _vitamin_a_food_index() -> dict[str, dict[int, float]]:
+    """{food key: {1104 IU, 1105 retinol µg, 1106 RAE µg}} including zero rows."""
+    conn = try_open_usda_db()
+    if conn is None:
+        return {}
+    try:
+        rows = conn.execute(
+            "SELECT nutrient_id, food_description, amount_per_100g FROM nutrient_rankings "
+            "WHERE nutrient_id IN (1104, 1105, 1106) AND amount_per_100g IS NOT NULL"
+        ).fetchall()
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+    out: dict[str, dict[int, float]] = {}
+    for nid, desc, amount in rows:
+        try:
+            out.setdefault(normalize_lookup_key(str(desc or "")), {})[int(nid)] = float(amount)
+        except Exception:
+            continue
+    return out
+
+
+def food_preformed_vitamin_a(food_description: str, food_category: str = "") -> float | None:
+    """µg of PREFORMED vitamin A (retinol, the form the 3000 µg upper limit is
+    about) per 100 g of a food, or None when unknown. USDA retinol when listed;
+    otherwise, for animal foods (where vitamin A is retinol), RAE or IU x 0.3
+    (fish livers only have an IU row); plant foods hold carotenoids only (0)."""
+    values = _vitamin_a_food_index().get(normalize_lookup_key(food_description), {})
+    if 1105 in values:
+        return values[1105]
+    animal = food_is_organ_meat(food_description, food_category) or bool(_ANIMAL_FOOD_CATEGORY_RE.search(str(food_category or "")))
+    if not animal:
+        return 0.0 if values or food_category else None
+    if 1106 in values:
+        return values[1106]
+    if 1104 in values:
+        return values[1104] * 0.3
+    return None
+
 # Per-food corrections where the local DB sample is far off the USDA reference
 # value. Brazil-nut selenium varies >10x with soil; this DB's Foundation-Foods
 # sample (280 µg/100 g) understates USDA SR Legacy #12078 and NIH ODS (544 µg
@@ -5869,9 +5968,10 @@ def _lexicon_food_rows(key: str, limit: int) -> tuple[dict[str, Any], ...]:
     unit = _normalize_component_unit_token(str(spec["unit"]))
 
     per_food: dict[str, dict[str, Any]] = {}
+    excluded = _NUTRIENT_FOOD_EXCLUSIONS.get(key)
     for nid, desc, category, amount in _query_usda_food_amounts(list(factors)):
         fkey = normalize_lookup_key(desc)
-        if not fkey:
+        if not fkey or (excluded is not None and excluded.search(desc)):
             continue
         entry = per_food.setdefault(fkey, {"desc": desc, "category": category, "by_id": {}})
         # Keep the highest value if the DB repeats a food for the same nutrient.
@@ -5898,6 +5998,11 @@ def _lexicon_food_rows(key: str, limit: int) -> tuple[dict[str, Any], ...]:
             }
         )
     foods = filter_and_rank_common_foods(foods, limit)
+    fortified = fortified_food_options(key)
+    if foods and fortified:
+        # Always listed (they are the only vegan B12 option), ranked by amount.
+        foods = list(foods[: max(0, limit - len(fortified))]) + fortified
+        foods.sort(key=lambda f: float(f.get("amount_per_100g", 0) or 0), reverse=True)
     for idx, food in enumerate(foods, start=1):
         food["rank"] = idx
     if not foods:

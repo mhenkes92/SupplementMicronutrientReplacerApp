@@ -718,7 +718,11 @@ def _dose_label(component: dict[str, Any]) -> str:
         return "Dose not found"
     try:
         # 3 decimals so small label doses stay exact ("0.025 mg", not "0.03 mg").
-        return f"{bb.format_float(float(dose_value), 3)} {dose_unit}".strip()
+        low = bb.format_float(float(dose_value), 3)
+        if component.get("dose_max") is not None and float(component["dose_max"]) > float(dose_value):
+            # A label range ("Vitamin C 100-200 mg"): portions use the lower bound.
+            return f"{low}–{bb.format_float(float(component['dose_max']), 3)} {dose_unit}".strip()
+        return f"{low} {dose_unit}".strip()
     except Exception:
         return str(dose_value)
 
@@ -790,6 +794,7 @@ def _portion_for_target(
     target_unit: str,
     component: str,
     form: str = "",
+    note: bool = True,
 ) -> str:
     """How much of `food` supplies `target_value target_unit` of the nutrient.
 
@@ -798,7 +803,26 @@ def _portion_for_target(
     can't be computed. Units of the target and the food need not match — both
     are normalised by bb.grams_needed_to_match_dose; `form` (the label's "(as
     ...)" text) selects the IU / folic-acid conversions for a PILL dose.
+    With `note`, a UV-treated mushroom on a vitamin D card says that only
+    UV-treated ones count.
     """
+    core = _portion_core_for_target(food, target_value, target_unit, component, form)
+    if note and core and not core.startswith("not practical") and _is_uv_mushroom(food) \
+            and bb.canonical_nutrient_key(component) == "vitamin d":
+        core += f" {_UV_MUSHROOM_NOTE}"
+    return core
+
+
+_UV_MUSHROOM_NOTE = "(only UV-treated mushrooms — regular mushrooms contain almost no vitamin D)"
+
+
+def _portion_core_for_target(
+    food: dict[str, Any],
+    target_value: Any,
+    target_unit: str,
+    component: str,
+    form: str = "",
+) -> str:
     if not isinstance(food, dict):
         return ""
     try:
@@ -1076,35 +1100,244 @@ def _upper_limit_warning(component_key: str, dose_value: Any, dose_unit: str, fo
     )
 
 
-def _liver_vitamin_a_warning(food: dict[str, Any] | None, grams: float | None) -> str:
+# --- The food on the card: co-nutrient limits and the default choice ----------
+# A food that matches one nutrient can push ANOTHER past its safe upper limit:
+# liver's preformed vitamin A (fish livers only have USDA IU rows), Brazil-nut
+# selenium, oyster zinc, liver copper, cod iodine. The check covers both
+# portions the card shows — for the pill dose and for the athlete target.
+_CO_NUTRIENT_LIMIT_KEYS = ("selenium", "iodine", "copper", "zinc")
+
+
+def _food_name_and_category(food: dict[str, Any] | None) -> tuple[str, str]:
+    food = food if isinstance(food, dict) else {}
+    return str(food.get("food_description", "") or ""), str(food.get("food_category", "") or "")
+
+
+def _food_portion_grams(
+    food: dict[str, Any] | None, target_value: Any, target_unit: str, component: str, form: str = ""
+) -> float | None:
+    """Grams of `food` that supply `target_value target_unit`, or None."""
+    if not isinstance(food, dict) or target_value is None:
+        return None
+    try:
+        grams = bb.grams_needed_to_match_dose(
+            target_value, target_unit, float(food.get("amount_per_100g", 0.0) or 0.0),
+            str(food.get("unit", "") or ""), component, form,
+        )
+    except Exception:
+        return None
+    return grams if grams and grams > 0 else None
+
+
+def _card_portion_grams(food: dict[str, Any] | None, dose_value: Any, dose_unit: str, component: str, form: str = "") -> float | None:
+    """The largest daily amount of `food` the card suggests that someone could
+    actually eat: the portion for the pill dose or the one for the athlete daily
+    target (the card shows both), leaving out a portion the card already calls
+    "not practical from food alone" (> 1 kg/day). None if there is none."""
+    grams = [g for g in (_food_portion_grams(food, dose_value, dose_unit, component, form),) if g]
+    entry = _rda_for_component(component)
+    if entry is not None:
+        athlete = _food_portion_grams(food, entry["athlete"], str(entry["unit"]), str(entry["display"]))
+        if athlete:
+            grams.append(athlete)
+    edible = [g for g in grams if _portion_practicality(g) != "impractical"]
+    return max(edible) if edible else None
+
+
+def _is_liver(food: dict[str, Any] | None) -> bool:
+    name, category = _food_name_and_category(food)
+    return bb.food_is_organ_meat(name, category) and re.search(r"\bliver\b", name.lower()) is not None
+
+
+def _liver_vitamin_a_warning(food: dict[str, Any] | None, grams: float | None, component: str = "") -> str:
     """Liver tops the B2 / B12 / folate / copper lists, but its vitamin A is
-    preformed retinol: warn when the suggested portion alone passes the vitamin A
-    upper limit (e.g. ~92 g duck liver for 680 µg folate = ~11,000 µg RAE)."""
-    name = str((food or {}).get("food_description", "") or "")
-    if not name or grams is None or grams <= 0 or not re.search(r"\bliver\b", name.lower()):
+    preformed retinol: warn when the portion passes the vitamin A upper limit
+    (e.g. ~92 g duck liver for 680 µg folate = ~11,000 µg). Liver is to be
+    avoided in pregnancy — always said on folate cards, as folic acid is THE
+    pregnancy supplement."""
+    if not _is_liver(food):
         return ""
-    rae_per_100g = bb.food_nutrient_amount(name, "vitamin a")
+    name, category = _food_name_and_category(food)
     limit = float(_UPPER_LIMITS["vitamin a"]["limit"])
-    if not rae_per_100g or rae_per_100g * grams / 100.0 <= limit:
-        return ""
-    return (
-        f"⚠️ ~{_format_grams(grams)} of this liver also gives ~{bb.format_float(rae_per_100g * grams / 100.0, 0)} mcg "
-        f"vitamin A — above the {bb.format_float(limit)} mcg/day safe upper limit. Pick another food or keep "
-        "liver to about once a week."
-    )
+    preformed = bb.food_preformed_vitamin_a(name, category)
+    if preformed is None:
+        return (
+            "⚠️ Liver is very rich in preformed vitamin A (USDA has no exact value for this one) — keep it "
+            "to a small portion about once a week and avoid liver during pregnancy."
+        )
+    if grams is not None and grams > 0 and preformed * grams / 100.0 > limit:
+        return (
+            f"⚠️ ~{_format_grams(grams)} of this liver also gives ~{bb.format_float(preformed * grams / 100.0, 0)} mcg "
+            f"vitamin A — above the {bb.format_float(limit)} mcg/day safe upper limit. Pick another food or keep "
+            "liver to about once a week, and avoid liver during pregnancy."
+        )
+    if bb.canonical_nutrient_key(component) == "folate":
+        return (
+            "⚠️ Liver is very high in vitamin A: avoid it during pregnancy (when folic acid is usually taken) — "
+            "legumes and leafy greens are the safer folate foods."
+        )
+    return ""
+
+
+def _co_nutrient_excesses(food: dict[str, Any] | None, grams: float | None, component: str) -> list[tuple[str, float, dict[str, Any]]]:
+    """(nutrient key, amount in the UL unit, UL entry) for every OTHER nutrient
+    the portion would push past its safe upper limit (liver vitamin A is
+    covered by _liver_vitamin_a_warning)."""
+    name, category = _food_name_and_category(food)
+    if not name or grams is None or grams <= 0:
+        return []
+    card_key = bb.canonical_nutrient_key(component)
+    out: list[tuple[str, float, dict[str, Any]]] = []
+    for key in _CO_NUTRIENT_LIMIT_KEYS:
+        if key == card_key:
+            continue
+        per_100g = bb.food_nutrient_amount(name, key)
+        entry = _UPPER_LIMITS[key]
+        if per_100g and per_100g * grams / 100.0 > float(entry["limit"]):
+            out.append((key, per_100g * grams / 100.0, entry))
+    if card_key != "vitamin a" and not _is_liver(food):
+        preformed = bb.food_preformed_vitamin_a(name, category)
+        entry = _UPPER_LIMITS["vitamin a"]
+        if preformed and preformed * grams / 100.0 > float(entry["limit"]):
+            out.append(("vitamin a", preformed * grams / 100.0, entry))
+    return out
+
+
+def _all_portion_grams(food: dict[str, Any] | None, dose_value: Any, dose_unit: str, component: str, form: str = "") -> float | None:
+    """Like _card_portion_grams, but including a "not practical" portion."""
+    grams = [g for g in (_food_portion_grams(food, dose_value, dose_unit, component, form),) if g]
+    entry = _rda_for_component(component)
+    if entry is not None:
+        athlete = _food_portion_grams(food, entry["athlete"], str(entry["unit"]), str(entry["display"]))
+        if athlete:
+            grams.append(athlete)
+    return max(grams) if grams else None
+
+
+def _food_exceeds_a_limit(food: dict[str, Any] | None, grams: float | None, component: str, liver_grams: float | None = None) -> bool:
+    """True when the portion breaks a co-nutrient upper limit, or the liver
+    portion (`liver_grams`, default `grams`) its vitamin A limit (liver of
+    unknown vitamin A content counts as over)."""
+    if _is_liver(food):
+        name, category = _food_name_and_category(food)
+        preformed = bb.food_preformed_vitamin_a(name, category)
+        portion = liver_grams if liver_grams is not None else grams
+        if preformed is None or (portion and preformed * portion / 100.0 > float(_UPPER_LIMITS["vitamin a"]["limit"])):
+            return True
+    return bool(_co_nutrient_excesses(food, grams, component))
 
 
 def _selected_food_warning(food: dict[str, Any] | None, dose_value: Any, dose_unit: str, component: str, form: str = "") -> str:
-    """Safety note for the food picked to replace the pill (portion-dependent)."""
+    """Safety note for the food picked to replace the pill (portion-dependent:
+    the larger of the pill-dose and athlete-target portions)."""
     if not isinstance(food, dict):
         return ""
-    try:
-        grams = bb.grams_needed_to_match_dose(
-            dose_value, dose_unit, float(food.get("amount_per_100g", 0.0) or 0.0), str(food.get("unit", "") or ""), component, form
+    grams = _card_portion_grams(food, dose_value, dose_unit, component, form)
+    # Liver: any portion the card names, even a "not practical" one.
+    parts = [_liver_vitamin_a_warning(food, _all_portion_grams(food, dose_value, dose_unit, component, form), component)]
+    for key, amount, entry in _co_nutrient_excesses(food, grams, component):
+        what = "preformed vitamin A" if key == "vitamin a" else entry["name"]
+        parts.append(
+            f"⚠️ ~{_format_grams(grams or 0.0)} of this food also gives ~{bb.format_float(amount, 0 if amount >= 10 else 1)} "
+            f"{entry['unit']} {what} — above the {bb.format_float(float(entry['limit']))} {entry['unit']}/day safe upper "
+            "limit. Pick another food or a smaller portion."
         )
-    except Exception:
-        grams = None
-    return _liver_vitamin_a_warning(food, grams)
+    return " ".join(p for p in parts if p)
+
+
+# The food pre-selected on a card (index 0 of the dropdown is the richest, not
+# necessarily the most sensible one). _default_food_index picks an everyday
+# choice; the whole ranked list stays in the dropdown:
+#   1. no food whose portion breaks a co-nutrient upper limit (liver vitamin A,
+#      Brazil-nut selenium, ...);
+#   2. no organ meat (liver, kidney, heart, giblets) when a non-organ food can
+#      supply the dose at a practical portion;
+#   3. on vitamin D cards, no mushroom (vitamin D2; UV-treated ones only) when
+#      an everyday vitamin D3 food (salmon, herring, mackerel, sardines, trout,
+#      eggs) is in the list;
+#   4. a whole food before a B12-fortified one, unless the diet is vegan /
+#      vegetarian (then the fortified foods are the reliable B12 source);
+#   5. a practical portion ("ok", < 400 g/day) before "large" / "impractical";
+#   6. on vitamin D cards, an everyday vitamin D3 food first;
+#   7. then the ranking order (most nutrient per 100 g first).
+_EVERYDAY_VITAMIN_D3_RE = re.compile(r"\b(?:salmon|herring|mackerel|sardines?|trout|eggs?)\b", re.IGNORECASE)
+_MUSHROOM_RE = re.compile(r"\bmushrooms?\b", re.IGNORECASE)
+_UV_TREATED_RE = re.compile(r"\b(?:ultraviolet|uv)\b", re.IGNORECASE)
+_PRACTICALITY_RANK = {"ok": 0, "large": 1, "impractical": 2}
+
+
+def _is_uv_mushroom(food: dict[str, Any] | None) -> bool:
+    name, _category = _food_name_and_category(food)
+    return bool(_MUSHROOM_RE.search(name) and _UV_TREATED_RE.search(name))
+
+
+def _default_food_index(foods: list[dict[str, Any]], card: dict[str, Any], profile: dict[str, Any] | None = None) -> int:
+    """Index (into `foods`, the ranked dropdown) of the food pre-selected on the card."""
+    if not foods:
+        return 0
+    component = str(card.get("component", "") or card.get("component_key", "") or "")
+    key = str(card.get("nutrient_key", "") or "") or bb.canonical_nutrient_key(component)
+    dose_value, dose_unit, form = card.get("dose_value"), str(card.get("dose_unit", "") or ""), str(card.get("form", "") or "")
+    entry = _rda_for_component(component) or _rda_for_component(key)
+    plant = _plant_based_diet(profile)
+
+    def _target_grams(food: dict[str, Any]) -> float | None:
+        grams = _food_portion_grams(food, dose_value, dose_unit, component, form)
+        if grams is None and entry is not None:  # "Dose not found": size by the daily target
+            grams = _food_portion_grams(food, entry["athlete"], str(entry["unit"]), str(entry["display"]))
+        return grams
+
+    facts = []
+    for food in foods:
+        name, category = _food_name_and_category(food)
+        grams = _target_grams(food)
+        checked = _card_portion_grams(food, dose_value, dose_unit, component, form)
+        if checked is None and grams is not None and _portion_practicality(grams) != "impractical":
+            checked = grams
+        facts.append({
+            "unsafe": _food_exceeds_a_limit(
+                food, checked, component, _all_portion_grams(food, dose_value, dose_unit, component, form) or grams
+            ),
+            "organ": bb.food_is_organ_meat(name, category),
+            "practical": _PRACTICALITY_RANK.get(_portion_practicality(grams), 3) if grams else 3,
+            "d3": key == "vitamin d" and bool(_EVERYDAY_VITAMIN_D3_RE.search(name)) and not _MUSHROOM_RE.search(name),
+            "mushroom": key == "vitamin d" and bool(_MUSHROOM_RE.search(name)),
+            "fortified": bool(food.get("fortified")) and not plant,
+        })
+    # The best portion a non-organ whole food offers: an organ meat is only the
+    # default when it is strictly more practical than every other food.
+    best_non_organ = min((f["practical"] for f in facts if not f["organ"] and not f["unsafe"] and not f["fortified"]), default=None)
+    d3_available = any(f["d3"] for f in facts)
+    # A mushroom gives way to an everyday D3 food whose portion is as practical
+    # (25 egg yolks a day do not beat ~80 g of UV-treated mushrooms).
+    best_d3 = min((f["practical"] for f in facts if f["d3"]), default=None)
+
+    def _rank(i: int) -> tuple[int, ...]:
+        f = facts[i]
+        return (
+            int(f["unsafe"]),
+            int(f["organ"] and best_non_organ is not None and best_non_organ <= f["practical"]),
+            int(f["mushroom"] and best_d3 is not None and best_d3 <= f["practical"]),
+            int(f["fortified"]),
+            f["practical"],
+            int(d3_available and not f["d3"]),
+            i,
+        )
+
+    return min(range(len(foods)), key=_rank)
+
+
+def _replace_block_reason(card: dict[str, Any], food: dict[str, Any] | None, profile: dict[str, Any] | None) -> str:
+    """Why "replace with food" is soft-blocked on this card ("" when it is not):
+    vegan / vegetarian B12 unless a B12-fortified food is picked, and vegan
+    iodine (no reliable plant source; iodised salt is not a food portion)."""
+    diet = _plant_based_diet(profile)
+    key = str(card.get("nutrient_key", "") or "") or bb.canonical_nutrient_key(str(card.get("component", "") or ""))
+    if diet and key == "vitamin b12" and not (food or {}).get("fortified"):
+        return f"On a {diet} diet only a B12-fortified food can replace a B12 pill."
+    if diet == "vegan" and key == "iodine":
+        return "On a vegan diet no food replaces an iodine pill reliably."
+    return ""
 
 
 def _final_food_warnings(items: list[dict[str, Any]]) -> list[str]:
@@ -1126,7 +1359,7 @@ def _final_upper_limit_warnings(items: list[dict[str, Any]]) -> list[str]:
     for d in items:
         warning = _upper_limit_warning(
             str(d.get("component", "") or d.get("component_key", "") or ""),
-            d.get("dose_value"),
+            d.get("dose_max") if d.get("dose_max") is not None else d.get("dose_value"),
             str(d.get("dose_unit", "") or ""),
             str(d.get("form", "") or ""),
         )
@@ -1190,14 +1423,43 @@ def _plant_based_diet(profile: dict[str, Any] | None) -> str:
 
 
 def _diet_specific_warning(component_key: str, profile: dict[str, Any] | None) -> str:
-    """Diet-specific advice that overrides "replace with food" (vegan/vegetarian B12)."""
+    """Diet-specific advice that overrides "replace with food" (vegan /
+    vegetarian B12, vegan iodine); Replace is soft-blocked for these cards
+    (see _replace_block_reason)."""
     diet = _plant_based_diet(profile)
-    if diet and bb.canonical_nutrient_key(component_key) == "vitamin b12":
+    key = bb.canonical_nutrient_key(component_key)
+    if diet and key == "vitamin b12":
         return (
             f"⚠️ On a {diet} diet whole foods aren't a reliable vitamin B12 source — "
-            "keeping the supplement is recommended."
+            "keeping the supplement is recommended. Only a B12-fortified food (yeast flakes, fortified "
+            "plant drinks) can stand in for it; seaweed and spirulina don't count."
+        )
+    if diet == "vegan" and key == "iodine":
+        return (
+            "⚠️ On a vegan diet no food supplies iodine reliably — keeping the supplement is recommended. "
+            "Cook with iodised salt (Jodsalz); seaweed iodine is erratic and can be far too high."
         )
     return ""
+
+
+# October-March the sun in Germany is too low for the skin to make vitamin D
+# (DGE / RKI); food alone rarely reaches the 20 µg/day reference intake.
+_VITAMIN_D_WINTER_MONTHS = frozenset({10, 11, 12, 1, 2, 3})
+
+
+def _winter_vitamin_d_note(component_key: str, today: Any = None) -> str:
+    """Seasonal advice on vitamin D cards from October to March ("" otherwise)."""
+    if bb.canonical_nutrient_key(component_key) != "vitamin d":
+        return ""
+    import datetime
+
+    month = (today or datetime.date.today()).month
+    if month not in _VITAMIN_D_WINTER_MONTHS:
+        return ""
+    return (
+        "ℹ️ October–March the sun in Germany is too weak for your skin to make vitamin D, and food alone "
+        "rarely reaches the 20 µg/day reference — keeping the supplement over winter is sensible."
+    )
 
 
 def _card_warning_text(
@@ -1206,11 +1468,15 @@ def _card_warning_text(
     dose_unit: str,
     form: str = "",
     profile: dict[str, Any] | None = None,
+    dose_max: Any = None,
+    today: Any = None,
 ) -> str:
     """The card's warn text: an over-upper-limit warning replaces the
-    deficiency / "prioritise it" flag (never both); diet advice is appended."""
+    deficiency / "prioritise it" flag (never both); diet advice and the winter
+    vitamin D note are appended. A label range ("100-200 mg") is checked
+    against the upper limit with its upper bound (`dose_max`)."""
     parts = []
-    upper = _upper_limit_warning(component_key, dose_value, dose_unit, form)
+    upper = _upper_limit_warning(component_key, dose_max if dose_max is not None else dose_value, dose_unit, form)
     diet = _diet_specific_warning(component_key, profile)
     if upper:
         parts.append(upper)
@@ -1222,6 +1488,9 @@ def _card_warning_text(
         parts.append(diet)
     if bb.canonical_nutrient_key(component_key) == "fish oil" and dose_value is not None:
         parts.append("ℹ️ The label gives the fish-oil weight; portions assume ~30% of it is EPA+DHA.")
+    winter = _winter_vitamin_d_note(component_key, today)
+    if winter:
+        parts.append(winter)
     return " ".join(parts)
 
 
@@ -1252,6 +1521,25 @@ _BIOAVAILABILITY_NOTES: dict[str, str] = {
     "ala": "Flax, chia, hemp and walnuts give ALA; the body converts only a few percent of it into EPA/DHA.",
     "choline": "Eggs and liver supply choline with phospholipids and other B-vitamins that work together.",
     "chromium": "Chromium values are approximate (NIH ODS) — USDA has no per-food chromium data.",
+}
+# The same notes for plant-based diets, where the default note would point at
+# foods the diet excludes ("Only animal foods...", "Heme iron from meat...").
+# Keyed by (diet, nutrient key); a "plant" entry covers vegan AND vegetarian.
+_PLANT_BIOAVAILABILITY_NOTES: dict[tuple[str, str], str] = {
+    ("plant", "vitamin b12"): "Plants, seaweed and spirulina hold no reliable active B12 — on a plant-based diet only B12-fortified foods (yeast flakes, fortified plant drinks) or a supplement cover it.",
+    ("vegetarian", "vitamin b12"): "Eggs and dairy give some B12, but rarely enough on their own — B12-fortified foods or a supplement are the reliable sources on a vegetarian diet.",
+    ("plant", "iron"): "Plant (non-heme) iron is absorbed less (~2–20%) than iron from meat — pair legumes, whole grains and seeds with vitamin C (peppers, citrus) and keep tea and coffee away from meals.",
+    ("plant", "vitamin a"): "Orange and dark-green vegetables give beta-carotene, which the body turns into vitamin A as needed — eat them with a little fat.",
+    ("vegan", "vitamin d"): "On a vegan diet UV-treated mushrooms are the only notable food source, and their D2 raises blood levels less than D3 — sunlight (and in winter a supplement) is the main source.",
+    ("vegan", "choline"): "Soy, legumes, quinoa and cruciferous vegetables supply choline; without eggs it takes larger portions.",
+    ("vegetarian", "choline"): "Eggs are the richest vegetarian choline source; soy and legumes add more.",
+    ("plant", "zinc"): "Plant zinc is partly bound by phytate — soaked, sprouted or fermented legumes, whole grains and seeds release more of it.",
+    ("vegan", "calcium"): "Calcium-set tofu, fortified plant drinks, kale, broccoli and almonds supply well-absorbed calcium; spinach calcium is poorly absorbed.",
+    ("vegan", "iodine"): "Plant foods hold little iodine — iodised salt (Jodsalz) is the everyday source in Germany; seaweed iodine is erratic and can be excessive.",
+    ("plant", "omega 3"): "Algal oil is the only plant source of EPA+DHA; flax, chia, hemp and walnuts give ALA, of which the body converts only a few percent.",
+    ("plant", "fish oil"): "Algal oil is the only plant source of EPA+DHA; flax, chia, hemp and walnuts give ALA, of which the body converts only a few percent.",
+    ("plant", "epa"): "Algal oil is the only plant source of EPA+DHA; flax, chia, hemp and walnuts give ALA, of which the body converts only a few percent.",
+    ("plant", "dha"): "Algal oil is the only plant source of EPA+DHA; flax, chia, hemp and walnuts give ALA, of which the body converts only a few percent.",
 }
 _FOLIC_ACID_NOTE = (
     "Your pill is folic acid, which is absorbed ~1.7× better than food folate — so the food "
@@ -1289,15 +1577,27 @@ def _selenium_note(dose_value: Any = None, dose_unit: str = "") -> str:
     )
 
 
-def _bioavailability_note(component_key: str, form: str = "", dose_value: Any = None, dose_unit: str = "") -> str:
+def _bioavailability_note(
+    component_key: str,
+    form: str = "",
+    dose_value: Any = None,
+    dose_unit: str = "",
+    profile: dict[str, Any] | None = None,
+) -> str:
     """One curated line on why the whole food helps; `dose_value`/`dose_unit`
     (the pill dose) make dose-dependent notes (Brazil-nut selenium) match the
-    portion on the card."""
+    portion on the card, and a vegan / vegetarian `profile` gets the note for
+    that diet."""
     key = bb.canonical_nutrient_key(component_key)
     if key == "folate" and bb._is_folic_acid_dose(component_key, form):
         return _FOLIC_ACID_NOTE
     if key == "selenium":
         return _selenium_note(dose_value, dose_unit)
+    diet = _plant_based_diet(profile)
+    if diet:
+        note = _PLANT_BIOAVAILABILITY_NOTES.get((diet, key)) or _PLANT_BIOAVAILABILITY_NOTES.get(("plant", key))
+        if note:
+            return note
     note = _BIOAVAILABILITY_NOTES.get(key)
     if note:
         return note
@@ -1951,6 +2251,7 @@ def _build_swipe_cards(components: list[dict[str, Any]], details: list[dict[str,
                 "nutrient_key": _component_nutrient_key(item),
                 "dose_label": _dose_label(item),
                 "dose_value": item.get("dose_value"),
+                "dose_max": item.get("dose_max"),
                 "dose_unit": str(item.get("dose_unit", "") or ""),
                 "form": str(item.get("form", "") or ""),
                 "foods": foods,
@@ -2960,6 +3261,7 @@ def _render_card() -> None:
     nonce = int(st.session_state.get("swipe_reset_nonce", 0))
     swipe_result = None
     selected_food = None
+    replace_block = ""
     match_dose_txt = ""
     rda_amount_txt = ""
     rda_label_txt = ""
@@ -2968,7 +3270,8 @@ def _render_card() -> None:
         # so only the dropdown / Ask AI / dietary filter sit below the card.
         card_form = str(card.get("form", "") or "")
         warn_text = _card_warning_text(
-            component_key, card.get("dose_value"), str(card.get("dose_unit", "") or ""), card_form, selected_profile
+            component_key, card.get("dose_value"), str(card.get("dose_unit", "") or ""), card_form, selected_profile,
+            dose_max=card.get("dose_max"),
         )
         stage = st.container()  # draggable swipe card sits at the top of this card
 
@@ -2978,7 +3281,9 @@ def _render_card() -> None:
             selected_label = st.selectbox(
                 "Whole-food replacement",
                 options=option_labels,
-                index=0,
+                # An everyday choice, not simply the richest food (no liver
+                # when another food works, D3 fish before UV mushrooms, ...).
+                index=_default_food_index(foods, card, selected_profile),
                 key=f"swipe_food_select_{component_key}_{index}",
                 label_visibility="collapsed",
             )
@@ -3001,7 +3306,7 @@ def _render_card() -> None:
                 # The target is a food amount (e.g. folate in DFE), so it is
                 # named by the RDA entry, not by the pill's form.
                 rda_amount_txt = _portion_for_target(
-                    selected_food, rda_entry["athlete"], str(rda_entry["unit"]), str(rda_entry["display"])
+                    selected_food, rda_entry["athlete"], str(rda_entry["unit"]), str(rda_entry["display"]), note=False
                 )
                 if rda_amount_txt:
                     rda_label_txt = _format_rda_target(rda_entry)
@@ -3023,10 +3328,15 @@ def _render_card() -> None:
         # render INSIDE the swipe card (passed as props below). Only the dropdown,
         # Ask AI and dietary filter stay below the card.
         bio_note = (
-            _bioavailability_note(component_key, card_form, card.get("dose_value"), str(card.get("dose_unit", "") or ""))
+            _bioavailability_note(
+                component_key, card_form, card.get("dose_value"), str(card.get("dose_unit", "") or ""), selected_profile
+            )
             if selected_food is not None
             else ""
         )
+        # Soft block (the card's diet warning says why): vegan / vegetarian B12
+        # unless a B12-fortified food is picked, vegan iodine.
+        replace_block = _replace_block_reason(card, selected_food, selected_profile) if selected_food is not None else ""
 
         _render_rag_chat_popup(card, component_key, index)
 
@@ -3046,7 +3356,7 @@ def _render_card() -> None:
                 accent=theme["accent"],
                 ink=theme["accent2"],
                 bg=theme["bg"],
-                canReplace=selected_food is not None,
+                canReplace=selected_food is not None and not replace_block,
                 previous=_previous_choice_label(decisions.get(component_key)),
                 height=450,
                 key=f"tinder_{component_key}_{index}_{nonce}",
@@ -3064,8 +3374,8 @@ def _render_card() -> None:
     decision = None
     if isinstance(swipe_result, dict) and swipe_result.get("dir") in ("left", "right"):
         decision = "keep" if swipe_result["dir"] == "left" else "replace"
-    # Can't replace with a whole food that doesn't exist.
-    if decision == "replace" and selected_food is None:
+    # Can't replace with a whole food that doesn't exist (or a soft-blocked one).
+    if decision == "replace" and (selected_food is None or replace_block):
         decision = None
 
     if decision:
@@ -3074,6 +3384,7 @@ def _render_card() -> None:
             "component": card.get("component", ""),
             "dose_label": card.get("dose_label", ""),
             "dose_value": card.get("dose_value"),
+            "dose_max": card.get("dose_max"),
             "dose_unit": card.get("dose_unit", ""),
             "form": card_form,
             "decision": decision,
