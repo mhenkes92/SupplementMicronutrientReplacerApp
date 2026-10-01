@@ -1796,6 +1796,24 @@ def _render_swap_totals(replace_items: list[dict[str, Any]]) -> None:
             st.caption(text)
 
 
+# Amounts the meal plan asks for instead of the match-dose portion: a normal
+# serving when the full dose would take a large / impractical amount of food
+# (the plan must not ask for 1.5 kg of spinach), and the once-a-week limit for
+# organ meats (vitamin A, see _liver_vitamin_a_warning).
+_MEAL_PLAN_NORMAL_PORTION = "a normal portion (about 150 g); the full dose isn't practical from food"
+_MEAL_PLAN_ORGAN_PORTION = "at most one small portion (~50 g) per week"
+
+
+def _meal_plan_amount(decision: dict[str, Any]) -> str:
+    """The daily amount of a replaced item's food as written into the meal-plan prompt."""
+    food = decision.get("selected_food") or {}
+    if _is_organ_meat(food) and not re.search(r"\boil\b", str(food.get("food_description", "") or "").lower()):
+        return _MEAL_PLAN_ORGAN_PORTION
+    if _portion_practicality(_grams_to_match_dose(decision)) in ("large", "impractical"):
+        return _MEAL_PLAN_NORMAL_PORTION
+    return _amount_to_match_dose(decision)
+
+
 def _meal_plan_prompts(
     replace_items: list[dict[str, Any]], diet_label: str, num_meals: int = 3, pregnant: bool | None = None
 ) -> tuple[str, str, str]:
@@ -1807,7 +1825,7 @@ def _meal_plan_prompts(
     lines = []
     for d in replace_items:
         food = _food_name(d.get("selected_food"))
-        amount = _amount_to_match_dose(d)
+        amount = _meal_plan_amount(d)
         nutrient = _nutrient_title(d.get("component"))
         lines.append(f"- {food} ({amount}) for {nutrient}")
     diet_clause = ""
