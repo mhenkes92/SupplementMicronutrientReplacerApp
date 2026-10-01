@@ -1541,7 +1541,7 @@ def _build_share_text(
         out.append("  • (none)")
     if meal_plan.strip():
         out += ["", "🍽️ Meal plan:", meal_plan.strip()]
-    out += ["", "Made with SuppSwipe — ditch the pill, eat the real thing."]
+    out += ["", "Made with SuppSwipe — swap pills for real food where it makes sense: https://suppswipe.streamlit.app"]
     return "\n".join(out)
 
 

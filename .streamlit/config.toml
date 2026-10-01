@@ -16,3 +16,11 @@ gatherUsageStats = false
 showErrorDetails = "type"
 # Hide developer-only toolbar items (e.g. "Deploy") from visitors.
 toolbarMode = "minimal"
+
+[theme]
+# The app's custom styling assumes light backgrounds; without a fixed base,
+# phones in dark mode rendered near-white text on the light cards and pills.
+base = "light"
+# Accessible primary (white text on #047857 = 5.5:1, WCAG AA) that also keeps
+# the main "Analyze" button distinct from the red "keep pill" action.
+primaryColor = "#047857"
