@@ -976,8 +976,10 @@ def estimate_whole_food_units(food_description: str, grams_needed: float | None)
             return ""
 
         if units >= 2:
-            shown_units = float(math.ceil(units))
-            units_txt = format_float(shown_units, 0)
+            # Nearest half, not rounded up: rounding 2.09 Brazil nuts up to 3
+            # (~290 µg selenium) would push a 200 µg dose past the 255 µg UL.
+            shown_units = round(units * 2) / 2
+            units_txt = format_float(shown_units, 1)
         else:
             shown_units = round(units, 1)
             units_txt = format_float(shown_units, 1)

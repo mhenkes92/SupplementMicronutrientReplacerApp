@@ -249,7 +249,7 @@ def test_trailing_ingredient_lists_add_no_phantom_cards(sw):
         ("Peppers, sweet, orange, raw", 200, ""),
         ("Tomatoes, sun-dried", 100, ""),
         ("Bananas, dehydrated, or banana powder", 50, ""),
-        ("Eggs, Grade A, Large, egg yolk", 53, "~4 egg yolks"),
+        ("Eggs, Grade A, Large, egg yolk", 53, "~3 egg yolks"),  # 3.1 -> nearest half, not rounded up
         ("Egg, whole, raw, fresh", 100, "~2 eggs"),
         ("Nuts, brazilnuts, raw", 10, "~2 Brazil nuts"),
         ("Carrots, baby, raw", 100, "~10 baby carrots"),

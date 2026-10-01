@@ -1205,7 +1205,6 @@ _BIOAVAILABILITY_NOTES: dict[str, str] = {
     "calcium": "Food calcium comes in smaller amounts spread over meals, which the body absorbs more efficiently than one large pill dose.",
     "magnesium": "Food magnesium comes bound to fibre and other minerals, so it's better tolerated than high-dose salts.",
     "zinc": "Food zinc is balanced with copper; isolated zinc pills can deplete copper over time.",
-    "selenium": "One Brazil nut (~5 g) holds roughly 50–100 µg selenium (it varies with soil) — one nut a day is plenty; several a day can exceed the safe upper limit.",
     "iodine": "Sea fish, dairy and eggs supply iodine; in Germany iodised salt is the main everyday source.",
     "potassium": "Food potassium is well-absorbed and unrestricted, unlike dose-capped supplements.",
     "omega 3": "Oily fish delivers EPA+DHA with protein, selenium and vitamin D, and is fresher than long-stored capsules.",
@@ -1222,10 +1221,45 @@ _FOLIC_ACID_NOTE = (
 )
 
 
-def _bioavailability_note(component_key: str, form: str = "") -> str:
+_BRAZIL_NUT = "Nuts, brazilnuts, raw"
+_BRAZIL_NUT_GRAMS = 5.0
+
+
+def _selenium_note(dose_value: Any = None, dose_unit: str = "") -> str:
+    """Brazil-nut advice that agrees with the nut count on the card and the UL:
+    a 5 g nut holds ~96 µg (USDA reference 1917 µg/100 g), so 3 nuts (~290 µg)
+    already pass the 255 µg/day EFSA limit."""
+    per_100g = bb.food_nutrient_amount(_BRAZIL_NUT, "selenium") or 1917.0
+    per_nut = per_100g * _BRAZIL_NUT_GRAMS / 100.0
+    limit = float(_UPPER_LIMITS["selenium"]["limit"])
+    too_many = int(limit // per_nut) + 1
+    dose = _dose_in_unit("selenium", dose_value, dose_unit, "mcg") if dose_value is not None else None
+    nuts = round(dose / per_nut * 2) / 2 if dose else None
+    head = (
+        f"One Brazil nut (~{bb.format_float(_BRAZIL_NUT_GRAMS, 0)} g) holds roughly 50–100 µg selenium "
+        f"(it varies with soil; USDA reference ~{bb.format_float(per_nut, 0)} µg)"
+    )
+    if nuts is None or nuts <= 1:
+        advice = "one nut a day is plenty"
+    elif nuts < too_many:
+        advice = f"the ~{bb.format_float(nuts, 1)} nuts that match this dose are fine, but don't eat more"
+    else:
+        advice = f"matching this dose would take ~{bb.format_float(nuts, 1)} nuts, more than is safe"
+    return (
+        f"{head} — {advice}; {too_many} or more nuts a day can pass the "
+        f"{bb.format_float(limit)} µg/day safe upper limit."
+    )
+
+
+def _bioavailability_note(component_key: str, form: str = "", dose_value: Any = None, dose_unit: str = "") -> str:
+    """One curated line on why the whole food helps; `dose_value`/`dose_unit`
+    (the pill dose) make dose-dependent notes (Brazil-nut selenium) match the
+    portion on the card."""
     key = bb.canonical_nutrient_key(component_key)
     if key == "folate" and bb._is_folic_acid_dose(component_key, form):
         return _FOLIC_ACID_NOTE
+    if key == "selenium":
+        return _selenium_note(dose_value, dose_unit)
     note = _BIOAVAILABILITY_NOTES.get(key)
     if note:
         return note
@@ -2903,7 +2937,11 @@ def _render_card() -> None:
         # Portion guidance, the bioavailability tip and the deficiency warning all
         # render INSIDE the swipe card (passed as props below). Only the dropdown,
         # Ask AI and dietary filter stay below the card.
-        bio_note = _bioavailability_note(component_key, card_form) if selected_food is not None else ""
+        bio_note = (
+            _bioavailability_note(component_key, card_form, card.get("dose_value"), str(card.get("dose_unit", "") or ""))
+            if selected_food is not None
+            else ""
+        )
 
         _render_rag_chat_popup(card, component_key, index)
 
