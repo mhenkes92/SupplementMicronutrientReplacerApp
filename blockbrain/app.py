@@ -5249,7 +5249,8 @@ def _load_usda_nutrients_index() -> list[dict[str, Any]]:
 # foods · 1178 B12 µg (542) · 1180 choline mg (506) · 1087/1091/1090/1092/1093/
 # 1089/1095/1098/1101 Ca, P, Mg, K, Na, Fe, Zn, Cu, Mn mg · 1100 iodine µg (8) ·
 # 1103 selenium µg (942) · 1102 molybdenum µg (54) · 1099 fluoride µg (32) · 1137
-# boron µg (34) · 1278 EPA g (319) · 1272 DHA g (253) · 1404 ALA g (274).
+# boron µg (34) · 1278 EPA g (319) · 1272 DHA g (253) · 1404 ALA g (274), 1270
+# PUFA 18:3 g (834).
 # Chromium (1096) and vitamin K2 have no food rows -> curated lists below.
 _NUTRIENT_LEXICON: dict[str, dict[str, Any]] = {
     "vitamin a": {
@@ -5405,7 +5406,9 @@ _NUTRIENT_LEXICON: dict[str, dict[str, Any]] = {
             "aliases": ["epa", "eicosapentaenoic acid", "eicosapentaensaure"]},
     "dha": {"display": "dha", "unit": "g", "usda": ((1272, 1.0),),
             "aliases": ["dha", "docosahexaenoic acid", "docosahexaensaure"]},
-    "ala": {"display": "alpha-linolenic acid", "unit": "g", "usda": ((1404, 1.0),),
+    # ALA: 1404 (18:3 n-3) where analysed, else 1270 (18:3 total), which is how
+    # USDA SR Legacy stores plant ALA (flaxseed 22.8 g); plant 18:3 is ~all ALA.
+    "ala": {"display": "alpha-linolenic acid", "unit": "g", "usda": ((1404, 1.0), (1270, 1.0)),
             "aliases": ["alpha linolenic acid", "alpha linolenic", "a linolenic acid", "alpha linolensaure"]},
     # Recognised (they become cards) but without whole-food data.
     "inositol": {"display": "inositol", "unit": "mg", "usda": (), "aliases": ["inositol", "myo inositol"]},
