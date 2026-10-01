@@ -429,9 +429,18 @@ WHOLE_FOOD_UNIT_ESTIMATES: list[tuple[str, str, str, float]] = [
     ("avocado", "avocado", "avocados", 150.0),
     ("tomato", "tomato", "tomatoes", 123.0),
     ("carrot", "carrot", "carrots", 61.0),
+    ("egg yolk", "egg yolk", "egg yolks", 17.0),
+    ("egg white", "egg white", "egg whites", 33.0),
     ("egg", "egg", "eggs", 50.0),
     ("peppers bell", "bell pepper", "bell peppers", 119.0),
+    ("brazilnut", "Brazil nut", "Brazil nuts", 5.0),
+    ("brazil nut", "Brazil nut", "Brazil nuts", 5.0),
 ]
+# Foods whose name contains a unit keyword but are not that unit
+# ("Eggplant", "Fish, whitefish, eggs" are not hen's eggs).
+WHOLE_FOOD_UNIT_EXCLUSIONS: dict[str, tuple[str, ...]] = {
+    "egg": ("eggplant", "fish", "roe", "caviar"),
+}
 
 # Approximate grams per cup for selected foods where cup-based measures are common.
 VOLUME_FOOD_ESTIMATES: list[tuple[str, str, str, float]] = [
@@ -933,28 +942,32 @@ def estimate_whole_food_units(food_description: str, grams_needed: float | None)
 
     text = normalize_lookup_key(food_description)
     for keyword, singular, plural, avg_weight_g in WHOLE_FOOD_UNIT_ESTIMATES:
-        if keyword in text and avg_weight_g > 0:
-            units = float(grams_needed) / float(avg_weight_g)
-            if units <= 0:
-                return ""
+        # Whole-word match ("pineapple" is not an apple, "eggplant" not an egg).
+        if avg_weight_g <= 0 or not re.search(r"\b" + re.escape(keyword) + r"(?:s|es)?\b", text):
+            continue
+        if any(bad in text for bad in WHOLE_FOOD_UNIT_EXCLUSIONS.get(keyword.split()[0], ())):
+            continue
+        units = float(grams_needed) / float(avg_weight_g)
+        if units <= 0:
+            return ""
 
-            if units >= 2:
-                shown_units = float(math.ceil(units))
-                units_txt = format_float(shown_units, 0)
-            else:
-                shown_units = round(units, 1)
-                units_txt = format_float(shown_units, 1)
+        if units >= 2:
+            shown_units = float(math.ceil(units))
+            units_txt = format_float(shown_units, 0)
+        else:
+            shown_units = round(units, 1)
+            units_txt = format_float(shown_units, 1)
 
-            try:
-                is_single = abs(float(units_txt) - 1.0) < 1e-9
-            except Exception:
-                is_single = False
+        try:
+            is_single = abs(float(units_txt) - 1.0) < 1e-9
+        except Exception:
+            is_single = False
 
-            noun = singular if is_single else plural
-            return (
-                f"Approximate whole-food portion: ~{units_txt} {noun} "
-                f"(assuming ~{format_float(float(avg_weight_g), 0)} g each)."
-            )
+        noun = singular if is_single else plural
+        return (
+            f"Approximate whole-food portion: ~{units_txt} {noun} "
+            f"(assuming ~{format_float(float(avg_weight_g), 0)} g each)."
+        )
 
     return ""
 
@@ -5392,7 +5405,7 @@ _NUTRIENT_LEXICON: dict[str, dict[str, Any]] = {
             "aliases": ["epa", "eicosapentaenoic acid", "eicosapentaensaure"]},
     "dha": {"display": "dha", "unit": "g", "usda": ((1272, 1.0),),
             "aliases": ["dha", "docosahexaenoic acid", "docosahexaensaure"]},
-    "ala": {"display": "ala", "unit": "g", "usda": ((1404, 1.0),),
+    "ala": {"display": "alpha-linolenic acid", "unit": "g", "usda": ((1404, 1.0),),
             "aliases": ["alpha linolenic acid", "alpha linolenic", "a linolenic acid", "alpha linolensaure"]},
     # Recognised (they become cards) but without whole-food data.
     "inositol": {"display": "inositol", "unit": "mg", "usda": (), "aliases": ["inositol", "myo inositol"]},
@@ -5403,7 +5416,7 @@ _NUTRIENT_LEXICON: dict[str, dict[str, Any]] = {
 # Form words in "(as ...)" that change WHICH nutrient a generic name means.
 _LEXICON_FORM_REFINEMENTS: list[tuple[str, re.Pattern[str], str, str]] = [
     ("vitamin k", re.compile(r"\b(?:mena\w*|mk ?[47]|k2)\b"), "vitamin k2", "vitamin k2"),
-    ("omega 3", re.compile(r"\b(?:ala|alpha linolen\w*|flax\w*|lein\w*|chia)\b"), "ala", "ala"),
+    ("omega 3", re.compile(r"\b(?:ala|alpha linolen\w*|flax\w*|lein\w*|chia)\b"), "ala", "alpha-linolenic acid"),
 ]
 # Form words that only make the card name more specific (vitamin d -> vitamin d3).
 _LEXICON_DISPLAY_REFINEMENTS: list[tuple[str, re.Pattern[str], str]] = [
