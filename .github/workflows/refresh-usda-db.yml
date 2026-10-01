@@ -7,14 +7,18 @@
 #   - SerpApi / DataForSEO (food pricing): queried live per request
 #   - BlockBrain agent + knowledge base  : hosted, managed in the BlockBrain console
 #
-# USDA FoodData Central publishes new Foundation/SR-Legacy releases only a couple
-# of times per year, so this job rebuilds from the pinned dataset URLs, validates
-# the result, and opens a Pull Request ONLY when the database actually changes.
-# Merging the PR redeploys the app (Streamlit Cloud tracks master). A human stays
-# in the loop so a bad upstream release can never silently break production.
+# The DB combines two USDA FoodData Central datasets: SR Legacy (frozen 2018
+# release, 7,793 foods — most vitamin, folate and omega-3 rows) and Foundation
+# Foods (a few releases per year). This job rebuilds both from the pinned
+# dataset URLs, validates the result (both datasets, dietary flags and every
+# app-critical nutrient id must be present — see scripts/validate_usda_db.py),
+# and opens a Pull Request ONLY when the database actually changes (the build
+# is byte-for-byte reproducible). Merging the PR redeploys the app (Streamlit
+# Cloud tracks master). A human stays in the loop so a bad upstream release can
+# never silently break production.
 #
-# To pull a brand-new USDA release, bump DEFAULT_FOUNDATION_CSV_URL /
-# DEFAULT_SR_LEGACY_CSV_URL in mobile_version/build_usda_rankings_db.py (or pass
+# To pull a brand-new USDA release, bump DEFAULT_FOUNDATION_CSV_URL in
+# scripts/build_usda_rankings_db.py (SR Legacy is final; or pass
 # --foundation-url / --sr-legacy-url), then run this workflow manually.
 
 name: Weekly USDA data refresh
@@ -36,6 +40,7 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,18 +50,33 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install build dependencies
-        run: python -m pip install --upgrade pip pandas
+      # The builder and validator are standard-library only; pytest runs their
+      # offline tests so a broken builder can never produce the PR.
+      - name: Test builder and validator
+        run: |
+          python -m pip install --upgrade pip pytest
+          python -m pytest tests/test_usda_builder.py tests/test_usda_validator.py -q
 
-      - name: Rebuild USDA rankings DB
-        working-directory: mobile_version
+      - name: Rebuild USDA rankings DB (SR Legacy + Foundation)
         run: >-
-          python build_usda_rankings_db.py
+          python scripts/build_usda_rankings_db.py
           --download-latest
-          --output-db ../blockbrain/data/usda_rankings.db
+          --download-dir "$RUNNER_TEMP/usda_downloads"
+          --output-db "$RUNNER_TEMP/usda_rankings.db"
 
       - name: Validate rebuilt DB
-        run: python scripts/validate_usda_db.py blockbrain/data/usda_rankings.db
+        id: validate
+        run: |
+          set -o pipefail
+          python scripts/validate_usda_db.py "$RUNNER_TEMP/usda_rankings.db" | tee "$RUNNER_TEMP/validate.txt"
+          {
+            echo "summary<<VALIDATE_EOF"
+            cat "$RUNNER_TEMP/validate.txt"
+            echo "VALIDATE_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install validated DB
+        run: cp "$RUNNER_TEMP/usda_rankings.db" blockbrain/data/usda_rankings.db
 
       - name: Open Pull Request if the database changed
         uses: peter-evans/create-pull-request@v6
@@ -68,10 +88,16 @@ jobs:
           title: "Weekly USDA rankings DB refresh"
           body: |
             Automated weekly rebuild of `blockbrain/data/usda_rankings.db` from
-            USDA FoodData Central.
+            USDA FoodData Central (SR Legacy + Foundation Foods) with
+            `scripts/build_usda_rankings_db.py --download-latest`.
 
-            The rebuilt database passed `scripts/validate_usda_db.py` (table
-            schema, minimum row counts, and all app-critical nutrient ids present).
+            The rebuilt database passed `scripts/validate_usda_db.py` (tables and
+            columns, SR Legacy and Foundation food minimums, dietary flags and
+            views, and all app-critical nutrient ids present):
 
-            Merging this PR redeploys the app. If no meaningful data changed, no
-            PR is created.
+            ```
+            ${{ steps.validate.outputs.summary }}
+            ```
+
+            Merging this PR redeploys the app. If no data changed, no PR is
+            created.

@@ -1,0 +1,43 @@
+# Run the offline test suite on every push and pull request.
+#
+# The suite needs no network and no secrets: tests/conftest.py sets a dummy
+# BLOCKBRAIN_API_KEY and every external call is stubbed; the USDA builder tests
+# use the synthetic CSV fixtures in tests/fixtures/usda_mini/.
+
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements-dev.txt
+            swipe_mobile_app/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: python -m pytest tests -q

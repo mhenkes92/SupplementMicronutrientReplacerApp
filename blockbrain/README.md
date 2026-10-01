@@ -92,6 +92,10 @@ Optional pricing integrations:
 
 ## Data files still used
 
+- data/usda_rankings.db (USDA SR Legacy + Foundation whole-food rankings; rebuild with
+  `python scripts/build_usda_rankings_db.py --download-latest`, check with
+  `python scripts/validate_usda_db.py blockbrain/data/usda_rankings.db`; refreshed weekly by
+  `.github/workflows/refresh-usda-db.yml`)
 - data/dietary_profiles.json
 - data/dietary_restriction_rules.json
 - data/whole_food_prices.csv
