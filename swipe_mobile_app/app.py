@@ -1794,7 +1794,10 @@ def _is_micronutrient(name: str) -> bool:
         return False
     if any(_whole_word_in(bad, head) for bad in _NON_MICRONUTRIENT_DENY):
         return False
-    return bool(bb.canonical_nutrient_key(str(name or "")))
+    key = bb.canonical_nutrient_key(str(name or ""))
+    # An umbrella name ("Vitamin B complex") has no foods or dose of its own;
+    # the parser turns it into the B vitamins it stands for.
+    return bool(key) and not bb._is_umbrella_key(key)
 
 
 def _filter_to_micronutrients(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
