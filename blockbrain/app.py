@@ -5322,107 +5322,226 @@ def build_web_fallback_package(question: str, fallback_query: str) -> dict[str, 
     }
 
 
-  
-# ---------------------------------------------------------------------------  
-# Exotic / non-retail food guardrail (agentic patcher.py)  
-#  
-# Discovery and "is this common" ranking are handled by the agent system  
-# prompts (it prefers common supermarket single-ingredient foods and orders  
-# by concentration). This block is ONLY a deterministic last-line safety net  
-# that guarantees exotic / game / non-retail / heavily processed items never  
-# reach the dropdowns, even if the model ignores its prompt.  
-#  
-# Tier  1 = allowed (passes guardrail)  
-# Tier -1 = blocked (exotic / non-retail / processed)  
+
+# ---------------------------------------------------------------------------
+# Exotic / non-retail food guardrail
+#
+# A deterministic last-line safety net that keeps foods an ordinary shopper in
+# Germany cannot buy, or that are absurd as a recommendation, off the cards:
+# indigenous-dataset foods (USDA "American Indian/Alaska Native Foods"), wild
+# game and marine mammals, offal that is not retailed, US-only produce and
+# grain classes, foraged plants, branded US products and processed /
+# multi-ingredient items. Keywords are matched as whole words (simple plurals)
+# so barley/rhubarb are no longer caught by "bar", whelk by "elk", pigeon peas
+# by "pigeon" or breadfruit by "bread".
+#
+# Tier  1 = allowed (passes guardrail)
+# Tier -1 = blocked (exotic / non-retail / processed)
 # ---------------------------------------------------------------------------
 
-# Hard blocklist: exotic, game, or non-retail items we never suggest,  
-# even when nutrient density is extreme (e.g. polar bear liver, whale, seal).  
-EXOTIC_FOOD_BLOCK_KEYWORDS: set[str] = {  
-    "bear", "polar bear", "seal", "whale", "walrus", "moose", "elk",  
-    "venison", "deer", "caribou", "reindeer", "bison", "buffalo", "boar",  
-    "emu", "ostrich", "pheasant", "quail", "kangaroo", "alligator",  
-    "crocodile", "snake", "insect", "cricket", "locust", "horse", "camel",  
-    "goose liver", "foie gras", "blubber", "muktuk", "game meat", "antelope",  
-    "rabbit", "hare", "pigeon", "squab", "frog", "turtle", "octopus",  
-    "sea lion", "wild boar", "elk liver", "moose liver",  
+# Hard blocklist: exotic, game, or non-retail animals we never suggest,
+# even when nutrient density is extreme (e.g. polar bear liver, whale, seal).
+EXOTIC_FOOD_BLOCK_KEYWORDS: set[str] = {
+    "bear", "polar bear", "seal", "whale", "walrus", "sea lion", "blubber", "muktuk",
+    "moose", "elk", "venison", "deer", "caribou", "reindeer", "bison", "buffalo", "beefalo",
+    "boar", "wild boar", "antelope", "game meat", "horse", "camel", "kangaroo", "rabbit", "hare",
+    "beaver", "muskrat", "squirrel", "raccoon", "opossum", "porcupine", "woodchuck", "armadillo",
+    "emu", "ostrich", "pheasant", "quail", "grouse", "ruffed grouse", "guinea hen", "canada goose",
+    "duck wild", "pigeon", "squab", "owl", "goose liver", "foie gras",
+    "alligator", "crocodile", "snake", "turtle", "frog", "insect", "cricket", "locust",
+    "octopus", "oopah", "tunicate", "ascidian", "chiton", "sea cucumber", "cockle", "conch",
+    "devilfish",
 }
 
-# Processed / multi-ingredient hints => not a single-ingredient whole food.  
-PROCESSED_FOOD_HINT_KEYWORDS: set[str] = {  
-    "fortified", "supplement", "powder", "bar", "drink mix", "formula",  
-    "infant", "baby food", "candy", "snack", "fast food", "restaurant",  
-    "sauce", "gravy", "fried", "breaded", "luncheon", "sausage", "nugget",  
+# Offal, trimmings and industrial cuts that are not sold to shoppers, US-only
+# produce / grain classes, foraged or toxic-raw plants, and high-mercury fish.
+UNCOMMON_FOOD_BLOCK_KEYWORDS: set[str] = {
+    # offal / trimmings / industrial cuts
+    "giblets", "capon", "testes", "brains", "feet", "eyes", "flipper", "mechanically deboned",
+    "manufacturing beef", "separable fat", "seam fat", "external fat", "intermuscular fat",
+    "subcutaneous fat", "backfat", "skin only", "skin from", "bbq skin", "wagyu", "milk human",
+    # US wheat classes, US-only fish and produce, US-style fortified/"enhanced" items
+    "hard red spring", "hard red winter", "hard white", "soft red winter", "soft white",
+    "bluefish", "butterfish", "cisco", "croaker", "cusk", "fish drum", "lingcod", "pompano",
+    "fish pout", "scup", "seatrout", "shad", "sheepshead", "fish spot", "fish sucker", "sunfish",
+    "muscadine", "pawpaw", "abiyuch", "rowal", "eppaw", "oheloberries", "carissa",
+    "java-plum", "mammy-apple", "breadnut", "persimmons native", "grapes american type",
+    "casaba", "pitanga", "rose-apples", "roselle", "sapodilla", "sapote", "soursop",
+    "sugar-apples", "arrowhead", "celtuce", "chrysanthemum", "epazote", "gourd", "waxgourd",
+    "mountain yam", "tendergreen", "nopales", "poi", "pumpkin flowers", "tahitian", "vinespinach",
+    "water convolvulus", "yautia", "irishmoss", "enhanced",
+    # foraged, not retailed or not safe raw
+    "willow", "fireweed", "lambsquarters", "sourdock", "dock", "cattail", "mashu", "mouse nuts",
+    "prairie turnips", "pokeberry", "butterbur", "fiddlehead", "stinging nettles", "acorns",
+    "ginkgo", "broccoli leaves", "amaranth leaves", "drumstick leaves", "drumstick pods",
+    "pumpkin leaves", "sweet potato leaves", "taro leaves", "taro shoots", "leafy tips",
+    "jute", "sesbania", "winged bean", "winged beans", "hyacinth beans", "hyacinth-beans",
+    "mothbeans", "catjang", "yardlong beans mature seeds", "beet greens",
+    # high-mercury fish (EU/FDA advice to limit or avoid)
+    "mackerel king", "king mackerel", "tilefish", "shark",
+}
+
+# Indigenous-dataset tags used by USDA SR Legacy (category "American
+# Indian/Alaska Native Foods"): traditional foods not sold in Germany.
+_INDIGENOUS_FOOD_TAG_RE = re.compile(
+    r"\((?:alaska native|northern plains indians|navajo|hopi|apache|southwest|shoshone bannock)\)",
+    re.IGNORECASE,
+)
+
+# Whole USDA categories that never hold a single-ingredient retail whole food.
+_UNCOMMON_FOOD_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "american indian alaska native foods",
+        "baby foods",
+        "fast foods",
+        "restaurant foods",
+        "snacks",
+        "sweets",
+        "beverages",
+        "breakfast cereals",
+        "baked products",
+        "meals entrees and side dishes",
+        "soups sauces and gravies",
+        "sausages and luncheon meats",
+    }
+)
+
+# Processed / multi-ingredient hints => not a single-ingredient whole food.
+PROCESSED_FOOD_HINT_KEYWORDS: set[str] = {
+    "fortified", "fort", "supplement", "powder", "powdered", "bar", "drink mix", "formula",
+    "infant", "baby food", "candy", "candied", "snack", "fast food", "restaurant",
+    "sauce", "gravy", "fried", "breaded", "luncheon", "sausage", "nugget",
     # Multi-ingredient / manufactured / branded products that slip into deeper
     # ranking pages. Blocking them keeps dropdowns to true single-ingredient
     # whole foods even when we widen the candidate pool for restrictive diets.
-    "burger", "soyburger", "patty", "imitation", "meatless", "veggie",
+    "burger", "soyburger", "patty", "meatloaf", "imitation", "surimi", "meatless", "veggie",
     "lite", "low fat", "nonfat", "fat free", "reduced fat", "instant",
-    "cereal", "cornflakes", "bread", "cracker", "cookie", "cake", "pastry",
+    "cereal", "cornflakes", "bread", "cracker", "cookie", "cake", "pancake", "pastry",
     "pizza", "chips", "beverage", "soft drink", "shake", "meal replacement",
-    "enriched", "canned", "pre-cooked", "ready-to", "fort-", "with added",
-    "flavored", "flavoured", "seasoned", "marinated", "smoked", "cured",
+    "enriched", "pre-cooked", "ready-to", "with added", "flavored", "flavoured",
+    "seasoned", "marinated", "cured", "catsup", "ketchup", "dessert topping",
+    "whipped topping", "eggnog", "souffle", "puree", "glazed", "chocolate", "cocoa",
+    "stew", "soup", "tamales", "tortilla", "homemade", "tuna salad", "hash brown",
+    "liquid from", "formulated",
 }
+# Note: "canned" and "smoked" are deliberately NOT processed hints any more:
+# canned sardines/salmon and smoked mackerel are the usual German retail forms.
+
+# Words inside these phrases are not the exotic animal they look like.
+_COMMONNESS_NEUTRAL_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (r"pigeon peas?", ("pigeon",)),
+    (r"turtle beans?|beans? black turtle", ("turtle",)),
+    (r"eggs? quail|quail eggs?", ("quail",)),
+    (r"bear s garlic|bears garlic", ("bear",)),
+    (r"buffalo mozzarella|mozzarella buffalo", ("buffalo",)),
+    (r"water chestnuts?", ("chestnut",)),
+    (r"bitter gourd", ("gourd",)),
+    (r"liquid from coconuts?", ("liquid from",)),
+)
+
+# Brand words in capitals (e.g. "SILK", "MORI-NU", "LIFEWAY", "HORMEL") mark US
+# branded products. Zespri SunGold is the standard gold kiwi in German shops.
+_BRAND_TOKEN_RE = re.compile(r"\b[A-Z][A-Z'\-]{2,}\b")
+_BRAND_TOKEN_ALLOWLIST = frozenset({"USDA", "USDA'S", "BBQ", "DHA", "EPA", "ALA", "UHT", "ZESPRI"})
 
 
-def classify_food_commonness(food_description: str) -> dict[str, Any]:
+@functools.lru_cache(maxsize=1)
+def _commonness_matchers() -> dict[str, Any]:
+    return {
+        "exotic": _keywords_regex(tuple(sorted(EXOTIC_FOOD_BLOCK_KEYWORDS))),
+        "uncommon": _keywords_regex(tuple(sorted(UNCOMMON_FOOD_BLOCK_KEYWORDS))),
+        "processed": _keywords_regex(tuple(sorted(PROCESSED_FOOD_HINT_KEYWORDS))),
+        "neutral": tuple(
+            (re.compile(rf"(?<![a-z0-9])(?:{phrase})(?![a-z0-9])"), _keywords_regex(words))
+            for phrase, words in _COMMONNESS_NEUTRAL_PHRASES
+        ),
+    }
+
+
+def classify_food_commonness(food_description: str, food_category: str = "") -> dict[str, Any]:
     """Return guardrail tier for a food.
 
-    tier  1 = allowed (not on the blocklist)  
-    tier -1 = blocked (exotic / non-retail / heavily processed / empty)  
-    """  
-    raw = str(food_description or "")  
+    tier  1 = allowed (not on the blocklist)
+    tier -1 = blocked (exotic / non-retail / heavily processed / empty)
+    `food_category` (USDA) is optional; when given, whole categories such as
+    "American Indian/Alaska Native Foods" are blocked.
+    """
+    raw = str(food_description or "")
     # Branded products (e.g. "Vitasoy USA, Nasoya Lite Firm Tofu") are not the
     # generic single-ingredient whole foods we want, even though USDA flags them
     # single-ingredient. In USDA SR Legacy they carry a brand marker such as
-    # " USA" (distinct from "USDA") or a trademark symbol.
-    if " USA" in raw or "\u00ae" in raw or "\u2122" in raw:  
-        return {"tier": -1, "reason": "branded"}  
-    key = normalize_lookup_key(food_description)  
-    if not key:  
+    # " USA" (distinct from "USDA"), a trademark symbol or a brand in capitals.
+    if " USA" in raw or "®" in raw or "™" in raw:
+        return {"tier": -1, "reason": "branded"}
+    brand = next(
+        (t for t in (x.strip("'-") for x in _BRAND_TOKEN_RE.findall(raw)) if len(t) >= 3 and t not in _BRAND_TOKEN_ALLOWLIST),
+        "",
+    )
+    if brand:
+        return {"tier": -1, "reason": f"branded: {brand}"}
+    key = normalize_lookup_key(food_description)
+    if not key:
         return {"tier": -1, "reason": "empty"}
 
-    for tok in EXOTIC_FOOD_BLOCK_KEYWORDS:  
-        if tok in key:  
-            return {"tier": -1, "reason": f"exotic: {tok}"}
+    category = normalize_lookup_key(str(food_category or "")).replace("/", " ")
+    category = re.sub(r"\s+", " ", category).strip()
+    if category in _UNCOMMON_FOOD_CATEGORIES:
+        return {"tier": -1, "reason": f"category: {food_category}"}
+    if _INDIGENOUS_FOOD_TAG_RE.search(raw):
+        return {"tier": -1, "reason": "indigenous dataset food"}
 
-    for tok in PROCESSED_FOOD_HINT_KEYWORDS:  
-        if tok in key:  
-            return {"tier": -1, "reason": f"processed: {tok}"}
+    m = _commonness_matchers()
+    text = key
+    for phrase_rx, word_rx in m["neutral"]:
+        text = phrase_rx.sub(lambda mm, _w=word_rx: _w.sub(" ", mm.group(0)), text)
+
+    hit = m["exotic"].search(text)
+    if hit:
+        return {"tier": -1, "reason": f"exotic: {hit.group(0)}"}
+    hit = m["uncommon"].search(text)
+    if hit:
+        return {"tier": -1, "reason": f"not sold in shops: {hit.group(0)}"}
+    hit = m["processed"].search(text)
+    if hit:
+        return {"tier": -1, "reason": f"processed: {hit.group(0)}"}
 
     return {"tier": 1, "reason": "allowed"}
 
 
-def filter_and_rank_common_foods(  
-    foods: list[dict[str, Any]],  
-    limit: int,  
-) -> list[dict[str, Any]]:  
+def filter_and_rank_common_foods(
+    foods: list[dict[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
     """Drop blocklisted foods, then rank the survivors by concentration.
 
-    The agent already orders results by commonness via its system prompt;  
-    this only removes exotic/processed items and re-sorts by amount_per_100g  
-    (desc) with a small preparation penalty as a tie-breaker.  
-    """  
-    enriched: list[tuple[float, int, dict[str, Any]]] = []  
-    for food in foods:  
-        if classify_food_commonness(str(food.get("food_description", "") or ""))["tier"] < 0:  
-            continue  # drop exotic / processed entirely  
-        try:  
-            amount = float(food.get("amount_per_100g", 0.0) or 0.0)  
-        except Exception:  
-            amount = 0.0  
-        if amount <= 0:  
-            continue  
-        prep_penalty = _whole_food_preparation_penalty(  
-            str(food.get("food_description", "") or "")  
-        )  
+    The agent already orders results by commonness via its system prompt;
+    this only removes exotic/processed items and re-sorts by amount_per_100g
+    (desc) with a small preparation penalty as a tie-breaker.
+    """
+    enriched: list[tuple[float, int, dict[str, Any]]] = []
+    for food in foods:
+        verdict = classify_food_commonness(
+            str(food.get("food_description", "") or ""),
+            str(food.get("food_category", "") or ""),
+        )
+        if verdict["tier"] < 0:
+            continue  # drop exotic / processed entirely
+        try:
+            amount = float(food.get("amount_per_100g", 0.0) or 0.0)
+        except Exception:
+            amount = 0.0
+        if amount <= 0:
+            continue
+        prep_penalty = _whole_food_preparation_penalty(
+            str(food.get("food_description", "") or "")
+        )
         enriched.append((amount, prep_penalty, food))
 
-    if not enriched:  
+    if not enriched:
         return []
 
-    enriched.sort(key=lambda e: (-e[0], e[1]))  
-    return [e[2] for e in enriched[:limit]]  
+    enriched.sort(key=lambda e: (-e[0], e[1]))
+    return [e[2] for e in enriched[:limit]]
 
 
 @functools.lru_cache(maxsize=1)
