@@ -8944,12 +8944,22 @@ def _typed_delta_piece(event: Any) -> str | None:
     return None
 
 
-def _order_stream_endpoints(base_url: str, endpoints: list[str]) -> list[str]:
+def _order_stream_endpoints(base_url: str, endpoints: list[str], primary: Any = ()) -> list[str]:
+    """Try order: the configured (`primary`) agent's endpoints that are not
+    cooling down (the one that last answered first), then the last endpoint
+    that answered, then the other healthy ones, then the cooling ones. So one
+    transient error of the operator's chosen agent moves calls to a fallback
+    only for its cooldown, not for the rest of the process lifetime."""
     now = time.monotonic()
     with _STREAM_HEALTH_LOCK:
         preferred = _LAST_GOOD_STREAM_URL.get(base_url, "")
         cooling = {url for url, until in _STREAM_ENDPOINT_COOLDOWN.items() if until > now}
-    head = [preferred] if preferred in endpoints and preferred not in cooling else []
+    primary_set = set(primary or ())
+    head = [url for url in endpoints if url in primary_set and url not in cooling]
+    if preferred in head:
+        head = [preferred] + [url for url in head if url != preferred]
+    elif preferred in endpoints and preferred not in cooling:
+        head.append(preferred)
     healthy = [url for url in endpoints if url not in head and url not in cooling]
     cold = [url for url in endpoints if url not in head and url in cooling]
     return head + healthy + cold
@@ -9168,8 +9178,9 @@ def _blockbrain_chat(
     # Primary transport: Blockbrain agent stream endpoint (SSE), preferring v2.
     # Include fallback agents so a single dead/500 agent cannot break the app
     # (the previously pinned agent started returning HTTP 500 and silently killed
-    # image OCR). Ordered, de-duplicated: last working endpoint first, then the
-    # configured agent, then fallbacks; recently failed endpoints go last.
+    # image OCR). Ordered, de-duplicated: the configured agent first (unless it
+    # is cooling down after a failure), then the last working endpoint, then
+    # fallbacks; recently failed endpoints go last.
     agent_order: list[str] = []
     primary_agents = [agent_id]
     if allow_tools:
@@ -9185,12 +9196,14 @@ def _blockbrain_chat(
     for _a in agent_order:
         stream_endpoints.append(f"{base_url}/v2/api/agents/{_a}/stream")
         stream_endpoints.append(f"{base_url}/v1/api/agents/{_a}/stream")
+    configured = {str(_a or "").strip() for _a in primary_agents}
+    primary_endpoints = [url for url in stream_endpoints if url.split("/api/agents/", 1)[1].split("/", 1)[0] in configured]
     join_mode = _stream_join_mode()
     last_error = ""
     # Tool calls remember their own last working endpoint, so a fast agent that
     # answered a meal plan never displaces the research agent for web lookups.
     sticky_key = base_url + ("|tools" if allow_tools else "")
-    for stream_url in _order_stream_endpoints(sticky_key, stream_endpoints):
+    for stream_url in _order_stream_endpoints(sticky_key, stream_endpoints, primary_endpoints):
         if time.monotonic() - started > budget:
             last_error = (last_error + " | " if last_error else "") + f"gave up after {int(budget)}s budget"
             break
