@@ -5690,6 +5690,13 @@ _FOOD_DISPLAY_NAME_OVERRIDES: dict[str, str] = {
     "chayote fruit raw": "Chayote",
     "shallots bulb peeled root removed raw": "Shallots (peeled)",
     "watermelon seedless flesh only raw": "Watermelon, seedless",
+    "watermelon seedless rind only raw": "Watermelon rind",
+    "potatoes baked skin only with salt": "Potato skins (baked)",
+    "green beans raw": "Green beans",
+    "beans liquid from stewed kidney beans": "Bean cooking liquid (kidney beans)",
+    "pasta whole grain 51 whole wheat remaining enriched semolina dry (includes foods for usda s food distribution program)": "Whole-grain pasta (dry)",
+    "peppers banana or hungarian wax seeded raw": "Banana pepper",
+    "peppers banana raw": "Banana pepper",
     "spinach souffle": "Spinach souffle",
     "fish tuna salad": "Tuna salad",
 }
@@ -5711,7 +5718,8 @@ _FOOD_NAME_DROP_SEGMENTS = frozenset(
         "grade a", "large", "grass-fed", "free range", "enhanced", "seeded", "destemmed", "uncooked",
         "dry", "mature seeds", "mature", "whole grain", "fresh water", "kernel", "kernels",
         "composite of trimmed retail cuts", "dehusked", "drained", "fruit", "flesh only",
-        "boneless separable lean only", "cultured",
+        "boneless separable lean only", "cultured", "no salt added", "without added salt", "unsalted",
+        "with salt", "with salt added", "salted", "solids and liquids", "drained solids",
     }
 )
 _FOOD_NAME_STATE_WORDS: dict[str, str] = {
@@ -5726,17 +5734,37 @@ _FOOD_NAME_STATE_WORDS: dict[str, str] = {
     "without peel": "peeled", "immature seeds": "fresh", "imitation": "imitation",
 }
 # Filler words allowed in a "state" segment ("canned in oil", "baked or broiled").
-_FOOD_NAME_STATE_FILLER = frozenset({"in", "or", "and", "oil", "water", "drained", "solids", "with", "bone", "heat", "dry", "moist", "made", "from", "surimi"})
-# Foods sold dry whose USDA "raw" values are per 100 g of DRY weight.
+_FOOD_NAME_STATE_FILLER = frozenset(
+    {"in", "or", "and", "oil", "water", "drained", "solids", "with", "without", "salt", "bone", "heat", "dry", "moist", "made", "from", "surimi"}
+)
+# "(dry)" tells the shopper that the grams on the card are DRY weight. It is
+# added only when the USDA text says so ("mature seeds", "dry", "0% moisture",
+# "uncooked") or when the food is a grain/pasta whose "raw" row is the dry
+# product. It is never added to fresh, frozen, canned, cooked or prepared foods
+# ("Green beans, raw" is a fresh vegetable, not dried beans).
 _FOOD_NAME_DRY_HEADS = frozenset(
     {
         "rice", "wild rice", "quinoa", "millet", "buckwheat", "bulgur", "couscous", "amaranth grain",
         "amaranth", "sorghum", "sorghum grain", "teff", "spelt", "farro", "einkorn", "khorasan",
-        "triticale", "rye grain", "barley", "beans", "lentils", "lima beans", "mung beans",
-        "mungo beans", "soybeans", "pasta", "spaghetti", "cornmeal", "semolina", "fonio", "lupins",
-        "wheat", "corn grain",
+        "triticale", "rye grain", "barley", "pasta", "spaghetti", "fonio", "wheat", "corn grain",
+        "lentils",
     }
 )
+_FOOD_NAME_DRY_MARKER_RE = re.compile(r"\bmature seeds\b|0% moisture|\buncooked\b|(?:^|,)\s*dry\s*(?=,|\(|$)")
+_FOOD_NAME_STRONG_DRY_RE = re.compile(r"0% moisture|\buncooked\b|(?:^|,)\s*dry\s*(?=,|\(|$)")
+_FOOD_NAME_NOT_DRY_RE = re.compile(
+    r"\b(?:fresh|green|snap|string|runner|immature|sprouted|in pod|frozen|canned|cooked|boiled|stewed"
+    r"|liquid|prepared|refried|babyfood|baby food|puddings?|cereals?|chili|soup|flour|salad|juice|sauce)\b"
+)
+_FOOD_NAME_READY_TO_EAT_RE = re.compile(r"\b(?:roasted|toasted|puffed|popped)\b")
+# Legumes are sold both fresh and dried, so "fresh" is kept as a state for them.
+_FOOD_NAME_LEGUME_RE = re.compile(r"(?:beans?|peas|lentils|edamame|lupins)\b")
+# Non-legume staples whose "dry" row is the uncooked product (dry weight).
+_FOOD_NAME_DRY_STAPLE_RE = re.compile(
+    r"\b(?:noodles|macaroni|pasta|spaghetti|groats|rice|quinoa|millet|couscous|bulgur|barley|oats|tapioca|grain)\b"
+)
+# Part-only rows must not merge with the whole food ("Watermelon rind").
+_FOOD_NAME_PART_ONLY = {"rind only": "rind", "skin only": "skin", "peel only": "peel"}
 # USDA "Head, modifier" groups that read better as "modifier head".
 _FOOD_NAME_PREFIX_GROUPS = frozenset(
     {
@@ -5786,7 +5814,9 @@ _FOOD_NAME_PROPER_WORDS = {
     "coho": "Coho", "ataulfo": "Ataulfo", "tommy": "Tommy", "atkins": "Atkins", "thompson": "Thompson",
     "deglet": "Deglet", "noor": "Noor", "northern": "northern", "american": "American",
 }
-_FOOD_NAME_PROPER_PHRASES = (("new zealand", "New Zealand"), ("new york", "New York"), ("great northern", "Great Northern"))
+_FOOD_NAME_PROPER_PHRASES = (
+    ("new zealand", "New Zealand"), ("new york", "New York"), ("great northern", "Great Northern"), ("ny", "NY"),
+)
 _FOOD_NAME_PREFIX_ADJECTIVES = frozenset(
     {
         "swiss", "garden", "baby", "red", "green", "yellow", "white", "black", "brown", "orange",
@@ -5888,11 +5918,13 @@ def food_display_name(food_description: str) -> str:
         group = normalize_lookup_key(head)
         head, rest = rest[0], rest[1:]
 
+    low_raw = raw.lower()
+    is_legume = bool(_FOOD_NAME_LEGUME_RE.search(low_raw))
     states: list[str] = []
     descriptors: list[str] = []
     for seg in rest:
         key = normalize_lookup_key(seg)
-        state = _segment_state(key)
+        state = "fresh" if key == "fresh" and is_legume else _segment_state(key)
         if state:
             if state not in states:
                 states.append(state)
@@ -5915,8 +5947,17 @@ def food_display_name(food_description: str) -> str:
         species = "Pork" if head_key == "pork loin" else head.split()[0].title()
         states = [s for s in states if s != "peeled"]
         organ = next((o for o in _FOOD_NAME_ORGANS for d in descriptors if re.search(rf"\b{o}\b", d.lower())), "")
+        composite = any(re.match(r"composite of trimmed", d.lower()) for d in descriptors)
+        fat_only = not composite and any(
+            re.fullmatch(r"(?:composite of )?(?:separable|external|seam) fat(?:, .*)?", d.lower()) for d in descriptors
+        )
         if organ:
             name = f"{species} {organ}"
+        elif composite:
+            lean = "separable lean only" in low_raw
+            name = f"{species}, mixed {'lean ' if lean else ''}cuts"
+        elif fat_only:
+            name = f"{species} fat"
         else:
             cuts = [
                 _clean_cut_text(d)
@@ -5971,7 +6012,10 @@ def food_display_name(food_description: str) -> str:
             name = f"{mod_txt} {noun}".strip()
     else:
         name = head
-        if descriptors:
+        part_only = next((normalize_lookup_key(d) for d in descriptors if normalize_lookup_key(d) in _FOOD_NAME_PART_ONLY), "")
+        if part_only:
+            name = f"{head} {_FOOD_NAME_PART_ONLY[part_only]}"
+        elif descriptors:
             v = descriptors[0]
             v_key = normalize_lookup_key(v)
             if v.startswith("(") and v.endswith(")"):
@@ -5986,10 +6030,15 @@ def food_display_name(food_description: str) -> str:
     name = re.sub(r"\(([^)]{28,})\)", "", name)                       # drop long synonym lists
     name = re.sub(r"\(\s*,?\s*", "(", name)
     name = re.sub(r"\s+", " ", name).strip(" ,")
-    last_word = normalize_lookup_key(name).split()[-1:] if name else []
-    if head_key in _FOOD_NAME_DRY_HEADS or last_word in (["beans"], ["lentils"], ["rice"]):
-        if not any(s in states for s in ("cooked", "boiled", "baked", "sprouted", "steamed", "canned", "fresh", "dry")):
-            states.insert(0, "dry")
+    explicit_dry = bool(_FOOD_NAME_DRY_MARKER_RE.search(low_raw)) and (
+        is_legume or bool(_FOOD_NAME_DRY_STAPLE_RE.search(low_raw))
+    )
+    if (explicit_dry or head_key in _FOOD_NAME_DRY_HEADS) and not (
+        _FOOD_NAME_NOT_DRY_RE.search(low_raw)
+        or (_FOOD_NAME_READY_TO_EAT_RE.search(low_raw) and not _FOOD_NAME_STRONG_DRY_RE.search(low_raw))
+        or any(s in states for s in ("cooked", "boiled", "baked", "sprouted", "steamed", "canned", "fresh", "dry"))
+    ):
+        states.insert(0, "dry")
     name = _display_case(name)
     name = re.sub(r"\(([A-Z])(?=[a-z])", lambda m: "(" + m.group(1).lower(), name) if not re.search(r"\((?:West|Kiwano)", name) else name
     if states:

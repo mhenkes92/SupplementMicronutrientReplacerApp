@@ -83,6 +83,46 @@ NAMES = [
     ("Sweet potato, raw, unprepared (Includes foods for USDA's Food Distribution Program)", "Sweet potato"),
     ("New Zealand spinach, raw", "New Zealand spinach"),
     ("Beans, great northern, mature seeds, raw (Includes foods for USDA's Food Distribution Program)", "Great Northern beans (dry)"),
+    # "(dry)" only for dry seeds / grains, never for fresh, frozen, canned or cooked foods
+    ("Green beans, raw", "Green beans"),
+    ("Broad beans, fresh", "Broad beans (fresh)"),
+    ("String beans, raw", "String beans"),
+    ("French beans, raw", "French beans"),
+    ("Runner beans, raw", "Runner beans"),
+    ("Beans, snap, green, raw", "Green beans"),
+    ("Beans, snap, green, frozen, all styles, unprepared", "Green snap beans (frozen)"),
+    ("Beans, liquid from stewed kidney beans", "Bean cooking liquid (kidney beans)"),
+    ("Beans, pinto, immature seeds, frozen, unprepared", "Pinto beans (fresh, frozen)"),
+    ("Beans, french, mature seeds, raw", "French beans (dry)"),
+    ("Beans, cannellini, dry", "Cannellini beans (dry)"),
+    ("Mothbeans, mature seeds, raw", "Mothbeans (dry)"),
+    ("Lentils, sprouted, raw", "Lentils (sprouted)"),
+    ("Soybeans, mature seeds, raw", "Soybeans (dry)"),
+    ("Soybeans, mature seeds, roasted, salted", "Soybeans (roasted)"),
+    ("Buckwheat groats, roasted, dry", "Buckwheat groats (dry, roasted)"),
+    ("Noodles, egg, dry, enriched", "Noodles, egg (dry)"),
+    ("Rice, white, long-grain, regular, unenriched, cooked without salt", "Long-grain white rice (cooked)"),
+    ("Rice, white, long-grain, precooked or instant, enriched, prepared", "Long-grain white rice"),
+    ("Puddings, rice, dry mix", "Puddings, rice"),
+    ("Flour, rice, brown", "Flour, rice"),
+    ("Figs, dried, uncooked", "Figs (dried)"),
+    ("Milk, dry, whole, with added vitamin D", "Milk"),
+    ("Gravy, brown, dry", "Brown gravy"),
+    ("Babyfood, green beans, dices, toddler", "Babyfood, green beans"),
+    # salt / liquid notes are not part of the name
+    ("Broccoli, cooked, boiled, drained, with salt", "Broccoli (cooked, boiled)"),
+    ("Asparagus, canned, no salt added, solids and liquids", "Asparagus (canned)"),
+    ("Almonds, oil roasted, with salt added", "Almonds (roasted)"),
+    # part-only and fat-only rows keep the part, so they never merge with the whole food
+    ("Watermelon, seedless, rind only, raw", "Watermelon rind"),
+    ("Pork, fresh, separable fat, raw", "Pork fat"),
+    ("Lamb, Australian, imported, fresh, external fat, raw", "Lamb fat"),
+    ("Beef, retail cuts, separable fat, cooked", "Beef fat (cooked)"),
+    # readable composites and peppers
+    ("Pork, fresh, composite of trimmed retail cuts (leg, loin, shoulder), separable lean only, raw", "Pork, mixed lean cuts"),
+    ("Pork, fresh, composite of trimmed retail cuts (loin and shoulder blade), separable lean and fat, cooked", "Pork, mixed cuts (cooked)"),
+    ("Peppers, banana or Hungarian wax, seeded, raw", "Banana pepper"),
+    ("Beef, short loin (NY strip steak), raw", "Beef short loin (NY strip steak)"),
 ]
 
 
@@ -129,3 +169,12 @@ def test_meal_plan_and_share_text_use_display_names(sw):
     share = sw._build_share_text([], [decision], "")
     assert "Vitamin B12: Lamb liver" in share
     assert sw._previous_choice_label(decision) == "replaced with Lamb liver"
+
+
+def test_chromium_fallback_card_shows_fresh_green_beans(sw):
+    """Chromium has no USDA rows, so its card uses the curated fallback list;
+    'Green beans, raw' is a fresh vegetable and must not say '(dry)'."""
+    rows = bb._curated_food_fallback("chromium", 10)
+    labels = [sw._food_label(r) for r in rows]
+    assert any(label.startswith("Green beans (") for label in labels), labels
+    assert not any("(dry)" in label for label in labels), labels
