@@ -2157,28 +2157,15 @@ def _component_card_theme(component_name: str) -> dict[str, str]:
 
 
 def _render_header() -> None:
+    # Only rules whose selectors match something on a screen (welcome, analyzing,
+    # card, results, dialogs) live here; the swipe card styles itself inside its
+    # iframe (swipe_component/index.html).
     st.markdown(
         """
         <style>
             /* Keep the Streamlit top bar visible but transparent, and push content below it. */
             [data-testid="stHeader"] {
                 background: transparent;
-            }
-            /* Tinder-style page lock: the page itself never scrolls (no left/right/up/down);
-               only the swipe card moves. */
-            html, body {
-                overflow: hidden !important;
-                overscroll-behavior: none !important;
-            }
-            [data-testid="stAppViewContainer"],
-            [data-testid="stMain"],
-            section.main {
-                overflow: hidden !important;
-                overscroll-behavior: none !important;
-            }
-            .block-container {
-                overflow-x: hidden !important;
-                max-width: 100vw;
             }
             [data-testid="stAppViewContainer"] {
                 background:
@@ -2205,6 +2192,12 @@ def _render_header() -> None:
             [data-testid="stButtonGroup"] button {
                 min-height: 40px;
             }
+            /* Long labels (results items, "doesn't fit Vegan — tap to choose
+               another") wrap instead of ending in an ellipsis. */
+            .stButton button [data-testid="stMarkdownContainer"],
+            .stButton button [data-testid="stMarkdownContainer"] p {
+                white-space: normal;
+            }
             .diet-strip-label {
                 font-size: 0.72rem;
                 font-weight: 800;
@@ -2212,113 +2205,6 @@ def _render_header() -> None:
                 text-transform: uppercase;
                 color: #475569;
                 margin: 0.25rem 0 0.3rem 0;
-            }
-            .swipe-title {
-                font-size: 2.05rem;
-                font-weight: 900;
-                letter-spacing: 0.015em;
-                line-height: 1.05;
-                margin-bottom: 0.15rem;
-                color: #111827;
-            }
-            .swipe-subtitle {
-                color: #425466;
-                margin-bottom: 1rem;
-                font-size: 0.95rem;
-            }
-            .filter-shell {
-                margin: 0.3rem 0 0.9rem 0;
-                padding: 0.85rem 0.9rem 0.8rem 0.9rem;
-                border: 1px solid #d9e2ef;
-                border-radius: 22px;
-                background: linear-gradient(160deg, rgba(255,255,255,0.92) 0%, rgba(247,250,255,0.92) 100%);
-                box-shadow: 0 12px 26px rgba(15, 23, 42, 0.06);
-            }
-            .filter-topline {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 0.5rem;
-                margin-bottom: 0.35rem;
-            }
-            .filter-title {
-                font-size: 0.82rem;
-                font-weight: 800;
-                letter-spacing: 0.04em;
-                text-transform: uppercase;
-                color: #475569;
-            }
-            .filter-chip {
-                display: inline-flex;
-                align-items: center;
-                gap: 0.4rem;
-                padding: 0.35rem 0.7rem;
-                border-radius: 999px;
-                border: 1px solid #d6dde7;
-                background: #ffffff;
-                color: #0f172a;
-                font-size: 0.8rem;
-                font-weight: 700;
-            }
-            .filter-chip-dot {
-                width: 9px;
-                height: 9px;
-                border-radius: 999px;
-                background: #22c55e;
-                box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.15);
-            }
-            .swipe-progress {
-                margin: 0 0 0.7rem 0;
-                display: flex;
-                justify-content: center;
-                gap: 0.35rem;
-            }
-            .swipe-dot {
-                width: 7px;
-                height: 7px;
-                border-radius: 999px;
-                background: #cfd9e5;
-            }
-            .swipe-dot.active {
-                width: 18px;
-                background: #22c55e;
-            }
-            .tinder-stage {
-                position: relative;
-                margin: 0.05rem 0 0.35rem 0;
-                min-height: 8px;
-            }
-            .stack-under-1,
-            .stack-under-2 {
-                position: absolute;
-                left: 12px;
-                right: 12px;
-                border-radius: 28px;
-                background: #e8eef6;
-                border: 1px solid #d4deea;
-            }
-            .stack-under-1 {
-                top: 14px;
-                bottom: 2px;
-                opacity: 0.86;
-                transform: scale(0.985);
-            }
-            .stack-under-2 {
-                top: 7px;
-                bottom: 10px;
-                opacity: 0.56;
-                transform: scale(0.97);
-            }
-            .card {
-                position: relative;
-                border-radius: 28px;
-                padding: 18px 18px 14px 18px;
-                background: linear-gradient(165deg, #ffffff 0%, #f9fcff 45%, #f7fbf5 100%);
-                border: 1px solid #d7e2ee;
-                box-shadow:
-                    0 18px 38px rgba(15, 36, 64, 0.18),
-                    0 3px 8px rgba(15, 36, 64, 0.08);
-                min-height: 488px;
             }
             .chip {
                 display: inline-block;
@@ -2331,151 +2217,6 @@ def _render_header() -> None:
                 font-weight: 700;
                 color: #233243;
             }
-            .decision-rail {
-                display: flex;
-                justify-content: space-between;
-                margin: 0.15rem 0 0.55rem 0;
-                gap: 0.6rem;
-            }
-            .decision-badge {
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 0.73rem;
-                font-weight: 800;
-                border-radius: 10px;
-                padding: 4px 8px;
-                letter-spacing: 0.03em;
-                min-width: 86px;
-            }
-            .decision-badge.left {
-                color: #b91c1c;
-                border: 1px solid #efb9b9;
-                background: #fff1f1;
-            }
-            .decision-badge.right {
-                margin-left: auto;
-                color: #047857;
-                border: 1px solid #9addc6;
-                background: #e8fff5;
-            }
-            .micro-name {
-                font-size: 1.8rem;
-                font-weight: 900;
-                color: #101a25;
-                margin-bottom: 0.45rem;
-                line-height: 1.08;
-            }
-            .dose {
-                color: #1d3650;
-                font-size: 1.02rem;
-                margin-bottom: 0.7rem;
-                font-weight: 600;
-            }
-            .swipe-hint {
-                font-size: 0.86rem;
-                color: #4c6076;
-                margin-top: 0.6rem;
-                margin-bottom: 0.35rem;
-            }
-            .portion-hint {
-                margin: 0.15rem 0 0.35rem 0;
-                padding: 0.5rem 0.7rem;
-                border-radius: 12px;
-                background: #f1f7f2;
-                border: 1px solid #cfe6d5;
-                color: #234a32;
-                font-size: 0.85rem;
-                line-height: 1.5;
-            }
-            .deficiency-flag {
-                margin: 0 0 0.45rem 0;
-                padding: 0.4rem 0.6rem;
-                border-radius: 10px;
-                background: #fff5f5;
-                border: 1px solid #f3c0c0;
-                color: #9b1c1c;
-                font-size: 0.78rem;
-                font-weight: 700;
-                line-height: 1.35;
-            }
-            .bioavail-note {
-                margin: 0.1rem 0 0.35rem 0;
-                padding: 0.45rem 0.6rem;
-                border-radius: 10px;
-                background: #f3f8ff;
-                border: 1px solid #cfe0f2;
-                color: #24425f;
-                font-size: 0.8rem;
-                line-height: 1.45;
-            }
-            .action-legend {
-                text-align: center;
-                color: #5a6778;
-                font-size: 0.78rem;
-                margin: 0.3rem 0 0.55rem 0;
-            }
-            .card-hero {
-                position: relative;
-                overflow: hidden;
-                border-radius: 22px;
-                margin: 0.05rem 0 0.8rem 0;
-                padding: 14px 14px 12px 14px;
-                border: 1px solid rgba(148, 163, 184, 0.22);
-                box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
-                background: var(--card-bg, linear-gradient(160deg, #ffffff 0%, #f8fbff 55%, #f4f7fb 100%));
-            }
-            .card-hero::before {
-                content: "";
-                position: absolute;
-                inset: 0;
-                background: linear-gradient(135deg, var(--card-accent, #64748b) 0%, transparent 42%);
-                opacity: 0.18;
-                pointer-events: none;
-            }
-            .card-hero-top {
-                position: relative;
-                z-index: 1;
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 0.75rem;
-            }
-            .card-hero-name {
-                font-size: 1.42rem;
-                font-weight: 900;
-                line-height: 1.05;
-                color: var(--card-ink, #0f172a);
-                letter-spacing: -0.02em;
-            }
-            .card-hero-dose {
-                position: relative;
-                z-index: 1;
-                margin-top: 0.5rem;
-                color: #334155;
-                font-size: 0.96rem;
-                font-weight: 600;
-            }
-            .card-hero-pill {
-                position: relative;
-                z-index: 1;
-                display: inline-flex;
-                margin-top: 0.55rem;
-                padding: 0.28rem 0.6rem;
-                border-radius: 999px;
-                background: var(--card-chip-bg, rgba(100, 116, 139, 0.12));
-                color: var(--card-chip-text, #334155);
-                font-size: 0.75rem;
-                font-weight: 800;
-                letter-spacing: 0.02em;
-            }
-            .swipe-final-card {
-                border-radius: 24px;
-                padding: 18px;
-                background: linear-gradient(145deg, #ffffff 0%, #fff7ec 60%, #f8fbff 100%);
-                border: 1px solid #e2d5c0;
-                box-shadow: 0 14px 30px rgba(37, 48, 64, 0.12);
-            }
             .analyze-loading-wrap {
                 min-height: 360px;
                 display: flex;
@@ -2484,14 +2225,6 @@ def _render_header() -> None:
                 justify-content: center;
                 text-align: center;
                 gap: 0.75rem;
-            }
-            .analyze-loading-spinner {
-                width: 54px;
-                height: 54px;
-                border-radius: 999px;
-                border: 4px solid #d5deeb;
-                border-top-color: #16a34a;
-                animation: suppswipe-spin 1s linear infinite;
             }
             .analyze-loading-arrow {
                 width: 54px;
@@ -2539,9 +2272,6 @@ def _render_header() -> None:
             @keyframes suppswipe-spin {
                 from { transform: rotate(0deg); }
                 to { transform: rotate(360deg); }
-            }
-            div[data-testid="stVerticalBlockBorderWrapper"] {
-                border-radius: 16px;
             }
         </style>
         """,
@@ -2660,8 +2390,8 @@ def _on_diet_profile_change() -> None:
     """Persist the dietary filter into a plain (non-widget) session key.
 
     Streamlit clears a widget's keyed state whenever that widget isn't rendered
-    on a run. A swipe calls st.rerun() before the dietary pills render, so the
-    radio's own key was being garbage-collected and the filter reset to "No
+    on a run. Runs that stop early (st.rerun() before the dietary pills render)
+    garbage-collected the radio's own key and reset the filter to "No
     restriction". Mirroring the choice into `swipe_diet_profile_id` (never used
     as a widget key) keeps it across swipes.
     """
