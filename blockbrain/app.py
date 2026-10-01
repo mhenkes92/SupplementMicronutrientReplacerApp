@@ -428,6 +428,7 @@ WHOLE_FOOD_UNIT_ESTIMATES: list[tuple[str, str, str, float]] = [
     ("mango", "mango", "mangoes", 200.0),
     ("avocado", "avocado", "avocados", 150.0),
     ("tomato", "tomato", "tomatoes", 123.0),
+    ("carrots baby", "baby carrot", "baby carrots", 10.0),
     ("carrot", "carrot", "carrots", 61.0),
     ("egg yolk", "egg yolk", "egg yolks", 17.0),
     ("egg white", "egg white", "egg whites", 33.0),
@@ -437,10 +438,18 @@ WHOLE_FOOD_UNIT_ESTIMATES: list[tuple[str, str, str, float]] = [
     ("brazil nut", "Brazil nut", "Brazil nuts", 5.0),
 ]
 # Foods whose name contains a unit keyword but are not that unit
-# ("Eggplant", "Fish, whitefish, eggs" are not hen's eggs).
+# ("Eggplant", "Fish, whitefish, eggs" are not hen's eggs; an orange bell
+# pepper is not an orange).
 WHOLE_FOOD_UNIT_EXCLUSIONS: dict[str, tuple[str, ...]] = {
     "egg": ("eggplant", "fish", "roe", "caviar"),
+    "orange": ("pepper",),
+    "apple": ("pineapple",),
 }
+# Dried / processed forms weigh nothing like the whole fresh item, so no
+# "~N bananas" estimate is given for them.
+WHOLE_FOOD_UNIT_PROCESSED_WORDS: tuple[str, ...] = (
+    "dried", "dehydrated", "powder", "juice", "paste", "puree", "sauce", "chips", "flakes",
+)
 
 # Approximate grams per cup for selected foods where cup-based measures are common.
 VOLUME_FOOD_ESTIMATES: list[tuple[str, str, str, float]] = [
@@ -941,6 +950,8 @@ def estimate_whole_food_units(food_description: str, grams_needed: float | None)
         return ""
 
     text = normalize_lookup_key(food_description)
+    if any(re.search(r"\b" + word + r"\b", text) for word in WHOLE_FOOD_UNIT_PROCESSED_WORDS):
+        return ""
     for keyword, singular, plural, avg_weight_g in WHOLE_FOOD_UNIT_ESTIMATES:
         # Whole-word match ("pineapple" is not an apple, "eggplant" not an egg).
         if avg_weight_g <= 0 or not re.search(r"\b" + re.escape(keyword) + r"(?:s|es)?\b", text):
@@ -9573,6 +9584,27 @@ def _legacy_row_name_pattern(component: str) -> re.Pattern[str] | None:
     return re.compile(r"(?<![a-z0-9])" + r"\s+".join(re.escape(w) for w in words) + r"(?![a-z0-9])")
 
 
+def _rename_salt_cation_rows(rows: list[dict[str, Any]], folded_text: str) -> list[dict[str, Any]]:
+    """Rename generic rows named after the cation of a salt to the nutrient the
+    salt supplies ("potassium" read from "potassium iodide" -> iodine) when the
+    name never appears on its own in the label text."""
+    hits = [(m.group(0), _NUTRIENT_ALIAS_INDEX[re.sub(r"\s+", " ", m.group(0))][0]) for m in _NUTRIENT_ALIAS_RE.finditer(folded_text)]
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        component = str(row.get("component", "") or "")
+        key = canonical_nutrient_key(component)
+        name = _fold_label_text(component)
+        if not key or any(hit_key == key for _text, hit_key in hits):
+            out.append(row)
+            continue
+        salts = {hit_key for text, hit_key in hits if text.startswith(name + " ")}
+        if len(salts) == 1:
+            salt_key = salts.pop()
+            row = {**row, "component": _NUTRIENT_LEXICON[salt_key]["display"]}
+        out.append(row)
+    return out
+
+
 def _reconcile_label_line_rows(rows: list[dict[str, Any]], input_text: str) -> list[dict[str, Any]]:
     """Merge label-line rows (authoritative) with the generic pipeline's rows.
 
@@ -9582,6 +9614,7 @@ def _reconcile_label_line_rows(rows: list[dict[str, Any]], input_text: str) -> l
     potassium iodide) 150 mcg", the "vitamin b9 6 mcg" from "Vitamin B-12 6
     mcg"), and its name appears in the label text the line parser left unread.
     """
+    rows = _rename_salt_cation_rows(rows, _fold_label_text(input_text))
     line_rows, unclaimed = _scan_label_nutrient_lines(input_text)
     if not line_rows:
         return rows

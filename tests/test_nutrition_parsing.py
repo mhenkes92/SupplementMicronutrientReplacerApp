@@ -220,3 +220,45 @@ def test_parse_components_keeps_label_form_and_line(sw):
             "label_line": "Vitamin E 400 IU (as d-alpha tocopherol)",
         }
     ]
+
+
+def test_ingredient_list_salt_is_read_as_the_nutrient_it_supplies(sw):
+    keys = [c["nutrient_key"] for c in _cards(sw, "Ingredients: potassium iodide, chromium chloride, zinc gluconate")]
+    assert "potassium" not in keys and "iodine" in keys
+    # A real potassium line next to a potassium salt stays potassium.
+    assert [c["nutrient_key"] for c in _cards(sw, "Potassium 99 mg\nIngredients: potassium chloride")] == ["potassium"]
+
+
+def test_trailing_ingredient_lists_add_no_phantom_cards(sw):
+    label = (
+        "Nährwertangaben pro Tagesdosis (1 Tablette) %NRV*\n"
+        "Vitamin C 80 mg 100%\nZink 10 mg 100%\nJod 150 µg 100%\nSelen 55 µg 100%\nEisen 14 mg 100%\n"
+        "Zutaten: Calciumcarbonat, Magnesiumoxid, L-Ascorbinsäure, Eisenfumarat, Zinkoxid, Kaliumiodid, "
+        "Natriumselenit, Überzugsmittel Hydroxypropylmethylcellulose, Trennmittel Magnesiumsalze der Speisefettsäuren."
+    )
+    got = sorted((c["nutrient_key"], c["dose_value"]) for c in _cards(sw, label))
+    assert got == [("iodine", 150), ("iron", 14), ("selenium", 55), ("vitamin c", 80), ("zinc", 10)]
+
+
+@pytest.mark.parametrize(
+    "food, grams, expected",
+    [
+        ("Eggplant, raw", 300, ""),
+        ("Fish, whitefish, eggs (Alaska Native)", 10, ""),
+        ("Pineapple, raw", 300, ""),
+        ("Peppers, sweet, orange, raw", 200, ""),
+        ("Tomatoes, sun-dried", 100, ""),
+        ("Bananas, dehydrated, or banana powder", 50, ""),
+        ("Eggs, Grade A, Large, egg yolk", 53, "~4 egg yolks"),
+        ("Egg, whole, raw, fresh", 100, "~2 eggs"),
+        ("Nuts, brazilnuts, raw", 10, "~2 Brazil nuts"),
+        ("Carrots, baby, raw", 100, "~10 baby carrots"),
+    ],
+)
+def test_portion_words_only_for_real_whole_items(food, grams, expected):
+    text = bb.estimate_whole_food_units(food, grams)
+    assert (expected in text) if expected else text == ""
+
+
+def test_small_doses_keep_their_precision_on_the_card(sw):
+    assert _one_card(sw, "Vitamin D3 0.025 mg")["dose_label"] == "0.025 mg"

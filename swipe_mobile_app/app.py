@@ -689,7 +689,8 @@ def _dose_label(component: dict[str, Any]) -> str:
     if dose_value is None:
         return "Dose not found"
     try:
-        return f"{bb.format_float(float(dose_value))} {dose_unit}".strip()
+        # 3 decimals so small label doses stay exact ("0.025 mg", not "0.03 mg").
+        return f"{bb.format_float(float(dose_value), 3)} {dose_unit}".strip()
     except Exception:
         return str(dose_value)
 
