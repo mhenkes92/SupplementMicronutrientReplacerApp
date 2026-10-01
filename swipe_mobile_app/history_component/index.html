@@ -6,9 +6,12 @@
 // Invisible helper: keeps SuppSwipe's scan history in THIS browser's
 // localStorage (so it's private to the device) instead of a file on the server
 // shared by every visitor. Args: save (array|null) to persist, clear (bool).
-// Sends the stored history back to Python once per page load.
+// A second key holds the scan in progress so it can be resumed after a
+// refresh. Args: saveScan (object|null) to persist, clearScan (bool).
+// Sends {history, scan} back to Python once per page load.
 (function () {
   var KEY = "suppswipe_scan_history_v1";
+  var SCAN_KEY = "suppswipe_current_scan_v1";
   var sentOnce = false;
   function send(type, extra) {
     var msg = { isStreamlitMessage: true, type: type };
@@ -21,19 +24,33 @@
       return Array.isArray(v) ? v : [];
     } catch (e) { return []; }
   }
+  function readScan() {
+    try {
+      var v = JSON.parse(window.localStorage.getItem(SCAN_KEY) || "null");
+      return (v && typeof v === "object" && !Array.isArray(v)) ? v : null;
+    } catch (e) { return null; }
+  }
   window.addEventListener("message", function (event) {
     var d = event.data;
     if (event.source !== window.parent) return; // only our Streamlit host
     if (!d || d.type !== "streamlit:render") return;
     var args = d.args || {};
+    // Read what this device stored BEFORE applying this run's writes.
+    var stored = sentOnce ? null : read();
+    var scan = sentOnce ? null : readScan();
     try {
       if (args.clear) { window.localStorage.removeItem(KEY); }
       if (Array.isArray(args.save)) { window.localStorage.setItem(KEY, JSON.stringify(args.save.slice(-30))); }
-    } catch (e) { /* storage blocked (private mode): history just isn't kept */ }
+      if (args.clearScan) { window.localStorage.removeItem(SCAN_KEY); }
+      if (args.saveScan && typeof args.saveScan === "object") {
+        window.localStorage.setItem(SCAN_KEY, JSON.stringify(args.saveScan));
+      }
+    } catch (e) { /* storage blocked (private mode): nothing is kept */ }
     if (!sentOnce) {
       sentOnce = true;
-      var stored = read();
-      if (stored.length) { send("streamlit:setComponentValue", { value: stored, dataType: "json" }); }
+      if (stored.length || scan) {
+        send("streamlit:setComponentValue", { value: { history: stored, scan: scan }, dataType: "json" });
+      }
     }
     send("streamlit:setFrameHeight", { height: 0 });
   });

@@ -2397,31 +2397,73 @@ def _save_scan_history(history: list[dict[str, Any]]) -> None:
     st.session_state["_suppswipe_history_save"] = history
 
 
+def _scan_content(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """A saved-scan snapshot without its timestamp (to compare two snapshots)."""
+    return {k: v for k, v in snapshot.items() if k != "ts"}
+
+
+def _saved_scan_args(state: Any) -> dict[str, Any] | None:
+    """The current scan to mirror into the browser, re-stamped only when its
+    content changes (so unchanged runs send identical props and the component
+    isn't re-rendered). Nothing is sent for a scan the visitor just cleared
+    (Clear history) until it changes again (next swipe or filter change)."""
+    snapshot = _scan_snapshot(state)
+    if snapshot is None:
+        return None
+    content = _scan_content(snapshot)
+    suppressed = state.get("_suppswipe_scan_suppressed")
+    if suppressed is not None:
+        if suppressed == content:
+            return None
+        state.pop("_suppswipe_scan_suppressed", None)
+    previous = state.get("_suppswipe_scan_snapshot")
+    if isinstance(previous, dict) and _scan_content(previous) == content:
+        return previous
+    state["_suppswipe_scan_snapshot"] = snapshot
+    return snapshot
+
+
 def _sync_scan_history_with_browser() -> None:
     """Render the invisible storage component (once per run, at the end of the
-    page): persist any pending change and pull the device's stored history in
-    on first load, merged with anything recorded before it arrived."""
+    page): persist any pending change (history and the scan in progress) and
+    pull the device's stored history and saved scan in on first load, merged
+    with anything recorded before it arrived."""
     if _history_store is None:
         return
     pending = st.session_state.pop("_suppswipe_history_save", None)
     clear = bool(st.session_state.pop("_suppswipe_history_clear", False))
+    clear_scan = bool(st.session_state.pop("_suppswipe_scan_clear", False))
+    if clear_scan:
+        st.session_state.pop("_suppswipe_scan_snapshot", None)
     try:
-        stored = _history_store(save=pending, clear=clear, key="suppswipe_history_store", default=None)
+        stored = _history_store(
+            save=pending,
+            clear=clear,
+            saveScan=_saved_scan_args(st.session_state),
+            clearScan=clear_scan,
+            key="suppswipe_history_store",
+            default=None,
+        )
     except Exception:
         return
-    if isinstance(stored, list) and not st.session_state.get("_suppswipe_history_loaded"):
+    stored_history: Any = stored
+    if isinstance(stored, dict):
+        stored_history = stored.get("history") if isinstance(stored.get("history"), list) else []
+    if isinstance(stored_history, list) and not st.session_state.get("_suppswipe_history_loaded"):
         st.session_state["_suppswipe_history_loaded"] = True
+        saved_scan = stored.get("scan") if isinstance(stored, dict) else None
+        st.session_state["_suppswipe_saved_scan"] = saved_scan if isinstance(saved_scan, dict) else None
         current = _load_scan_history()
         merged: list[dict[str, Any]] = []
         seen: set[str] = set()
-        for entry in [e for e in stored if isinstance(e, dict)] + current:
+        for entry in [e for e in stored_history if isinstance(e, dict)] + current:
             sig = repr(sorted((k, repr(v)) for k, v in entry.items()))
             if sig in seen:
                 continue
             seen.add(sig)
             merged.append(entry)
         st.session_state["suppswipe_scan_history"] = merged[-_HISTORY_MAX:]
-        if len(merged) != len(stored):
+        if len(merged) != len(stored_history):
             st.session_state["_suppswipe_history_save"] = merged[-_HISTORY_MAX:]
         st.rerun()
 
@@ -2481,101 +2523,119 @@ def _render_scan_history_popover() -> None:
         if st.button("Clear history", use_container_width=True, key="swipe_clear_history"):
             st.session_state["suppswipe_scan_history"] = []
             st.session_state["_suppswipe_history_clear"] = True
+            _forget_saved_scan()
             st.rerun()
+
+
+def _excluded_swaps_caption(excluded: list[dict[str, Any]], diet_label: str) -> None:
+    """Note which flagged swaps (no longer fitting the filter) are left out."""
+    if not excluded:
+        return
+    names = ", ".join(dict.fromkeys(str(d.get("component", "") or "") for d in excluded if d.get("component")))
+    st.caption(f"Not included until you choose another food: {names} (doesn't fit {diet_label}).")
 
 
 def _render_final_actions(
     keep_items: list[dict[str, Any]],
     replace_items: list[dict[str, Any]],
     diet_label: str,
+    excluded: list[dict[str, Any]] | None = None,
 ) -> None:
-    row1 = st.columns(2)
-    with row1[0]:
-        with st.popover("🍽️ Meal plan", use_container_width=True):
-            st.caption("Turn your whole-food swaps into meals that use all of them.")
-            if not replace_items:
-                st.info("Swipe right on at least one nutrient to build a meal plan.")
-            else:
-                num_meals = st.radio(
-                    "How many meals?",
-                    options=[1, 2, 3],
-                    index=2,
-                    horizontal=True,
-                    key="swipe_meal_count",
-                    format_func=lambda m: f"{m} meal" if m == 1 else f"{m} meals",
+    # Tabs instead of popovers: long answers (meal plans, the benefit
+    # comparison) scroll with the page instead of being clipped in a popover.
+    excluded = list(excluded or [])
+    plan_key = ""
+    tab_meals, tab_cost, tab_pills, tab_share, tab_why = st.tabs(
+        ["🍽️ Meals", "🛒 Cost", "💊 Kept pills", "📤 Share", "🌱 Why food"]
+    )
+    with tab_meals:
+        st.caption("Turn your whole-food swaps into meals that use all of them.")
+        _excluded_swaps_caption(excluded, diet_label)
+        if not replace_items:
+            st.info("Swipe right on at least one nutrient to build a meal plan.")
+        else:
+            num_meals = st.radio(
+                "How many meals?",
+                options=[1, 2, 3],
+                index=2,
+                horizontal=True,
+                key="swipe_meal_count",
+                format_func=lambda m: f"{m} meal" if m == 1 else f"{m} meals",
+            )
+            _sys, _usr, plan_key = _meal_plan_prompts(replace_items, diet_label, int(num_meals))
+            ready = llm_cache.get(plan_key)
+            plan_box = st.empty()
+            if ready:
+                plan_box.markdown(ready)
+                st.session_state["swipe_meal_plan"] = ready
+                st.session_state["swipe_meal_plan_key"] = plan_key
+                if st.button("🔄 Different meals", use_container_width=True, key="swipe_regen_meal"):
+                    llm_cache.drop(plan_key)
+                    with st.spinner("Cooking up new meals…"):
+                        st.session_state["swipe_meal_plan"] = _generate_meal_plan(
+                            replace_items, diet_label, int(num_meals), placeholder=plan_box
+                        )
+            elif st.button("Generate meals", type="primary", use_container_width=True, key="swipe_gen_meal"):
+                with st.spinner("Cooking up your meals…"):
+                    plan = _generate_meal_plan(replace_items, diet_label, int(num_meals), placeholder=plan_box)
+                st.session_state["swipe_meal_plan"] = plan
+                st.session_state["swipe_meal_plan_key"] = plan_key
+                if not plan:
+                    st.warning("Couldn't generate meals right now — please try again.")
+            elif llm_cache.inflight(plan_key) is not None:
+                st.caption("⚡ Already preparing your meals in the background — tap Generate to see them.")
+    with tab_cost:
+        st.caption("Rough daily cost of your swaps at German discounters (ALDI/Lidl/REWE average).")
+        _excluded_swaps_caption(excluded, diet_label)
+        basket = _basket_cost_breakdown(replace_items)
+        total, rows, unknown = basket["total"], basket["rows"], basket["unknown"]
+        impractical = basket["impractical"]
+        if not rows and not unknown and not impractical:
+            st.info("No whole-food swaps to price yet.")
+        else:
+            for name, cost in rows:
+                st.markdown(f"- {name}: ~€{cost:.2f}/day")
+            if total > 0:
+                st.markdown(f"**≈ €{total:.2f}/day · €{total * 7:.2f}/week**")
+            if impractical:
+                st.markdown(
+                    "**Not practical from food:** "
+                    + ", ".join(f"{name} (~{bb.format_float(grams / 1000.0, 1)} kg/day)" for name, grams in impractical)
+                    + " — more than 1 kg a day, so not priced; keeping the supplement may be the practical choice."
                 )
-                _sys, _usr, plan_key = _meal_plan_prompts(replace_items, diet_label, int(num_meals))
-                ready = llm_cache.get(plan_key)
-                plan_box = st.empty()
-                if ready:
-                    plan_box.markdown(ready)
-                    st.session_state["swipe_meal_plan"] = ready
-                    if st.button("🔄 Different meals", use_container_width=True, key="swipe_regen_meal"):
-                        llm_cache.drop(plan_key)
-                        with st.spinner("Cooking up new meals…"):
-                            st.session_state["swipe_meal_plan"] = _generate_meal_plan(
-                                replace_items, diet_label, int(num_meals), placeholder=plan_box
-                            )
-                elif st.button("Generate meals", type="primary", use_container_width=True, key="swipe_gen_meal"):
-                    with st.spinner("Cooking up your meals…"):
-                        plan = _generate_meal_plan(replace_items, diet_label, int(num_meals), placeholder=plan_box)
-                    st.session_state["swipe_meal_plan"] = plan
-                    if not plan:
-                        st.warning("Couldn't generate meals right now — please try again.")
-                elif llm_cache.inflight(plan_key) is not None:
-                    st.caption("⚡ Already preparing your meals in the background — tap Generate to see them.")
-    with row1[1]:
-        with st.popover("🛒 Grocery cost", use_container_width=True):
-            st.caption("Rough daily cost of your swaps at German discounters (ALDI/Lidl/REWE average).")
-            basket = _basket_cost_breakdown(replace_items)
-            total, rows, unknown = basket["total"], basket["rows"], basket["unknown"]
-            impractical = basket["impractical"]
-            if not rows and not unknown and not impractical:
-                st.info("No whole-food swaps to price yet.")
-            else:
-                for name, cost in rows:
-                    st.markdown(f"- {name}: ~€{cost:.2f}/day")
-                if total > 0:
-                    st.markdown(f"**≈ €{total:.2f}/day · €{total * 7:.2f}/week**")
-                if impractical:
-                    st.markdown(
-                        "**Not practical from food:** "
-                        + ", ".join(f"{name} (~{bb.format_float(grams / 1000.0, 1)} kg/day)" for name, grams in impractical)
-                        + " — more than 1 kg a day, so not priced; keeping the supplement may be the practical choice."
-                    )
-                if unknown:
-                    st.caption("No estimate for: " + ", ".join(unknown))
-                st.caption("Approximate 2025 shelf prices — actual prices vary by shop and season.")
-    row2 = st.columns(2)
-    with row2[0]:
-        with st.popover("💊 Cheapest combo", use_container_width=True):
-            st.caption("Find one all-in-one product covering the pills you kept.")
-            if not keep_items:
-                st.info("You didn't keep any supplements — nothing to buy!")
-            else:
-                _query, links = _supplement_search_links(keep_items)
-                covers = ", ".join(dict.fromkeys(_nutrient_title(d.get("component")) for d in keep_items if d.get("component")))
-                st.markdown(f"**Covers:** {covers}")
-                for label, url in links.items():
-                    st.markdown(f"- [{label}]({url})")
-                st.caption("Links open a live search so you can compare real products and prices. Not medical or purchase advice.")
-    with row2[1]:
-        with st.popover("📤 Share", use_container_width=True):
-            st.caption("Copy or download your results.")
-            share_text = _build_share_text(
-                keep_items, replace_items, str(st.session_state.get("swipe_meal_plan", "") or "")
-            )
-            st.code(share_text)
-            st.download_button(
-                "Download as text",
-                data=share_text,
-                file_name="suppswipe_results.txt",
-                mime="text/plain",
-                use_container_width=True,
-                key="swipe_share_dl",
-            )
-
-    with st.popover("🌱 Pill vs whole-food benefits", use_container_width=True):
+            if unknown:
+                st.caption("No estimate for: " + ", ".join(unknown))
+            st.caption("Approximate 2025 shelf prices — actual prices vary by shop and season.")
+    with tab_pills:
+        st.caption("Find one all-in-one product covering the pills you kept.")
+        if not keep_items:
+            st.info("You didn't keep any supplements — nothing to buy!")
+        else:
+            _query, links = _supplement_search_links(keep_items)
+            covers = ", ".join(dict.fromkeys(_nutrient_title(d.get("component")) for d in keep_items if d.get("component")))
+            st.markdown(f"**Covers:** {covers}")
+            for label, url in links.items():
+                st.markdown(f"- [{label}]({url})")
+            st.caption("Links open a live search so you can compare real products and prices. Not medical or purchase advice.")
+    with tab_share:
+        st.caption("Copy or download your results.")
+        _excluded_swaps_caption(excluded, diet_label)
+        # Only a plan written for the current swaps (not one from before the
+        # filter or a choice changed) goes into the share text.
+        meal_plan = ""
+        if plan_key and st.session_state.get("swipe_meal_plan_key") == plan_key:
+            meal_plan = str(st.session_state.get("swipe_meal_plan", "") or "")
+        share_text = _build_share_text(keep_items, replace_items, meal_plan)
+        st.code(share_text)
+        st.download_button(
+            "Download as text",
+            data=share_text,
+            file_name="suppswipe_results.txt",
+            mime="text/plain",
+            use_container_width=True,
+            key="swipe_share_dl",
+        )
+    with tab_why:
         st.caption(
             "See how much MORE you get by eating the whole food instead of just the isolated pill."
         )
@@ -2881,28 +2941,15 @@ def _component_card_theme(component_name: str) -> dict[str, str]:
 
 
 def _render_header() -> None:
+    # Only rules whose selectors match something on a screen (welcome, analyzing,
+    # card, results, dialogs) live here; the swipe card styles itself inside its
+    # iframe (swipe_component/index.html).
     st.markdown(
         """
         <style>
             /* Keep the Streamlit top bar visible but transparent, and push content below it. */
             [data-testid="stHeader"] {
                 background: transparent;
-            }
-            /* Tinder-style page lock: the page itself never scrolls (no left/right/up/down);
-               only the swipe card moves. */
-            html, body {
-                overflow: hidden !important;
-                overscroll-behavior: none !important;
-            }
-            [data-testid="stAppViewContainer"],
-            [data-testid="stMain"],
-            section.main {
-                overflow: hidden !important;
-                overscroll-behavior: none !important;
-            }
-            .block-container {
-                overflow-x: hidden !important;
-                max-width: 100vw;
             }
             [data-testid="stAppViewContainer"] {
                 background:
@@ -2929,6 +2976,12 @@ def _render_header() -> None:
             [data-testid="stButtonGroup"] button {
                 min-height: 40px;
             }
+            /* Long labels (results items, "doesn't fit Vegan — tap to choose
+               another") wrap instead of ending in an ellipsis. */
+            .stButton button [data-testid="stMarkdownContainer"],
+            .stButton button [data-testid="stMarkdownContainer"] p {
+                white-space: normal;
+            }
             .diet-strip-label {
                 font-size: 0.72rem;
                 font-weight: 800;
@@ -2936,113 +2989,6 @@ def _render_header() -> None:
                 text-transform: uppercase;
                 color: #475569;
                 margin: 0.25rem 0 0.3rem 0;
-            }
-            .swipe-title {
-                font-size: 2.05rem;
-                font-weight: 900;
-                letter-spacing: 0.015em;
-                line-height: 1.05;
-                margin-bottom: 0.15rem;
-                color: #111827;
-            }
-            .swipe-subtitle {
-                color: #425466;
-                margin-bottom: 1rem;
-                font-size: 0.95rem;
-            }
-            .filter-shell {
-                margin: 0.3rem 0 0.9rem 0;
-                padding: 0.85rem 0.9rem 0.8rem 0.9rem;
-                border: 1px solid #d9e2ef;
-                border-radius: 22px;
-                background: linear-gradient(160deg, rgba(255,255,255,0.92) 0%, rgba(247,250,255,0.92) 100%);
-                box-shadow: 0 12px 26px rgba(15, 23, 42, 0.06);
-            }
-            .filter-topline {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 0.5rem;
-                margin-bottom: 0.35rem;
-            }
-            .filter-title {
-                font-size: 0.82rem;
-                font-weight: 800;
-                letter-spacing: 0.04em;
-                text-transform: uppercase;
-                color: #475569;
-            }
-            .filter-chip {
-                display: inline-flex;
-                align-items: center;
-                gap: 0.4rem;
-                padding: 0.35rem 0.7rem;
-                border-radius: 999px;
-                border: 1px solid #d6dde7;
-                background: #ffffff;
-                color: #0f172a;
-                font-size: 0.8rem;
-                font-weight: 700;
-            }
-            .filter-chip-dot {
-                width: 9px;
-                height: 9px;
-                border-radius: 999px;
-                background: #22c55e;
-                box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.15);
-            }
-            .swipe-progress {
-                margin: 0 0 0.7rem 0;
-                display: flex;
-                justify-content: center;
-                gap: 0.35rem;
-            }
-            .swipe-dot {
-                width: 7px;
-                height: 7px;
-                border-radius: 999px;
-                background: #cfd9e5;
-            }
-            .swipe-dot.active {
-                width: 18px;
-                background: #22c55e;
-            }
-            .tinder-stage {
-                position: relative;
-                margin: 0.05rem 0 0.35rem 0;
-                min-height: 8px;
-            }
-            .stack-under-1,
-            .stack-under-2 {
-                position: absolute;
-                left: 12px;
-                right: 12px;
-                border-radius: 28px;
-                background: #e8eef6;
-                border: 1px solid #d4deea;
-            }
-            .stack-under-1 {
-                top: 14px;
-                bottom: 2px;
-                opacity: 0.86;
-                transform: scale(0.985);
-            }
-            .stack-under-2 {
-                top: 7px;
-                bottom: 10px;
-                opacity: 0.56;
-                transform: scale(0.97);
-            }
-            .card {
-                position: relative;
-                border-radius: 28px;
-                padding: 18px 18px 14px 18px;
-                background: linear-gradient(165deg, #ffffff 0%, #f9fcff 45%, #f7fbf5 100%);
-                border: 1px solid #d7e2ee;
-                box-shadow:
-                    0 18px 38px rgba(15, 36, 64, 0.18),
-                    0 3px 8px rgba(15, 36, 64, 0.08);
-                min-height: 488px;
             }
             .chip {
                 display: inline-block;
@@ -3055,151 +3001,6 @@ def _render_header() -> None:
                 font-weight: 700;
                 color: #233243;
             }
-            .decision-rail {
-                display: flex;
-                justify-content: space-between;
-                margin: 0.15rem 0 0.55rem 0;
-                gap: 0.6rem;
-            }
-            .decision-badge {
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 0.73rem;
-                font-weight: 800;
-                border-radius: 10px;
-                padding: 4px 8px;
-                letter-spacing: 0.03em;
-                min-width: 86px;
-            }
-            .decision-badge.left {
-                color: #b91c1c;
-                border: 1px solid #efb9b9;
-                background: #fff1f1;
-            }
-            .decision-badge.right {
-                margin-left: auto;
-                color: #047857;
-                border: 1px solid #9addc6;
-                background: #e8fff5;
-            }
-            .micro-name {
-                font-size: 1.8rem;
-                font-weight: 900;
-                color: #101a25;
-                margin-bottom: 0.45rem;
-                line-height: 1.08;
-            }
-            .dose {
-                color: #1d3650;
-                font-size: 1.02rem;
-                margin-bottom: 0.7rem;
-                font-weight: 600;
-            }
-            .swipe-hint {
-                font-size: 0.86rem;
-                color: #4c6076;
-                margin-top: 0.6rem;
-                margin-bottom: 0.35rem;
-            }
-            .portion-hint {
-                margin: 0.15rem 0 0.35rem 0;
-                padding: 0.5rem 0.7rem;
-                border-radius: 12px;
-                background: #f1f7f2;
-                border: 1px solid #cfe6d5;
-                color: #234a32;
-                font-size: 0.85rem;
-                line-height: 1.5;
-            }
-            .deficiency-flag {
-                margin: 0 0 0.45rem 0;
-                padding: 0.4rem 0.6rem;
-                border-radius: 10px;
-                background: #fff5f5;
-                border: 1px solid #f3c0c0;
-                color: #9b1c1c;
-                font-size: 0.78rem;
-                font-weight: 700;
-                line-height: 1.35;
-            }
-            .bioavail-note {
-                margin: 0.1rem 0 0.35rem 0;
-                padding: 0.45rem 0.6rem;
-                border-radius: 10px;
-                background: #f3f8ff;
-                border: 1px solid #cfe0f2;
-                color: #24425f;
-                font-size: 0.8rem;
-                line-height: 1.45;
-            }
-            .action-legend {
-                text-align: center;
-                color: #5a6778;
-                font-size: 0.78rem;
-                margin: 0.3rem 0 0.55rem 0;
-            }
-            .card-hero {
-                position: relative;
-                overflow: hidden;
-                border-radius: 22px;
-                margin: 0.05rem 0 0.8rem 0;
-                padding: 14px 14px 12px 14px;
-                border: 1px solid rgba(148, 163, 184, 0.22);
-                box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
-                background: var(--card-bg, linear-gradient(160deg, #ffffff 0%, #f8fbff 55%, #f4f7fb 100%));
-            }
-            .card-hero::before {
-                content: "";
-                position: absolute;
-                inset: 0;
-                background: linear-gradient(135deg, var(--card-accent, #64748b) 0%, transparent 42%);
-                opacity: 0.18;
-                pointer-events: none;
-            }
-            .card-hero-top {
-                position: relative;
-                z-index: 1;
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 0.75rem;
-            }
-            .card-hero-name {
-                font-size: 1.42rem;
-                font-weight: 900;
-                line-height: 1.05;
-                color: var(--card-ink, #0f172a);
-                letter-spacing: -0.02em;
-            }
-            .card-hero-dose {
-                position: relative;
-                z-index: 1;
-                margin-top: 0.5rem;
-                color: #334155;
-                font-size: 0.96rem;
-                font-weight: 600;
-            }
-            .card-hero-pill {
-                position: relative;
-                z-index: 1;
-                display: inline-flex;
-                margin-top: 0.55rem;
-                padding: 0.28rem 0.6rem;
-                border-radius: 999px;
-                background: var(--card-chip-bg, rgba(100, 116, 139, 0.12));
-                color: var(--card-chip-text, #334155);
-                font-size: 0.75rem;
-                font-weight: 800;
-                letter-spacing: 0.02em;
-            }
-            .swipe-final-card {
-                border-radius: 24px;
-                padding: 18px;
-                background: linear-gradient(145deg, #ffffff 0%, #fff7ec 60%, #f8fbff 100%);
-                border: 1px solid #e2d5c0;
-                box-shadow: 0 14px 30px rgba(37, 48, 64, 0.12);
-            }
             .analyze-loading-wrap {
                 min-height: 360px;
                 display: flex;
@@ -3208,14 +3009,6 @@ def _render_header() -> None:
                 justify-content: center;
                 text-align: center;
                 gap: 0.75rem;
-            }
-            .analyze-loading-spinner {
-                width: 54px;
-                height: 54px;
-                border-radius: 999px;
-                border: 4px solid #d5deeb;
-                border-top-color: #16a34a;
-                animation: suppswipe-spin 1s linear infinite;
             }
             .analyze-loading-arrow {
                 width: 54px;
@@ -3263,9 +3056,6 @@ def _render_header() -> None:
             @keyframes suppswipe-spin {
                 from { transform: rotate(0deg); }
                 to { transform: rotate(360deg); }
-            }
-            div[data-testid="stVerticalBlockBorderWrapper"] {
-                border-radius: 16px;
             }
         </style>
         """,
@@ -3387,8 +3177,8 @@ def _on_diet_profile_change() -> None:
     """Persist the dietary filter into a plain (non-widget) session key.
 
     Streamlit clears a widget's keyed state whenever that widget isn't rendered
-    on a run. A swipe calls st.rerun() before the dietary pills render, so the
-    radio's own key was being garbage-collected and the filter reset to "No
+    on a run. Runs that stop early (st.rerun() before the dietary pills render)
+    garbage-collected the radio's own key and reset the filter to "No
     restriction". Mirroring the choice into `swipe_diet_profile_id` (never used
     as a widget key) keeps it across swipes.
     """
@@ -3418,11 +3208,14 @@ def _render_dietary_pills() -> None:
     if hasattr(st, "pills"):
         # Native chips wrap onto several lines on a phone; the old horizontal
         # radio squeezed every label into a one-letter-wide column.
+        # The key is the chips' identity, so `default` only seeds them when they
+        # have no state yet. Passing it while the state is set (e.g. by Resume)
+        # makes Streamlit log a default-vs-state warning.
         st.pills(
             "Dietary filter",
             options=ordered_ids,
             selection_mode="single",
-            default=selected_id,
+            default=None if "swipe_diet_pills" in st.session_state else selected_id,
             key="swipe_diet_pills",
             on_change=_on_diet_profile_change,
             label_visibility="collapsed",
@@ -3731,6 +3524,7 @@ def _confirm_restart_dialog() -> None:
     with col_ok:
         if st.button("Start over", type="primary", use_container_width=True, key="swipe_restart_confirm"):
             _reset_swipe_state()
+            _forget_saved_scan()
             st.session_state["swipe_open_analyze"] = True
             st.rerun()
 
@@ -3760,12 +3554,14 @@ def _render_privacy_popover() -> None:
             "Don't include personal details.\n"
             "- Barcode numbers are looked up in public product databases and web search "
             "(Open Food Facts, UPCitemdb, DuckDuckGo). Pasted links are fetched by the app's server.\n"
-            "- Your scan history is stored only in this browser; *Clear history* deletes it.\n"
+            "- Your scan history and the scan you're working on are stored only in this browser "
+            "(so you can resume after a refresh); *Clear history* or *Start over* deletes them.\n"
             "- There are no accounts. Label text and generated answers may be kept in the server's "
             "memory for a few hours so repeat requests are faster.\n"
             "- The app runs on Streamlit Community Cloud, which has its own privacy notice.\n\n"
             "**Sources:** food data from USDA FoodData Central; upper limits from EFSA and NIH ODS."
         )
+        st.caption(f"Build {BUILD_TAG}")
 
 
 def _render_label_source_notice() -> None:
@@ -3838,6 +3634,292 @@ def _report_card_problem(
     return payload
 
 
+# --- Swipe handling: one script run per swipe ---------------------------------
+# The card component keeps ONE key per scan (per reset nonce), so Streamlit
+# reuses its iframe and only sends the next card's props. A swipe arrives as
+# that key's value ({"dir", "id", "card", "index"}) at the start of the run it
+# triggered; _render_card applies it there and draws the next card in the same
+# run, without st.rerun(). The value stays in session state afterwards, so
+# `swipe_last_swipe_id` makes sure each swipe is applied exactly once.
+
+
+def _swipe_component_key(nonce: Any) -> str:
+    try:
+        return f"tinder_{int(nonce or 0)}"
+    except Exception:
+        return "tinder_0"
+
+
+def _decision_record(card: dict[str, Any], index: int, decision: str, selected_food: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "component_key": str(card.get("component_key", "") or ""),
+        "component": card.get("component", ""),
+        "dose_label": card.get("dose_label", ""),
+        "dose_value": card.get("dose_value"),
+        "dose_max": card.get("dose_max"),
+        "dose_unit": card.get("dose_unit", ""),
+        "form": str(card.get("form", "") or ""),
+        "decision": decision,
+        "selected_food": selected_food,
+        "card_index": index,
+    }
+
+
+def _shown_food(state: Any, index: int, component_key: str) -> dict[str, Any] | None:
+    """The whole food selected on card `index` when it was swiped: the dropdown's
+    current value (sent with the swipe), else the food the card was drawn with."""
+    view = state.get("swipe_card_view") or {}
+    if view.get("index") != index or view.get("component_key") != component_key:
+        return None
+    options = view.get("options") or {}
+    select_key = str(view.get("select_key", "") or "")
+    label = state.get(select_key) if select_key else None
+    if label in options:
+        return options[label]
+    return view.get("selected")
+
+
+def _apply_card_swipe(state: Any, value: Any) -> bool:
+    """Apply a keep / replace / back reported by the card component to `state`
+    (st.session_state or a plain dict). True when it changed the screen."""
+    if not isinstance(value, dict):
+        return False
+    swipe_id = str(value.get("id", "") or "")
+    if not swipe_id or swipe_id == str(state.get("swipe_last_swipe_id", "") or ""):
+        return False
+    state["swipe_last_swipe_id"] = swipe_id
+    cards = list(state.get("swipe_cards") or [])
+    index = int(state.get("swipe_index", 0) or 0)
+    if not 0 <= index < len(cards):
+        return False
+    card = cards[index]
+    component_key = str(card.get("component_key", "") or "")
+    # A value made on another card (stale) never lands on this one.
+    if "card" in value and str(value.get("card") or "") != component_key:
+        return False
+    if "index" in value and str(value.get("index")) != str(index):
+        return False
+    editing = bool(state.get("swipe_edit_return", False))
+    direction = value.get("dir")
+    if direction == "back":
+        # Opened from the results: Back returns there unchanged.
+        if editing:
+            state["swipe_edit_return"] = False
+            state["swipe_index"] = len(cards)
+            return True
+        if index > 0:
+            state["swipe_index"] = index - 1
+            return True
+        return False
+    if direction not in ("left", "right"):
+        return False
+    decision = "keep" if direction == "left" else "replace"
+    selected_food = _shown_food(state, index, component_key)
+    # Can't replace with a whole food that doesn't exist (or a soft-blocked one).
+    blocked = str((state.get("swipe_card_view") or {}).get("replace_block", "") or "")
+    if decision == "replace" and (selected_food is None or blocked):
+        return False
+    decisions = dict(state.get("swipe_decisions") or {})
+    decisions[component_key] = _decision_record(card, index, decision, selected_food)
+    state["swipe_decisions"] = decisions
+    # Edit mode goes straight back to the results instead of the next card.
+    state["swipe_index"] = len(cards) if editing else index + 1
+    state["swipe_edit_return"] = False
+    return True
+
+
+def _open_card(index: int, edit: bool = False) -> None:
+    """Button callback: show card `index`; `edit` (from the results screen)
+    returns to the results after the next keep / replace / back."""
+    st.session_state["swipe_index"] = int(index)
+    st.session_state["swipe_edit_return"] = bool(edit)
+
+
+def _restore_previous_food(
+    state: Any, select_key: str, option_labels: list[str], foods: list[dict[str, Any]], decision: dict[str, Any] | None
+) -> None:
+    """Re-select the food chosen earlier (matched by USDA description) when a
+    card is reopened, instead of resetting the dropdown to the first food. Only
+    seeds a dropdown that isn't on screen yet, so the user's own change wins."""
+    if not isinstance(decision, dict) or select_key in state:
+        return
+    wanted = str((decision.get("selected_food") or {}).get("food_description", "") or "")
+    if not wanted:
+        return
+    for label, food in zip(option_labels, foods):
+        if str(food.get("food_description", "") or "") == wanted:
+            state[select_key] = label
+            return
+
+
+# --- Dietary filter re-check ----------------------------------------------------
+
+
+def _active_diet_label(profile: dict[str, Any] | None) -> str:
+    """The filter's label ("Vegan"), or "" for "No restriction"."""
+    label = str((profile or {}).get("label", "") or "").strip()
+    pid = bb.normalize_lookup_key(str((profile or {}).get("id", "") or ""))
+    if not label or pid == "none" or label.lower() in ("no restriction", "none"):
+        return ""
+    return label
+
+
+def _food_fits_diet(food: dict[str, Any] | None, profile: dict[str, Any] | None) -> bool:
+    """True when `food` passes the dietary filter (the same rules the dropdown uses)."""
+    if not isinstance(food, dict) or not str(food.get("food_description", "") or "").strip():
+        return True
+    try:
+        return bool(bb.apply_food_filters([food], profile, use_llm_adjudication=False))
+    except Exception:
+        return True
+
+
+def _split_replacements_by_diet(
+    replace_items: list[dict[str, Any]], profile: dict[str, Any] | None
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(fitting, misfitting) "replace" decisions. A swap chosen before the filter
+    changed (e.g. salmon, then "Vegan") no longer fits and is left out of the meal
+    plan, grocery cost and share text until the user picks another food."""
+    fits: list[dict[str, Any]] = []
+    misfits: list[dict[str, Any]] = []
+    for d in replace_items:
+        (fits if _food_fits_diet(d.get("selected_food"), profile) else misfits).append(d)
+    return fits, misfits
+
+
+# --- Resume after refresh ---------------------------------------------------------
+# The current scan is mirrored into the visitor's browser (localStorage, via the
+# scan-history component): the label text, the decisions by card, the diet
+# filter and the current card. Resuming re-runs the same deterministic parse and
+# USDA ranking on the saved text (no LLM call) and re-applies the decisions.
+_SAVED_SCAN_VERSION = 1
+_SAVED_SCAN_MAX_AGE_S = 7 * 24 * 3600
+
+
+def _scan_snapshot(state: Any, now: float | None = None) -> dict[str, Any] | None:
+    import time as _time
+
+    cards = list(state.get("swipe_cards") or [])
+    text = str(state.get("swipe_analysis_text", "") or "")
+    if not cards or not text.strip():
+        return None
+    decisions: dict[str, dict[str, str]] = {}
+    for key, d in dict(state.get("swipe_decisions") or {}).items():
+        if isinstance(d, dict) and d.get("decision") in ("keep", "replace"):
+            decisions[str(key)] = {
+                "decision": str(d["decision"]),
+                "food_description": str((d.get("selected_food") or {}).get("food_description", "") or ""),
+            }
+    index = int(state.get("swipe_index", 0) or 0)
+    if state.get("swipe_edit_return"):
+        index = len(cards)  # mid-edit: resume on the results
+    return {
+        "v": _SAVED_SCAN_VERSION,
+        "text": text,
+        "decisions": decisions,
+        "diet": str(state.get("swipe_diet_profile_id", "none") or "none"),
+        "index": max(0, min(len(cards), index)),
+        "total": len(cards),
+        "label_source": dict(state.get("swipe_label_source") or {}),
+        "recorded": bool(state.get("swipe_history_recorded_sig")),
+        "ts": float(_time.time() if now is None else now),
+    }
+
+
+def _resumable_scan(saved: Any, now: float | None = None) -> dict[str, Any] | None:
+    """The saved scan if it is usable and less than 7 days old, else None."""
+    import time as _time
+
+    if not isinstance(saved, dict) or saved.get("v") != _SAVED_SCAN_VERSION:
+        return None
+    if not str(saved.get("text", "") or "").strip():
+        return None
+    try:
+        age = float(_time.time() if now is None else now) - float(saved.get("ts"))
+        total = int(saved.get("total") or 0)
+    except Exception:
+        return None
+    if total <= 0 or age > _SAVED_SCAN_MAX_AGE_S or age < -300:
+        return None
+    return saved
+
+
+def _resume_label(saved: dict[str, Any]) -> str:
+    total = int(saved.get("total") or 0)
+    done = min(total, len(saved.get("decisions") or {}))
+    return f"↩ Resume your last scan ({done} of {total} cards done)"
+
+
+def _restore_scan(state: Any, saved: dict[str, Any]) -> bool:
+    """Rebuild the cards from the saved label text and re-apply the decisions.
+    A saved swap whose food is no longer among the card's foods is dropped (the
+    card then simply asks again)."""
+    text = str(saved.get("text", "") or "")
+    try:
+        components = _filter_to_micronutrients(bb.parse_components(text))
+        cards = _build_swipe_cards(components, []) if components else []
+    except Exception:
+        return False
+    if not cards:
+        return False
+    saved_decisions = saved.get("decisions") or {}
+    decisions: dict[str, dict[str, Any]] = {}
+    for i, card in enumerate(cards):
+        key = str(card.get("component_key", "") or "")
+        sd = saved_decisions.get(key) if isinstance(saved_decisions, dict) else None
+        if not isinstance(sd, dict) or sd.get("decision") not in ("keep", "replace"):
+            continue
+        wanted = str(sd.get("food_description", "") or "")
+        food = next(
+            (f for f in (card.get("foods") or []) if wanted and str(f.get("food_description", "") or "") == wanted),
+            None,
+        )
+        if sd["decision"] == "replace" and food is None:
+            continue
+        decisions[key] = _decision_record(card, i, str(sd["decision"]), food)
+    try:
+        index = int(saved.get("index") or 0)
+    except Exception:
+        index = 0
+    sig = _analysis_input_signature(b"", b"", text)
+    diet = str(saved.get("diet", "none") or "none")
+    state["swipe_cards"] = cards
+    state["swipe_analysis_text"] = text
+    state["swipe_components"] = components
+    state["swipe_label_source"] = dict(saved.get("label_source") or {"kind": "input", "url": ""})
+    state["swipe_decisions"] = decisions
+    state["swipe_rag_chats"] = {}
+    state["swipe_index"] = max(0, min(len(cards), index))
+    state["swipe_edit_return"] = False
+    state["swipe_diet_profile_id"] = diet
+    state["swipe_diet_pills"] = diet  # keep the filter chips in step
+    state["swipe_last_auto_signature"] = sig
+    if saved.get("recorded"):
+        state["swipe_history_recorded_sig"] = sig  # already in the scan history
+    return True
+
+
+def _resume_saved_scan() -> None:
+    """Button callback for "Resume your last scan"."""
+    saved = _resumable_scan(st.session_state.get("_suppswipe_saved_scan"))
+    if saved is None or not _restore_scan(st.session_state, saved):
+        st.session_state["swipe_resume_failed"] = True
+
+
+def _forget_saved_scan() -> None:
+    """Drop the saved scan here and in the browser (Start over / Clear history).
+    A scan still on screen (Clear history on the results, or mid-way through a
+    later scan) is not saved again until it changes, else the same run would
+    write it straight back and a reload would still offer to resume it."""
+    st.session_state["_suppswipe_saved_scan"] = None
+    st.session_state["_suppswipe_scan_clear"] = True
+    snapshot = _scan_snapshot(st.session_state)
+    if snapshot is None:
+        st.session_state.pop("_suppswipe_scan_suppressed", None)
+    else:
+        st.session_state["_suppswipe_scan_suppressed"] = _scan_content(snapshot)
+
+
 def _previous_choice_label(decision: dict[str, Any] | None) -> str:
     """Short label of an earlier choice for this card (shown after going back)."""
     if not decision:
@@ -3850,6 +3932,12 @@ def _previous_choice_label(decision: dict[str, Any] | None) -> str:
 
 def _render_card() -> None:
     cards: list[dict[str, Any]] = st.session_state.get("swipe_cards", [])
+    nonce = int(st.session_state.get("swipe_reset_nonce", 0))
+    swipe_key = _swipe_component_key(nonce)
+    # The swipe that triggered this run (if any) is applied first, so the next
+    # card renders in this same run (see "Swipe handling" above).
+    if cards:
+        _apply_card_swipe(st.session_state, st.session_state.get(swipe_key))
     index = int(st.session_state.get("swipe_index", 0))
     decisions: dict[str, dict[str, Any]] = st.session_state.get("swipe_decisions", {})
 
@@ -3885,6 +3973,16 @@ def _render_card() -> None:
                 "</div>",
                 unsafe_allow_html=True,
             )
+        saved_scan = _resumable_scan(st.session_state.get("_suppswipe_saved_scan"))
+        if saved_scan is not None:
+            st.button(
+                _resume_label(saved_scan),
+                use_container_width=True,
+                key="swipe_resume_scan",
+                on_click=_resume_saved_scan,
+            )
+        if st.session_state.pop("swipe_resume_failed", False):
+            st.caption("Couldn't restore your last scan — please scan the label again.")
         if st.button("✨ Try it with a sample label", use_container_width=True, key="swipe_try_sample"):
             if _stage_analysis_from_inputs(b"", b"", _SAMPLE_LABEL_TEXT):
                 st.rerun()
@@ -3915,20 +4013,16 @@ def _render_card() -> None:
     # Vegan / vegetarian B12: the fortified foods are the reliable option.
     foods = _with_fortified_options(foods, card, selected_profile)
 
-    dots = []
-    for i in range(len(cards)):
-        css_class = "swipe-dot active" if i == index else "swipe-dot"
-        dots.append(f"<span class='{css_class}'></span>")
-    st.markdown(f"<div class='swipe-progress'>{''.join(dots)}</div>", unsafe_allow_html=True)
+    # No colour-only progress dots: the card itself says "Card i of N".
     _render_label_source_notice()
 
     # The swipe card and its controls (whole-food dropdown + Ask AI) share one
     # bordered container so they read as a single card.
     theme = _component_card_theme(str(card.get("component", "") or ""))
-    nonce = int(st.session_state.get("swipe_reset_nonce", 0))
-    swipe_result = None
     selected_food = None
     replace_block = ""
+    option_labels: list[str] = []
+    select_key = f"swipe_food_select_{component_key}_{index}"
     match_dose_txt = ""
     rda_amount_txt = ""
     rda_label_txt = ""
@@ -3945,12 +4039,16 @@ def _render_card() -> None:
         # --- On-card controls ---
         if foods:
             option_labels = [_food_label(food) for food in foods]
+            # Reopened card (Back / edit from the results): keep the earlier food.
+            _restore_previous_food(st.session_state, select_key, option_labels, foods, decisions.get(component_key))
             selected_label = st.selectbox(
                 "Whole-food replacement",
                 options=option_labels,
-                # An everyday choice, not simply the richest food (no liver
-                # when another food works, D3 fish before UV mushrooms, ...).
-                index=_default_food_index(foods, card, selected_profile),
+                # An everyday choice, not simply the richest food (no liver when
+                # another food works, D3 fish before UV mushrooms, ...). A reopened
+                # card already has its earlier food in session state, which wins;
+                # index 0 then avoids Streamlit's default-vs-state warning.
+                index=0 if select_key in st.session_state else _default_food_index(foods, card, selected_profile),
                 key=f"swipe_food_select_{component_key}_{index}",
                 label_visibility="collapsed",
             )
@@ -3958,6 +4056,9 @@ def _render_card() -> None:
             full_name = str(selected_food.get("food_description", "") or "").strip()
             if full_name and full_name != _food_name(selected_food):
                 st.caption(f"USDA: {full_name}")
+            diet_name = _active_diet_label(selected_profile)
+            if diet_name:
+                st.caption(f"Filter: {diet_name}")
 
             # For the selected whole food, compute how much to eat to (a) match
             # the supplement dose and (b) reach the athlete daily target. These
@@ -4023,8 +4124,21 @@ def _render_card() -> None:
             st.toast("Thanks — logged for review")
 
         food_label = _food_name(selected_food)
+        # What this card offers, so the swipe (applied at the start of the next
+        # run) records the food the user actually had selected.
+        st.session_state["swipe_card_view"] = {
+            "index": index,
+            "component_key": component_key,
+            "select_key": select_key,
+            # reversed(): of two equal labels the first wins, as with option_labels.index().
+            "options": dict(reversed(list(zip(option_labels, foods)))),
+            "selected": selected_food,
+            # A soft-blocked replace (e.g. vegan B12 without a fortified food)
+            # must not be applied even if a stale "right" value arrives.
+            "replace_block": replace_block,
+        }
         with stage:
-            swipe_result = tinder_swipe(
+            tinder_swipe(
                 name=_nutrient_title(card.get("component")) or "Unknown micronutrient",
                 dose=str(card.get("dose_label", "Not available")),
                 food=food_label,
@@ -4040,54 +4154,32 @@ def _render_card() -> None:
                 bg=theme["bg"],
                 canReplace=selected_food is not None and not replace_block,
                 previous=_previous_choice_label(decisions.get(component_key)),
+                editing=bool(st.session_state.get("swipe_edit_return", False)),
+                cardId=component_key,
+                # Changes after every handled swipe, so the card always gets
+                # fresh props (and resets) even when it stays on the same card.
+                ack=str(st.session_state.get("swipe_last_swipe_id", "") or ""),
                 height=420,
-                key=f"tinder_{component_key}_{index}_{nonce}",
+                key=swipe_key,
                 default=None,
             )
 
-    # The card reports a swipe or a button/keyboard action: left = keep,
-    # right = replace, back = return to the previous card (decisions are kept
-    # and can be changed when that card is shown again).
-    if isinstance(swipe_result, dict) and swipe_result.get("dir") == "back":
-        if index > 0:
-            st.session_state["swipe_index"] = index - 1
-            st.rerun()
-        return
-    decision = None
-    if isinstance(swipe_result, dict) and swipe_result.get("dir") in ("left", "right"):
-        decision = "keep" if swipe_result["dir"] == "left" else "replace"
-    # Can't replace with a whole food that doesn't exist (or a soft-blocked one).
-    if decision == "replace" and (selected_food is None or replace_block):
-        decision = None
-
-    if decision:
-        decisions[component_key] = {
-            "component_key": component_key,
-            "component": card.get("component", ""),
-            "dose_label": card.get("dose_label", ""),
-            "dose_value": card.get("dose_value"),
-            "dose_max": card.get("dose_max"),
-            "dose_unit": card.get("dose_unit", ""),
-            "form": card_form,
-            "decision": decision,
-            "selected_food": selected_food,
-            "card_index": index,
-        }
-        st.session_state["swipe_decisions"] = decisions
-        st.session_state["swipe_index"] = index + 1
-        st.rerun()
-
 
 def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[str, Any]]) -> None:
-    replace_items = [d for d in decisions.values() if d.get("decision") == "replace"]
+    profile = _selected_dietary_profile()
+    diet_name = _active_diet_label(profile)
+    all_replace_items = [d for d in decisions.values() if d.get("decision") == "replace"]
+    # Swaps picked before the dietary filter changed and no longer fitting it
+    # stay listed (flagged) but are left out of meals, cost and share text.
+    replace_items, misfit_items = _split_replacements_by_diet(all_replace_items, profile)
     keep_items = [d for d in decisions.values() if d.get("decision") == "keep"]
 
     with st.container(border=True):
         st.subheader("Your results")
-        st.caption("Tap any nutrient to go back to its card and change your choice.")
-        if cards and st.button("↩ Back to the last card", key="final_back_last"):
-            st.session_state["swipe_index"] = len(cards) - 1
-            st.rerun()
+        st.caption("Tap any nutrient to change your choice — you'll come straight back here.")
+        if cards:
+            # Callbacks (not st.rerun()) so one tap is one script run.
+            st.button("↩ Back to the last card", key="final_back_last", on_click=_open_card, args=(len(cards) - 1,))
 
         # Two columns of tappable nutrients: kept supplements (left) vs
         # whole-food swaps (right). Tapping one reopens that micronutrient's card.
@@ -4101,21 +4193,21 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
                     label = f"{LEFT_SWIPE_ICON} {_nutrient_title(d.get('component')) or 'Unknown'}"
                     if dose:
                         label += f" · {dose}"
-                    if st.button(
+                    st.button(
                         label,
                         use_container_width=True,
                         key=f"final_keep_{component_key}",
-                    ):
-                        st.session_state["swipe_index"] = int(d.get("card_index", 0))
-                        st.rerun()
+                        on_click=_open_card,
+                        args=(int(d.get("card_index", 0)), True),
+                    )
                 # Kept pills above the safe upper limit stay flagged on the results.
                 for warning in _final_upper_limit_warnings(keep_items):
                     st.caption(warning)
             else:
                 st.caption("Nothing swiped left.")
         with col_replace:
-            st.markdown(f"**{TITLE_WHOLE_FOOD_ICON} Replaced ({len(replace_items)})**")
-            if replace_items:
+            st.markdown(f"**{TITLE_WHOLE_FOOD_ICON} Replaced ({len(all_replace_items)})**")
+            if all_replace_items:
                 for d in replace_items:
                     component_key = str(d.get("component_key", "") or "")
                     food = d.get("selected_food") or {}
@@ -4126,14 +4218,24 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
                     label = f"{icon} {_nutrient_title(d.get('component')) or 'Unknown'}"
                     if detail:
                         label += f" → {detail}"
-                    if st.button(
+                    st.button(
                         label,
                         use_container_width=True,
                         key=f"final_repl_{component_key}",
                         help=f"USDA: {food.get('food_description', '')}" if food.get("food_description") else None,
-                    ):
-                        st.session_state["swipe_index"] = int(d.get("card_index", 0))
-                        st.rerun()
+                        on_click=_open_card,
+                        args=(int(d.get("card_index", 0)), True),
+                    )
+                for d in misfit_items:
+                    component_key = str(d.get("component_key", "") or "")
+                    food_name = _food_name(d.get("selected_food")) or "this food"
+                    st.button(
+                        f"⚠️ {_nutrient_title(d.get('component')) or 'Unknown'} → {food_name} doesn't fit {diet_name} — tap to choose another",
+                        use_container_width=True,
+                        key=f"final_misfit_{component_key}",
+                        on_click=_open_card,
+                        args=(int(d.get("card_index", 0)), True),
+                    )
                 for warning in _final_food_warnings(replace_items) + _pregnancy_food_warnings(replace_items):
                     st.caption(warning)
             else:
@@ -4148,8 +4250,8 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
     # Start writing the default (3-meal) plan in the background right away.
     _prefetch_meal_plan(replace_items, diet_label, 3)
 
-    # Action row: meal plan, German grocery cost, all-in-one supplement finder, share.
-    _render_final_actions(keep_items, replace_items, diet_label)
+    # Action tabs: meal plan, German grocery cost, kept pills, share, why food.
+    _render_final_actions(keep_items, replace_items, diet_label, excluded=misfit_items)
 
     # A single Ask AI chat for the whole summary, shown once below the card.
     all_components = [_nutrient_title(d.get("component")) for d in decisions.values() if d.get("component")]
@@ -4174,8 +4276,8 @@ def _render_athlete_rda_popup() -> None:
 
     Values are approximate consensus figures from ISSN (Nutrient Timing, 2017),
     ACSM/AND/DC Nutrition and Athletic Performance (2016/2021), and NIH Office
-    of Dietary Supplements RDA fact sheets. General guidance only — shown as a
-    popover so it works with the app's no-scroll layout.
+    of Dietary Supplements RDA fact sheets. General guidance only — kept in a
+    popover so the long table doesn't push the results down.
     """
     with st.popover("\U0001F3C3 Athlete RDA guide", use_container_width=True):
         st.caption(
