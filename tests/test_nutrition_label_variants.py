@@ -156,3 +156,85 @@ def test_ocr_typo_line_sharing_a_dose_is_kept():
 
 def test_salt_cation_is_never_a_separate_nutrient():
     assert _parsed("Iodine (as potassium iodide) 150 mcg") == [("iodine", 150.0, "mcg")]
+
+
+# --- Titles, marketing and second-language lines repeat a dose (never add) ---
+
+@pytest.mark.parametrize(
+    "text, key, dose, form",
+    [
+        (
+            "Vitamin D3 1000 I.E. Tabletten\nNährwerte pro Tablette\nVitamin D3 (Cholecalciferol) 25 µg (1000 I.E.) 500%",
+            "vitamin d", "25 mcg", "cholecalciferol",
+        ),
+        (
+            "Magnesium 400 mg Kapseln\nNährwerte pro Kapsel\nMagnesium (als Magnesiumcitrat) 400 mg 107%",
+            "magnesium", "400 mg", "magnesium citrat",
+        ),
+        (
+            "Vitamin B12 1000 µg Lutschtabletten\nVitamin B12 (Methylcobalamin) 1000 µg",
+            "vitamin b12", "1000 mcg", "methylcobalamin",
+        ),
+        (
+            "Vitamin D3 2000 IU softgels\nVitamin D3 (as cholecalciferol) 50 mcg (2000 IU)",
+            "vitamin d", "50 mcg", "cholecalciferol",
+        ),
+        (
+            "Vitamin D3 1000 I.E. hochdosiert vegan\nVitamin D3 25 µg 500%",
+            "vitamin d", "25 mcg", "",
+        ),
+        (
+            "Vitamin E 400 I.E. Kapseln\nVitamin E (als natürliches d-alpha-Tocopherol) 268 mg (400 I.E.) 2233%",
+            "vitamin e", "268 mg", "naturliches d alpha tocopherol",
+        ),
+    ],
+)
+def test_product_title_repeating_the_dose_does_not_double_it(sw, text, key, dose, form):
+    cards = _cards(sw, text)
+    assert [(c["nutrient_key"], c["dose_label"], c["form"]) for c in cards] == [(key, dose, form)]
+    # parse_components itself returns one row (other consumers see no duplicate).
+    assert len(bb.parse_components(text)) == 1
+
+
+def test_bilingual_label_lines_do_not_double_the_dose(sw):
+    text = (
+        "Vitamin C (L-Ascorbinsäure) 80 mg\nVitamine C (acide L-ascorbique) 80 mg\n"
+        "Magnesium (als Magnesiumcitrat) 300 mg\nMagnésium (citrate de magnésium) 300 mg"
+    )
+    cards = _cards(sw, text)
+    assert [(c["nutrient_key"], c["dose_label"]) for c in cards] == [("vitamin c", "80 mg"), ("magnesium", "300 mg")]
+    # The German line (first) is kept; the UL check sees 300 mg, not 600 mg.
+    magnesium = cards[1]
+    warn = sw._card_warning_text(magnesium["component_key"], magnesium["dose_value"], magnesium["dose_unit"], magnesium["form"])
+    assert "300 mg is above the safe upper limit for magnesium" in warn
+
+
+def test_packaging_words_are_not_a_form():
+    rows = bb.parse_components("Vitamin D3 1000 I.E. Tabletten hochdosiert")
+    assert [(r["component"], r["dose_value"], r["dose_unit"], r["form"]) for r in rows] == [("vitamin d3", 1000.0, "iu", "")]
+    assert bb.parse_components("Magnesium Citrat 400 mg")[0]["form"] == "citrat"
+
+
+def test_table_line_wins_over_a_different_title_dose(sw):
+    # Title gives the compound weight, the table the elemental dose: the table line counts.
+    text = "Magnesiumcitrat 1000 mg Kapseln\nMagnesium (als Magnesiumcitrat) 150 mg 40%"
+    assert _doses(sw, text) == {"magnesium": "150 mg"}
+
+
+def test_vitamin_a_retinyl_plus_beta_carotene_on_separate_lines_is_summed(sw):
+    cards = _cards(sw, "Vitamin A (as retinyl palmitate) 450 mcg\nVitamin A (as beta-carotene) 450 mcg")
+    assert [(c["nutrient_key"], c["dose_label"]) for c in cards] == [("vitamin a", "900 mcg")]
+
+
+def test_vitamin_a_same_form_in_two_languages_is_not_summed(sw):
+    text = "Vitamin A (als Retinylacetat) 400 µg 50%\nVitamine A (acétate de rétinyle) 400 µg 50%"
+    assert _doses(sw, text) == {"vitamin a": "400 mcg"}
+
+
+def test_vitamin_a_title_plus_two_form_lines_sums_only_the_table_forms(sw):
+    text = (
+        "Vitamin A 900 µg Kapseln\n"
+        "Vitamin A (as retinyl palmitate) 450 mcg 50%\n"
+        "Vitamin A (as beta-carotene) 450 mcg 50%"
+    )
+    assert _doses(sw, text) == {"vitamin a": "900 mcg"}

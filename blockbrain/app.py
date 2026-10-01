@@ -794,6 +794,19 @@ def _is_folic_acid_dose(component_name: str | None, form: str | None = "") -> bo
     return bool(re.search(r"\bfol(?:ic acid|saure|saeure)\b", text))
 
 
+def vitamin_a_form_kind(component_name: str | None, form: str | None = "") -> str:
+    """"preformed" (retinol / retinyl esters), "carotenoid" (beta-carotene) or
+    "" (unknown or mixed) for a vitamin A dose, read from its name and form."""
+    if canonical_nutrient_key(component_name or "") != "vitamin a":
+        return ""
+    text = _fold_label_text(f"{component_name or ''} {form or ''}")
+    carotenoid = bool(re.search(r"carot", text))
+    preformed = bool(re.search(r"\bretin|palmitat|\bacetat|preformed", text))
+    if carotenoid != preformed:
+        return "carotenoid" if carotenoid else "preformed"
+    return ""
+
+
 def supplement_dose_food_factor(component_name: str | None, form: str | None = "") -> float:
     """Multiplier turning a label dose into the food-equivalent amount it is
     compared with: folic acid -> DFE (x1.7), fish-oil weight -> EPA+DHA (x0.3)."""
@@ -9454,6 +9467,22 @@ _LABEL_FILLER_WORDS: frozenset[str] = frozenset({
     "total", "per", "serving", "pro", "je", "davon", "of", "which", "amount", "content", "gehalt", "as", "from",
     "als", "aus", "and", "und", "nrv", "dv", "rda", "rm", "ri",
 })
+# Packaging / marketing words of product titles ("Vitamin D3 1000 I.E.
+# Tabletten", "Magnesium 400 mg Kapseln hochdosiert") are never a chemical form.
+_LABEL_PACKAGING_WORDS: frozenset[str] = frozenset({
+    "kapsel", "kapseln", "kps", "weichkapsel", "weichkapseln", "tablette", "tabletten", "tabl", "tabs", "tab",
+    "tablet", "tablets", "caps", "capsule", "capsules", "softgel", "softgels", "lutschtablette",
+    "lutschtabletten", "kautablette", "kautabletten", "brausetablette", "brausetabletten", "filmtablette",
+    "filmtabletten", "dragee", "dragees", "tropfen", "drops", "liquid", "flussig", "spray", "pulver", "powder",
+    "gummies", "gummy", "fruchtgummis", "sticks", "stick", "beutel", "sachets", "lozenge", "lozenges",
+    "chewable", "chewables", "gelules", "comprimes", "compresse", "depot", "retard", "hochdosiert",
+    "hochdosierte", "hochdosiertes", "hochdosierter", "high", "dose", "dosiert", "extra", "forte", "plus",
+    "mono", "premium", "vegan", "vegane", "veganes", "vegetarisch", "vegetarian", "laborgepruft", "ohne",
+    "zusatze", "zusatzstoffe", "jahresvorrat", "monatsvorrat", "vorrat", "stuck", "st", "packung", "pack",
+    "count", "ct", "supply", "months", "monate", "tage", "days", "time", "release", "sustained", "fast",
+    "pur", "pure", "aktiv", "active", "maximum", "max", "strength", "starke", "mit", "with", "for", "fur",
+    "tagesdosis", "tagesportion", "portion", "pro", "je", "nrv", "dv",
+})
 _LABEL_MAX_NAME_TO_DOSE_GAP = 40  # characters of unbracketed text between name and dose
 
 
@@ -9509,7 +9538,7 @@ def _label_segment_forms(segment: str, chosen: re.Match[str]) -> list[str]:
     rest = re.sub(r"[(\[][^()\[\]]*[)\]]", " ", segment)
     rest = _LABEL_DOSE_RE.sub(" ", rest)
     rest = re.sub(r"\d+(?:[.,]\d+)*\s*%|\d+(?:[.,]\d+)*|[%*:;,.]", " ", rest)
-    words = [w for w in rest.split() if w not in _LABEL_FILLER_WORDS and len(w) > 1]
+    words = [w for w in rest.split() if w not in _LABEL_FILLER_WORDS and w not in _LABEL_PACKAGING_WORDS and len(w) > 1]
     if words:
         forms.append(" ".join(words))
     return [f for f in forms if f]
@@ -9556,6 +9585,61 @@ def _parse_label_segment(
     }
 
 
+def label_row_preference(row: dict[str, Any]) -> tuple[int, int]:
+    """How authoritative a label row is, for choosing between rows of the same
+    nutrient: a nutrient-table line (with %NRV / %DV) beats a product title or
+    marketing line, and a row naming a chemical form beats one without."""
+    line = str(row.get("label_line", "") or "")
+    return (1 if re.search(r"\d\s*%", line) else 0, 1 if str(row.get("form", "") or "").strip() else 0)
+
+
+def _label_row_dose_mg(row: dict[str, Any], form: str) -> float | None:
+    try:
+        value = float(row.get("dose_value"))
+    except Exception:
+        return None
+    unit = str(row.get("dose_unit", "") or "")
+    factor = unit_to_mg(unit)
+    if factor is None and unit == "iu":
+        factor = _iu_unit_to_mg_for_component(str(row.get("component", "") or ""), form)
+    return value * factor if factor else None
+
+
+def _same_label_dose(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """True when two rows state the same amount of the same nutrient (after
+    unit / IU conversion). Vitamin A as retinyl AND as beta-carotene are two
+    real doses even when the numbers match."""
+    if a.get("nutrient_key") != b.get("nutrient_key"):
+        return False
+    kinds = {vitamin_a_form_kind(r.get("component"), r.get("form")) for r in (a, b)}
+    if kinds == {"preformed", "carotenoid"}:
+        return False
+    # IU rows are converted with the forms of both rows ("Vitamin E 400 I.E."
+    # in a title, "d-alpha-Tocopherol 268 mg (400 I.E.)" in the table).
+    form = f"{a.get('form', '') or ''}; {b.get('form', '') or ''}"
+    mg_a, mg_b = _label_row_dose_mg(a, form), _label_row_dose_mg(b, form)
+    if mg_a is None or mg_b is None:
+        return (a.get("dose_value"), a.get("dose_unit")) == (b.get("dose_value"), b.get("dose_unit"))
+    return abs(mg_a - mg_b) <= 0.01 * max(mg_a, mg_b)
+
+
+def _drop_repeated_label_doses(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A product title ("Vitamin D3 1000 I.E. Tabletten"), a marketing line or a
+    second-language line ("Vitamine C (acide L-ascorbique) 80 mg") repeats a
+    table line's dose. Keep ONE row per nutrient and dose — the most
+    authoritative (label_row_preference) — at the first row's position."""
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        for i, kept in enumerate(out):
+            if _same_label_dose(kept, row):
+                if label_row_preference(row) > label_row_preference(kept):
+                    out[i] = row
+                break
+        else:
+            out.append(row)
+    return out
+
+
 def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
     """(rows read from nutrient-table lines, folded text those rows did NOT consume)."""
     rows: list[dict[str, Any]] = []
@@ -9600,7 +9684,7 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
                     rows.append(row)
             i = j
         unclaimed.append(" ".join(part for part in leftover if part.strip()))
-    return rows, "\n".join(unclaimed)
+    return _drop_repeated_label_doses(rows), "\n".join(unclaimed)
 
 
 def parse_label_nutrient_lines(text: str) -> list[dict[str, Any]]:

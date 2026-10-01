@@ -1726,13 +1726,18 @@ def _filter_to_micronutrients(components: list[dict[str, Any]]) -> list[dict[str
 
 # --- One card per nutrient ----------------------------------------------------
 # Cards that resolve to the same nutrient are merged (they would otherwise
-# overwrite each other's swipe decision). The dosed row is kept; doses are
-# summed ONLY when the label genuinely lists the nutrient on separate lines in
-# different forms (e.g. vitamin A as retinyl palmitate + as beta-carotene).
-# Same-form repeats — OCR echoes, a dose-less ingredient-list mention — are
-# duplicates, not extra dose. Omega-3 rows ("Fish oil 1000 mg / EPA 180 mg /
-# DHA 120 mg") become ONE EPA+DHA card; the fish-oil weight is the carrier,
-# not an omega-3 amount.
+# overwrite each other's swipe decision). One dosed row is kept: the most
+# authoritative one (bb.label_row_preference — the nutrient-table line with
+# %NRV / %DV, else the row naming a chemical form, else the first). A product
+# title ("Vitamin D3 1000 I.E. Tabletten"), a marketing line or a
+# second-language line (DE/FR labels) repeats the dose; it never adds to it.
+# Doses are summed ONLY for the one whitelisted pair of chemically distinct
+# forms listed on separate lines: vitamin A as preformed retinol / retinyl
+# ester + as beta-carotene (the UL applies to the preformed share only). Other
+# "two forms" (magnesium citrate + oxide on separate lines) are too rare to
+# tell apart from a title or a translation, so they are not summed.
+# Omega-3 rows ("Fish oil 1000 mg / EPA 180 mg / DHA 120 mg") become ONE
+# EPA+DHA card; the fish-oil weight is the carrier, not an omega-3 amount.
 _OMEGA3_FAMILY_KEYS = ("omega 3", "fish oil", "epa", "dha")
 
 
@@ -1761,18 +1766,34 @@ def _sum_distinct_form_doses(rows: list[dict[str, Any]]) -> dict[str, Any] | Non
     return merged
 
 
+def _vitamin_a_form_pair(rows: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """[preformed row, beta-carotene row] when vitamin A is listed on separate
+    label lines in both forms, else None."""
+    by_kind: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        if _component_nutrient_key(row) != "vitamin a" or not row.get("label_line"):
+            continue
+        kind = bb.vitamin_a_form_kind(str(row.get("component", "") or ""), str(row.get("form", "") or ""))
+        if kind:
+            by_kind.setdefault(kind, []).append(row)
+    if set(by_kind) != {"preformed", "carotenoid"}:
+        return None
+    pair = [max(by_kind[kind], key=bb.label_row_preference) for kind in ("preformed", "carotenoid")]
+    if pair[0].get("label_line") == pair[1].get("label_line"):
+        return None
+    return pair
+
+
 def _merge_same_nutrient_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     dosed = [r for r in rows if r.get("dose_value") is not None]
     if not dosed:
         return dict(rows[0])
     if len(dosed) > 1:
-        forms = [bb.normalize_lookup_key(str(r.get("form", "") or "")) for r in dosed]
-        lines = [str(r.get("label_line", "") or "") for r in dosed]
-        if all(forms) and all(lines) and len(set(forms)) == len(forms) and len(set(lines)) == len(lines):
-            summed = _sum_distinct_form_doses(dosed)
-            if summed is not None:
-                return summed
-    return dict(dosed[0])
+        pair = _vitamin_a_form_pair(dosed)
+        summed = _sum_distinct_form_doses(pair) if pair else None
+        if summed is not None:
+            return summed
+    return dict(max(dosed, key=bb.label_row_preference))  # first of the best
 
 
 def _merge_omega3_family(rows_by_key: dict[str, dict[str, Any]]) -> dict[str, Any]:
