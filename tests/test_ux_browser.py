@@ -303,6 +303,21 @@ def test_resume_after_refresh_and_start_over_clears_it(page):
     assert page.get_by_role("button", name="Resume your last scan").count() == 0
 
 
+def test_clear_history_on_the_results_forgets_the_saved_scan(page):
+    start_sample(page)
+    finish_all_cards(page)
+    settle(page, 1.2)
+    assert page.evaluate("localStorage.getItem('suppswipe_current_scan_v1')")
+    page.get_by_role("button", name="🕘 Recent scans").click()
+    page.get_by_role("button", name="Clear history").click()
+    settle(page, 1.5)
+    assert page.evaluate("localStorage.getItem('suppswipe_scan_history_v1')") is None
+    assert page.evaluate("localStorage.getItem('suppswipe_current_scan_v1')") is None
+    page.reload(wait_until="networkidle")
+    settle(page, 2.0)
+    assert page.get_by_role("button", name="Resume your last scan").count() == 0
+
+
 def test_build_tag_in_about_popover(page):
     page.get_by_role("button", name="🔒 About & privacy").click()
     page.get_by_text("Build ", exact=False).first.wait_for(timeout=5000)

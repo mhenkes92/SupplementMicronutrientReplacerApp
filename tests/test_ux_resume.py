@@ -91,7 +91,8 @@ def test_restore_rebuilds_cards_and_reapplies_decisions(sw, sample_cards):
     assert state["swipe_decisions"][first]["card_index"] == 0
     assert state["swipe_decisions"][second]["decision"] == "keep"
     assert state["swipe_index"] == 2
-    assert state["swipe_diet_profile_id"] == "vegetarian" == state["swipe_diet_pills"]
+    assert state["swipe_diet_profile_id"] == "vegetarian"
+    assert "swipe_diet_pills" not in state  # chips start from the profile id (no state-vs-default warning)
     assert state["swipe_last_auto_signature"]
 
 
@@ -159,3 +160,52 @@ def test_clear_history_also_forgets_the_saved_scan(sw, sample_cards):
     at.button(key="swipe_clear_history").click().run()
     assert at.session_state["_suppswipe_saved_scan"] is None
     assert not [b for b in at.button if b.key == "swipe_resume_scan"]
+
+
+def test_cleared_scan_is_not_saved_again_until_it_changes(sw, sample_cards):
+    state = _scan_state(sw, sample_cards)
+    state["_suppswipe_scan_suppressed"] = sw._scan_content(sw._scan_snapshot(state))
+    assert sw._saved_scan_args(state) is None
+    assert sw._saved_scan_args(state) is None
+    state["swipe_index"] = 3  # the next swipe saves it again
+    assert sw._saved_scan_args(state)["index"] == 3
+    assert "_suppswipe_scan_suppressed" not in state
+
+
+def test_clear_history_on_the_results_does_not_resave_the_scan():
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.run()
+    at.button(key="swipe_try_sample").click().run()
+    cards = at.session_state["swipe_cards"]
+    key = "tinder_" + str(at.session_state["swipe_reset_nonce"])
+    for i, card in enumerate(cards):
+        at.session_state[key] = {"dir": "left", "id": f"c{i}", "card": card["component_key"], "index": i}
+        at.run()
+    assert at.session_state["swipe_index"] == len(cards)
+    assert at.session_state["suppswipe_scan_history"]  # the finished scan was recorded
+    assert at.session_state["_suppswipe_scan_snapshot"]["index"] == len(cards)  # and saved for resuming
+    at.button(key="swipe_clear_history").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.session_state["suppswipe_scan_history"] == []
+    # The cards are still on screen, but nothing is handed to the browser again.
+    assert "_suppswipe_scan_snapshot" not in at.session_state
+    assert at.session_state["_suppswipe_scan_suppressed"]["index"] == len(cards)
+    at.run()
+    assert "_suppswipe_scan_snapshot" not in at.session_state
+
+
+def test_forget_with_cards_on_screen_suppresses_them(sw, sample_cards, monkeypatch):
+    state = _scan_state(sw, sample_cards, _suppswipe_saved_scan={"v": 1})
+    monkeypatch.setattr(sw.st, "session_state", state)
+    sw._forget_saved_scan()  # Clear history on the results / mid-way through a scan
+    assert state["_suppswipe_saved_scan"] is None and state["_suppswipe_scan_clear"] is True
+    assert sw._saved_scan_args(state) is None
+
+
+def test_start_over_clears_any_suppression(sw, monkeypatch):
+    # Start over resets the cards first, so a fresh scan after it is saved even
+    # if it looks like the cleared one.
+    state = {"_suppswipe_scan_suppressed": {"text": "old"}}
+    monkeypatch.setattr(sw.st, "session_state", state)
+    sw._forget_saved_scan()
+    assert "_suppswipe_scan_suppressed" not in state

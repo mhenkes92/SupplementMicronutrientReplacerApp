@@ -1640,16 +1640,27 @@ def _save_scan_history(history: list[dict[str, Any]]) -> None:
     st.session_state["_suppswipe_history_save"] = history
 
 
+def _scan_content(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """A saved-scan snapshot without its timestamp (to compare two snapshots)."""
+    return {k: v for k, v in snapshot.items() if k != "ts"}
+
+
 def _saved_scan_args(state: Any) -> dict[str, Any] | None:
     """The current scan to mirror into the browser, re-stamped only when its
     content changes (so unchanged runs send identical props and the component
-    isn't re-rendered)."""
+    isn't re-rendered). Nothing is sent for a scan the visitor just cleared
+    (Clear history) until it changes again (next swipe or filter change)."""
     snapshot = _scan_snapshot(state)
     if snapshot is None:
         return None
-    content = {k: v for k, v in snapshot.items() if k != "ts"}
+    content = _scan_content(snapshot)
+    suppressed = state.get("_suppswipe_scan_suppressed")
+    if suppressed is not None:
+        if suppressed == content:
+            return None
+        state.pop("_suppswipe_scan_suppressed", None)
     previous = state.get("_suppswipe_scan_snapshot")
-    if isinstance(previous, dict) and {k: v for k, v in previous.items() if k != "ts"} == content:
+    if isinstance(previous, dict) and _scan_content(previous) == content:
         return previous
     state["_suppswipe_scan_snapshot"] = snapshot
     return snapshot
@@ -3047,7 +3058,9 @@ def _restore_scan(state: Any, saved: dict[str, Any]) -> bool:
     state["swipe_index"] = max(0, min(len(cards), index))
     state["swipe_edit_return"] = False
     state["swipe_diet_profile_id"] = diet
-    state["swipe_diet_pills"] = diet  # keep the filter chips in step
+    # The filter chips start from swipe_diet_profile_id (their default). Also
+    # setting their key here makes Streamlit log a default-vs-state warning.
+    state.pop("swipe_diet_pills", None)
     state["swipe_last_auto_signature"] = sig
     if saved.get("recorded"):
         state["swipe_history_recorded_sig"] = sig  # already in the scan history
@@ -3062,9 +3075,17 @@ def _resume_saved_scan() -> None:
 
 
 def _forget_saved_scan() -> None:
-    """Drop the saved scan here and in the browser (Start over / Clear history)."""
+    """Drop the saved scan here and in the browser (Start over / Clear history).
+    A scan still on screen (Clear history on the results, or mid-way through a
+    later scan) is not saved again until it changes, else the same run would
+    write it straight back and a reload would still offer to resume it."""
     st.session_state["_suppswipe_saved_scan"] = None
     st.session_state["_suppswipe_scan_clear"] = True
+    snapshot = _scan_snapshot(st.session_state)
+    if snapshot is None:
+        st.session_state.pop("_suppswipe_scan_suppressed", None)
+    else:
+        st.session_state["_suppswipe_scan_suppressed"] = _scan_content(snapshot)
 
 
 def _previous_choice_label(decision: dict[str, Any] | None) -> str:
@@ -3387,8 +3408,8 @@ def _render_athlete_rda_popup() -> None:
 
     Values are approximate consensus figures from ISSN (Nutrient Timing, 2017),
     ACSM/AND/DC Nutrition and Athletic Performance (2016/2021), and NIH Office
-    of Dietary Supplements RDA fact sheets. General guidance only — shown as a
-    popover so it works with the app's no-scroll layout.
+    of Dietary Supplements RDA fact sheets. General guidance only — kept in a
+    popover so the long table doesn't push the results down.
     """
     with st.popover("\U0001F3C3 Athlete RDA guide", use_container_width=True):
         st.caption(
