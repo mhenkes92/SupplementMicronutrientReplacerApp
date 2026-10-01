@@ -344,3 +344,30 @@ def test_the_same_food_under_two_usda_names_counts_once(sw):
     assert totals["grams"] == pytest.approx(0.68 / 1.14 * 100)
     basket = sw._basket_cost_breakdown(items)
     assert [name for name, _c in basket["rows"]] == ["Almonds"]
+
+
+# --- F12: foods German shops don't sell in that form -------------------------------------
+
+@pytest.mark.parametrize("text, banned", [("Kalium 500 mg", "hearts of palm"), ("Vitamin C 80 mg", "acerola")])
+@pytest.mark.parametrize("diet", ["none", "vegan"])
+def test_raw_palm_hearts_and_fresh_acerola_are_not_the_default(sw, profiles, text, banned, diet):
+    [card] = _cards(sw, text)
+    foods = _shown(sw, card, profiles[diet])
+    assert any(banned in f["food_description"].lower() for f in foods)  # still listed
+    food = foods[sw._default_food_index(foods, card, profiles[diet])]
+    assert banned not in food["food_description"].lower(), food
+    assert sw._portion_practicality(sw._food_portion_grams(food, card["dose_value"], card["dose_unit"], card["component"]), food) == "ok"
+
+
+def test_raw_palm_hearts_stay_the_default_when_nothing_else_is_practical(sw):
+    card = {"component": "potassium", "nutrient_key": "potassium", "dose_value": 500, "dose_unit": "mg", "form": ""}
+    palm = _row("Hearts of palm, raw", "Vegetables and Vegetable Products", 1806.0, "mg")
+    banana = _row("Bananas, raw", "Fruits and Fruit Juices", 10.0, "mg")  # 5 kg
+    assert sw._default_food_index([palm, banana], card) == 0
+    assert sw._default_food_index([palm, _row("Beans, white, mature seeds, raw", "Legumes and Legume Products", 1795.0, "mg")], card) == 1
+
+
+def test_hot_chili_is_a_spice_not_a_vitamin_c_portion(sw):
+    chili = _row("Peppers, hot chili, green, raw", "Vegetables and Vegetable Products", 242.5, "mg")
+    assert sw._portion_practicality(33, chili) == "impractical"
+    assert sw._portion_practicality(10, chili) == "ok"

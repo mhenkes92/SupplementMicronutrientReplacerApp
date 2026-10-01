@@ -840,7 +840,8 @@ _PORTION_LARGE_KCAL = 600.0
 # normal portion (USDA names / categories): chia (pre-packed chia sold in the
 # EU must state a 15 g/day maximum), nuts and seeds (~70 g, a generous
 # handful; bb.SERVING_SIZE_GROUP_RULES "nuts_seeds_group"), egg yolks (~3 a
-# day at ~17 g), whole eggs (~4 a day), garlic (~3 cloves) and fish roe / caviar.
+# day at ~17 g), whole eggs (~4 a day), garlic (~3 cloves), hot chili peppers
+# (a spice, ~2 peppers) and fish roe / caviar.
 _NUT_SEED_NAME_RE = re.compile(
     r"^\s*(?:nuts|seeds|peanuts?|almonds?|walnuts?|hazelnuts?|cashews?|pistachios?|pecans?|macadamias?|"
     r"brazil ?nuts?|pine nuts?|sunflower seeds?|pumpkin seeds?|flaxseeds?|linseeds?|sesame seeds?)\b",
@@ -852,6 +853,7 @@ _FOOD_DAILY_MAX_RULES: tuple[tuple[re.Pattern[str], float], ...] = (
     (re.compile(r"\byolks?\b", re.IGNORECASE), 51.0),
     (re.compile(r"^\s*eggs?\b", re.IGNORECASE), 200.0),
     (re.compile(r"\bgarlic\b", re.IGNORECASE), 10.0),
+    (re.compile(r"\bpeppers?, hot chili\b|\bhot chili peppers?\b", re.IGNORECASE), 15.0),
     (re.compile(r"\b(?:roe|caviar)\b", re.IGNORECASE), 50.0),
 )
 _NUTS_SEEDS_MAX_DAILY_G = 70.0
@@ -1468,6 +1470,8 @@ def _own_limit_food_warning(food: dict[str, Any] | None, dose_value: Any, dose_u
 #      a B12-fortified food first; see _replace_block_reason);
 #   2. no organ meat (liver, kidney, heart, giblets) when a non-organ food can
 #      supply the dose at a practical portion;
+#   2b. likewise no food German shops don't sell in that form (raw hearts of
+#      palm - only canned, ~1/10 of the potassium - and fresh acerola);
 #   3. on vitamin D cards, no mushroom (vitamin D2; UV-treated ones only) when
 #      a common fish is listed (salmon, herring, mackerel, sardines, trout) or
 #      another vitamin D3 food (fish, eggs) offers an equally practical portion;
@@ -1483,6 +1487,7 @@ _EVERYDAY_VITAMIN_D3_FISH_RE = re.compile(r"\b(?:salmon|herring|mackerel|sardine
 # Any fish (USDA "Fish, ...") or egg supplies vitamin D3.
 _VITAMIN_D3_SOURCE_RE = re.compile(r"^\s*fish\b|\b(?:salmon|herring|mackerel|sardines?|trout|eggs?)\b", re.IGNORECASE)
 _MUSHROOM_RE = re.compile(r"\bmushrooms?\b", re.IGNORECASE)
+_NOT_SOLD_FRESH_IN_DE_RE = re.compile(r"^\s*(?:hearts of palm|palm hearts?),?\s*raw\b|^\s*acerola\b.*\braw\b", re.IGNORECASE)
 _UV_TREATED_RE = re.compile(r"\b(?:ultraviolet|uv)\b", re.IGNORECASE)
 _PRACTICALITY_RANK = {"ok": 0, "large": 1, "impractical": 2}
 
@@ -1534,11 +1539,13 @@ def _default_food_index(
             "blocked": bool(_replace_block_reason(card, food, profile)),
             # Pregnancy: oysters / clams / mussels, roe and tuna are no daily default.
             "pregnancy": bool(pregnant) and _pregnancy_caution_food(food),
+            "not_in_de": bool(_NOT_SOLD_FRESH_IN_DE_RE.search(name)),
         })
     # The best portion a non-organ whole food offers: an organ meat is only the
     # default when it is strictly more practical than every other food.
     best_non_organ = min((f["practical"] for f in facts if not f["organ"] and not f["unsafe"] and not f["fortified"]), default=None)
     d3_available = any(f["d3"] for f in facts)
+    best_buyable = min((f["practical"] for f in facts if not f["not_in_de"] and not f["unsafe"]), default=None)
     # A mushroom gives way to a common fish (salmon, herring, mackerel,
     # sardines, trout) whatever its portion, and to any other D3 food (eggs,
     # other fish) whose portion is as practical (25 egg yolks a day do not
@@ -1553,6 +1560,7 @@ def _default_food_index(
             int(f["pregnancy"]),
             int(f["blocked"]),
             int(f["organ"] and best_non_organ is not None and best_non_organ <= f["practical"]),
+            int(f["not_in_de"] and best_buyable is not None and best_buyable <= f["practical"]),
             int(f["mushroom"] and (common_fish or (best_d3 is not None and best_d3 <= f["practical"]))),
             int(f["fortified"]),
             f["practical"],
