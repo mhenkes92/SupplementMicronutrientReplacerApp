@@ -452,3 +452,21 @@ def test_folate_dfe_as_folic_acid_gets_the_upper_limit_check(sw, text, warned):
     assert bool(warning) is warned, (card["form"], warning)
     if warned and "1,200" not in text:
         assert "~1176 mcg folic acid" in warning
+
+
+def test_vegan_epa_dha_card_says_why_no_food_is_listed(sw):
+    from pathlib import Path
+
+    from streamlit.testing.v1 import AppTest
+
+    [card] = [c for c in _cards(sw, _ALGAE_LABEL) if c["nutrient_key"] in sw._OMEGA3_LONG_CHAIN_KEYS]
+    at = AppTest.from_file(str(Path(sw.__file__)), default_timeout=60)
+    at.session_state["swipe_cards"] = [card]
+    at.session_state["swipe_index"] = 0
+    at.session_state["swipe_diet_profile_id"] = "vegan"
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    captions = " ".join(c.value for c in at.caption)
+    assert "only algal oil supplies EPA+DHA" in captions and "Keeping the supplement is recommended." in captions
+    assert "Switch the dietary filter" not in captions
+    assert len(at.selectbox) == 0

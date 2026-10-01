@@ -4696,7 +4696,11 @@ def _render_card() -> None:
                 if rda_amount_txt:
                     rda_label_txt = _format_rda_target(rda_entry)
         else:
-            if foods_raw:
+            diet_block = _replace_block_reason(card, None, selected_profile)
+            if diet_block:
+                # Vegan EPA/DHA: no whole food exists, so another filter is no answer.
+                st.caption(f"{diet_block} Keeping the supplement is recommended.")
+            elif foods_raw:
                 prof = selected_profile or {}
                 prof_label = str(prof.get("label", "") or "").strip()
                 if prof_label and prof_label.lower() not in ("no restriction", "none"):
