@@ -9524,11 +9524,20 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
         LAST_VISION_ATTEMPT_LOG.append("content_image:refused (unreadable or oversized image)")
         return ""
     b64 = base64.b64encode(jpeg_bytes).decode("utf-8")
+    # Only what the parser needs: fewer output tokens is the biggest speed-up
+    # for a vision read (a full transcription of ingredients, directions and
+    # marketing copy can be several times longer than the nutrient table).
     vision_prompt = (
-        "You are a strict OCR extractor for supplement and nutrition labels. "
-        "Read all visible text from this label image exactly as printed. "
-        "Preserve nutrient names, numeric doses, and units (mg, mcg, IU, g). "
-        "Output plain text lines only — no markdown, no commentary."
+        "You are a strict OCR extractor for supplement and nutrition labels. From this photo, output ONLY:\n"
+        "1. the product name and brand, if visible, on the first line;\n"
+        "2. the serving line (e.g. 'Serving size 1 tablet' or 'pro Tagesdosis (1 Tablette)');\n"
+        "3. every vitamin, mineral and other nutrient line of the nutrition / supplement facts table, "
+        "exactly as printed, one per line, with its amount, unit, any '(as ...)' form and the %NRV / %DV "
+        "if shown (e.g. 'Vitamin D3 20 µg (800 I.E.) 400%').\n"
+        "Keep the label's language, spelling and number format (decimal commas, µg, I.E./IU). Skip "
+        "ingredient lists, directions, warnings, marketing text and addresses. If the photo shows no "
+        "nutrient table, output only the visible product name, brand and any barcode digits. "
+        "Plain text lines only — no markdown, no commentary."
     )
 
     def _record(out: str) -> None:
