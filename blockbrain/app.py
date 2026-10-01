@@ -774,7 +774,7 @@ _IU_UNIT_KEYS: frozenset[str] = frozenset({"iu", "ui", "ie", "i e"})
 
 # Vitamin E form detection from the label text ("(as d-alpha tocopherol)").
 _SYNTHETIC_VITAMIN_E_RE = re.compile(r"\b(?:dl alpha|dl|all rac|synthetic|synthetisch)\b")
-_NATURAL_VITAMIN_E_RE = re.compile(r"\b(?:d alpha|rrr|natural|naturlich|natuerlich)\b")
+_NATURAL_VITAMIN_E_RE = re.compile(r"\b(?:d alpha|rrr|natural\w*|naturlich\w*|natuerlich\w*)\b")
 
 # Folic acid is absorbed ~1.7x better than food folate: 1 µg folic acid = 1.7 µg
 # DFE (NIH ODS; EFSA). Food folate amounts are DFE, so a folic-acid dose is
@@ -794,12 +794,33 @@ def _is_folic_acid_dose(component_name: str | None, form: str | None = "") -> bo
     return bool(re.search(r"\bfol(?:ic acid|saure|saeure)\b", text))
 
 
+_BETA_CAROTENE_SHARE_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*%\s*(?:as|als|from|aus)?\s*beta\s*carot")
+
+
+def vitamin_a_beta_carotene_share(component_name: str | None, form: str | None = "") -> float:
+    """Fraction of a vitamin A dose given as beta-carotene: 1.0 for "(as
+    beta-carotene)", 0.5 for "(50% as beta-carotene)", 0.0 for retinol /
+    retinyl esters or an unknown form (counted as preformed: the safe side
+    for the upper limit)."""
+    if canonical_nutrient_key(component_name or "") != "vitamin a":
+        return 0.0
+    text = _fold_label_text(f"{component_name or ''} {form or ''}")
+    share = _BETA_CAROTENE_SHARE_RE.search(text)
+    if share:
+        return max(0.0, min(1.0, (_parse_float(share.group(1)) or 0.0) / 100.0))
+    if re.search(r"carot", text) and not re.search(r"\bretin|palmitat|\bacetat|preformed", text):
+        return 1.0
+    return 0.0
+
+
 def vitamin_a_form_kind(component_name: str | None, form: str | None = "") -> str:
     """"preformed" (retinol / retinyl esters), "carotenoid" (beta-carotene) or
     "" (unknown or mixed) for a vitamin A dose, read from its name and form."""
     if canonical_nutrient_key(component_name or "") != "vitamin a":
         return ""
     text = _fold_label_text(f"{component_name or ''} {form or ''}")
+    if _BETA_CAROTENE_SHARE_RE.search(text):
+        return ""  # "(50% as beta-carotene)": mixed
     carotenoid = bool(re.search(r"carot", text))
     preformed = bool(re.search(r"\bretin|palmitat|\bacetat|preformed", text))
     if carotenoid != preformed:
@@ -838,9 +859,10 @@ def _iu_unit_to_mg_for_component(component_name: str | None, form: str | None = 
     if key == "vitamin d":
         return 0.000025
     if key == "vitamin a":
-        if re.search(r"\bbeta ?carot", text) and not re.search(r"\bretin", text):
-            return 0.00015
-        return 0.0003
+        # Weighted by the beta-carotene share ("5000 IU (50% as beta-carotene)"
+        # = 2500 IU x 0.3 + 2500 IU x 0.15 = 1125 µg RAE).
+        share = vitamin_a_beta_carotene_share(component_name or "vitamin a", form)
+        return 0.0003 * (1.0 - share) + 0.00015 * share
     if key == "beta carotene":
         return 0.0006
     if key == "vitamin e":
@@ -5464,6 +5486,10 @@ _VITAMIN_CODE = r"(?:b\s*-?\s*(?:1[0-2]|[1-9])|d\s*-?\s*[23]|k\s*-?\s*[12])"
 _VITAMIN_CODE_END = r"(?!\d)(?![.,]\d)(?!\s*(?:mcg|mg|ug|g|iu|ie|i\.\s?e|ui|%)(?![a-z]))"
 _VITAMIN_GLUED_RE = re.compile(r"\bvit(?:amine?|main|arnin|amln)?\.?(?=" + _VITAMIN_CODE + _VITAMIN_CODE_END + r")")
 _VITAMIN_SPACED_CODE_RE = re.compile(r"\b(vitamin\s+)(" + _VITAMIN_CODE + r")" + _VITAMIN_CODE_END)
+_OMEGA_BLEND_RE = re.compile(
+    r"\bomega\s*-?\s*3(?:\s*(?:[-/,+&]|und|and)\s*(?:omega\s*)?-?\s*[69](?![0-9]))+"
+    r"|\bomega\s*-?\s*3\s+6\s+9(?![0-9])"
+)
 # German salt compounds written as one word ("Magnesiumcitrat", "Kaliumiodid").
 _GERMAN_SALT_COMPOUND_RE = re.compile(
     r"\b(magnesium|zink|zinc|calcium|kalzium|kalium|natrium|eisen|kupfer|mangan|chrom|selen)"
@@ -5491,6 +5517,9 @@ def _fold_label_text(text: str) -> str:
     t = _VITAMIN_SPACED_CODE_RE.sub(lambda m: m.group(1) + re.sub(r"[\s-]+", "", m.group(2)), t)
     t = re.sub(r"\b([bdk])\s*-\s*(\d{1,2})\b", r"\1\2", t)
     t = _GERMAN_SALT_COMPOUND_RE.sub(r"\1 \2", t)
+    # "Omega 3-6-9", "Omega-3/6/9", "Omega-3, -6 und -9", "Omega 3 + Omega 6" are
+    # blends (mostly ALA / linoleic / oleic acid), never an EPA+DHA omega-3.
+    t = _OMEGA_BLEND_RE.sub("omega 369 blend", t)
     t = re.sub(r"\s*\+\s*", " + ", t)
     t = re.sub(r"[^a-z0-9.,%()\[\]+:;*\s]", " ", t)
     return re.sub(r"\s+", " ", t).strip()
@@ -9506,6 +9535,10 @@ _LABEL_PACKAGING_WORDS: frozenset[str] = frozenset({
     "tagesdosis", "tagesportion", "portion", "pro", "je", "nrv", "dv",
 })
 _LABEL_MAX_NAME_TO_DOSE_GAP = 40  # characters of unbracketed text between name and dose
+# Nutrients whose limits / IU factors depend on the form: when the line names
+# the form itself ("Nicotinic acid 20 mg", "Nicotinsäure", "Retinyl palmitate",
+# "d-alpha-Tocopherol 400 IU", "Methylfolat"), that name is kept as the form.
+_FORM_NAMED_NUTRIENT_KEYS: frozenset[str] = frozenset({"vitamin a", "vitamin e", "niacin", "folate"})
 
 
 def _bracket_depths(text: str) -> list[int]:
@@ -9547,7 +9580,11 @@ def _label_segment_forms(segment: str, chosen: re.Match[str]) -> list[str]:
             continue
         prefix = _LABEL_FORM_PREFIX_RE.match(content)
         dose = _LABEL_DOSE_RE.search(content)
-        if prefix:
+        share = re.fullmatch(r"(\d+(?:[.,]\d+)?)\s*%\s*(?:(?:as|als|from|aus)\s+(.+)|(.*carot.*))", content)
+        if share:
+            # "(50% as beta-carotene)": the share of the dose in that form.
+            forms.append(f"{format_float(_parse_float(share.group(1)) or 0.0)}% {(share.group(2) or share.group(3)).strip()}")
+        elif prefix:
             forms.append(content[prefix.end():].strip())
         elif dose:
             # Secondary amounts: only the folic-acid share matters (DFE vs folic
@@ -9630,8 +9667,11 @@ def _parse_label_segment(
     if value is None or value <= 0:
         return None
 
-    key, display = _NUTRIENT_ALIAS_INDEX[re.sub(r"\s+", " ", name.group(0))]
+    alias = re.sub(r"\s+", " ", name.group(0))
+    key, display = _NUTRIENT_ALIAS_INDEX[alias]
     forms = _label_segment_forms(line[start:end], chosen)
+    if key in _FORM_NAMED_NUTRIENT_KEYS and alias not in (key, display) and not any(alias in f for f in forms):
+        forms.insert(0, alias)  # "Nicotinic acid 20 mg", "Retinyl palmitate 900 µg"
     if display == "folic acid" and not any("folic" in f for f in forms):
         forms.append("folic acid")  # "Folsäure 200 µg": the dose IS folic acid, not DFE
     form_text = "; ".join(forms)
@@ -9786,12 +9826,19 @@ def _name_fuzzily_in(words: list[str], folded_text: str, cutoff: float = 0.8) ->
 
 
 def _vitamin_code_named_in(component: str, folded_text: str) -> bool | None:
-    """For a "vitamin <code>" row: is that code on the label? None for other names.
+    """For a "vitamin <code>" / "omega <n>" row: is that code on the label? None
+    for other names.
 
     The generic pipeline turns a truncated "Vitamin B" ("Vitamin B 1,1 mg",
-    "Vitamin B-12" cut at the hyphen) into "vitamin b9"; such a row is only real
-    when the label actually shows "B9"."""
-    m = re.fullmatch(r"vitamin ([a-k])(\d{0,2})", " ".join(_legacy_row_name_words(component)))
+    "Vitamin B-12" cut at the hyphen) into "vitamin b9", and an "Omega-3/6/9"
+    blend into "omega 3"; such a row is only real when the label actually
+    shows "B9" / a plain omega-3 (blends fold to "omega 369 blend")."""
+    # Strip a trailing dose only ("vitamin b9 1.1 mg"); the 3 of "omega 3" stays.
+    name = re.sub(r"\s+\d+(?:[.,]\d+)?\s*(?:mg|mcg|ug|iu|g)\b.*$", "", _fold_label_text(component)).strip()
+    omega = re.fullmatch(r"omega ?(\d)", name)
+    if omega:
+        return bool(re.search(rf"\bomega\s*{omega.group(1)}(?![0-9])", folded_text))
+    m = re.fullmatch(r"vitamin ([a-k])(\d{0,2})", name)
     if not m:
         return None
     letter, number = m.groups()

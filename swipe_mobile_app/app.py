@@ -990,8 +990,18 @@ def _upper_limit_dose(key: str, component: str, value: Any, unit: str, form: str
                 if "carot" not in part_form.lower():
                     total += _dose_in_unit(component, part_value, part_unit, entry["unit"], part_form) or 0.0
             return total, f"{bb.format_float(total)} {entry['unit']} of preformed vitamin A", entry
-        if "carot" in form_l and "retin" not in form_l:
+        share = bb.vitamin_a_beta_carotene_share(component or "vitamin a", form)
+        if share >= 1.0:
             return None  # beta-carotene has no UL
+        if share > 0.0:  # "(50% as beta-carotene)": only the preformed share counts
+            if bb.normalize_lookup_key(str(unit or "")) in bb._IU_UNIT_KEYS:
+                preformed = _dose_in_unit("vitamin a", float(value) * (1.0 - share), unit, entry["unit"], "retinyl")
+            else:
+                full = _dose_in_unit(component, value, unit, entry["unit"], form)
+                preformed = full * (1.0 - share) if full is not None else None
+            if preformed is None:
+                return None
+            return preformed, f"{_dose_text(value, unit)} ({bb.format_float(preformed)} {entry['unit']} preformed vitamin A)", entry
     if key == "folate":
         share = re.search(r"(\d+(?:\.\d+)?)\s*(mcg|mg)\s+folic acid", form_l)
         if share:
