@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import io
 import os
 import re
@@ -1473,8 +1474,6 @@ def _winter_vitamin_d_note(component_key: str, today: Any = None) -> str:
     """Seasonal advice on vitamin D cards from October to March ("" otherwise)."""
     if bb.canonical_nutrient_key(component_key) != "vitamin d":
         return ""
-    import datetime
-
     month = (today or datetime.date.today()).month
     if month not in _VITAMIN_D_WINTER_MONTHS:
         return ""
