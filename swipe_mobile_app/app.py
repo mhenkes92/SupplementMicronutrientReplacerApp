@@ -2148,12 +2148,26 @@ def _render_header() -> None:
                 padding-top: 0.8rem;
                 padding-bottom: 0.6rem;
             }
+            /* Readability (WCAG AA 4.5:1) and comfortable touch targets. */
+            [data-testid="stCaptionContainer"],
+            [data-testid="stCaptionContainer"] p {
+                color: #475569 !important;
+            }
+            .stButton button,
+            .stDownloadButton button,
+            .stFormSubmitButton button,
+            [data-testid="stPopover"] > div > button {
+                min-height: 44px;
+            }
+            [data-testid="stButtonGroup"] button {
+                min-height: 40px;
+            }
             .diet-strip-label {
                 font-size: 0.72rem;
                 font-weight: 800;
                 letter-spacing: 0.05em;
                 text-transform: uppercase;
-                color: #64748b;
+                color: #475569;
                 margin: 0.25rem 0 0.3rem 0;
             }
             .swipe-title {
@@ -2704,6 +2718,11 @@ def _run_pending_analysis() -> None:
             st.session_state["swipe_pending_request"] = None
             st.session_state["swipe_analysis_kicked"] = False
             st.session_state["swipe_progress_pct"] = 0
+            # Allow retrying the exact same input (it was deduplicated by signature).
+            st.session_state["swipe_last_auto_signature"] = ""
+            loading_block.empty()
+            progress_bar.empty()
+            progress_text.empty()
             st.error(message)
 
         _set_progress(6, "Preparing AI analysis…")
@@ -2726,7 +2745,7 @@ def _run_pending_analysis() -> None:
             for label, key, pct in (("uploaded image", "upload_bytes", 26), ("camera image", "camera_bytes", 42)):
                 img = req.get(key)
                 if isinstance(img, (bytes, bytearray)) and img:
-                    _set_progress(pct, f"Reading {label}…")
+                    _set_progress(pct, f"Reading the {label} with AI — this usually takes 5–15 seconds…")
                     try:
                         ocr_text, _route = _extract_image_text_best_effort(bytes(img))
                         if ocr_text.strip():
@@ -2855,7 +2874,7 @@ def _analyze_dialog() -> None:
     precheck_error = _blockbrain_ready_error()
     if precheck_error:
         st.error(precheck_error)
-    st.caption("Analysis starts automatically once you add a photo, barcode, file, URL, or text.")
+    st.caption("Photos and files are analysed as soon as you add them; for links or text, tap Analyze.")
 
     method = st.radio(
         "How would you like to add your supplement?",
@@ -2892,13 +2911,19 @@ def _analyze_dialog() -> None:
         )
         upload_bytes = upload.getvalue() if upload is not None else b""
     else:
-        manual = st.text_area(
-            "Paste a product URL, a barcode number, or the supplement facts text",
-            height=120,
-            key=f"dlg_manual_{nonce}",
-            label_visibility="collapsed",
-        )
-        manual_text = str(manual or "").strip()
+        # A form, so typing (or tapping Cancel, which blurs the box) never starts
+        # an analysis with half-typed text; only the Analyze button does.
+        with st.form(key=f"dlg_text_form_{nonce}", border=False):
+            manual = st.text_area(
+                "Paste a product URL, a barcode number, or the supplement facts text",
+                height=120,
+                key=f"dlg_manual_{nonce}",
+                placeholder="e.g. https://… or 4006040000000 or 'Vitamin D3 20 µg, Zink 10 mg …'",
+            )
+            submitted = st.form_submit_button("Analyze", type="primary", use_container_width=True)
+        manual_text = str(manual or "").strip() if submitted else ""
+        if submitted and not manual_text:
+            st.warning("Paste a link, a barcode number or the label text first.")
 
     if not precheck_error and _stage_analysis_from_inputs(upload_bytes, camera_bytes, manual_text, camera_barcode):
         # Close the dialog and let the main app run the analysis immediately.
@@ -2972,6 +2997,18 @@ def _render_label_source_notice() -> None:
     )
 
 
+# A typical German multivitamin label, for "Try it with a sample label".
+_SAMPLE_LABEL_TEXT = """Nährwertangaben pro Tagesdosis (1 Tablette) %NRV*
+Vitamin C 80 mg 100%
+Vitamin D3 20 µg (800 I.E.) 400%
+Vitamin B12 2,5 µg 100%
+Folsäure 200 µg 100%
+Magnesium 56 mg 15%
+Zink 10 mg 100%
+Selen 55 µg 100%
+*NRV = Nährstoffbezugswerte"""
+
+
 def _previous_choice_label(decision: dict[str, Any] | None) -> str:
     """Short label of an earlier choice for this card (shown after going back)."""
     if not decision:
@@ -3019,6 +3056,9 @@ def _render_card() -> None:
                 "</div>",
                 unsafe_allow_html=True,
             )
+        if st.button("✨ Try it with a sample label", use_container_width=True, key="swipe_try_sample"):
+            if _stage_analysis_from_inputs(b"", b"", _SAMPLE_LABEL_TEXT):
+                st.rerun()
         return
 
     if index >= len(cards):
@@ -3151,7 +3191,7 @@ def _render_card() -> None:
                 bg=theme["bg"],
                 canReplace=selected_food is not None,
                 previous=_previous_choice_label(decisions.get(component_key)),
-                height=450,
+                height=420,
                 key=f"tinder_{component_key}_{index}_{nonce}",
                 default=None,
             )

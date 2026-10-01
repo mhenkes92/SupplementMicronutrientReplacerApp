@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SuppSwipe card</title>
 <style>
   html, body {
     margin: 0;
@@ -120,6 +121,7 @@
 </div>
 <script>
 (function () {
+  var stage = document.getElementById("stage");
   var card = document.getElementById("card");
   var railKeep = document.getElementById("railKeep");
   var railRepl = document.getElementById("railRepl");
@@ -127,7 +129,8 @@
   var btnKeep = document.getElementById("btnKeep");
   var btnRepl = document.getElementById("btnRepl");
   var live = document.getElementById("live");
-  var HEIGHT = 450;
+  var HEIGHT = 420;   // minimum frame height (from Python)
+  var lastHeight = 0;
   var committed = false;
   var canReplace = true;
   var canBack = false;
@@ -139,6 +142,22 @@
     window.parent.postMessage(msg, "*");
   }
   function setHeight(h) { send("streamlit:setFrameHeight", { height: h }); }
+
+  // Size the frame to the card's content (narrow phones need more height,
+  // wide screens less), never below the minimum Python asked for.
+  function fitHeight() {
+    var probe = card.cloneNode(true);
+    probe.removeAttribute("id");
+    probe.style.cssText = "position:absolute;visibility:hidden;left:0;top:0;right:auto;bottom:auto;" +
+      "height:auto;overflow:visible;width:" + card.clientWidth + "px;";
+    stage.appendChild(probe);
+    var contentHeight = probe.scrollHeight;
+    stage.removeChild(probe);
+    var actionsHeight = document.getElementById("actions").offsetHeight + 6;
+    var h = Math.max(HEIGHT, Math.min(780, contentHeight + actionsHeight + 4));
+    if (Math.abs(h - lastHeight) > 2) { lastHeight = h; setHeight(h); }
+  }
+  window.addEventListener("resize", function () { if (!committed) { fitHeight(); } });
   function setValue(v) { send("streamlit:setComponentValue", { value: v, dataType: "json" }); }
 
   function esc(s) {
@@ -152,7 +171,7 @@
     committed = false;
     canReplace = (args.canReplace !== false);
     canBack = parseInt(args.index || 0, 10) > 0;
-    HEIGHT = parseInt(args.height || 450, 10) || 450;
+    HEIGHT = parseInt(args.height || 420, 10) || 420;
     card.style.setProperty("--accent", args.accent || "#64748b");
     card.style.setProperty("--ink", args.ink || "#0f172a");
     if (args.bg) { card.style.setProperty("--card-bg", args.bg); }
@@ -201,7 +220,8 @@
     card.style.transform = "";
     railKeep.style.opacity = 0;
     railRepl.style.opacity = 0;
-    setHeight(HEIGHT);
+    if (!lastHeight) { lastHeight = HEIGHT; setHeight(HEIGHT); }
+    requestAnimationFrame(fitHeight);
   }
 
   function rails(dx) {
