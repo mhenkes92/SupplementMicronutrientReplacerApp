@@ -920,51 +920,79 @@ def _bioavailability_note(component_key: str) -> str:
     )
 
 
-# Approximate German discounter prices (REWE/ALDI/Lidl average, €/kg, 2024). Used
-# only for a rough basket estimate — clearly labelled as approximate in the UI.
-_GERMAN_FOOD_PRICE_PER_KG: list[tuple[list[str], float]] = [
-    (["salmon", "lachs"], 22.0),
-    (["sardine", "mackerel", "makrele", "anchovy", "hering", "herring"], 12.0),
-    (["tuna", "thunfisch"], 15.0),
-    (["fish", "seafood", "fisch"], 18.0),
-    (["liver", "leber"], 9.0),
-    (["beef", "rind"], 14.0),
-    (["pork", "schwein"], 9.0),
-    (["chicken", "poultry", "huhn", "hähnchen"], 8.0),
-    (["egg", "eier"], 4.0),
-    (["cheese", "käse"], 10.0),
-    (["yogurt", "joghurt", "milk", "milch", "quark"], 1.6),
-    (["almond", "mandel"], 14.0),
-    (["walnut", "walnuss"], 13.0),
-    (["hazelnut", "hasel"], 14.0),
-    (["cashew"], 15.0),
-    (["peanut", "erdnuss"], 6.0),
-    (["seed", "samen", "kerne", "sunflower", "pumpkin", "chia", "flax", "lein"], 8.0),
-    (["nut", "nuss"], 12.0),
-    (["spinach", "spinat"], 5.0),
-    (["kale", "grünkohl"], 4.0),
-    (["broccoli", "brokkoli"], 3.5),
-    (["cabbage", "kohl", "lettuce", "salat", "chard", "mangold", "greens"], 3.0),
-    (["carrot", "möhre", "karotte"], 1.5),
-    (["sweet potato", "süßkartoffel"], 3.0),
-    (["potato", "kartoffel"], 1.2),
-    (["bean", "bohne", "lentil", "linse", "chickpea", "kichererbse", "legume"], 3.0),
-    (["tofu", "soy", "soja"], 6.0),
-    (["berry", "beere", "strawberry", "erdbeere", "blueberry", "heidelbeere"], 8.0),
-    (["orange", "apple", "apfel", "banana", "banane", "fruit", "obst"], 2.5),
-    (["mushroom", "pilz", "champignon"], 8.0),
-    (["oat", "hafer", "rice", "reis", "grain", "getreide", "bread", "brot"], 2.0),
-]
+# Approximate German shelf prices (EUR/kg, typical ALDI/Lidl/REWE/EDEKA
+# own-brand prices in 2025) live in blockbrain/data/german_food_prices.csv, one
+# row per food with its basis (dry weight, fillet, meat weight ...). Used only
+# for a rough basket estimate that the UI labels as approximate.
+_GERMAN_FOOD_PRICES_PATH = ROOT_DIR / "blockbrain" / "data" / "german_food_prices.csv"
+# A swap needing more than this much of one food per day is not a realistic
+# replacement: it is listed as "not practical from food" instead of priced.
+_BASKET_MAX_PRACTICAL_G_PER_DAY = 1000.0
+
+
+_GERMAN_FOOD_PRICES_CACHE: list[tuple[tuple[Any, ...], float, str]] = []
+
+
+def _german_food_prices() -> tuple[tuple[tuple[Any, ...], float, str], ...]:
+    """((word regexes per alternative), EUR/kg, matched phrase) rows in file order."""
+    import csv
+
+    if _GERMAN_FOOD_PRICES_CACHE:
+        return tuple(_GERMAN_FOOD_PRICES_CACHE)
+    rows: list[tuple[tuple[Any, ...], float, str]] = []
+    try:
+        with _GERMAN_FOOD_PRICES_PATH.open(encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh):
+                try:
+                    price = float(row.get("eur_per_kg", "") or 0)
+                except Exception:
+                    continue
+                if price <= 0:
+                    continue
+                for alternative in str(row.get("match", "") or "").split("|"):
+                    words = bb.normalize_lookup_key(alternative).split()
+                    regexes = tuple(bb._keywords_regex((w,)) for w in words)
+                    if words and all(rx is not None for rx in regexes):
+                        rows.append((regexes, price, " ".join(words)))
+    except Exception:
+        return ()
+    _GERMAN_FOOD_PRICES_CACHE[:] = rows
+    return tuple(rows)
+
+
+def _german_price_per_kg(food_name: str) -> tuple[float, str] | None:
+    """(EUR/kg, matched phrase) for a USDA food name, or None if unpriced.
+
+    Words match whole (simple plurals), so "Goat" is not "oat" and butternut
+    squash is not "nut". The most specific row wins: more matched words first,
+    then a match in the food's head (first two USDA segments, so "Fish,
+    roughy, orange" is fish, not oranges), then file order.
+    """
+    segments = [bb.normalize_lookup_key(s) for s in str(food_name or "").split(",")]
+    segments = [s for s in segments if s]
+    if not segments:
+        return None
+    key = " ".join(segments)
+    best: tuple[tuple[int, int, int], float, str] | None = None
+    for order, (regexes, price, phrase) in enumerate(_german_food_prices()):
+        if not all(rx.search(key) for rx in regexes):
+            continue
+        first_seg = min(
+            next((i for i, seg in enumerate(segments) if rx.search(seg)), len(segments)) for rx in regexes
+        )
+        score = (len(regexes), 1 if first_seg <= 1 else 0, -order)
+        if best is None or score > best[0]:
+            best = (score, price, phrase)
+    return (best[1], best[2]) if best else None
 
 
 def _estimate_food_price_eur(food_name: str, grams: float | None) -> float | None:
     if grams is None or grams <= 0:
         return None
-    key = bb.normalize_lookup_key(food_name)
-    for needles, price_per_kg in _GERMAN_FOOD_PRICE_PER_KG:
-        if any(n in key for n in needles):
-            return (grams / 1000.0) * price_per_kg
-    return None
+    match = _german_price_per_kg(food_name)
+    if match is None:
+        return None
+    return (grams / 1000.0) * match[0]
 
 
 def _grams_to_match_dose(decision: dict[str, Any]) -> float | None:
@@ -985,20 +1013,40 @@ def _grams_to_match_dose(decision: dict[str, Any]) -> float | None:
         return None
 
 
-def _basket_cost_summary(replace_items: list[dict[str, Any]]) -> tuple[float, list[tuple[str, float]], list[str]]:
+def _basket_cost_breakdown(replace_items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Daily cost of the whole-food swaps.
+
+    Returns {"total": EUR/day, "rows": [(name, EUR/day)], "unknown": [name],
+    "impractical": [(name, grams/day)]}. Swaps needing more than
+    _BASKET_MAX_PRACTICAL_G_PER_DAY of one food are not priced (eating e.g.
+    23 kg of bananas a day is not a real option) but listed separately.
+    """
     rows: list[tuple[str, float]] = []
     unknown: list[str] = []
+    impractical: list[tuple[str, float]] = []
     total = 0.0
     for d in replace_items:
-        name = str((d.get("selected_food") or {}).get("food_description", "") or "")
+        food = d.get("selected_food") or {}
+        usda_name = str(food.get("food_description", "") or "")
+        name = _food_name(food)
+        if not name:
+            continue
         grams = _grams_to_match_dose(d)
-        cost = _estimate_food_price_eur(name, grams)
+        if grams is not None and grams > _BASKET_MAX_PRACTICAL_G_PER_DAY:
+            impractical.append((name, grams))
+            continue
+        cost = _estimate_food_price_eur(usda_name, grams)
         if cost is not None and cost > 0:
             rows.append((name, cost))
             total += cost
-        elif name:
+        else:
             unknown.append(name)
-    return total, rows, unknown
+    return {"total": total, "rows": rows, "unknown": unknown, "impractical": impractical}
+
+
+def _basket_cost_summary(replace_items: list[dict[str, Any]]) -> tuple[float, list[tuple[str, float]], list[str]]:
+    breakdown = _basket_cost_breakdown(replace_items)
+    return breakdown["total"], breakdown["rows"], breakdown["unknown"]
 
 
 def _meal_plan_prompts(
@@ -1307,18 +1355,26 @@ def _render_final_actions(
                     st.caption("⚡ Already preparing your meals in the background — tap Generate to see them.")
     with row1[1]:
         with st.popover("🛒 Grocery cost", use_container_width=True):
-            st.caption("Rough daily cost of your swaps at German discounters (REWE/ALDI/Lidl average).")
-            total, rows, unknown = _basket_cost_summary(replace_items)
-            if not rows and not unknown:
+            st.caption("Rough daily cost of your swaps at German discounters (ALDI/Lidl/REWE average).")
+            basket = _basket_cost_breakdown(replace_items)
+            total, rows, unknown = basket["total"], basket["rows"], basket["unknown"]
+            impractical = basket["impractical"]
+            if not rows and not unknown and not impractical:
                 st.info("No whole-food swaps to price yet.")
             else:
                 for name, cost in rows:
                     st.markdown(f"- {name}: ~€{cost:.2f}/day")
                 if total > 0:
                     st.markdown(f"**≈ €{total:.2f}/day · €{total * 7:.2f}/week**")
+                if impractical:
+                    st.markdown(
+                        "**Not practical from food:** "
+                        + ", ".join(f"{name} (~{bb.format_float(grams / 1000.0, 1)} kg/day)" for name, grams in impractical)
+                        + " — more than 1 kg a day, so not priced; keeping the supplement may be the practical choice."
+                    )
                 if unknown:
                     st.caption("No estimate for: " + ", ".join(unknown))
-                st.caption("Approximate 2024 discounter prices — actual prices vary by shop and season.")
+                st.caption("Approximate 2025 shelf prices — actual prices vary by shop and season.")
     row2 = st.columns(2)
     with row2[0]:
         with st.popover("💊 Cheapest combo", use_container_width=True):

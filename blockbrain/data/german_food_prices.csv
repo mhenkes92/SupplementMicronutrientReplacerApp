@@ -1,0 +1,266 @@
+match,eur_per_kg,basis,source,as_of
+salmon smoked|smoked salmon,30.00,edible weight,typical German discounter/supermarket own-brand shelf price,2025
+salmon,20.00,fillet,typical German discounter/supermarket own-brand shelf price,2025
+trout,18.00,fillet,typical German discounter/supermarket own-brand shelf price,2025
+mackerel,10.00,fillet,typical German discounter/supermarket own-brand shelf price,2025
+herring,9.00,fillet,typical German discounter/supermarket own-brand shelf price,2025
+sardine,12.00,canned drained weight,typical German discounter/supermarket own-brand shelf price,2025
+anchovy,25.00,jarred drained weight,typical German discounter/supermarket own-brand shelf price,2025
+fresh tuna|tuna steak,30.00,fresh steak,typical German supermarket fish counter price,2025
+tuna,14.00,canned drained weight,typical German discounter/supermarket own-brand shelf price,2025
+cod,20.00,frozen fillet,typical German discounter/supermarket own-brand shelf price,2025
+pollock|saithe,11.00,frozen fillet,typical German discounter/supermarket own-brand shelf price,2025
+haddock,18.00,frozen fillet,typical German discounter/supermarket own-brand shelf price,2025
+halibut,30.00,fillet,typical German supermarket fish counter price,2025
+tilapia,12.00,frozen fillet,typical German discounter/supermarket own-brand shelf price,2025
+catfish|pangasius,9.00,frozen fillet,typical German discounter/supermarket own-brand shelf price,2025
+carp,10.00,whole fish,typical German supermarket fish counter price,2025
+ocean perch|redfish,18.00,fillet,typical German supermarket fish counter price,2025
+perch|pike|whitefish|zander|walleye,22.00,fillet,typical German supermarket fish counter price,2025
+eel,60.00,smoked,typical German supermarket fish counter price,2025
+sea bass|bass,20.00,whole fish,typical German supermarket fish counter price,2025
+snapper|grouper|mahimahi|yellowtail|roughy|sablefish|rockfish|mullet|milkfish|burbot,25.00,frozen fillet,typical German supermarket price,2025
+swordfish|monkfish|turbot|sturgeon|wolffish,35.00,fillet,typical German supermarket fish counter price,2025
+sole|plaice|flounder,22.00,fillet,typical German supermarket fish counter price,2025
+whiting|hake|ling,12.00,frozen fillet,typical German discounter/supermarket own-brand shelf price,2025
+smelt,10.00,whole fish,typical German supermarket fish counter price,2025
+roe|caviar,40.00,jarred lumpfish/salmon roe,typical German supermarket shelf price,2025
+shrimp|prawn,18.00,frozen peeled,typical German discounter/supermarket own-brand shelf price,2025
+crab,45.00,frozen crab meat/legs,typical German supermarket price,2025
+lobster,60.00,frozen,typical German supermarket price,2025
+crayfish,35.00,frozen tail meat,typical German supermarket price,2025
+mussel,15.00,cooked meat (in shell ~6/kg),typical German discounter/supermarket own-brand shelf price,2025
+oyster,45.00,meat weight (~1 EUR per oyster),typical German supermarket fish counter price,2025
+clam,25.00,meat weight,typical German supermarket price,2025
+scallop,45.00,frozen,typical German supermarket price,2025
+squid|calamari,14.00,frozen rings,typical German discounter/supermarket own-brand shelf price,2025
+cuttlefish|octopus,18.00,frozen,typical German supermarket price,2025
+whelk|snail,30.00,meat weight,typical German specialty shop price,2025
+beef liver,7.00,raw,typical German butcher/supermarket price,2025
+veal liver,18.00,raw,typical German butcher price,2025
+pork liver,4.00,raw,typical German butcher/supermarket price,2025
+lamb liver,9.00,raw,typical German (Turkish/halal) butcher price,2025
+lamb kidney|lamb heart,8.00,raw,typical German (Turkish/halal) butcher price,2025
+chicken liver,5.00,raw,typical German supermarket price,2025
+chicken heart|chicken gizzard,6.00,raw,typical German supermarket price,2025
+turkey liver|turkey heart|turkey gizzard,6.00,raw,typical German supermarket price,2025
+duck liver,15.00,raw,typical German butcher price,2025
+beef tenderloin|beef fillet,45.00,raw,typical German supermarket price,2025
+beef steak|beef ribeye|beef sirloin|beef porterhouse|beef t-bone|beef striploin,28.00,raw,typical German supermarket price,2025
+ground beef|minced beef,10.00,raw,typical German discounter/supermarket own-brand shelf price,2025
+beef,16.00,raw,typical German discounter/supermarket own-brand shelf price,2025
+veal,25.00,raw,typical German supermarket price,2025
+pork tenderloin,14.00,raw,typical German discounter/supermarket own-brand shelf price,2025
+pork,9.00,raw,typical German discounter/supermarket own-brand shelf price,2025
+lamb,20.00,raw,typical German supermarket price,2025
+chicken breast,11.00,raw,typical German discounter/supermarket own-brand shelf price,2025
+chicken thigh|chicken leg|chicken drumstick|chicken wing,6.50,raw,typical German discounter/supermarket own-brand shelf price,2025
+chicken,9.00,raw,typical German discounter/supermarket own-brand shelf price,2025
+turkey breast,13.00,raw,typical German discounter/supermarket own-brand shelf price,2025
+turkey,11.00,raw,typical German discounter/supermarket own-brand shelf price,2025
+duck,12.00,raw,typical German supermarket price,2025
+goose,14.00,raw,typical German supermarket price,2025
+goat,16.00,raw,typical German (Turkish/halal) butcher price,2025
+liver,7.00,raw,typical German butcher/supermarket price,2025
+kidney|heart|gizzard|tongue,7.00,raw,typical German butcher price,2025
+egg yolk|yolk,15.00,yolk weight (whole eggs ~4.80/kg),typical German discounter price,2025
+egg white,8.00,white weight (whole eggs ~4.80/kg),typical German discounter price,2025
+quail egg,14.00,whole egg,typical German supermarket price,2025
+duck egg|goose egg|turkey egg,10.00,whole egg,typical German farm-shop price,2025
+egg,4.80,whole egg (10 eggs size M ~2.90 EUR),typical German discounter price,2025
+soy milk|soymilk|soy drink,1.60,per litre,typical German discounter price,2025
+oat milk|oat drink,1.50,per litre,typical German discounter price,2025
+almond milk|almond drink,2.20,per litre,typical German discounter price,2025
+coconut milk,4.00,canned,typical German discounter price,2025
+buttermilk,1.20,per litre,typical German discounter price,2025
+kefir,2.50,per litre,typical German discounter price,2025
+yogurt|yoghurt,2.20,natural yogurt,typical German discounter price,2025
+quark,3.00,low-fat quark,typical German discounter price,2025
+cottage cheese,4.50,per kg,typical German discounter price,2025
+parmesan|parmigiano|grana|pecorino,18.00,per kg,typical German discounter price,2025
+emmental|emmentaler|gruyere|swiss cheese|bergkase,12.00,per kg,typical German discounter price,2025
+mozzarella,6.50,drained weight,typical German discounter price,2025
+feta,9.00,per kg,typical German discounter price,2025
+cheese,9.00,gouda/edam slices,typical German discounter price,2025
+cream,4.50,per litre,typical German discounter price,2025
+butter,9.00,per kg (250 g ~2.29 EUR),typical German discounter price,2025
+whey,1.50,per litre,typical German supermarket price,2025
+sheep milk|goat milk,4.00,per litre,typical German organic supermarket price,2025
+milk,1.10,per litre (whole milk 3.5-3.8%),typical German discounter price,2025
+tofu,6.00,per kg,typical German discounter price,2025
+tempeh,12.00,per kg,typical German organic supermarket price,2025
+natto,20.00,per kg,typical German Asian-shop price,2025
+edamame|soybeans green,6.00,frozen,typical German discounter price,2025
+soybean,4.00,dry,typical German organic supermarket price,2025
+red lentil,3.50,dry,typical German discounter price,2025
+lentil,3.00,dry,typical German discounter price,2025
+chickpea|garbanzo,3.00,dry,typical German discounter price,2025
+kidney bean,3.00,dry,typical German discounter price,2025
+black bean|black turtle bean,4.00,dry,typical German supermarket price,2025
+white bean|navy bean|cannellini|great northern bean|small white bean,3.00,dry,typical German discounter price,2025
+pinto bean|borlotti|cranberry bean|pink bean|red bean,4.00,dry,typical German supermarket price,2025
+adzuki,7.00,dry,typical German organic supermarket price,2025
+mung bean|mungo bean,5.00,dry,typical German Asian-shop price,2025
+fava|broad bean|broadbean,4.00,dry,typical German supermarket price,2025
+split pea|peas split,2.00,dry,typical German discounter price,2025
+black-eyed|blackeye|cowpea,4.00,dry,typical German supermarket price,2025
+lima bean|butter bean,4.00,dry,typical German supermarket price,2025
+pigeon pea|pigeonpea,4.00,dry,typical German Asian/African-shop price,2025
+lupin,8.00,dry,typical German organic supermarket price,2025
+green bean|snap bean|wax bean,4.50,fresh,typical German discounter price,2025
+snow pea|edible-podded pea,9.00,fresh,typical German supermarket price,2025
+green pea|peas green,2.50,frozen,typical German discounter price,2025
+peanut,6.00,shelled,typical German discounter price,2025
+bean,3.50,dry,typical German discounter price,2025
+rolled oat|steel-cut oat|oat|oatmeal,1.20,dry (500 g ~0.60 EUR),typical German discounter price,2025
+wild rice,12.00,dry,typical German supermarket price,2025
+brown rice|rice brown|black rice|rice black|red rice|rice red,3.00,dry,typical German discounter price,2025
+rice,2.20,dry,typical German discounter price,2025
+quinoa,7.00,dry,typical German discounter price,2025
+buckwheat,4.00,dry,typical German discounter price,2025
+millet,3.50,dry,typical German discounter price,2025
+barley,2.50,dry (pearl barley),typical German discounter price,2025
+bulgur,3.00,dry,typical German discounter price,2025
+couscous,2.50,dry,typical German discounter price,2025
+spelt,3.50,dry,typical German supermarket price,2025
+amaranth,7.00,dry,typical German organic supermarket price,2025
+teff,10.00,dry,typical German organic supermarket price,2025
+wheat germ,8.00,per kg (250 g ~2 EUR),typical German supermarket/drugstore price,2025
+vital wheat gluten,10.00,per kg,typical German organic supermarket price,2025
+whole-wheat pasta|whole-grain pasta|pasta whole-wheat|pasta whole grain,2.60,dry,typical German discounter price,2025
+pasta|spaghetti,1.80,dry (500 g ~0.90 EUR),typical German discounter price,2025
+semolina|durum,1.80,dry,typical German discounter price,2025
+cornmeal|polenta,2.50,dry,typical German supermarket price,2025
+rye,2.00,dry grain,typical German organic supermarket price,2025
+wheat,1.50,dry grain,typical German organic supermarket price,2025
+corn sweet|sweet corn,3.00,fresh/frozen kernels,typical German discounter price,2025
+brazilnut|brazil nut,25.00,shelled,typical German supermarket price,2025
+macadamia,38.00,shelled,typical German supermarket price,2025
+pistachio,28.00,shelled,typical German supermarket price,2025
+pine nut,55.00,shelled,typical German discounter price (small packs),2025
+pecan,25.00,shelled,typical German supermarket price,2025
+cashew,15.00,shelled,typical German discounter price,2025
+hazelnut|filbert,13.00,shelled,typical German discounter price,2025
+walnut,13.00,shelled,typical German discounter price,2025
+almond,12.00,shelled (200 g ~2.49 EUR),typical German discounter price,2025
+chestnut,10.00,cooked vacuum-packed,typical German discounter price,2025
+coconut water,3.00,per litre,typical German discounter price,2025
+coconut,4.00,fresh flesh (one coconut ~1.49 EUR),typical German discounter price,2025
+sunflower seed,4.50,shelled (200 g ~0.89 EUR),typical German discounter price,2025
+pumpkin seed|pepita,11.00,shelled,typical German discounter price,2025
+flaxseed|linseed,3.50,whole,typical German discounter price,2025
+chia,9.00,per kg,typical German discounter price,2025
+sesame,8.00,per kg,typical German discounter price,2025
+hemp seed,22.00,hulled,typical German organic supermarket/drugstore price,2025
+spinach,6.00,fresh (frozen leaf spinach ~2.50),typical German discounter price,2025
+kale,4.00,fresh,typical German discounter price (seasonal),2025
+broccoli,2.80,fresh,typical German discounter price,2025
+cauliflower,2.80,fresh,typical German discounter price,2025
+brussels sprout,4.00,fresh,typical German discounter price,2025
+red cabbage|cabbage red,1.50,fresh,typical German discounter price,2025
+savoy|cabbage savoy,2.50,fresh,typical German discounter price,2025
+pak choi|bok choy|pak-choi,5.00,fresh,typical German supermarket price,2025
+chinese cabbage|napa|pe-tsai,2.00,fresh,typical German discounter price,2025
+kimchi,10.00,jarred,typical German supermarket/Asian-shop price,2025
+balsam-pear|bitter gourd,8.00,fresh,typical German Asian-shop price,2025
+cabbage,1.30,fresh,typical German discounter price,2025
+carrot,1.20,fresh,typical German discounter price,2025
+sweet potato|sweet potatoes,2.80,fresh,typical German discounter price,2025
+potato,1.30,fresh,typical German discounter price,2025
+beet|beetroot,1.80,fresh,typical German discounter price,2025
+bell pepper|sweet pepper|peppers sweet|peppers bell,4.50,fresh (500 g ~2.29 EUR),typical German discounter price,2025
+chili|jalapeno|serrano|poblano|hungarian pepper|banana pepper,12.00,fresh,typical German supermarket price,2025
+tomato,3.20,fresh,typical German discounter price,2025
+cucumber,2.00,fresh,typical German discounter price,2025
+zucchini,2.50,fresh,typical German discounter price,2025
+butternut squash|squash butternut,2.20,fresh,typical German discounter price,2025
+pumpkin|squash,2.50,fresh (Hokkaido),typical German discounter price,2025
+eggplant|aubergine,3.50,fresh,typical German discounter price,2025
+shallot,4.00,fresh,typical German discounter price,2025
+onion,1.30,fresh,typical German discounter price,2025
+garlic,7.00,fresh,typical German discounter price,2025
+leek,2.50,fresh,typical German discounter price,2025
+celeriac,2.50,fresh,typical German discounter price,2025
+celery,3.00,fresh,typical German discounter price,2025
+fennel,4.00,fresh,typical German discounter price,2025
+kohlrabi,2.50,fresh,typical German discounter price,2025
+asparagus,9.00,fresh (seasonal),typical German discounter price,2025
+lamb s lettuce|cornsalad,12.00,fresh (150 g ~1.79 EUR),typical German discounter price,2025
+arugula|rocket,12.00,fresh,typical German discounter price,2025
+watercress|cress,25.00,fresh (small boxes),typical German supermarket price,2025
+lettuce|romaine|iceberg|endive|radicchio|chicory,3.00,fresh,typical German discounter price,2025
+parsley|coriander|cilantro|chives|basil|dill|herb,20.00,fresh bunch (~40 g for ~0.89 EUR),typical German discounter price,2025
+chard,6.00,fresh,typical German supermarket price,2025
+collards|mustard greens|turnip greens|dandelion|beet greens|grape leaves,8.00,fresh/jarred,typical German supermarket/market price,2025
+radish,3.00,fresh,typical German discounter price,2025
+parsnip|turnip|rutabaga,2.50,fresh,typical German supermarket price,2025
+mushroom exposed ultraviolet,8.00,UV-treated (vitamin D) mushrooms,typical German supermarket price,2025
+oyster mushroom|mushrooms oyster|mushroom oyster|king oyster,12.00,fresh,typical German supermarket price,2025
+shiitake|enoki|beech|pioppini,15.00,fresh,typical German supermarket price,2025
+maitake|lion s mane,30.00,fresh,typical German specialty shop price,2025
+chanterelle,25.00,fresh (seasonal),typical German supermarket price,2025
+morel,150.00,fresh,typical German specialty shop price,2025
+portabella|portobello,8.00,fresh,typical German supermarket price,2025
+crimini|brown mushroom|mushrooms brown,5.50,fresh,typical German discounter price,2025
+mushroom,4.50,fresh white mushrooms,typical German discounter price,2025
+laver|nori,16.00,raw-equivalent of dried nori (~100 EUR/kg dried),typical German Asian-shop/supermarket price,2025
+kelp|kombu,8.00,raw-equivalent of dried kombu (~40 EUR/kg dried),typical German Asian-shop price,2025
+wakame,11.00,raw-equivalent of dried wakame (~50 EUR/kg dried),typical German Asian-shop price,2025
+spirulina,6.00,raw-equivalent of spirulina powder (~40 EUR/kg),typical German drugstore price,2025
+agar,8.00,raw-equivalent of agar powder,typical German supermarket price,2025
+sungold|gold kiwi,8.00,fresh,typical German supermarket price,2025
+kiwifruit|kiwi,4.00,fresh (~0.30 EUR each),typical German discounter price,2025
+acerola,15.00,frozen pulp (fresh fruit not sold),typical German online/specialty price,2025
+guava,10.00,fresh,typical German specialty/supermarket price,2025
+blackcurrant|currant,9.00,fresh/frozen,typical German discounter price,2025
+strawberry,7.00,fresh,typical German discounter price (seasonal),2025
+blueberry,12.00,fresh,typical German discounter price,2025
+raspberry,16.00,fresh,typical German discounter price,2025
+blackberry,14.00,fresh,typical German discounter price,2025
+cranberry,10.00,fresh/frozen,typical German supermarket price,2025
+elderberry|gooseberry|mulberry,10.00,fresh/frozen,typical German market price,2025
+sour cherry|cherries sour,6.00,jarred/frozen,typical German discounter price,2025
+cherry|cherries,8.00,fresh (seasonal),typical German discounter price,2025
+grape,4.00,fresh,typical German discounter price,2025
+banana,1.60,fresh,typical German discounter price,2025
+apple,2.50,fresh,typical German discounter price,2025
+pear,2.80,fresh,typical German discounter price,2025
+clementine|mandarin|tangerine,2.80,fresh,typical German discounter price,2025
+grapefruit|pummelo,2.50,fresh,typical German discounter price,2025
+orange peel|lemon peel,4.00,zest of fresh fruit,typical German discounter price,2025
+orange,2.00,fresh,typical German discounter price,2025
+lemon,3.00,fresh,typical German discounter price,2025
+lime,5.00,fresh,typical German discounter price,2025
+mango,3.50,fresh,typical German discounter price,2025
+papaya,5.00,fresh,typical German supermarket price,2025
+pineapple,2.20,fresh,typical German discounter price,2025
+watermelon,1.20,fresh,typical German discounter price,2025
+melon|cantaloupe|honeydew,2.50,fresh,typical German discounter price,2025
+avocado,6.00,fresh (~1 EUR each),typical German discounter price,2025
+pomegranate,5.00,fresh,typical German discounter price,2025
+fig,10.00,fresh,typical German supermarket price,2025
+date,6.00,dried,typical German discounter price,2025
+raisin,5.00,dried,typical German discounter price,2025
+apricot,5.00,fresh,typical German discounter price (seasonal),2025
+peach|nectarine,3.50,fresh,typical German discounter price (seasonal),2025
+plum,3.00,fresh,typical German discounter price,2025
+rhubarb,4.00,fresh (seasonal),typical German discounter price,2025
+passion-fruit|passion fruit|granadilla,12.00,fresh,typical German supermarket price,2025
+persimmon|kaki,4.00,fresh,typical German discounter price,2025
+litchi|lychee|longan,10.00,fresh,typical German supermarket price,2025
+plantain,3.00,fresh,typical German supermarket/Afro-shop price,2025
+quince,4.00,fresh (seasonal),typical German market price,2025
+kumquat|carambola|starfruit|cherimoya|feijoa|jujube|loquat|tamarind,10.00,fresh,typical German specialty/supermarket price,2025
+jackfruit,8.00,fresh,typical German Asian-shop price,2025
+okra,6.00,fresh,typical German Asian/Turkish-shop price,2025
+artichoke,8.00,fresh,typical German supermarket price,2025
+hearts of palm,10.00,jarred drained weight,typical German supermarket price,2025
+lemon grass,15.00,fresh,typical German supermarket price,2025
+ginger,6.00,fresh,typical German discounter price,2025
+bamboo shoot,6.00,jarred/canned drained weight,typical German Asian-shop price,2025
+cassava|yam|taro|yambean|jicama,4.00,fresh,typical German Asian/Afro-shop price,2025
+lotus root,8.00,fresh,typical German Asian-shop price,2025
+fish,18.00,fillet,typical German supermarket price (generic fallback),2025
+nut,14.00,shelled (generic fallback),typical German discounter price,2025
+seed,6.00,generic fallback,typical German discounter price,2025
+berry|berries,10.00,fresh/frozen (generic fallback),typical German discounter price,2025
