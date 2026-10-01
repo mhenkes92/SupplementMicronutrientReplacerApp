@@ -267,9 +267,11 @@ def test_plant_based_b12_warning_points_to_fortified_foods(sw, profiles):
 @pytest.mark.parametrize("month, shown", [(10, True), (12, True), (1, True), (3, True), (4, False), (7, False), (9, False)])
 def test_vitamin_d_winter_note(sw, month, shown):
     today = datetime.date(2026, month, 15)
-    warn = sw._card_warning_text("vitamin d3", 20, "mcg", "", None, today=today)
-    assert ("October–March the sun in Germany is too weak" in warn) is shown
-    assert "October–March" not in sw._card_warning_text("vitamin c", 80, "mg", "", None, today=today)
+    # A neutral note: in the blue info line, not the red warning box (final review F13).
+    info = sw._card_extra_info("vitamin d3", 20, "mcg", "", None, pregnant=False, today=today)
+    assert ("October–March the sun in Germany is too weak" in info) is shown
+    assert "October–March" not in sw._card_warning_text("vitamin d3", 20, "mcg", "", None, today=today)
+    assert "October–March" not in sw._card_extra_info("vitamin c", 80, "mg", "", None, pregnant=False, today=today)
 
 
 # --- Diet-aware notes -------------------------------------------------------------------

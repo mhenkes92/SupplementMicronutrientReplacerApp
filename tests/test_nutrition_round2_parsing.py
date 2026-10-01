@@ -185,11 +185,11 @@ def test_daily_column_of_multi_column_tables(sw, text, expected):
 @pytest.mark.parametrize(
     "text, expected",
     [
-        ("Vitamin D3 + K2 MK-7 Tropfen 1000 IE + 20 µg", [("vitamin d3", "1000 iu"), ("vitamin k2", "20 mcg")]),
-        ("Calcium + Vitamin D3 600 mg / 400 IE", [("calcium", "600 mg"), ("vitamin d3", "400 iu")]),
-        ("Vitamin D3/K2 1000 IE/20 µg", [("vitamin d3", "1000 iu"), ("vitamin k2", "20 mcg")]),
+        ("Vitamin D3 + K2 MK-7 Tropfen 1000 IE + 20 µg", [("vitamin d3", "1000 IU"), ("vitamin k2", "20 mcg")]),
+        ("Calcium + Vitamin D3 600 mg / 400 IE", [("calcium", "600 mg"), ("vitamin d3", "400 IU")]),
+        ("Vitamin D3/K2 1000 IE/20 µg", [("vitamin d3", "1000 IU"), ("vitamin k2", "20 mcg")]),
         # One IU dose only fits vitamin D; K2 keeps its card without a dose.
-        ("Vitamin D3 + K2 Depot 2000 I.E.", [("vitamin d3", "2000 iu"), ("vitamin k2", "Dose not found")]),
+        ("Vitamin D3 + K2 Depot 2000 I.E.", [("vitamin d3", "2000 IU"), ("vitamin k2", "Dose not found")]),
         ("Vitamin B Komplex hochdosiert 500 µg B12", [("vitamin b12", "500 mcg")]),
         ("Vitamin-B-Komplex Kapseln mit 500 µg Vitamin B12", [("vitamin b12", "500 mcg")]),
         ("Vitamin B1, B2 und B6 je 1,4 mg", [("vitamin b1", "1.4 mg"), ("vitamin b2", "1.4 mg"), ("vitamin b6", "1.4 mg")]),

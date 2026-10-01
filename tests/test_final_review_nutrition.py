@@ -371,3 +371,33 @@ def test_hot_chili_is_a_spice_not_a_vitamin_c_portion(sw):
     chili = _row("Peppers, hot chili, green, raw", "Vegetables and Vegetable Products", 242.5, "mg")
     assert sw._portion_practicality(33, chili) == "impractical"
     assert sw._portion_practicality(10, chili) == "ok"
+
+
+# --- F13 / UXJ-F3: polish — low-dose rounding, neutral notes in the info line, IU --------
+
+@pytest.mark.parametrize("dose, pct", [(186, 49), (187, 49), (56, 15), (100, 27), (3.7, 1)])
+def test_low_dose_percentage_never_rounds_up_to_the_threshold(sw, dose, pct):
+    assert sw._deficiency_flag("magnesium", dose, "mg") == f"ℹ️ Low dose: about {pct}% of the EU daily reference intake (NRV)."
+    assert sw._deficiency_flag("magnesium", 188, "mg") == ""
+
+
+def test_neutral_notes_are_in_the_info_line_not_the_warning_box(sw):
+    import datetime
+
+    winter = datetime.date(2026, 11, 1)
+    warn = sw._card_warning_text("magnesium", 56, "mg", today=winter)
+    info = sw._card_extra_info("magnesium", 56, "mg", "", None, pregnant=False, today=winter)
+    assert warn == "" and "ℹ️ Low dose: about 15%" in info
+    d_warn = sw._card_warning_text("vitamin d3", 2, "mcg", today=winter)
+    d_info = sw._card_extra_info("vitamin d3", 2, "mcg", "", None, pregnant=False, today=winter)
+    assert "ℹ️" not in d_warn and "October–March" in d_info and "Low dose" in d_info
+    # Real warnings stay in the red box; no low-dose note next to them.
+    assert "safe upper limit" in sw._card_warning_text("magnesium", 400, "mg")
+    assert "Low dose" not in sw._card_extra_info("magnesium", 400, "mg", "", None, pregnant=False)
+
+
+@pytest.mark.parametrize("unit", ["iu", "IU", "I.E.", "ie"])
+def test_iu_doses_read_iu(sw, unit):
+    assert sw._dose_label({"dose_value": 1000, "dose_unit": unit}) == "1000 IU"
+    assert sw._dose_label({"dose_value": 1000, "dose_max": 2000, "dose_unit": unit}) == "1000–2000 IU"
+    assert sw._dose_label({"dose_value": 20, "dose_unit": "mcg"}) == "20 mcg"

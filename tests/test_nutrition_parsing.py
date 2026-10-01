@@ -55,7 +55,9 @@ def test_fish_oil_weight_alone_counts_as_30_percent_epa_dha(sw):
     card = _one_card(sw, "Fish oil 1000 mg")
     top = card["foods"][0]
     assert _grams(card, top) == pytest.approx(300 / (top["amount_per_100g"] * 1000) * 100, rel=0.01)
-    assert "30%" in sw._card_warning_text(card["component_key"], card["dose_value"], card["dose_unit"], card["form"])
+    # A neutral note: in the blue info line, not the red warning box (final review F13).
+    assert "30%" in sw._card_extra_info(card["component_key"], card["dose_value"], card["dose_unit"], card["form"])
+    assert "30%" not in sw._card_warning_text(card["component_key"], card["dose_value"], card["dose_unit"], card["form"])
 
 
 def test_vitamin_d3_in_iu(sw):

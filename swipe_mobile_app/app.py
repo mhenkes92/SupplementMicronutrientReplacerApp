@@ -740,6 +740,8 @@ def _dose_label(component: dict[str, Any]) -> str:
     dose_unit = str(component.get("dose_unit", "") or "").strip()
     if dose_value is None:
         return "Dose not found"
+    if bb.normalize_lookup_key(dose_unit) in bb._IU_UNIT_KEYS:
+        dose_unit = "IU"  # "1000 IU", never the parser's lowercase "iu"
     try:
         # 3 decimals so small label doses stay exact ("0.025 mg", not "0.03 mg").
         low = bb.format_float(float(dose_value), 3)
@@ -1764,7 +1766,9 @@ def _deficiency_flag(component_key: str, dose_value: Any, dose_unit: str, form: 
     athlete target (that row stays on the card): a 100% NRV pill is not "low"."""
     ratio = _dose_vs_nrv_ratio(component_key, dose_value, dose_unit, form)
     if ratio is not None and ratio < _LOW_DOSE_NRV_RATIO:
-        pct = max(1, int(round(ratio * 100)))
+        # Rounded like the label's %NRV column (14.9% -> 15%), but never up to
+        # the 50% threshold itself (49.6% -> "about 49%").
+        pct = max(1, min(int(_LOW_DOSE_NRV_RATIO * 100) - 1, int(round(ratio * 100))))
         return f"ℹ️ Low dose: about {pct}% of the EU daily reference intake (NRV)."
     return ""
 
@@ -1854,27 +1858,42 @@ def _card_warning_text(
     dose_max: Any = None,
     today: Any = None,
 ) -> str:
-    """The card's warn text: an over-upper-limit warning replaces the
-    deficiency / "prioritise it" flag (never both); diet advice and the winter
-    vitamin D note are appended. A label range ("100-200 mg") is checked
-    against the upper limit with its upper bound (`dose_max`)."""
+    """The card's warn text (the red box): real warnings only — an
+    over-upper-limit warning and diet advice that overrides "replace with
+    food". Neutral ℹ️ notes (low dose, fish-oil weight, winter vitamin D) go
+    to the blue info line instead (_card_info_notes). A label range ("100-200
+    mg") is checked against the upper limit with its upper bound (`dose_max`).
+    `today` is unused (kept for callers that pass it)."""
     parts = []
     upper = _upper_limit_warning(component_key, dose_max if dose_max is not None else dose_value, dose_unit, form)
-    diet = _diet_specific_warning(component_key, profile)
     if upper:
         parts.append(upper)
-    elif not diet:
-        flag = _deficiency_flag(component_key, dose_value, dose_unit, form)
-        if flag:
-            parts.append(flag)
+    diet = _diet_specific_warning(component_key, profile)
     if diet:
         parts.append(diet)
-    if bb.canonical_nutrient_key(component_key) == "fish oil" and dose_value is not None:
-        parts.append("ℹ️ The label gives the fish-oil weight; portions assume ~30% of it is EPA+DHA.")
-    winter = _winter_vitamin_d_note(component_key, today)
-    if winter:
-        parts.append(winter)
     return " ".join(parts)
+
+
+def _card_info_notes(
+    component_key: str,
+    dose_value: Any,
+    dose_unit: str,
+    form: str = "",
+    profile: dict[str, Any] | None = None,
+    dose_max: Any = None,
+    today: Any = None,
+) -> list[str]:
+    """Neutral ℹ️ notes for the card's blue info line: the low-dose note (not
+    next to an upper-limit warning or diet advice), the fish-oil weight
+    assumption and the October–March vitamin D note."""
+    notes = []
+    upper = _upper_limit_warning(component_key, dose_max if dose_max is not None else dose_value, dose_unit, form)
+    if not upper and not _diet_specific_warning(component_key, profile):
+        notes.append(_deficiency_flag(component_key, dose_value, dose_unit, form))
+    if bb.canonical_nutrient_key(component_key) == "fish oil" and dose_value is not None:
+        notes.append("ℹ️ The label gives the fish-oil weight; portions assume ~30% of it is EPA+DHA.")
+    notes.append(_winter_vitamin_d_note(component_key, today))
+    return [n for n in notes if n]
 
 
 # --- Pregnancy & medication guardrails ----------------------------------------
@@ -2024,13 +2043,17 @@ def _card_extra_info(
     form: str = "",
     profile: dict[str, Any] | None = None,
     pregnant: bool | None = None,
+    dose_max: Any = None,
+    today: Any = None,
 ) -> str:
     """Extra lines appended to the card's info (after the curated
-    _bioavailability_note): the "often low in athletes" remark, the pregnancy
-    note (pregnancy mode only) and the medication note."""
+    _bioavailability_note): the neutral ℹ️ notes (_card_info_notes), the
+    "often low in athletes" remark, the pregnancy note (pregnancy mode only)
+    and the medication note."""
     if pregnant is None:
         pregnant = _pregnancy_mode()
     lines = [
+        *_card_info_notes(component_key, dose_value, dose_unit, form, profile, dose_max, today),
         _athlete_info_note(component_key, dose_value, dose_unit, form),
         _pregnancy_note(component_key, profile) if pregnant else "",
         _medication_note(component_key),
@@ -4354,7 +4377,8 @@ def _render_card() -> None:
         # unless a B12-fortified food is picked, vegan iodine.
         replace_block = _replace_block_reason(card, selected_food, selected_profile) if selected_food is not None else ""
         extra_info = _card_extra_info(
-            component_key, card.get("dose_value"), str(card.get("dose_unit", "") or ""), card_form, selected_profile
+            component_key, card.get("dose_value"), str(card.get("dose_unit", "") or ""), card_form, selected_profile,
+            dose_max=card.get("dose_max"),
         )
         if extra_info:
             bio_note = f"{bio_note} {extra_info}".strip()

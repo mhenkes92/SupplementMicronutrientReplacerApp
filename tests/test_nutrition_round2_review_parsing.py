@@ -107,7 +107,7 @@ def test_generic_parsers_keep_the_dose_after_a_dash():
 
 def test_dash_title_card_shows_the_real_dose(sw):
     card = _card(sw, "Vitamin D3 - 1000 I.E. - 365 Tabletten")
-    assert card["dose_label"] == "1000 iu"
+    assert card["dose_label"] == "1000 IU"
     assert card.get("dose_max") is None
 
 

@@ -89,12 +89,14 @@ def test_high_dose_beta_carotene_gets_the_smoker_note(sw):
 
 
 def test_over_ul_warning_replaces_the_low_dose_flag(sw):
-    # A low zinc dose (< 50% of the 10 mg EU NRV) gets the neutral low-dose note.
-    assert "Low dose" in sw._card_warning_text("zinc", 3, "mg")
+    # A low zinc dose (< 50% of the 10 mg EU NRV) gets the neutral low-dose
+    # note, in the blue info line (final review F13), never next to a UL warning.
+    assert "Low dose" in sw._card_extra_info("zinc", 3, "mg")
+    assert "Low dose" not in sw._card_warning_text("zinc", 3, "mg")
     over = sw._card_warning_text("zinc", 50, "mg")
-    assert "safe upper limit" in over and "Low dose" not in over
+    assert "safe upper limit" in over and "Low dose" not in over + sw._card_extra_info("zinc", 50, "mg")
     over_d = sw._card_warning_text("vitamin d3", 10000, "iu")
-    assert "safe upper limit" in over_d and "Low dose" not in over_d
+    assert "safe upper limit" in over_d and "Low dose" not in over_d + sw._card_extra_info("vitamin d3", 10000, "iu")
 
 
 def test_results_screen_lists_kept_pills_above_the_limit(sw):
