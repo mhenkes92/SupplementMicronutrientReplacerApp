@@ -134,6 +134,14 @@
   var committed = false;
   var canReplace = true;
   var canBack = false;
+  // The iframe is reused for every card of a scan (stable Streamlit key), so
+  // each swipe carries the card it was made on and a unique id; Python applies
+  // it once and answers with the next card's props in the same script run.
+  var cardId = "";
+  var cardIndex = 0;
+  var seq = 0;
+  var animEnd = 0;      // fly-out animation end; new props wait for it
+  var pendingArgs = null;
   var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   function send(type, extra) {
@@ -170,7 +178,13 @@
     args = args || {};
     committed = false;
     canReplace = (args.canReplace !== false);
-    canBack = parseInt(args.index || 0, 10) > 0;
+    cardId = String(args.cardId || "");
+    cardIndex = parseInt(args.index || 0, 10) || 0;
+    // Opened from the results ("edit mode"): Back returns to the results.
+    var editing = !!args.editing;
+    canBack = editing || cardIndex > 0;
+    btnBack.setAttribute("aria-label", editing ? "Back to your results" : "Back to the previous card");
+    btnBack.title = editing ? "Back to results" : "Back";
     HEIGHT = parseInt(args.height || 420, 10) || 420;
     card.style.setProperty("--accent", args.accent || "#64748b");
     card.style.setProperty("--ink", args.ink || "#0f172a");
@@ -206,7 +220,8 @@
       '<div class="foodwrap"><div class="foodlbl">Whole-food replacement</div><div class="food">' + foodTxt + '</div>' + portionHtml + bioHtml + '</div>' +
       '<div class="hint">' + (canReplace
         ? 'Swipe or tap: <b>◀ keep pill</b> · <b>replace ▶</b> (arrow keys work too)'
-        : 'No whole-food match for this one — keep the pill or go back') + '</div>';
+        : 'No whole-food match for this one — keep the pill or go back') +
+        (editing ? '<br>Editing from your results — your choice takes you straight back.' : '') + '</div>';
     card.setAttribute("aria-label",
       "Card " + idx + " of " + total + ": " + (args.name || "Micronutrient") + ", dose " + (args.dose || "not available") +
       (args.food ? ". Whole-food replacement: " + args.food : "") +
@@ -237,8 +252,10 @@
     committed = true;
     btnKeep.disabled = btnRepl.disabled = btnBack.disabled = true;
     live.textContent = dir === "right" ? "Replaced with the whole food" : (dir === "left" ? "Kept the pill" : "Going back");
+    seq += 1;
+    var value = { dir: dir, id: Date.now() + "-" + seq, card: cardId, index: cardIndex };
     if (dir === "back" || reduceMotion) {
-      setValue({ dir: dir, id: Date.now() });
+      setValue(value);
       return;
     }
     var w = Math.max(window.innerWidth, 480);
@@ -246,7 +263,20 @@
     card.style.transition = "transform .3s ease";
     card.style.transform = "translate(" + off + "px, -30px) rotate(" + (dir === "right" ? 22 : -22) + "deg)";
     (dir === "right" ? railRepl : railKeep).style.opacity = 1;
-    setTimeout(function () { setValue({ dir: dir, id: Date.now() }); }, 220);
+    // Send right away: the server round trip overlaps the fly-out, and the next
+    // card's props are held until the animation is done (see onRender).
+    animEnd = Date.now() + 220;
+    setValue(value);
+  }
+
+  function onRender(args) {
+    var wait = animEnd - Date.now();
+    if (wait <= 0) { pendingArgs = null; render(args); return; }
+    var first = pendingArgs === null;
+    pendingArgs = args;
+    if (first) {
+      setTimeout(function () { var a = pendingArgs; pendingArgs = null; render(a); }, wait);
+    }
   }
 
   // Drag-to-swipe. Pointer Events cover mouse, pen and touch; the legacy touch
@@ -317,7 +347,7 @@
     var d = event.data;
     if (event.source !== window.parent) return; // only our Streamlit host
     if (!d || d.type !== "streamlit:render") return;
-    render(d.args);
+    onRender(d.args);
   });
 
   send("streamlit:componentReady", { apiVersion: 1 });
