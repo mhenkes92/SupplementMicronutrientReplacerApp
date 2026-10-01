@@ -2993,6 +2993,10 @@ def _keyword_matches_food_blob(keyword: str, blob: str, blob_compact: str = "") 
 # dairy word. Each entry is (phrase regex, words to blank out inside a match):
 # only the misleading word is removed, so "peanut butter" stays "peanut" for
 # the nut-free filter while no longer looking like dairy to the vegan filter.
+_MEAT_DISH_RX = (
+    r"(?:schnitzel|meatballs?|sausages?|burgers?|bacon|mince|nuggets?|hot dogs?|frankfurters?|salami|bologna"
+    r"|jerky|patties|meat|chicken|ham|bratwurst|wurst|luncheon)"
+)
 _DIET_NEUTRAL_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (r"kidney beans?|beans? kidney|red kidney", ("kidney",)),
     (r"butter beans?|beans? butter", ("butter",)),
@@ -3001,6 +3005,10 @@ _DIET_NEUTRAL_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("butter",),
     ),
     (r"coconut (?:meat|milk|cream|water|butter|yogurt|yoghurt)", ("meat", "milk", "cream", "butter", "yogurt", "yoghurt")),
+    # USDA files coconut under "Nuts, coconut ..."; coconut is not a tree-nut allergen here.
+    (r"nuts? coconut|coconut nuts?", ("nut",)),
+    (r"nut[- ]free|free (?:from|of) nuts?", ("nut",)),
+    (r"mouse nuts?", ("nut",)),  # Alaska Native root vegetable, not a nut
     (
         r"(?:soy|soya|almond|oat|rice|cashew|hemp|hazelnut|pea|plant|grain|coconut) (?:milk|drink|cream|yogurt|yoghurt|cheese)",
         ("milk", "cream", "yogurt", "yoghurt", "cheese"),
@@ -3021,6 +3029,15 @@ _DIET_NEUTRAL_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (r"turtle beans?|beans? black turtle", ("turtle",)),
     (r"hen of the woods|chicken of the woods", ("hen", "chicken")),
     (r"bean curd", ("curd",)),
+    (r"flor de mayo", ("mayo",)),  # a dry bean variety
+    (r"baby ray s", ("ray",)),  # barbecue-sauce brand
+    # Meat-free versions of meat dishes ("Vegetarian sausage", "veggie burger").
+    (
+        rf"(?:vegetarian|vegan|veggie|meatless|meat-free|plant-based|plant based|soy|tofu|seitan|tempeh) {_MEAT_DISH_RX}"
+        rf"|{_MEAT_DISH_RX}(?: bits| slices)? (?:meatless|vegetarian|vegan|meat-free)",
+        ("schnitzel", "meatball", "sausage", "burger", "bacon", "mince", "nugget", "hot dog", "frankfurter",
+         "salami", "bologna", "jerky", "meat", "chicken", "ham", "bratwurst", "wurst"),
+    ),
     (r"(?:vegetable|veggie|mushroom) (?:broth|stock|bouillon)", ("broth", "stock", "bouillon")),
     # Eggs of a bird are not the bird: "Egg, duck" is fine for vegetarians.
     (
@@ -3041,7 +3058,7 @@ _DIET_NEUTRAL_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("flour",),
     ),
     (r"rice noodles?|noodles? rice|rice vermicelli|vermicelli made from soy|cellophane noodles?|glass noodles?", ("noodle", "vermicelli")),
-    (r"(?:rice|corn|maize) bran|(?:rice|corn) cakes?", ("bran", "cake")),
+    (r"(?:rice|corn|maize) bran|(?:rice|corn) cakes?|rice wafers?|rice biscuits?", ("bran", "cake", "wafer", "biscuit")),
     # Halal-friendly look-alikes (no alcohol left in vinegar / soft drinks).
     (r"wine vinegar|vinegar (?:red |white )?wine|ginger beer|root beer", ("wine", "beer")),
 )
@@ -3088,6 +3105,10 @@ _DIET_LAND_ANIMAL_WORDS = frozenset(
         "pepperoni", "chorizo", "prosciutto", "pancetta", "pastrami", "jerky", "wurst", "bratwurst",
         "liverwurst", "frankfurter", "hot dog", "bologna", "cricket", "mealworm", "locust",
         "grasshopper", "insect",
+        # EU pork / meat products ("Leberkäse" is matched after accents are folded)
+        "gammon", "speck", "mortadella", "leberkase", "leberkaese", "schinken", "kassler", "kasseler",
+        "lardons", "guanciale", "coppa", "jamon", "nduja", "chicharron", "pork rinds", "spareribs",
+        "schnitzel", "meatball", "meatballs", "bresaola", "biltong", "corned beef", "steak tartare",
     }
 )
 _DIET_SEAFOOD_WORDS = frozenset(
@@ -3101,6 +3122,13 @@ _DIET_SEAFOOD_WORDS = frozenset(
         "calamari", "octopus", "cuttlefish", "snail", "escargot", "abalone", "conch", "whelk",
         "cockle", "periwinkle", "urchin", "sea cucumber", "jellyfish", "chiton", "tunicate",
         "ascidian", "oopah", "devilfish", "mollusk", "mollusc", "isinglass", "fish sauce", "dashi",
+        # common EU / restaurant fish names
+        "pangasius", "zander", "saithe", "coley", "sea bream", "bream", "dorade", "sprat", "kipper",
+        "gravlax", "gravad lax", "lox", "scampi", "stockfish", "redfish", "barramundi", "snapper",
+        "grouper", "pollack", "whiting", "pilchard", "mullet", "john dory", "brill", "wolffish",
+        "rockfish", "sablefish", "tilefish", "butterfish", "pompano", "mahi mahi", "mahimahi", "wahoo",
+        "yellowtail", "arctic char", "roughy", "matjes", "rollmops", "bacalao", "bacalhau", "baccala",
+        "fish fingers", "fish sticks", "fishcake", "bouillabaisse", "bonito flakes", "katsuobushi",
     }
 )
 # Words that only mean "land animal" when no fish is named ("Fish, lingcod, liver").
@@ -3118,15 +3146,28 @@ _DIET_DAIRY_WORDS = frozenset(
         "milk", "cream", "cheese", "yogurt", "yoghurt", "kefir", "whey", "casein", "caseinate",
         "buttermilk", "butter", "ghee", "lactose", "quark", "curd", "ricotta", "paneer", "mozzarella",
         "eggnog", "souffle", "custard", "ice cream", "dessert topping", "whipped topping",
+        # cheese and dairy names that do not say "milk" or "cheese"
+        "skyr", "halloumi", "labneh", "labne", "creme fraiche", "schmand", "smetana", "gelato",
+        "hollandaise", "bechamel", "ayran", "lassi", "raita", "tzatziki", "mascarpone", "burrata",
+        "feta", "brie", "camembert", "parmesan", "parmigiano", "cheddar", "gouda", "emmental",
+        "emmentaler", "gruyere", "pecorino", "manchego", "edam", "provolone", "gorgonzola",
+        "roquefort", "stilton", "queso", "fromage", "dulce de leche",
     }
 )
 # USDA "Pasta, fresh-refrigerated" is egg pasta (it carries cholesterol and B12).
 _DIET_EGG_WORDS = frozenset(
-    {"egg", "yolk", "egg white", "mayonnaise", "meringue", "souffle", "eggnog", "pasta fresh-refrigerated", "fresh pasta"}
+    {
+        "egg", "yolk", "egg white", "mayonnaise", "mayo", "aioli", "hollandaise", "meringue", "souffle", "eggnog",
+        "omelet", "omelette", "frittata", "quiche", "pasta fresh-refrigerated", "fresh pasta",
+    }
 )
 _DIET_BEE_WORDS = frozenset({"honey", "royal jelly", "beeswax", "propolis"})
 _DIET_PORK_WORDS = frozenset(
-    {"pork", "ham", "bacon", "lard", "boar", "pig", "swine", "prosciutto", "pancetta", "chorizo", "pepperoni"}
+    {
+        "pork", "ham", "bacon", "lard", "boar", "pig", "swine", "prosciutto", "pancetta", "chorizo", "pepperoni",
+        "gammon", "speck", "mortadella", "leberkase", "leberkaese", "schinken", "kassler", "kasseler",
+        "lardons", "guanciale", "coppa", "jamon", "nduja", "chicharron", "pork rinds",
+    }
 )
 _DIET_ALCOHOL_WORDS = frozenset(
     {"alcohol", "wine", "beer", "rum", "brandy", "whisky", "whiskey", "vodka", "gin", "liqueur", "sake", "mirin", "sherry", "cognac"}
@@ -3145,8 +3186,12 @@ _DIET_NONKOSHER_SEAFOOD_WORDS = frozenset(
         "periwinkle", "urchin", "sea cucumber", "jellyfish", "chiton", "tunicate", "ascidian", "oopah",
         "devilfish", "mollusk", "mollusc", "eel", "catfish", "shark", "swordfish", "sturgeon",
         "caviar", "monkfish", "turbot", "skate", "ray", "lamprey", "pufferfish", "blowfish", "dogfish",
+        "scampi", "stingray",
     }
 )
+# Every non-kosher sea animal is also seafood for the vegetarian/vegan filters
+# ("ray" is too ambiguous in free text outside the kosher list).
+_DIET_SEAFOOD_WORDS = _DIET_SEAFOOD_WORDS | (_DIET_NONKOSHER_SEAFOOD_WORDS - {"ray"})
 _DIET_NONKOSHER_LAND_WORDS = frozenset(
     {
         "rabbit", "hare", "horse", "camel", "bear", "beaver", "muskrat", "squirrel", "raccoon",
@@ -3162,12 +3207,22 @@ _DIET_GLUTEN_WORDS = frozenset(
         "breadcrumbs", "panko", "pasta", "spaghetti", "macaroni", "noodle", "vermicelli", "lasagna",
         "ravioli", "tortellini", "crouton", "cracker", "cookie", "cake", "pastry", "flour", "bran",
         "graham", "beer", "souffle", "meatloaf", "oat", "oatmeal",
+        # wheat products that do not say "wheat" or "flour"
+        "pancake", "waffle", "pumpernickel", "soy sauce", "shoyu", "teriyaki", "pretzel", "brezel",
+        "bagel", "croissant", "brioche", "muffin", "biscuit", "dumpling", "gnocchi", "spaetzle", "spatzle",
+        "pizza", "wafer", "strudel", "matzo", "matzah", "orzo", "udon", "ramen", "crispbread", "rusk",
+        "zwieback", "brot", "brotchen", "broetchen", "knodel", "knoedel", "tempura", "breaded",
     }
 )
 _DIET_LACTOSE_WORDS = frozenset(
     {
         "milk", "cream", "yogurt", "yoghurt", "kefir", "whey", "buttermilk", "butter", "eggnog",
         "souffle", "custard", "ice cream", "whipped cream", "whipped topping", "quark", "lactose", "pudding",
+        # fresh dairy and soft cheeses named without "milk"/"cheese"
+        "skyr", "labneh", "labne", "creme fraiche", "schmand", "smetana", "gelato", "hollandaise",
+        "bechamel", "ayran", "lassi", "raita", "tzatziki", "mascarpone", "burrata", "mozzarella",
+        "ricotta", "feta", "paneer", "brie", "camembert", "halloumi", "neufchatel", "queso fresco",
+        "dulce de leche",
     }
 )
 # Fresh/soft cheeses keep most of their lactose; aged hard cheeses do not.
@@ -3190,13 +3245,14 @@ _DIET_TREE_NUT_WORDS = frozenset(
         "peanut", "groundnut", "almond", "walnut", "cashew", "hazelnut", "filbert", "pistachio",
         "pecan", "macadamia", "brazil nut", "brazilnut", "pine nut", "pinenut", "pignoli", "pignolia",
         "pinyon", "hickory nut", "hickorynut", "beechnut", "mixed nuts", "nut butter", "nut meal",
-        "praline", "marzipan", "nougat", "gianduja",
+        "praline", "marzipan", "nougat", "gianduja", "nut", "nutella",
     }
 )
 _DIET_SALTY_WORDS = frozenset(
     {
         "sausage", "bacon", "ham", "processed meat", "instant noodle", "soy sauce", "fish sauce",
         "brined", "cured", "salted", "pickled", "corned", "jerky", "miso", "bouillon",
+        "meatless",  # processed meat analogues (meatless bacon/sausage) are as salty as the originals
     }
 )
 _DIET_HIGH_SODIUM_MG_PER_100G = 600.0
@@ -3231,7 +3287,7 @@ _DIET_RULES: dict[str, dict[str, Any]] = {
     },
     "gluten free": {
         "keywords": _DIET_GLUTEN_WORDS,
-        "allow_phrases": ("gluten-free", "gluten free"),
+        "allow_phrases": ("gluten-free", "gluten free", "gluten- free"),
     },
     "lactose free": {
         "keywords": _DIET_LACTOSE_WORDS,
@@ -3239,6 +3295,7 @@ _DIET_RULES: dict[str, dict[str, Any]] = {
         "cheese_rule": True,
     },
     "nut free": {
+        # Whole-word, so nutmeg, butternut squash, coconut and water chestnut stay allowed.
         "keywords": _DIET_TREE_NUT_WORDS,
         # Every USDA "Nuts, ..." row except coconut (chestnut, acorn, ginkgo, butternuts ...).
         "nut_category_prefix": True,
@@ -3309,12 +3366,31 @@ def _diet_profile_matcher(profile_key: str, extra_keywords: tuple[str, ...]) -> 
     }
 
 
-def _diet_matcher_for_profile(profile: dict[str, Any]) -> dict[str, Any]:
+def _diet_text_key(text: str) -> str:
+    """normalize_lookup_key() after folding accents ("Leberkäse" -> "leberkase",
+    "Crème fraîche" -> "creme fraiche"), so keyword matching sees whole words."""
+    folded = unicodedata.normalize("NFKD", str(text or "")).replace("ß", "ss")
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
+    return normalize_lookup_key(folded)
+
+
+@functools.lru_cache(maxsize=256)
+def _normalized_diet_keywords(raw_keywords: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(sorted({k for k in (_diet_text_key(x) for x in raw_keywords if x.strip()) if k}))
+
+
+def _diet_profile_signature(profile: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
+    """(canonical profile id, sorted extra avoid keywords): a hashable cache key."""
     profile_id = normalize_lookup_key(str(profile.get("id", "") or ""))
-    extra = [normalize_lookup_key(str(x)) for x in (profile.get("avoid_keywords", []) or []) if str(x).strip()]
     rules_file = load_dietary_restriction_rules().get(profile_id, {}) or {}
-    extra += [normalize_lookup_key(str(x)) for x in (rules_file.get("avoid_keywords", []) or []) if str(x).strip()]
-    return _diet_profile_matcher(_canonical_diet_profile_id(profile), tuple(sorted(set(extra))))
+    raw = tuple(str(x) for x in (profile.get("avoid_keywords", []) or [])) + tuple(
+        str(x) for x in (rules_file.get("avoid_keywords", []) or [])
+    )
+    return _canonical_diet_profile_id(profile), _normalized_diet_keywords(raw)
+
+
+def _diet_matcher_for_profile(profile: dict[str, Any]) -> dict[str, Any]:
+    return _diet_profile_matcher(*_diet_profile_signature(profile))
 
 
 def dietary_block_reason(
@@ -3330,18 +3406,27 @@ def dietary_block_reason(
     USDA category (e.g. AI fallback foods) get it from the local USDA DB when
     the description is known there.
     """
-    blob = normalize_lookup_key(food_description)
-    if not blob:
+    if not normalize_lookup_key(str(food_description or "")):
         return "empty food name"
     if not profile or not _dietary_profile_is_restrictive(profile):
         return ""
+    profile_key, extra = _diet_profile_signature(profile)
+    return _dietary_block_reason_cached(profile_key, extra, str(food_description or ""), str(food_category or ""))
 
-    m = _diet_matcher_for_profile(profile)
+
+@functools.lru_cache(maxsize=65536)
+def _dietary_block_reason_cached(
+    profile_key: str, extra_keywords: tuple[str, ...], food_description: str, food_category: str
+) -> str:
+    # The same food pools are re-filtered on every Streamlit rerun, so verdicts
+    # are cached per (profile rules, description, category).
+    blob = _diet_text_key(food_description)
+    m = _diet_profile_matcher(profile_key, extra_keywords)
     rule = m["rule"]
     if m["allow"] is not None and m["allow"].search(blob):
         return ""
 
-    facts = _usda_food_diet_facts().get(blob)
+    facts = _usda_food_diet_facts().get(normalize_lookup_key(food_description))
     category = normalize_lookup_key(str(food_category or ""))
     if facts and facts[0]:
         category = facts[0]
@@ -3387,7 +3472,7 @@ def dietary_text_blocked(text: str, profile: dict[str, Any] | None) -> bool:
     """
     if not profile or not _dietary_profile_is_restrictive(profile):
         return False
-    blob = normalize_lookup_key(text)
+    blob = _diet_text_key(text)
     if not blob:
         return False
     m = _diet_matcher_for_profile(profile)
