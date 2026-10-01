@@ -11588,6 +11588,29 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
                     line[a["names_end"]:b["start"]].strip() not in ("", ",") for a, b in zip(group, group[1:])
                 )
                 group_doses = _label_group_doses(group, outside, line, title_joiner) if outside else None
+                # A title over a dose-first list ("Magnesium + Zink: 300 mg
+                # Magnesium, 10 mg Zink"): the dose right before a later name
+                # that repeats a title name is that name's, so the title takes
+                # no dose and claims only its names; each later name then gets
+                # the dose written before it (_dose_before).
+                if (
+                    group_doses is not None
+                    and k + 1 < len(items)
+                    and items[k + 1]["key"] in {member["key"] for member in group}
+                    and _LABEL_DOSE_BEFORE_NAME_GAP_RE.match(line[outside[-1].end():items[k + 1]["start"]])
+                ):
+                    for member in group:
+                        if _NUTRIENT_LEXICON.get(member["key"], {}).get("umbrella"):
+                            continue
+                        form_end = member["end"] if member is not group[-1] else member["names_end"]
+                        row = _label_row(line, depths, member, None, form_end, _lead(member) if member is group[0] else "")
+                        if row is not None:
+                            row["label_line"] = label_line
+                            line_rows.append(row)
+                    _claim(group[0]["start"], group[-1]["names_end"])
+                    prev_end = group[-1]["names_end"]
+                    i = k + 1
+                    continue
                 if group_doses is not None:
                     for member, dose in zip(group, group_doses):
                         if _NUTRIENT_LEXICON.get(member["key"], {}).get("umbrella"):
