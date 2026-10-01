@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import re
 import subprocess
@@ -3349,6 +3350,50 @@ Selen 55 µg 100%
 *NRV = Nährstoffbezugswerte"""
 
 
+# "🚩 Report a problem with this card": one structured warning line in the
+# blockbrain log per tap, for review. Only what the card shows: nutrient, dose,
+# the label line it was read from, the chosen food and the dietary filter — no
+# free text and nothing personal (the pregnancy toggle is not logged).
+_REPORT_LABEL_LINE_MAX = 160
+
+
+def _card_label_line(card: dict[str, Any]) -> str:
+    """The supplement-label line a card's dose was read from, or ""."""
+    key = str(card.get("nutrient_key", "") or "")
+    try:
+        rows = list(st.session_state.get("swipe_components", []) or [])
+    except Exception:
+        rows = []
+    for row in rows:
+        if not isinstance(row, dict) or _component_nutrient_key(row) != key:
+            continue
+        if row.get("dose_value") == card.get("dose_value") and row.get("label_line"):
+            return re.sub(r"\s+", " ", str(row["label_line"])).strip()[:_REPORT_LABEL_LINE_MAX]
+    return ""
+
+
+def _card_report_payload(
+    card: dict[str, Any], selected_food: dict[str, Any] | None, profile: dict[str, Any] | None
+) -> dict[str, str]:
+    return {
+        "nutrient": _nutrient_title(card.get("component")),
+        "nutrient_key": str(card.get("nutrient_key", "") or ""),
+        "dose": str(card.get("dose_label", "") or ""),
+        "label_line": _card_label_line(card),
+        "food": str((selected_food or {}).get("food_description", "") or ""),
+        "diet": str((profile or {}).get("label", "") or "No restriction"),
+    }
+
+
+def _report_card_problem(
+    card: dict[str, Any], selected_food: dict[str, Any] | None, profile: dict[str, Any] | None
+) -> dict[str, str]:
+    """Log one structured "card report" warning line and return its payload."""
+    payload = _card_report_payload(card, selected_food, profile)
+    bb.logger.warning("SuppSwipe card report: %s", json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    return payload
+
+
 def _previous_choice_label(decision: dict[str, Any] | None) -> str:
     """Short label of an earlier choice for this card (shown after going back)."""
     if not decision:
@@ -3517,6 +3562,13 @@ def _render_card() -> None:
             bio_note = f"{bio_note} {extra_info}".strip()
 
         _render_rag_chat_popup(card, component_key, index)
+        if st.button(
+            "🚩 Report a problem with this card",
+            type="tertiary",
+            key=f"swipe_report_{component_key}_{index}_{nonce}",
+        ):
+            _report_card_problem(card, selected_food, selected_profile)
+            st.toast("Thanks — logged for review")
 
         food_label = _food_name(selected_food)
         with stage:
