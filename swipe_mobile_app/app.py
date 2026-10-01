@@ -694,6 +694,18 @@ def _dose_label(component: dict[str, Any]) -> str:
         return str(dose_value)
 
 
+def _food_name(food: dict[str, Any] | None) -> str:
+    """Short shopper-friendly name of a food row ("Lamb liver"); the full USDA
+    name stays in food["food_description"] (shown as caption/tooltip)."""
+    full = str((food or {}).get("food_description", "") or "").strip()
+    if not full:
+        return ""
+    try:
+        return bb.food_display_name(full) or full
+    except Exception:
+        return full
+
+
 def _food_label(food: dict[str, Any]) -> str:
     try:
         amount_per_100g = float(food.get("amount_per_100g", 0.0) or 0.0)
@@ -701,7 +713,7 @@ def _food_label(food: dict[str, Any]) -> str:
         amount_per_100g = 0.0
     unit_raw = str(food.get("unit", "") or "")
     amount_txt, unit_txt = bb.format_amount_unit_for_dropdown(amount_per_100g, unit_raw)
-    food_name = str(food.get("food_description", "") or "").strip() or "Unknown food"
+    food_name = _food_name(food) or "Unknown food"
     if amount_txt and unit_txt:
         return f"{food_name} ({amount_txt} {unit_txt}/100g)"
     return food_name
@@ -996,7 +1008,7 @@ def _meal_plan_prompts(
     n = max(1, min(3, int(num_meals or 3)))
     lines = []
     for d in replace_items:
-        food = str((d.get("selected_food") or {}).get("food_description", "") or "")
+        food = _food_name(d.get("selected_food"))
         amount = _amount_to_match_dose(d)
         nutrient = str(d.get("component", "") or "")
         lines.append(f"- {food} ({amount}) for {nutrient}")
@@ -1062,7 +1074,7 @@ def _benefits_prompts(replace_items: list[dict[str, Any]]) -> tuple[str, str, st
     lines = []
     for d in replace_items:
         nutrient = str(d.get("component", "") or "")
-        food = str((d.get("selected_food") or {}).get("food_description", "") or "")
+        food = _food_name(d.get("selected_food"))
         if nutrient and food:
             lines.append(f"- Isolated pill nutrient: {nutrient}  |  Whole food chosen instead: {food}")
     if not lines:
@@ -1122,7 +1134,7 @@ def _build_share_text(
     out.append(f"🥗 Replaced with whole foods ({len(replace_items)}):")
     if replace_items:
         for d in replace_items:
-            food = str((d.get("selected_food") or {}).get("food_description", "") or "")
+            food = _food_name(d.get("selected_food"))
             out.append(f"  • {d.get('component', '')}: {food} ({_amount_to_match_dose(d)})")
     else:
         out.append("  • (none)")
@@ -1214,7 +1226,7 @@ def _record_scan_to_history(decisions: dict[str, dict[str, Any]], diet_label: st
         "replaced": [
             {
                 "component": str(d.get("component", "") or ""),
-                "food": str((d.get("selected_food") or {}).get("food_description", "") or ""),
+                "food": _food_name(d.get("selected_food")),
                 "amount": _amount_to_match_dose(d),
             }
             for d in decisions.values()
@@ -2368,7 +2380,7 @@ def _previous_choice_label(decision: dict[str, Any] | None) -> str:
         return ""
     if decision.get("decision") == "keep":
         return "kept the pill"
-    food = str((decision.get("selected_food") or {}).get("food_description", "") or "").strip()
+    food = _food_name(decision.get("selected_food"))
     return f"replaced with {food}" if food else "replaced"
 
 
@@ -2472,6 +2484,9 @@ def _render_card() -> None:
                 label_visibility="collapsed",
             )
             selected_food = foods[option_labels.index(selected_label)]
+            full_name = str(selected_food.get("food_description", "") or "").strip()
+            if full_name and full_name != _food_name(selected_food):
+                st.caption(f"USDA: {full_name}")
 
             # For the selected whole food, compute how much to eat to (a) match
             # the supplement dose and (b) reach the athlete daily target. These
@@ -2508,7 +2523,7 @@ def _render_card() -> None:
 
         _render_rag_chat_popup(card, component_key, index)
 
-        food_label = str((selected_food or {}).get("food_description", "") or "").strip()
+        food_label = _food_name(selected_food)
         with stage:
             swipe_result = tinder_swipe(
                 name=str(card.get("component", "Unknown micronutrient")),
@@ -2600,7 +2615,7 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
                 for d in replace_items:
                     component_key = str(d.get("component_key", "") or "")
                     food = d.get("selected_food") or {}
-                    food_name = str(food.get("food_description", "") or "")
+                    food_name = _food_name(food)
                     icon = _whole_food_icon_from_food(food, component_key)
                     amount_txt = _amount_to_match_dose(d)
                     detail = food_name + (f" ({amount_txt})" if (food_name and amount_txt) else "")
@@ -2611,6 +2626,7 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
                         label,
                         use_container_width=True,
                         key=f"final_repl_{component_key}",
+                        help=f"USDA: {food.get('food_description', '')}" if food.get("food_description") else None,
                     ):
                         st.session_state["swipe_index"] = int(d.get("card_index", 0))
                         st.rerun()

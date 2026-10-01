@@ -5541,7 +5541,462 @@ def filter_and_rank_common_foods(
         return []
 
     enriched.sort(key=lambda e: (-e[0], e[1]))
-    return [e[2] for e in enriched[:limit]]
+    # Collapse near-duplicates that read the same to a shopper (e.g. the
+    # "choice"/"select"/"all grades" variants of one beef cut), keeping the
+    # richest one, so the dropdown never shows two identical names.
+    out: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
+    for _, _, food in enriched:
+        name_key = food_display_name(str(food.get("food_description", "") or "")).lower()
+        if name_key and name_key in seen_names:
+            continue
+        seen_names.add(name_key)
+        out.append(food)
+        if len(out) >= limit:
+            break
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Shopper-friendly display names
+#
+# USDA long names ("Lamb, New Zealand, imported, liver, raw") are precise but
+# hard to read on a phone. food_display_name() turns them into short English
+# names a shopper in Germany recognises ("Lamb liver", "Almonds", "Salmon,
+# sockeye (cooked)"). It is deterministic (curated overrides + rules, no LLM);
+# the full USDA name stays in food_description for tooltips and captions.
+# ---------------------------------------------------------------------------
+
+# Exact overrides, keyed by normalize_lookup_key(USDA description).
+_FOOD_DISPLAY_NAME_OVERRIDES: dict[str, str] = {
+    "acerola (west indian cherry) raw": "Acerola (West Indian cherry)",
+    "nuts brazilnuts raw": "Brazil nuts",
+    "nuts pistachio nuts raw": "Pistachios",
+    "nuts coconut meat raw": "Coconut (fresh flesh)",
+    "nuts coconut water (liquid from coconuts)": "Coconut water",
+    "nuts walnuts english": "Walnuts",
+    "nuts walnuts english halves raw": "Walnuts",
+    "currants european black raw": "Blackcurrants",
+    "kiwifruit zespri sungold raw": "Gold kiwi (Zespri SunGold)",
+    "kiwifruit green raw": "Kiwi, green",
+    "kiwifruit (kiwi) green peeled raw": "Kiwi, green (peeled)",
+    "parsley fresh": "Parsley",
+    "spinach mature": "Spinach",
+    "spinach baby": "Baby spinach",
+    "wheat germ crude": "Wheat germ",
+    "vital wheat gluten": "Vital wheat gluten (seitan flour)",
+    "lettuce cos or romaine raw": "Romaine lettuce",
+    "lettuce romaine green raw": "Romaine lettuce, green",
+    "lettuce iceberg (includes crisphead types) raw": "Iceberg lettuce",
+    "onions young green tops only": "Spring onion greens",
+    "onions welsh raw": "Welsh onions",
+    "tomatoes red ripe raw year round average": "Tomatoes",
+    "tomato roma": "Roma tomatoes",
+    "beans snap green raw": "Green beans",
+    "beans snap green microwaved": "Green beans (microwaved)",
+    "beans snap yellow raw": "Yellow wax beans",
+    "beans fava in pod raw": "Fava beans in the pod",
+    "broadbeans (fava beans) mature seeds raw": "Fava beans (dry)",
+    "broadbeans immature seeds raw": "Fava beans, fresh",
+    "chickpeas (garbanzo beans bengal gram) mature seeds raw": "Chickpeas (dry)",
+    "chickpeas (garbanzo beans bengal gram) dry": "Chickpeas (dry)",
+    "peas green split mature seeds raw": "Split peas (dry)",
+    "blackeye pea dry": "Black-eyed peas (dry)",
+    "cowpeas common (blackeyes crowder southern) mature seeds raw": "Black-eyed peas (dry)",
+    "cowpeas (blackeyes) immature seeds raw": "Black-eyed peas, fresh",
+    "pigeon peas (red gram) mature seeds raw": "Pigeon peas (dry)",
+    "lentils raw": "Lentils (dry)",
+    "lentils pink or red raw": "Red lentils (dry)",
+    "oats (includes foods for usda s food distribution program)": "Oats",
+    "oats whole grain rolled old fashioned": "Rolled oats",
+    "oats whole grain steel cut": "Steel-cut oats",
+    "eggs grade a large egg whole": "Eggs",
+    "eggs grade a large egg yolk": "Egg yolk",
+    "eggs grade a large egg white": "Egg white",
+    "egg whole raw fresh": "Eggs",
+    "egg yolk raw fresh": "Egg yolk",
+    "egg white raw fresh": "Egg white",
+    "sweet potato raw unprepared (includes foods for usda s food distribution program)": "Sweet potato",
+    "sweet potatoes orange flesh without skin raw": "Sweet potato (peeled)",
+    "mushrooms brown italian or crimini exposed to ultraviolet light raw": "Brown mushrooms (UV-exposed)",
+    "mushrooms brown italian or crimini raw": "Brown mushrooms",
+    "mushroom white exposed to ultraviolet light raw": "White mushrooms (UV-exposed)",
+    "mushrooms white button": "White mushrooms",
+    "mushrooms white raw": "White mushrooms",
+    "mushroom crimini": "Brown mushrooms (crimini)",
+    "seaweed laver raw": "Nori (laver seaweed)",
+    "seaweed kelp raw": "Kelp (seaweed)",
+    "seaweed wakame raw": "Wakame (seaweed)",
+    "seaweed agar raw": "Agar (seaweed)",
+    "seaweed spirulina raw": "Spirulina",
+    "fish roe mixed species raw": "Fish roe",
+    "milk producer fluid 3 7 milkfat": "Whole milk (3.7% fat)",
+    "milk buttermilk fluid whole": "Buttermilk",
+    "milk buttermilk fluid cultured lowfat": "Buttermilk, low-fat",
+    "milk low sodium fluid": "Milk, low-sodium",
+    "soy milk sweetened plain refrigerated": "Soy milk, sweetened",
+    "soy milk unsweetened plain shelf stable": "Soy milk, unsweetened",
+    "cabbage chinese (pak-choi) raw": "Pak choi",
+    "cabbage bok choy raw": "Bok choy",
+    "cabbage chinese (pe-tsai) raw": "Chinese cabbage",
+    "cabbage napa leaf destemmed raw": "Napa cabbage",
+    "squash summer green zucchini includes skin raw": "Zucchini",
+    "squash summer zucchini includes skin raw": "Zucchini",
+    "squash zucchini baby raw": "Baby zucchini",
+    "squash pie pumpkin peeled seeded raw": "Pie pumpkin",
+    "pumpkin raw": "Pumpkin",
+    "coriander (cilantro) leaves raw": "Coriander leaves (cilantro)",
+    "cornsalad raw": "Lamb's lettuce (corn salad)",
+    "arugula raw": "Rocket (arugula)",
+    "arugula baby raw": "Baby rocket (arugula)",
+    "beet greens raw": "Beet greens",
+    "chicory witloof raw": "Chicory (witloof)",
+    "garlic raw": "Garlic",
+    "ginger root raw": "Ginger root",
+    "lemon peel raw": "Lemon peel",
+    "orange peel raw": "Orange peel",
+    "hearts of palm raw": "Hearts of palm",
+    "tofu raw firm prepared with calcium sulfate": "Tofu, firm",
+    "natto": "Natto (fermented soybeans)",
+    "tempeh": "Tempeh",
+    "seeds flaxseed": "Flaxseed (linseed)",
+    "chia seeds dry raw": "Chia seeds",
+    "egg duck whole fresh raw": "Duck egg",
+    "egg goose whole fresh raw": "Goose egg",
+    "egg quail whole fresh raw": "Quail eggs",
+    "egg turkey whole fresh raw": "Turkey egg",
+    "oranges raw navels": "Navel oranges",
+    "oranges raw navels (includes foods for usda s food distribution program)": "Navel oranges",
+    "pasta whole grain 51 whole wheat remaining unenriched semolina dry": "Whole-grain pasta (dry)",
+    "pasta gluten-free corn dry": "Gluten-free corn pasta (dry)",
+    "soybeans green raw": "Edamame (green soybeans)",
+    "peas edible-podded raw": "Snow peas",
+    "peas edible-podded boiled drained without salt": "Snow peas (boiled)",
+    "cabbage kimchi": "Kimchi",
+    "waterchestnuts chinese (matai) raw": "Water chestnuts",
+    "beans cranberry (roman) mature seeds raw": "Borlotti beans (dry)",
+    "beans dry cranberry (0 moisture)": "Borlotti beans (dry)",
+    "lima beans thin seeded (baby) mature seeds raw": "Baby lima beans (dry)",
+    "squash summer all varieties raw": "Summer squash",
+    "squash winter all varieties raw": "Winter squash",
+    "squash summer yellow includes skin raw": "Yellow squash",
+    "potatoes baked skin without salt": "Potato skins (baked)",
+    "potatoes raw skin": "Potato skins",
+    "potatoes baked flesh without salt": "Potatoes (baked, peeled)",
+    "tomatillos dehusked raw": "Tomatillos",
+    "chayote fruit raw": "Chayote",
+    "shallots bulb peeled root removed raw": "Shallots (peeled)",
+    "watermelon seedless flesh only raw": "Watermelon, seedless",
+    "spinach souffle": "Spinach souffle",
+    "fish tuna salad": "Tuna salad",
+}
+
+_FOOD_NAME_NOISE_PARENS = re.compile(
+    r"\((?:includes foods for usda.s food distribution program|may contain additives to retain moisture|0% moisture"
+    r"|decorticated|alaska native|northern plains indians|navajo|hopi|apache|southwest|shoshone bannock)\)",
+    re.IGNORECASE,
+)
+_FOOD_NAME_DROP_SEGMENTS = frozenset(
+    {
+        "raw", "fresh", "boneless", "bone-in", "separable lean only", "lean only", "all grades",
+        "choice", "select", "imported", "new zealand", "australian", "mixed species", "all classes",
+        "all types", "all varieties", "all areas", "year round average", "unprepared", "meat only",
+        "skinless", "broilers or fryers", "broiler or fryers", "broiler", "domesticated", "unenriched",
+        "plain", "as purchased", "regular", "lip off", "lip-on", "from whole bird", "retail parts",
+        "whole", "fluid", "without salt", "without salt added", "flesh", "includes skin", "common",
+        "unspecified", "halves", "english", "roasting", "stewing", "denver cut", "america s beef roast",
+        "grade a", "large", "grass-fed", "free range", "enhanced", "seeded", "destemmed", "uncooked",
+        "dry", "mature seeds", "mature", "whole grain", "fresh water", "kernel", "kernels",
+        "composite of trimmed retail cuts", "dehusked", "drained", "fruit", "flesh only",
+        "boneless separable lean only", "cultured",
+    }
+)
+_FOOD_NAME_STATE_WORDS: dict[str, str] = {
+    "cooked": "cooked", "dry heat": "cooked", "moist heat": "cooked", "boiled": "boiled",
+    "baked": "baked", "broiled": "grilled", "grilled": "grilled", "roasted": "roasted",
+    "sauteed": "sautéed", "steamed": "steamed", "braised": "braised", "microwaved": "microwaved",
+    "toasted": "toasted", "dried": "dried", "blanched": "blanched", "frozen": "frozen",
+    "canned": "canned", "smoked": "smoked", "sprouted": "sprouted", "peeled": "peeled",
+    "without skin": "peeled", "hulled": "hulled", "farmed": "farmed", "farm raised": "farmed",
+    "rotisserie": "rotisserie", "exposed to ultraviolet light": "UV-exposed", "pearled": "pearled",
+    "rolled": "rolled", "parboiled": "parboiled", "fresh-refrigerated": "fresh",
+    "without peel": "peeled", "immature seeds": "fresh", "imitation": "imitation",
+}
+# Filler words allowed in a "state" segment ("canned in oil", "baked or broiled").
+_FOOD_NAME_STATE_FILLER = frozenset({"in", "or", "and", "oil", "water", "drained", "solids", "with", "bone", "heat", "dry", "moist", "made", "from", "surimi"})
+# Foods sold dry whose USDA "raw" values are per 100 g of DRY weight.
+_FOOD_NAME_DRY_HEADS = frozenset(
+    {
+        "rice", "wild rice", "quinoa", "millet", "buckwheat", "bulgur", "couscous", "amaranth grain",
+        "amaranth", "sorghum", "sorghum grain", "teff", "spelt", "farro", "einkorn", "khorasan",
+        "triticale", "rye grain", "barley", "beans", "lentils", "lima beans", "mung beans",
+        "mungo beans", "soybeans", "pasta", "spaghetti", "cornmeal", "semolina", "fonio", "lupins",
+        "wheat", "corn grain",
+    }
+)
+# USDA "Head, modifier" groups that read better as "modifier head".
+_FOOD_NAME_PREFIX_GROUPS = frozenset(
+    {
+        "beans", "peppers", "pepper", "mushrooms", "mushroom", "squash", "cabbage", "lettuce",
+        "onions", "tomatoes", "potatoes", "cherries", "grapes", "melons", "oranges", "pears",
+        "plantains", "radishes", "carrots", "lentils", "peas", "rice", "wheat", "cornmeal", "corn",
+        "apples", "grapefruit", "bananas", "persimmons", "plums", "raisins", "dates", "guavas",
+        "avocados", "beets", "cauliflower", "broccoli", "asparagus", "chicory", "soybeans",
+        "tomatillos", "sorghum", "millet", "buckwheat", "pasta", "lima beans", "taro", "turnips",
+    }
+)
+_FOOD_NAME_TAXONOMY_PREFIXES = frozenset({"fish", "nuts", "seeds", "mollusks", "crustaceans", "game meat", "spices", "seaweed"})
+_FOOD_NAME_MEAT_HEADS = frozenset(
+    {"beef", "pork", "pork loin", "lamb", "veal", "chicken", "turkey", "duck", "goose", "goat", "rabbit", "bison", "venison"}
+)
+_FOOD_NAME_ORGANS = ("liver", "kidney", "heart", "gizzard", "tongue", "sweetbread", "giblets")
+_FOOD_NAME_CUT_WORDS = frozenset(
+    {
+        "tenderloin", "sirloin", "ribeye", "rib eye", "loin", "chop", "chops", "steak", "steaks", "roast",
+        "breast", "thigh", "drumstick", "wing", "leg", "shoulder", "chuck", "brisket", "flank", "round",
+        "shank", "neck", "back", "rack", "belly", "rump", "striploin", "skirt", "porterhouse", "t-bone",
+        "ribs", "rib", "cutlet", "filet", "fillet", "fore-shank", "hind-shank", "foreshank", "saddle",
+        "flap", "chump", "cube roll", "eye round", "inside", "flat", "bolar blade", "plate", "shin",
+        "blade", "dark meat", "light meat", "rib chop",
+    }
+)
+_FOOD_NAME_MAIN_CUTS = frozenset(
+    {
+        "steak", "steaks", "roast", "chop", "chops", "ribs", "tenderloin", "sirloin", "ribeye", "brisket",
+        "loin", "breast", "thigh", "drumstick", "wing", "leg", "shoulder", "chuck", "flank", "shank",
+        "neck", "rump", "striploin", "skirt", "porterhouse", "t-bone", "cutlet", "filet", "rack", "belly",
+        "back", "saddle", "dark meat", "light meat", "cube roll", "blade",
+    }
+)
+_FOOD_NAME_PLURAL_HEADS = {
+    "oyster": "Oysters", "mussel": "Mussels", "clam": "Clams", "scallop": "Scallops", "snail": "Snails",
+    "whelk": "Whelks", "crab": "Crab", "abalone": "Abalone", "cuttlefish": "Cuttlefish",
+}
+_FOOD_NAME_PROPER_WORDS = {
+    "atlantic": "Atlantic", "pacific": "Pacific", "european": "European", "english": "English",
+    "chinese": "Chinese", "japanese": "Japanese", "indian": "Indian", "west": "West",
+    "hungarian": "Hungarian", "italian": "Italian", "spanish": "Spanish", "french": "French",
+    "swiss": "Swiss", "greenland": "Greenland", "alaska": "Alaska", "california": "California",
+    "florida": "Florida", "hass": "Hass", "bartlett": "Bartlett", "anjou": "Anjou", "bosc": "Bosc",
+    "medjool": "Medjool", "valencia": "Valencia", "valencias": "Valencia", "virginia": "Virginia",
+    "roman": "Roman", "brazil": "Brazil", "dungeness": "Dungeness", "chinook": "Chinook",
+    "coho": "Coho", "ataulfo": "Ataulfo", "tommy": "Tommy", "atkins": "Atkins", "thompson": "Thompson",
+    "deglet": "Deglet", "noor": "Noor", "northern": "northern", "american": "American",
+}
+_FOOD_NAME_PROPER_PHRASES = (("new zealand", "New Zealand"), ("new york", "New York"), ("great northern", "Great Northern"))
+_FOOD_NAME_PREFIX_ADJECTIVES = frozenset(
+    {
+        "swiss", "garden", "baby", "red", "green", "yellow", "white", "black", "brown", "orange",
+        "sweet", "sour", "dark", "golden", "purple", "savoy", "napa", "chinese", "japanese",
+        "european", "asian", "spring", "young",
+    }
+)
+_FOOD_NAME_PART_WORDS = {
+    "stalks": "stalks", "leaves": "leaves", "flower clusters": "florets", "florets": "florets",
+    "tops": "tops", "roots": "roots", "root": "root", "greens": "greens", "bulb": "bulb",
+    "shoots": "shoots", "leafy tips": "leafy tips", "pods": "pods", "tuber": "tuber",
+}
+_DISPLAY_NAME_MAX_LEN = 42
+
+
+def _split_usda_segments(text: str) -> list[str]:
+    """Split a USDA description on commas that are not inside parentheses."""
+    parts: list[str] = []
+    depth = 0
+    buf = []
+    for ch in text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        if ch == "," and depth == 0:
+            parts.append("".join(buf))
+            buf = []
+            continue
+        buf.append(ch)
+    parts.append("".join(buf))
+    return [re.sub(r"\s+", " ", p).strip() for p in parts if p.strip()]
+
+
+def _display_case(text: str) -> str:
+    words = []
+    for w in text.split(" "):
+        low = w.lower()
+        words.append(_FOOD_NAME_PROPER_WORDS.get(low, low) if not w.isupper() or len(w) <= 2 else w.title())
+    out = " ".join(words).strip()
+    for phrase, proper in _FOOD_NAME_PROPER_PHRASES:
+        out = re.sub(rf"\b{phrase}\b", proper, out, flags=re.IGNORECASE)
+    return out[:1].upper() + out[1:]
+
+
+def _segment_state(key: str) -> str:
+    """State label for a USDA segment made only of preparation words, else ""."""
+    state = _FOOD_NAME_STATE_WORDS.get(key)
+    if state:
+        return state
+    if key in {"wild", "wild caught"}:
+        return "wild"
+    found = ""
+    rest = key
+    for phrase in sorted(_FOOD_NAME_STATE_WORDS, key=len, reverse=True):
+        if re.search(rf"(?<![a-z0-9-]){re.escape(phrase)}(?![a-z0-9-])", rest):
+            found = found or _FOOD_NAME_STATE_WORDS[phrase]
+            rest = re.sub(rf"(?<![a-z0-9-]){re.escape(phrase)}(?![a-z0-9-])", " ", rest)
+    if found and all(w in _FOOD_NAME_STATE_FILLER for w in rest.split()):
+        return found
+    return ""
+
+
+def _clean_cut_text(cut: str) -> str:
+    cut = re.sub(r"\s+-\s+.*$", "", cut)                        # "rack - fully frenched"
+    cut = re.sub(r"\b(?:lip[- ]off|lip[- ]on|cap[- ]off|cap[- ]on|meat only|skinless|without skin)\b", "", cut, flags=re.IGNORECASE)
+    cut = re.sub(r"(\w+)/[\w ]+", r"\1", cut)                    # "steak/roast" -> "steak"
+    return re.sub(r"\s+", " ", cut).strip().lower()
+
+
+@functools.lru_cache(maxsize=8192)
+def food_display_name(food_description: str) -> str:
+    """Short, readable English name for a USDA food description.
+
+    "Lamb, New Zealand, imported, liver, raw" -> "Lamb liver";
+    "Nuts, almonds" -> "Almonds"; "Fish, salmon, sockeye, cooked, dry heat" ->
+    "Salmon, sockeye (cooked)"; "Beans, kidney, red, mature seeds, raw" ->
+    "Red kidney beans (dry)". Unknown shapes fall back to the first segments of
+    the USDA name, so the result is never empty for a non-empty input.
+    """
+    raw = re.sub(r"\s+", " ", str(food_description or "")).strip()
+    if not raw:
+        return ""
+    override = _FOOD_DISPLAY_NAME_OVERRIDES.get(normalize_lookup_key(raw))
+    if override:
+        return override
+
+    text = _FOOD_NAME_NOISE_PARENS.sub("", raw)
+    text = re.sub(r"\btrimmed to [0-9/]+\"? fat\b", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bAust\. marble score [0-9/]+", "", text)
+    text = re.sub(r"\((?:chops or roasts|steaks|roasts)\)", "", text, flags=re.IGNORECASE)
+    segments = _split_usda_segments(text)
+    if not segments:
+        return raw[:_DISPLAY_NAME_MAX_LEN]
+
+    head, rest = segments[0], segments[1:]
+    group = ""
+    if normalize_lookup_key(head) in _FOOD_NAME_TAXONOMY_PREFIXES and rest:
+        group = normalize_lookup_key(head)
+        head, rest = rest[0], rest[1:]
+
+    states: list[str] = []
+    descriptors: list[str] = []
+    for seg in rest:
+        key = normalize_lookup_key(seg)
+        state = _segment_state(key)
+        if state:
+            if state not in states:
+                states.append(state)
+            continue
+        if (
+            not key
+            or key in _FOOD_NAME_DROP_SEGMENTS
+            or re.search(r"\d", key)                                  # '1" steak', '3.7%'
+            or re.fullmatch(r"\w+[- ](?:off|on)", key)               # "chump off", "heel on"
+            or (seg.isupper() and len(seg) > 2)                       # brand in capitals
+        ):
+            continue
+        descriptors.append(seg)
+
+    head = re.sub(r"\s+or\s+.*$", "", head).strip()                   # "Hazelnuts or filberts"
+    head = re.sub(r"\bseed kernels?\b|\bseed\b(?=\s*$)", "seeds", head)
+    head_key = normalize_lookup_key(head)
+
+    if head_key in _FOOD_NAME_MEAT_HEADS:
+        species = "Pork" if head_key == "pork loin" else head.split()[0].title()
+        states = [s for s in states if s != "peeled"]
+        organ = next((o for o in _FOOD_NAME_ORGANS for d in descriptors if re.search(rf"\b{o}\b", d.lower())), "")
+        if organ:
+            name = f"{species} {organ}"
+        else:
+            cuts = [
+                _clean_cut_text(d)
+                for d in descriptors
+                if any(re.search(rf"(?<![a-z-]){re.escape(c)}(?![a-z-])", d.lower()) for c in _FOOD_NAME_CUT_WORDS)
+            ]
+            cuts = [c for c in cuts if c]
+            cut = cuts[-1] if cuts else ""
+            generic_item = cut in {"steak", "steaks", "roast", "roasts", "chop", "chops", "ribs", "filet"}
+            if cut and len(cuts) > 1 and (
+                generic_item or not any(re.search(rf"\b{re.escape(c)}\b", cut) for c in _FOOD_NAME_MAIN_CUTS)
+            ):
+                cut = f"{cuts[-2]} {cut}"
+            if head_key == "pork loin":
+                cut = f"loin {cut}".strip()
+            if cut in {"dark meat", "light meat"}:
+                name = f"{species}, {cut}"
+            else:
+                name = f"{species} {cut}".strip()
+    elif group in {"fish", "mollusks", "crustaceans"}:
+        base = _FOOD_NAME_PLURAL_HEADS.get(head_key, head[:1].upper() + head[1:].lower())
+        variety = descriptors[0] if descriptors else ""
+        name = f"{base}, {variety}" if variety else base
+    elif head_key in _FOOD_NAME_PREFIX_GROUPS and descriptors:
+        parts = [d for d in descriptors if normalize_lookup_key(d) in _FOOD_NAME_PART_WORDS]
+        mods = [
+            d
+            for d in descriptors
+            if d not in parts
+            and normalize_lookup_key(d) not in {"winter", "summer", "sweet", "bell", "hot chili"}
+            and len(d.split()) <= 3
+        ]
+        if head_key in {"peppers", "pepper"}:
+            if any(normalize_lookup_key(d) in {"sweet", "bell"} for d in descriptors):
+                kind = "bell pepper"
+            elif any("chili" in d.lower() for d in descriptors):
+                kind = "chili pepper"
+            else:
+                kind = "pepper"
+            name = f"{' '.join(m.lower() for m in mods[:1])} {kind}".strip()
+        elif parts:
+            part = _FOOD_NAME_PART_WORDS[normalize_lookup_key(parts[0])]
+            name = f"{head} {part}"
+        else:
+            noun = head.lower()
+            if not mods:
+                mods = [d for d in descriptors if normalize_lookup_key(d) in {"winter", "summer"}][:1]
+            if len(mods) >= 2 and all(len(m.split()) == 1 for m in mods[:2]):
+                mod_txt = " ".join(reversed([m.lower() for m in mods[:2]]))
+            else:
+                mod_txt = mods[0].lower() if mods else ""
+            name = f"{mod_txt} {noun}".strip()
+    else:
+        name = head
+        if descriptors:
+            v = descriptors[0]
+            v_key = normalize_lookup_key(v)
+            if v.startswith("(") and v.endswith(")"):
+                name = f"{head} {v}"
+            elif v_key in _FOOD_NAME_PART_WORDS:
+                name = f"{head} {_FOOD_NAME_PART_WORDS[v_key]}"
+            elif v_key in _FOOD_NAME_PREFIX_ADJECTIVES:
+                name = f"{v.lower()} {head.lower()}"
+            elif len(v.split()) <= 3:
+                name = f"{head}, {v}"
+
+    name = re.sub(r"\(([^)]{28,})\)", "", name)                       # drop long synonym lists
+    name = re.sub(r"\(\s*,?\s*", "(", name)
+    name = re.sub(r"\s+", " ", name).strip(" ,")
+    last_word = normalize_lookup_key(name).split()[-1:] if name else []
+    if head_key in _FOOD_NAME_DRY_HEADS or last_word in (["beans"], ["lentils"], ["rice"]):
+        if not any(s in states for s in ("cooked", "boiled", "baked", "sprouted", "steamed", "canned", "fresh", "dry")):
+            states.insert(0, "dry")
+    name = _display_case(name)
+    name = re.sub(r"\(([A-Z])(?=[a-z])", lambda m: "(" + m.group(1).lower(), name) if not re.search(r"\((?:West|Kiwano)", name) else name
+    if states:
+        suffix = f" ({', '.join(states[:2])})"
+        if len(name) + len(suffix) > _DISPLAY_NAME_MAX_LEN:
+            suffix = f" ({states[0]})"
+        name += suffix
+    if len(name) > _DISPLAY_NAME_MAX_LEN:
+        name = name[: _DISPLAY_NAME_MAX_LEN - 1].rstrip(" ,(") + "…"
+    return name
 
 
 @functools.lru_cache(maxsize=1)
