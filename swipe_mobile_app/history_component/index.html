@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8" /></head>
+<body style="margin:0;padding:0;">
+<script>
+// Invisible helper: keeps SuppSwipe's scan history in THIS browser's
+// localStorage (so it's private to the device) instead of a file on the server
+// shared by every visitor. Args: save (array|null) to persist, clear (bool).
+// Sends the stored history back to Python once per page load.
+(function () {
+  var KEY = "suppswipe_scan_history_v1";
+  var sentOnce = false;
+  function send(type, extra) {
+    var msg = { isStreamlitMessage: true, type: type };
+    if (extra) { for (var k in extra) { msg[k] = extra[k]; } }
+    window.parent.postMessage(msg, "*");
+  }
+  function read() {
+    try {
+      var v = JSON.parse(window.localStorage.getItem(KEY) || "[]");
+      return Array.isArray(v) ? v : [];
+    } catch (e) { return []; }
+  }
+  window.addEventListener("message", function (event) {
+    var d = event.data;
+    if (!d || d.type !== "streamlit:render") return;
+    var args = d.args || {};
+    try {
+      if (args.clear) { window.localStorage.removeItem(KEY); }
+      if (Array.isArray(args.save)) { window.localStorage.setItem(KEY, JSON.stringify(args.save.slice(-30))); }
+    } catch (e) { /* storage blocked (private mode): history just isn't kept */ }
+    if (!sentOnce) {
+      sentOnce = true;
+      var stored = read();
+      if (stored.length) { send("streamlit:setComponentValue", { value: stored, dataType: "json" }); }
+    }
+    send("streamlit:setFrameHeight", { height: 0 });
+  });
+  send("streamlit:componentReady", { apiVersion: 1 });
+  send("streamlit:setFrameHeight", { height: 0 });
+})();
+</script>
+</body>
+</html>

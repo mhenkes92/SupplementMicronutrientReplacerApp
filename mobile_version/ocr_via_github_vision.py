@@ -11,9 +11,8 @@ from PIL import Image
 
 # Get GitHub token from app config or environment
 import os
-GITHUB_MODELS_TOKEN = "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"  # From app.py
-if not GITHUB_MODELS_TOKEN:
-    GITHUB_MODELS_TOKEN = os.getenv('GITHUB_MODELS_TOKEN', '')
+# Never hard-code tokens: set GITHUB_MODELS_TOKEN in your environment.
+GITHUB_MODELS_TOKEN = os.getenv('GITHUB_MODELS_TOKEN', '')
 
 def extract_nutrition_via_github_vision(image_url: str) -> list[dict[str, Any]]:
     """

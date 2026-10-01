@@ -6,8 +6,12 @@
 mobile_version/.venv/
 mobile_version/.venv-*/
 
-# Secrets
-mobile_version/.env
+# Secrets (anywhere in the repo). Keep *.env.example files tracked.
+**/.env
+**/.env.*
+!**/.env.example
+**/.streamlit/secrets.toml
+**/blockbrain api.txt
 
 # Temporary diagnostics
 mobile_version/_pdf_text_diagnose.py
@@ -21,3 +25,6 @@ assets/models/*.gguf
 **/app.py.bak_*
 **/*.log
 .title_dot_toggle
+
+# Test / tooling caches
+.pytest_cache/

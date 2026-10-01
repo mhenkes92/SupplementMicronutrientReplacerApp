@@ -21,6 +21,9 @@ from PIL import Image, ImageOps
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
+APP_DIR = Path(__file__).resolve().parent
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
 
 
 def _bootstrap_blockbrain_env_from_secrets() -> None:
@@ -44,6 +47,7 @@ def _bootstrap_blockbrain_env_from_secrets() -> None:
         "BLOCKBRAIN_RESEARCH_BOT_ID": "BLOCKBRAIN_RESEARCH_BOT_ID",
         "BLOCKBRAIN_MODEL_TEXT": "BLOCKBRAIN_MODEL_TEXT",
         "BLOCKBRAIN_MODEL_VISION": "BLOCKBRAIN_MODEL_VISION",
+        "BLOCKBRAIN_MODEL_GENERATION": "BLOCKBRAIN_MODEL_GENERATION",
     }
     for secret_key, env_key in key_map.items():
         if os.getenv(env_key, "").strip():
@@ -56,6 +60,7 @@ def _bootstrap_blockbrain_env_from_secrets() -> None:
 _bootstrap_blockbrain_env_from_secrets()
 
 import blockbrain.app as bb  # noqa: E402
+import llm_cache  # noqa: E402
 
 
 st.set_page_config(page_title="SuppSwipe", page_icon="🥗", layout="centered")
@@ -114,7 +119,7 @@ SWIPE_CARD_DROPDOWN_MAX = 40
 
 # Bumped on notable releases so we can confirm which build is actually live on
 # Streamlit Cloud (shown as a tiny stamp under the title).
-BUILD_TAG = "2026-07-13 · vitE-fix"
+BUILD_TAG = "2026-10-01 · speed+safety"
 
 # Shared formatting contract appended to LLM prompts whose reply is rendered with
 # st.markdown / st.write on a narrow mobile screen, so answers come back as clean,
@@ -236,14 +241,22 @@ def _reset_swipe_app() -> None:
     st.rerun()
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=6 * 3600, max_entries=64)
 def _cached_extract_from_url(url: str) -> str:
-    return bb.extract_supplement_text_from_url(url)
+    # Raise instead of returning "": st.cache_data doesn't cache exceptions, so a
+    # transient fetch/LLM failure is retried next time instead of sticking.
+    text = str(bb.extract_supplement_text_from_url(url) or "")
+    if not text.strip():
+        raise RuntimeError("couldn't read supplement facts from that page")
+    return text
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=6 * 3600, max_entries=64)
 def _cached_ocr(image_bytes: bytes) -> str:
-    return bb.extract_image_text_with_blockbrain(image_bytes)
+    text = str(bb.extract_image_text_with_blockbrain(image_bytes) or "")
+    if not text.strip():
+        raise RuntimeError("vision OCR returned no text")
+    return text
 
 
 def _ocr_quality_score(text: str) -> tuple[int, int]:
@@ -262,24 +275,29 @@ def _ocr_quality_score(text: str) -> tuple[int, int]:
 
 
 def _build_ocr_image_variants(image_bytes: bytes) -> list[tuple[str, bytes]]:
-    variants: list[tuple[str, bytes]] = [("original", image_bytes)]
+    """Small, fast variant first (~1400px JPEG, the size the vision benchmarks
+    used), then a sharper ~2000px variant that is only sent when the first read
+    is empty or weak. The full-resolution original is never uploaded."""
+    variants: list[tuple[str, bytes]] = []
     try:
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        image = ImageOps.exif_transpose(image)
-
-        max_side = 1800
+        variants.extend(bb._build_blockbrain_ocr_image_variants(image_bytes))
+    except Exception:
+        pass
+    try:
+        image = ImageOps.exif_transpose(Image.open(io.BytesIO(image_bytes))).convert("RGB")
+        max_side = int(getattr(bb, "BLOCKBRAIN_VISION_MAX_SIDE", 2000) or 2000)
         w, h = image.size
         if max(w, h) > max_side:
             scale = max_side / float(max(w, h))
             image = image.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS)
-
-        buf_std = io.BytesIO()
-        image.save(buf_std, format="JPEG", quality=88, optimize=True)
-        resized_payload = buf_std.getvalue()
-        if resized_payload and resized_payload != image_bytes:
-            variants.append(("resized_jpeg", resized_payload))
+        buf = io.BytesIO()
+        image.save(buf, format="JPEG", quality=88, optimize=True)
+        if buf.getvalue():
+            variants.append(("detail_jpeg", buf.getvalue()))
     except Exception:
         pass
+    if not variants:
+        variants = [("original", image_bytes)]
 
     # Deduplicate identical byte payloads.
     unique: list[tuple[str, bytes]] = []
@@ -293,16 +311,27 @@ def _build_ocr_image_variants(image_bytes: bytes) -> list[tuple[str, bytes]]:
 
 
 def _extract_image_text_best_effort(image_bytes: bytes) -> tuple[str, str]:
+    """Return the first OCR read that passes the label-quality gate; otherwise the
+    best-scoring read across variants (so a weak small-image read still gets a
+    second chance at higher resolution)."""
+    best_text, best_route, best_score = "", "", (-1, -1)
     for variant_name, variant_bytes in _build_ocr_image_variants(image_bytes):
         try:
-            primary = _cached_ocr(variant_bytes)
+            text = str(_cached_ocr(variant_bytes) or "").strip()
         except Exception:
-            primary = ""
-        text = str(primary or "").strip()
-        if text:
-            return text, f"Blockbrain vision OCR ({variant_name})"
-
-    return "", ""
+            text = ""
+        if not text:
+            continue
+        route = f"Blockbrain vision OCR ({variant_name})"
+        try:
+            if bb.extraction_gate_report(text).get("passed"):
+                return text, route
+        except Exception:
+            return text, route
+        score = _ocr_quality_score(text)
+        if score > best_score:
+            best_text, best_route, best_score = text, route, score
+    return best_text, best_route
 
 
 def _classify_image_kind(image_bytes: bytes, extracted_text: str) -> tuple[str, str]:
@@ -372,6 +401,84 @@ def _cached_rag_chunks() -> list[dict[str, str]]:
     return chunks
 
 
+def _generation_model() -> str:
+    """Model for long-form answers (meal plans, benefit comparisons, Ask AI).
+
+    Set BLOCKBRAIN_MODEL_GENERATION (Streamlit secrets or env) to use a different
+    (e.g. faster) model just for these; otherwise the app's text model is used
+    (BLOCKBRAIN_MODEL_TEXT or the pinned default). Benchmark candidates with
+    scripts/benchmark_blockbrain_models.py.
+    """
+    value = ""
+    try:
+        value = str(st.secrets.get("BLOCKBRAIN_MODEL_GENERATION", "") or "")
+    except Exception:
+        value = ""
+    value = value or os.getenv("BLOCKBRAIN_MODEL_GENERATION", "")
+    if not value.strip():
+        try:
+            value = bb._get_selected_blockbrain_models()[0]
+        except Exception:
+            value = ""
+    return str(value or "").strip()
+
+
+def _stream_llm_text(
+    cache_key: str,
+    system_prompt: str,
+    user_prompt: str,
+    placeholder: Any = None,
+    history: list[dict[str, str]] | None = None,
+    budget_s: float | None = None,
+) -> str:
+    """Generate text, streaming partial output into `placeholder` (an st.empty()).
+
+    Reuses a cached answer or a background prefetch for the same prompt when one
+    exists; only non-empty answers are cached.
+    """
+    cached = llm_cache.get(cache_key)
+    if cached:
+        if placeholder is not None:
+            placeholder.markdown(cached)
+        return cached
+    pending = llm_cache.inflight(cache_key)
+    if pending is not None:
+        try:
+            text = str(pending.result(timeout=float(bb.BLOCKBRAIN_TOTAL_BUDGET_S)) or "").strip()
+        except Exception:
+            text = ""
+        if text:
+            if placeholder is not None:
+                placeholder.markdown(text)
+            return text
+
+    def _show(partial: str) -> None:
+        if placeholder is not None and partial:
+            placeholder.markdown(partial + " \u258c")
+
+    try:
+        text = str(
+            bb.call_blockbrain_text(
+                system_prompt,
+                user_prompt,
+                model=_generation_model() or None,
+                on_text=_show,
+                history=history,
+                budget_s=budget_s,
+            )
+            or ""
+        ).strip()
+    except Exception:
+        text = ""
+    if text:
+        llm_cache.put(cache_key, text)
+        if placeholder is not None:
+            placeholder.markdown(text)
+    elif placeholder is not None:
+        placeholder.empty()
+    return text
+
+
 def _looks_like_extraction_json(text: str) -> bool:
     """True if the text looks like the bot's label-extraction JSON output.
 
@@ -389,7 +496,28 @@ def _looks_like_extraction_json(text: str) -> bool:
     )
 
 
-def _answer_ask_ai_question(component_name: str, question: str) -> tuple[str | None, str]:
+_ASK_AI_HISTORY_MESSAGES = 6  # most recent chat messages sent as memory
+_ASK_AI_BOT_TIMEOUT = (10, 45)  # (connect, read) seconds for the Knowledge Bot
+
+
+def _ask_ai_history(component_key: str) -> list[dict[str, str]]:
+    """Recent turns of this card's chat, without the appended 'Sources:' line."""
+    chat_store = st.session_state.get("swipe_rag_chats", {}) or {}
+    turns: list[dict[str, str]] = []
+    for msg in list(chat_store.get(component_key, []))[-_ASK_AI_HISTORY_MESSAGES:]:
+        role = "user" if str(msg.get("role", "")).lower() == "user" else "assistant"
+        content = re.sub(r"\n\nSources: .*$", "", str(msg.get("content", "") or ""), flags=re.S).strip()
+        if content:
+            turns.append({"role": role, "content": content[:1500]})
+    return turns
+
+
+def _answer_ask_ai_question(
+    component_name: str,
+    question: str,
+    history: list[dict[str, str]] | None = None,
+    placeholder: Any = None,
+) -> tuple[str | None, str]:
     """Answer an "Ask AI" question.
 
     Order of preference:
@@ -397,22 +525,39 @@ def _answer_ask_ai_question(component_name: str, question: str) -> tuple[str | N
          base attached — only bots, not agents, can hold a knowledge base). We
          send an "[ASK]" mode marker so a single dual-mode bot can tell research
          questions apart from label-extraction requests;
-      2) the Blockbrain agent (general nutrition reasoning);
+      2) the Blockbrain agent (general nutrition reasoning), streamed into
+         `placeholder` as it is written;
       3) the local RAG index.
+
+    `history` carries the earlier turns of this chat so follow-up questions
+    ("and for vegans?") are understood. First questions (no history) are cached.
 
     Returns (answer, sources_line). answer is None only when nothing at all is
     available (no bot, no agent, and no local index produced a response).
     """
+    history = list(history or [])
     scoped_question = f"{component_name}: {question}".strip(": ").strip()
+    cache_key = ""
+    if not history:
+        cache_key = llm_cache.make_key("ask_ai", component_name.strip().lower(), question.strip().lower())
+        cached = llm_cache.get(cache_key)
+        if cached:
+            return cached, ""
 
-    # 1) Preferred: the Knowledge Bot (answers from the attached Examine KB). We
-    #    send an "[ASK]" mode marker so a single dual-mode bot can tell research
-    #    questions apart from label-extraction requests. Uses BLOCKBRAIN_RESEARCH_BOT_ID
-    #    if set, otherwise the default bot. The JSON guard discards any accidental
-    #    extraction-schema output so we still fall back cleanly.
+    history_block = ""
+    if history:
+        history_block = "Earlier in this conversation:\n" + "\n".join(
+            f"{'User' if t['role'] == 'user' else 'Assistant'}: {t['content']}" for t in history
+        ) + "\n\n"
+
+    # 1) Preferred: the Knowledge Bot (answers from the attached Examine KB). Uses
+    #    BLOCKBRAIN_RESEARCH_BOT_ID if set, otherwise the default bot. The JSON
+    #    guard discards any accidental extraction-schema output so we still fall
+    #    back cleanly.
     ask_message = (
         "[ASK]\n"
         f"Micronutrient / supplement component: {component_name or 'unspecified'}\n"
+        f"{history_block}"
         f"Question: {question}\n\n"
         "Answer concisely and evidence-based using the connected knowledge "
         "base. General guidance only; no individual medical advice."
@@ -420,36 +565,44 @@ def _answer_ask_ai_question(component_name: str, question: str) -> tuple[str | N
     )
     research_bot_id = os.getenv("BLOCKBRAIN_RESEARCH_BOT_ID", "").strip()
     try:
-        bot_answer = bb.call_blockbrain_bot(ask_message, bot_id=(research_bot_id or None))
+        bot_answer = bb.call_blockbrain_bot(
+            ask_message, bot_id=(research_bot_id or None), timeout=_ASK_AI_BOT_TIMEOUT
+        )
         if (
             isinstance(bot_answer, str)
             and bot_answer.strip()
             and not _looks_like_extraction_json(bot_answer)
         ):
+            if cache_key:
+                llm_cache.put(cache_key, bot_answer.strip())
             return bot_answer.strip(), ""
     except Exception:
         pass
 
-    # 2) Fallback: the general agent.
-    try:
-        system_prompt = (
-            "You are a supplement and micronutrient research assistant for the "
-            "SuppSwipe app. Answer the user's question using established "
-            "nutrition science. Be concise, evidence-based, and practical. If "
-            "the evidence is unclear or the question is outside "
-            "nutrition/supplementation, say so plainly. Do not give individual "
-            "medical advice; speak in general terms."
-            + _MARKDOWN_STYLE
-        )
-        user_prompt = (
-            f"Micronutrient / supplement component: {component_name or 'unspecified'}\n"
-            f"Question: {question}"
-        )
-        agent_answer = bb.call_blockbrain_text(system_prompt, user_prompt)
-        if isinstance(agent_answer, str) and agent_answer.strip():
-            return agent_answer.strip(), ""
-    except Exception:
-        pass
+    # 2) Fallback: the general agent (streamed).
+    system_prompt = (
+        "You are a supplement and micronutrient research assistant for the "
+        "SuppSwipe app. Answer the user's question using established "
+        "nutrition science. Be concise, evidence-based, and practical. If "
+        "the evidence is unclear or the question is outside "
+        "nutrition/supplementation, say so plainly. Do not give individual "
+        "medical advice; speak in general terms."
+        + _MARKDOWN_STYLE
+    )
+    user_prompt = (
+        f"Micronutrient / supplement component: {component_name or 'unspecified'}\n"
+        f"Question: {question}"
+    )
+    agent_answer = _stream_llm_text(
+        cache_key or llm_cache.make_key("ask_ai_followup", component_name, question, history),
+        system_prompt,
+        user_prompt,
+        placeholder=placeholder,
+        history=history,
+        budget_s=90,
+    )
+    if agent_answer:
+        return agent_answer, ""
 
     # 3) Fallback: local research RAG index.
     try:
@@ -511,7 +664,13 @@ def _render_rag_chat_popup(card: dict[str, Any], component_key: str, index: int)
             else:
                 with st.spinner("Asking AI research assistant..."):
                     component_name = str(card.get("component", "") or "").strip()
-                    answer, sources_line = _answer_ask_ai_question(component_name, question.strip())
+                    stream_box = st.empty()
+                    answer, sources_line = _answer_ask_ai_question(
+                        component_name,
+                        question.strip(),
+                        history=_ask_ai_history(component_key),
+                        placeholder=stream_box,
+                    )
                     if answer is None:
                         st.error("AI research is not available in this environment.")
                     else:
@@ -830,9 +989,10 @@ def _basket_cost_summary(replace_items: list[dict[str, Any]]) -> tuple[float, li
     return total, rows, unknown
 
 
-def _generate_meal_plan(replace_items: list[dict[str, Any]], diet_label: str, num_meals: int = 3) -> str:
-    if not replace_items:
-        return ""
+def _meal_plan_prompts(
+    replace_items: list[dict[str, Any]], diet_label: str, num_meals: int = 3
+) -> tuple[str, str, str]:
+    """(system_prompt, user_prompt, cache_key) for the meal-plan generation."""
     n = max(1, min(3, int(num_meals or 3)))
     lines = []
     for d in replace_items:
@@ -849,8 +1009,13 @@ def _generate_meal_plan(replace_items: list[dict[str, Any]], diet_label: str, nu
         f"Design exactly {n} {meal_word} that TOGETHER incorporate ALL of the given whole foods "
         "at roughly the daily amounts provided (spread the foods across the meals so every food is "
         "used at least once). Use common German-supermarket ingredients, keep it budget-friendly and "
-        "realistic, and give each meal a short **bold** title followed by a few short bullet points. "
-        "General guidance only; no medical advice."
+        "realistic, and give each meal a short **bold** title followed by 3-5 short bullet points "
+        "(ingredients with gram amounts, then one line on preparation). Keep each meal under 80 words. "
+        "Respect safe intakes: if an amount is unrealistic (more than about 500 g of one food per day) "
+        "or would exceed a safe upper limit (for example liver at most one small portion per week "
+        "because of vitamin A, at most 2 Brazil nuts per day because of selenium), use a sensible "
+        "amount instead and add one short note that a supplement may be the practical choice for that "
+        "nutrient. General guidance only; no medical advice."
         + _MARKDOWN_STYLE
     )
     user_prompt = (
@@ -859,16 +1024,41 @@ def _generate_meal_plan(replace_items: list[dict[str, Any]], diet_label: str, nu
         + diet_clause
         + f"\n\nWrite exactly {n} {meal_word} now."
     )
-    try:
-        return str(bb.call_blockbrain_text(system_prompt, user_prompt) or "").strip()
-    except Exception:
-        return ""
+    return system_prompt, user_prompt, llm_cache.make_key("meal_plan", system_prompt, user_prompt, _generation_model())
 
 
-def _generate_whole_food_benefits(replace_items: list[dict[str, Any]]) -> str:
-    """Contrast the isolated pill nutrient vs. the fuller benefits of the chosen whole food."""
+def _generate_meal_plan(
+    replace_items: list[dict[str, Any]],
+    diet_label: str,
+    num_meals: int = 3,
+    placeholder: Any = None,
+) -> str:
     if not replace_items:
         return ""
+    system_prompt, user_prompt, key = _meal_plan_prompts(replace_items, diet_label, num_meals)
+    return _stream_llm_text(key, system_prompt, user_prompt, placeholder=placeholder)
+
+
+def _prefetch_meal_plan(replace_items: list[dict[str, Any]], diet_label: str, num_meals: int = 3) -> None:
+    """Start writing the default meal plan in the background as soon as the
+    results screen opens, so "Generate meals" is instant (or nearly) when tapped.
+    Disable with SUPPSWIPE_PREFETCH_MEALS=0."""
+    if not replace_items:
+        return
+    if str(os.getenv("SUPPSWIPE_PREFETCH_MEALS", "1") or "1").strip().lower() in {"0", "false", "off", "no"}:
+        return
+    if not os.getenv("BLOCKBRAIN_API_KEY", "").strip():
+        try:
+            if not str(st.secrets.get("BLOCKBRAIN_API_KEY", "") or "").strip():
+                return
+        except Exception:
+            return
+    system_prompt, user_prompt, key = _meal_plan_prompts(replace_items, diet_label, num_meals)
+    model = _generation_model() or None
+    llm_cache.submit(key, lambda: bb.call_blockbrain_text(system_prompt, user_prompt, model=model))
+
+
+def _benefits_prompts(replace_items: list[dict[str, Any]]) -> tuple[str, str, str] | None:
     lines = []
     for d in replace_items:
         nutrient = str(d.get("component", "") or "")
@@ -876,24 +1066,34 @@ def _generate_whole_food_benefits(replace_items: list[dict[str, Any]]) -> str:
         if nutrient and food:
             lines.append(f"- Isolated pill nutrient: {nutrient}  |  Whole food chosen instead: {food}")
     if not lines:
-        return ""
+        return None
     system_prompt = (
         "You are a nutrition educator for the SuppSwipe app. For each pairing the user gives "
         "(an isolated supplement micronutrient vs. the whole food they chose to replace it with), "
         "contrast two things: (1) what the ISOLATED pill nutrient does on its own, and (2) the fuller "
         "set of health benefits and extra nutrients/compounds they ALSO gain by eating that whole food "
         "instead (co-nutrients, fibre, healthy fats, phytochemicals/antioxidants, protein, satiety, gut "
-        "health, etc.). Make the added value of the whole food obvious. For each item use this compact "
-        "structure: a bold heading '<Nutrient> \u2192 <Food>', then '\ud83d\udc8a Pill alone:' with one short line, then "
-        "'\ud83e\udd57 Whole food also gives:' with 3-5 short bullets. Be concise and evidence-based. General "
-        "guidance only; no individual medical advice."
+        "health, etc.). Make the added value of the whole food obvious, but stay accurate: mention it "
+        "briefly when the food also has a downside (e.g. liver is very high in vitamin A, Brazil nuts in "
+        "selenium). For each item use this compact structure: a bold heading '<Nutrient> \→ <Food>', "
+        "then '💊 Pill alone:' with one short line, then '🥗 Whole food also gives:' "
+        "with 3-4 short bullets. Be concise and evidence-based. General guidance only; no individual "
+        "medical advice."
         + _MARKDOWN_STYLE
     )
     user_prompt = "Pairings:\n" + "\n".join(lines) + "\n\nWrite the comparison now."
-    try:
-        return str(bb.call_blockbrain_text(system_prompt, user_prompt) or "").strip()
-    except Exception:
+    return system_prompt, user_prompt, llm_cache.make_key("benefits", system_prompt, user_prompt, _generation_model())
+
+
+def _generate_whole_food_benefits(replace_items: list[dict[str, Any]], placeholder: Any = None) -> str:
+    """Contrast the isolated pill nutrient vs. the fuller benefits of the chosen whole food."""
+    if not replace_items:
         return ""
+    prompts = _benefits_prompts(replace_items)
+    if prompts is None:
+        return ""
+    system_prompt, user_prompt, key = prompts
+    return _stream_llm_text(key, system_prompt, user_prompt, placeholder=placeholder)
 
 
 def _supplement_search_links(keep_items: list[dict[str, Any]]) -> tuple[str, dict[str, str]]:
@@ -939,35 +1139,60 @@ def _build_share_text(
     return "\n".join(out)
 
 
-# --- Scan history (best-effort, stored per device) ---------------------------
-_HISTORY_PATH = Path.home() / ".suppswipe_scan_history.json"
+# --- Scan history (stored in the visitor's own browser) ----------------------
+# Streamlit Cloud serves every visitor from ONE server process, so a file on the
+# server would be shared by everyone. History therefore lives in the browser's
+# localStorage via a tiny invisible component and is mirrored into this
+# session's state; nothing about a visitor's scans is stored server-side.
+_HISTORY_COMPONENT_DIR = APP_DIR / "history_component"
+try:
+    _history_store = components.declare_component("scan_history", path=str(_HISTORY_COMPONENT_DIR))
+except Exception:
+    _history_store = None
+_HISTORY_MAX = 30
 
 
 def _load_scan_history() -> list[dict[str, Any]]:
-    if "suppswipe_scan_history" in st.session_state:
-        return st.session_state["suppswipe_scan_history"]
-    history: list[dict[str, Any]] = []
-    try:
-        if _HISTORY_PATH.exists():
-            import json
-
-            loaded = json.loads(_HISTORY_PATH.read_text(encoding="utf-8"))
-            if isinstance(loaded, list):
-                history = loaded
-    except Exception:
+    history = st.session_state.get("suppswipe_scan_history")
+    if not isinstance(history, list):
         history = []
-    st.session_state["suppswipe_scan_history"] = history
+        st.session_state["suppswipe_scan_history"] = history
     return history
 
 
 def _save_scan_history(history: list[dict[str, Any]]) -> None:
+    history = list(history)[-_HISTORY_MAX:]
     st.session_state["suppswipe_scan_history"] = history
-    try:
-        import json
+    st.session_state["_suppswipe_history_save"] = history
 
-        _HISTORY_PATH.write_text(json.dumps(history[-30:], ensure_ascii=False, indent=2), encoding="utf-8")
+
+def _sync_scan_history_with_browser() -> None:
+    """Render the invisible storage component (once per run, at the end of the
+    page): persist any pending change and pull the device's stored history in
+    on first load, merged with anything recorded before it arrived."""
+    if _history_store is None:
+        return
+    pending = st.session_state.pop("_suppswipe_history_save", None)
+    clear = bool(st.session_state.pop("_suppswipe_history_clear", False))
+    try:
+        stored = _history_store(save=pending, clear=clear, key="suppswipe_history_store", default=None)
     except Exception:
-        pass
+        return
+    if isinstance(stored, list) and not st.session_state.get("_suppswipe_history_loaded"):
+        st.session_state["_suppswipe_history_loaded"] = True
+        current = _load_scan_history()
+        merged: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for entry in [e for e in stored if isinstance(e, dict)] + current:
+            sig = repr(sorted((k, repr(v)) for k, v in entry.items()))
+            if sig in seen:
+                continue
+            seen.add(sig)
+            merged.append(entry)
+        st.session_state["suppswipe_scan_history"] = merged[-_HISTORY_MAX:]
+        if len(merged) != len(stored):
+            st.session_state["_suppswipe_history_save"] = merged[-_HISTORY_MAX:]
+        st.rerun()
 
 
 def _record_scan_to_history(decisions: dict[str, dict[str, Any]], diet_label: str) -> None:
@@ -1007,7 +1232,7 @@ def _render_scan_history_popover() -> None:
     if not history:
         return
     with st.popover(f"🕘 Recent scans ({len(history)})", use_container_width=True):
-        st.caption("Your past scans on this device — newest first.")
+        st.caption("Your past scans, saved only in this browser — newest first.")
         for entry in reversed(history[-15:]):
             ts = str(entry.get("ts", "") or "")
             diet = str(entry.get("diet", "") or "")
@@ -1023,7 +1248,8 @@ def _render_scan_history_popover() -> None:
                 st.markdown(f"- 💊 {k.get('component', '')} {k.get('dose', '')}".rstrip())
             st.divider()
         if st.button("Clear history", use_container_width=True, key="swipe_clear_history"):
-            _save_scan_history([])
+            st.session_state["suppswipe_scan_history"] = []
+            st.session_state["_suppswipe_history_clear"] = True
             st.rerun()
 
 
@@ -1047,17 +1273,26 @@ def _render_final_actions(
                     key="swipe_meal_count",
                     format_func=lambda m: f"{m} meal" if m == 1 else f"{m} meals",
                 )
-                if st.button("Generate meals", type="primary", use_container_width=True, key="swipe_gen_meal"):
+                _sys, _usr, plan_key = _meal_plan_prompts(replace_items, diet_label, int(num_meals))
+                ready = llm_cache.get(plan_key)
+                plan_box = st.empty()
+                if ready:
+                    plan_box.markdown(ready)
+                    st.session_state["swipe_meal_plan"] = ready
+                    if st.button("🔄 Different meals", use_container_width=True, key="swipe_regen_meal"):
+                        llm_cache.drop(plan_key)
+                        with st.spinner("Cooking up new meals…"):
+                            st.session_state["swipe_meal_plan"] = _generate_meal_plan(
+                                replace_items, diet_label, int(num_meals), placeholder=plan_box
+                            )
+                elif st.button("Generate meals", type="primary", use_container_width=True, key="swipe_gen_meal"):
                     with st.spinner("Cooking up your meals…"):
-                        st.session_state["swipe_meal_plan"] = _generate_meal_plan(
-                            replace_items, diet_label, int(num_meals)
-                        )
-                    st.rerun()
-                meal_plan = str(st.session_state.get("swipe_meal_plan", "") or "")
-                if meal_plan:
-                    st.markdown(meal_plan)
-                elif "swipe_meal_plan" in st.session_state:
-                    st.warning("Couldn't generate meals right now — please try again.")
+                        plan = _generate_meal_plan(replace_items, diet_label, int(num_meals), placeholder=plan_box)
+                    st.session_state["swipe_meal_plan"] = plan
+                    if not plan:
+                        st.warning("Couldn't generate meals right now — please try again.")
+                elif llm_cache.inflight(plan_key) is not None:
+                    st.caption("⚡ Already preparing your meals in the background — tap Generate to see them.")
     with row1[1]:
         with st.popover("🛒 Grocery cost", use_container_width=True):
             st.caption("Rough daily cost of your swaps at German discounters (REWE/ALDI/Lidl average).")
@@ -1108,20 +1343,21 @@ def _render_final_actions(
         if not replace_items:
             st.info("Swipe right on at least one nutrient to compare benefits.")
         else:
-            if st.button(
+            prompts = _benefits_prompts(replace_items)
+            ready = llm_cache.get(prompts[2]) if prompts else None
+            benefits_box = st.empty()
+            if ready:
+                benefits_box.markdown(ready)
+            elif st.button(
                 "Show benefit comparison",
                 type="primary",
                 use_container_width=True,
                 key="swipe_gen_benefits",
             ):
                 with st.spinner("Gathering whole-food benefits…"):
-                    st.session_state["swipe_wf_benefits"] = _generate_whole_food_benefits(replace_items)
-                st.rerun()
-            benefits = str(st.session_state.get("swipe_wf_benefits", "") or "")
-            if benefits:
-                st.markdown(benefits)
-            elif "swipe_wf_benefits" in st.session_state:
-                st.warning("Couldn't fetch the comparison right now — please try again.")
+                    benefits = _generate_whole_food_benefits(replace_items, placeholder=benefits_box)
+                if not benefits:
+                    st.warning("Couldn't fetch the comparison right now — please try again.")
 
 
 # --- Micronutrient allow-list -------------------------------------------------
@@ -1764,41 +2000,52 @@ def _research_barcode_label(barcode: str) -> str:
     return ""
 
 
-def _research_product_from_label_text(label_text: str) -> str:
-    """Identify a supplement from text read off a product photo and return its
-    full Supplement Facts label.
+def _research_product_from_label_text(label_text: str) -> tuple[str, str]:
+    """Identify a supplement from text read off a product photo and return
+    (supplement facts text, source URL).
 
     Used when a photo shows the product (brand / product name / marketing copy)
-    but not a complete, readable Supplement Facts panel. Researching by the
-    visible product NAME is far more reliable than guessing from a barcode
-    number, so the model is much less likely to hallucinate.
+    but not a complete, readable Supplement Facts panel. The agent may use its
+    web tools for this one call so values come from a real product page rather
+    than the model's memory; the result is still flagged to the user as
+    AI-researched (see swipe_label_source) because it was not read off the photo.
     """
     snippet = str(label_text or "").strip()
     if len(snippet) < 3:
-        return ""
+        return "", ""
     snippet = snippet[:1200]
     system_prompt = (
         "You are a supplement-label research assistant. You are given raw text read "
         "from a photo of a supplement product (often the front of the pack: brand, "
-        "product name, and marketing text). Identify the exact product and return its "
-        "full Supplement Facts / nutrition label as plain text: one nutrient or active "
-        "ingredient per line with amount and unit (for example 'Vitamin D 25 mcg', "
-        "'Magnesium 300 mg', 'Curcumin 500 mg'). Include the active ingredient list "
-        "when relevant. Never invent values. If you cannot confidently identify the "
-        "product from the text, reply with exactly NONE."
+        "product name, and marketing text). Identify the exact product, look it up "
+        "online (manufacturer page or a major retailer listing), and return its full "
+        "Supplement Facts / nutrition label as plain text. First line: 'Source: <URL of "
+        "the page you used>'. Then one nutrient or active ingredient per line with "
+        "amount and unit (for example 'Vitamin D 25 mcg', 'Magnesium 300 mg', "
+        "'Curcumin 500 mg'). Never invent or estimate values. If you cannot confidently "
+        "identify the product and find its label, reply with exactly NONE."
     )
     user_prompt = (
         "Text read from the product photo:\n"
         f"{snippet}\n\n"
-        "Identify the product and return only its supplement facts label text."
+        "Identify the product and return only the source line and its supplement facts label text."
     )
     try:
-        reply = str(bb.call_blockbrain_text(system_prompt, user_prompt) or "").strip()
+        reply = str(
+            bb.call_blockbrain_text(system_prompt, user_prompt, allow_tools=True, budget_s=90) or ""
+        ).strip()
     except Exception:
         reply = ""
-    if reply and reply.upper() != "NONE":
-        return reply
-    return ""
+    if not reply or reply.upper().strip(" .") == "NONE":
+        return "", ""
+    source_url = ""
+    m = re.search(r"^\s*\**source\**\s*:\s*(\S+)", reply, flags=re.I | re.M)
+    if m:
+        source_url = m.group(1).strip("<>()[]")
+        reply = (reply[: m.start()] + reply[m.end():]).strip()
+    if not re.match(r"https?://", source_url, flags=re.I):
+        source_url = ""
+    return reply, source_url
 
 
 def _on_diet_profile_change() -> None:
@@ -1894,6 +2141,9 @@ def _run_pending_analysis() -> None:
 
         _set_progress(6, "Preparing AI analysis…")
         text_parts: list[str] = []
+        # Where the doses came from; "ai_research" is surfaced on every card so the
+        # user knows the values were looked up, not read from their own photo.
+        label_source: dict[str, str] = {"kind": "input", "url": ""}
 
         with st.spinner("Extracting and parsing supplement info…"):
             for label, key, pct in (("uploaded image", "upload_bytes", 26), ("camera image", "camera_bytes", 42)):
@@ -1918,9 +2168,10 @@ def _run_pending_analysis() -> None:
                         # the label from its visible brand / product name.
                         if ocr_text.strip() and not bb.extraction_gate_report("\n".join(text_parts)).get("passed"):
                             _set_progress(min(96, pct + 6), "Researching the product from the label…")
-                            researched_name = _research_product_from_label_text(ocr_text)
+                            researched_name, source_url = _research_product_from_label_text(ocr_text)
                             if researched_name:
                                 text_parts.append(researched_name)
+                                label_source = {"kind": "ai_research", "url": source_url}
                     except Exception as exc:
                         st.warning(f"Image OCR failed: {exc}")
 
@@ -1982,6 +2233,7 @@ def _run_pending_analysis() -> None:
 
         st.session_state["swipe_cards"] = _build_swipe_cards(components, details)
         st.session_state["swipe_analysis_text"] = combined
+        st.session_state["swipe_label_source"] = label_source
         st.session_state["swipe_components"] = components
         st.session_state["swipe_decisions"] = {}
         st.session_state["swipe_rag_chats"] = {}
@@ -2097,6 +2349,20 @@ def _render_analyze_bar() -> None:
     _render_scan_history_popover()
 
 
+def _render_label_source_notice() -> None:
+    """Warn when the doses were researched online by AI instead of read from the
+    user's own photo (front-of-pack photos without a readable facts panel)."""
+    source = st.session_state.get("swipe_label_source") or {}
+    if str(source.get("kind", "") or "") != "ai_research":
+        return
+    url = str(source.get("url", "") or "")
+    where = f" ([source]({url}))" if url else ""
+    st.caption(
+        f"⚠️ These doses were looked up online by AI from the product name{where}, "
+        "not read from your photo — check them against your pack."
+    )
+
+
 def _render_card() -> None:
     cards: list[dict[str, Any]] = st.session_state.get("swipe_cards", [])
     index = int(st.session_state.get("swipe_index", 0))
@@ -2163,6 +2429,7 @@ def _render_card() -> None:
         css_class = "swipe-dot active" if i == index else "swipe-dot"
         dots.append(f"<span class='{css_class}'></span>")
     st.markdown(f"<div class='swipe-progress'>{''.join(dots)}</div>", unsafe_allow_html=True)
+    _render_label_source_notice()
 
     # The swipe card and its controls (whole-food dropdown + Ask AI) share one
     # bordered container so they read as a single card.
@@ -2330,6 +2597,9 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
     diet_label = str((_selected_dietary_profile() or {}).get("label", "") or "")
     _record_scan_to_history(decisions, diet_label)
 
+    # Start writing the default (3-meal) plan in the background right away.
+    _prefetch_meal_plan(replace_items, diet_label, 3)
+
     # Action row: meal plan, German grocery cost, all-in-one supplement finder, share.
     _render_final_actions(keep_items, replace_items, diet_label)
 
@@ -2376,6 +2646,20 @@ def _render_athlete_rda_popup() -> None:
         )
 
 
+def _render_debug_panel() -> None:
+    """Shown only with ?debug=1: which endpoint/model answered the last LLM call
+    and how long it took (time-to-first-token and total)."""
+    with st.expander("🛠 Diagnostics", expanded=False):
+        st.json(
+            {
+                "build": BUILD_TAG,
+                "generation_model": _generation_model(),
+                "last_call": dict(getattr(bb, "LAST_BLOCKBRAIN_TIMING", {}) or {}),
+                "last_error": str(getattr(bb, "LAST_BLOCKBRAIN_ERROR", "") or ""),
+            }
+        )
+
+
 def _build_mobile_ui() -> None:
     _init_state()
     _render_header()
@@ -2388,6 +2672,13 @@ def _build_mobile_ui() -> None:
         _confirm_restart_dialog()
     if st.session_state.pop("swipe_open_analyze", False):
         _analyze_dialog()
+    try:
+        show_debug = str(st.query_params.get("debug", "") or "") == "1"
+    except Exception:
+        show_debug = False
+    if show_debug:
+        _render_debug_panel()
+    _sync_scan_history_with_browser()
 
 
 def _is_streamlit_runtime() -> bool:
@@ -2418,7 +2709,7 @@ if __name__ == "__main__":
             subprocess.run(cmd, check=False)
         except Exception as exc:
             print(f"Failed to launch Streamlit automatically: {exc}")
-else:
+elif _is_streamlit_runtime():
+    # Imported by another Streamlit page/runner: render. Imported by tests or
+    # tooling (no Streamlit runtime): expose the helpers without drawing the UI.
     _build_mobile_ui()
-
-
