@@ -515,6 +515,11 @@ def build_db(
     ]
     for dataset in datasets:
         _check_dataset_dir(dataset)
+    # The classifier silently falls back to "no restriction" without these files,
+    # which would ship a flags table without any diet columns.
+    for path in (Path(profiles_path), Path(rules_path)):
+        if not path.is_file():
+            raise FileNotFoundError(f"dietary profiles/rules file not found: {path}")
 
     categories = _load_categories(datasets)
     nutrients = _load_nutrients(datasets)

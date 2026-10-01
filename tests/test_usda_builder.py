@@ -296,6 +296,13 @@ def test_failed_build_leaves_existing_db_untouched(builder, tmp_path):
     assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")] == []
 
 
+def test_missing_dietary_profiles_file_fails(builder, tmp_path):
+    out = tmp_path / "usda_rankings.db"
+    with pytest.raises(FileNotFoundError, match="dietary profiles/rules"):
+        builder.build_db(FOUNDATION_DIR, SR_LEGACY_DIR, out, profiles_path=tmp_path / "missing.json")
+    assert not out.exists()
+
+
 def test_build_overwrites_existing_output(builder, built, tmp_path):
     out = tmp_path / "usda_rankings.db"
     out.write_bytes(b"stale")
