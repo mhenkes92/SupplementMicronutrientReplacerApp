@@ -5438,7 +5438,17 @@ _LEXICON_DISPLAY_REFINEMENTS: list[tuple[str, re.Pattern[str], str]] = [
     ("vitamin d", re.compile(r"\b(?:ergocalciferol|d2)\b"), "vitamin d2"),
 ]
 
+# Applied AFTER NFKD + lowercasing, so the micro sign (U+00B5 -> U+03BC), the
+# capital mu of an upper-cased label ("800 ΜG") and the "㎍" square unit sign
+# all arrive here as "μ" and become "u" (µg -> ug), never a bare "g".
 _FOLD_CHAR_MAP = str.maketrans({"µ": "u", "μ": "u", "α": " alpha ", "ß": "ss", "‐": "-", "–": "-", "—": "-"})
+# Vitamin codes a label may space or hyphenate ("Vitamin B 6", "Vit.B6",
+# "VitaminB12", "Vitamin K 2"). Only real codes are joined, and never when the
+# number is itself the dose ("Vitamin D 3 µg", "Vitamin B 1,1 mg").
+_VITAMIN_CODE = r"(?:b\s*-?\s*(?:1[0-2]|[1-9])|d\s*-?\s*[23]|k\s*-?\s*[12])"
+_VITAMIN_CODE_END = r"(?!\d)(?![.,]\d)(?!\s*(?:mcg|mg|ug|g|iu|ie|i\.\s?e|ui|%)(?![a-z]))"
+_VITAMIN_GLUED_RE = re.compile(r"\bvit(?:amine?|main|arnin|amln)?\.?(?=" + _VITAMIN_CODE + _VITAMIN_CODE_END + r")")
+_VITAMIN_SPACED_CODE_RE = re.compile(r"\b(vitamin\s+)(" + _VITAMIN_CODE + r")" + _VITAMIN_CODE_END)
 # German salt compounds written as one word ("Magnesiumcitrat", "Kaliumiodid").
 _GERMAN_SALT_COMPOUND_RE = re.compile(
     r"\b(magnesium|zink|zinc|calcium|kalzium|kalium|natrium|eisen|kupfer|mangan|chrom|selen)"
@@ -5450,15 +5460,21 @@ _GERMAN_SALT_COMPOUND_RE = re.compile(
 
 def _fold_label_text(text: str) -> str:
     """Fold label text for lexicon matching: lowercase ASCII with umlauts dropped
-    (Folsäure -> folsaure), µg -> ug, α-TE -> alpha te, "Vit." -> vitamin,
-    "B-12"/"Vitamin B 12" -> b12, German salt compounds split (Kaliumiodid ->
-    kalium iodid) and hyphens/slashes as spaces. Digits, decimal marks, % and
-    brackets are kept so doses can still be read from the result."""
-    t = str(text or "").translate(_FOLD_CHAR_MAP)
-    t = unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode("ascii").lower()
+    (Folsäure -> folsaure), µg/ΜG/㎍ -> ug, α-TE -> alpha te, "Vit." -> vitamin,
+    "B-12"/"Vitamin B 12"/"VitaminB12"/"Vit.B12"/OCR "Bl2" -> b12 (likewise B1-B9,
+    D2/D3, K1/K2), German salt compounds split (Kaliumiodid -> kalium iodid)
+    and hyphens/slashes as spaces. Digits, decimal marks, % and brackets are
+    kept so doses can still be read from the result."""
+    t = unicodedata.normalize("NFKD", str(text or "")).lower().translate(_FOLD_CHAR_MAP)
+    # A micro sign variant NFKD does not know must not leave a bare "g" (grams):
+    # "800 ?g" becomes the unknown unit "xg" instead of 800 g.
+    t = re.sub(r"(?<=[\d\s])[^\x00-\x7f]+(?=g(?![a-z]))", "x", t)
+    t = t.encode("ascii", "ignore").decode("ascii")
+    t = re.sub(r"\bb\s*-?\s*l2\b", "b12", t)  # OCR: "Bl2"
+    t = _VITAMIN_GLUED_RE.sub("vitamin ", t)
     t = re.sub(r"\bvit(?:amine?|main|arnin|amln)?\b\.?", "vitamin", t)
+    t = _VITAMIN_SPACED_CODE_RE.sub(lambda m: m.group(1) + re.sub(r"[\s-]+", "", m.group(2)), t)
     t = re.sub(r"\b([bdk])\s*-\s*(\d{1,2})\b", r"\1\2", t)
-    t = re.sub(r"\b(vitamin\s+b)\s+(1[0-2])\b", r"\1\2", t)
     t = _GERMAN_SALT_COMPOUND_RE.sub(r"\1 \2", t)
     t = re.sub(r"\s*\+\s*", " + ", t)
     t = re.sub(r"[^a-z0-9.,%()\[\]+:;*\s]", " ", t)
@@ -5516,36 +5532,41 @@ def canonical_nutrient_key(name: str) -> str:
     return _lexicon_match(str(name or ""))[0]
 
 
+# --- Compatibility wrappers ---------------------------------------------------
+# The names below predate the lexicon and are kept (as thin wrappers over it)
+# for callers outside this module; the app itself uses canonical_nutrient_key /
+# _lexicon_match and the label-line parser directly.
+
 def nutrient_display_name(name: str) -> str:
-    """Card name for a nutrient name ("Folsäure" -> "folic acid", "Jod" ->
-    "iodine", "Cholecalciferol" -> "vitamin d3"); "" if unknown."""
+    """Compatibility wrapper. Card name for a nutrient name ("Folsäure" ->
+    "folic acid", "Jod" -> "iodine", "Cholecalciferol" -> "vitamin d3"); "" if
+    unknown."""
     return _lexicon_match(str(name or ""))[1]
 
 
 def _nutrient_id_override_for(target: str) -> list[int]:
-    """USDA nutrient ids pinned for a component name by the lexicon, or []."""
+    """Compatibility wrapper. USDA nutrient ids pinned for a component name by
+    the lexicon, or []."""
     key = canonical_nutrient_key(target)
     if not key:
         return []
     return [int(nid) for nid, _factor in _NUTRIENT_LEXICON[key]["usda"]]
 
 
-# Alternate / chemical / German ingredient names -> canonical nutrient key,
-# derived from the lexicon so the synonym layer and the parser always agree
-# (e.g. "pyridoxine HCl" -> vitamin b6, "Folsäure" -> folate, "Jod" -> iodine,
-# "vitamin b1" -> thiamin).
+# Compatibility view: alternate / chemical / German ingredient names ->
+# canonical nutrient key, derived from the lexicon so it always agrees with the
+# parser (e.g. "pyridoxine HCl" -> vitamin b6, "Folsäure" -> folate, "Jod" ->
+# iodine, "vitamin b1" -> thiamin).
 _NUTRIENT_SYNONYMS: dict[str, str] = {
     phrase: key
     for phrase, (key, _display) in _NUTRIENT_ALIAS_INDEX.items()
     if phrase != key
 }
 
-# Longer keys first so multi-word forms (e.g. "ferrous fumarate") win over "ferrous".
-_SORTED_NUTRIENT_SYNONYM_KEYS: list[str] = sorted(_NUTRIENT_SYNONYMS, key=len, reverse=True)
-
 
 def _canonicalize_nutrient_name(normalized_target: str) -> str:
-    """Map an alternate/chemical nutrient name to the standard (lexicon) name."""
+    """Compatibility wrapper. Map an alternate/chemical nutrient name to the
+    standard (lexicon) name; unknown names are returned unchanged."""
     key = canonical_nutrient_key(normalized_target)
     return key or normalized_target
 
@@ -9583,7 +9604,9 @@ def _scan_label_nutrient_lines(text: str) -> tuple[list[dict[str, Any]], str]:
 
 
 def parse_label_nutrient_lines(text: str) -> list[dict[str, Any]]:
-    """Nutrient rows read from a label's nutrient table lines (see above).
+    """Public entry point (parse_components uses _scan_label_nutrient_lines via
+    _reconcile_label_line_rows). Nutrient rows read from a label's nutrient
+    table lines (see above).
 
     Each row: component (card name), dose_value, dose_unit (mg/mcg/g/iu), form
     (the "(as ...)" form, dose basis such as DFE / NE / alpha-TE, a folic-acid
@@ -9591,13 +9614,66 @@ def parse_label_nutrient_lines(text: str) -> list[dict[str, Any]]:
     return _scan_label_nutrient_lines(text)[0]
 
 
+def _legacy_row_name_words(component: str) -> list[str]:
+    """A generic row's name in folded words, without the dose words some rows
+    carry ("magnesium 400 mg" -> ["magnesium"])."""
+    return [w for w in _fold_label_text(component).split() if not re.fullmatch(r"[\d.,%]*(?:mg|mcg|ug|iu|g)?", w)]
+
+
 def _legacy_row_name_pattern(component: str) -> re.Pattern[str] | None:
-    """Whole-word regex for a generic row's name in folded label text, without
-    the dose words some rows carry ("magnesium 400 mg" -> "magnesium")."""
-    words = [w for w in _fold_label_text(component).split() if not re.fullmatch(r"[\d.,%]*(?:mg|mcg|ug|iu|g)?", w)]
+    """Whole-word regex for a generic row's name in folded label text."""
+    words = _legacy_row_name_words(component)
     if not words:
         return None
     return re.compile(r"(?<![a-z0-9])" + r"\s+".join(re.escape(w) for w in words) + r"(?![a-z0-9])")
+
+
+def _name_fuzzily_in(words: list[str], folded_text: str, cutoff: float = 0.8) -> bool:
+    """True when `words` appear in folded_text up to OCR typos ("magnesiurn")."""
+    if not words or len(" ".join(words)) < 5:
+        return False
+    target = " ".join(words)
+    tokens = re.findall(r"[a-z0-9]+", folded_text)
+    n = len(words)
+    return any(
+        difflib.SequenceMatcher(None, target, " ".join(tokens[i:i + n])).ratio() >= cutoff
+        for i in range(len(tokens) - n + 1)
+    )
+
+
+def _vitamin_code_named_in(component: str, folded_text: str) -> bool | None:
+    """For a "vitamin <code>" row: is that code on the label? None for other names.
+
+    The generic pipeline turns a truncated "Vitamin B" ("Vitamin B 1,1 mg",
+    "Vitamin B-12" cut at the hyphen) into "vitamin b9"; such a row is only real
+    when the label actually shows "B9"."""
+    m = re.fullmatch(r"vitamin ([a-k])(\d{0,2})", " ".join(_legacy_row_name_words(component)))
+    if not m:
+        return None
+    letter, number = m.groups()
+    if number:
+        return bool(re.search(rf"(?<![a-z0-9]){letter}{number}(?![a-z0-9])", folded_text))
+    return bool(re.search(rf"\bvit[a-z]*\.?\s*{letter}(?![a-z0-9])", folded_text))
+
+
+def _generic_row_named_in(component: str, folded_text: str, text_keys: set[str]) -> bool:
+    """True when a generic row's nutrient is named in folded_text: by a lexicon
+    name of the same nutrient (text_keys), its literal name, or — for
+    micronutrients — up to OCR typos. A "vitamin <code>" row needs its code."""
+    key = canonical_nutrient_key(component)
+    if key and key in text_keys:
+        return True
+    code_named = _vitamin_code_named_in(component, folded_text)
+    if code_named is not None:
+        return code_named
+    pattern = _legacy_row_name_pattern(component)
+    if pattern is not None and pattern.search(folded_text):
+        return True
+    return bool(key) and _name_fuzzily_in(_legacy_row_name_words(component), folded_text)
+
+
+def _lexicon_keys_in(folded_text: str) -> set[str]:
+    return {_NUTRIENT_ALIAS_INDEX[re.sub(r"\s+", " ", m.group(0))][0] for m in _NUTRIENT_ALIAS_RE.finditer(folded_text)}
 
 
 def _rename_salt_cation_rows(rows: list[dict[str, Any]], folded_text: str) -> list[dict[str, Any]]:
@@ -9625,33 +9701,28 @@ def _reconcile_label_line_rows(rows: list[dict[str, Any]], input_text: str) -> l
     """Merge label-line rows (authoritative) with the generic pipeline's rows.
 
     A generic row survives only if it adds something: its nutrient is not
-    already read from a label line, it did not take its dose from a line the
-    label-line parser read (the "potassium 150 mcg" taken from "Iodine (as
-    potassium iodide) 150 mcg", the "vitamin b9 6 mcg" from "Vitamin B-12 6
-    mcg"), and its name appears in the label text the line parser left unread.
+    already read from a label line, and its nutrient is named in the label text
+    the line parser left unread (by any lexicon name, its literal name, or —
+    allowing OCR typos such as "Magnesiurn" — fuzzily). That drops the
+    "potassium 150 mcg" taken from "Iodine (as potassium iodide) 150 mcg" and
+    the "vitamin b9" read from a truncated "Vitamin B" / "Vitamin B-12". A dose
+    equal to another line's dose is NOT a reason to drop a row (B2 and B6 are
+    both 1.4 mg on many labels; "Coenzyme Q10 100 mg" next to "Vitamin C 100
+    mg"). With no label lines read at all, only the "vitamin <code>" phantoms
+    are dropped.
     """
-    rows = _rename_salt_cation_rows(rows, _fold_label_text(input_text))
+    folded_text = _fold_label_text(input_text)
+    rows = _rename_salt_cation_rows(rows, folded_text)
     line_rows, unclaimed = _scan_label_nutrient_lines(input_text)
     if not line_rows:
-        return rows
+        return [r for r in rows if _vitamin_code_named_in(str(r.get("component", "") or ""), folded_text) is not False]
     covered = {r["nutrient_key"] for r in line_rows}
-    line_doses = {(round(float(r["dose_value"]), 4), r["dose_unit"]) for r in line_rows}
-    kept: list[dict[str, Any]] = []
-    for row in rows:
-        component = str(row.get("component", "") or "")
-        key = canonical_nutrient_key(component)
-        if key and key in covered:
-            continue
-        try:
-            dose = (round(float(row.get("dose_value")), 4), _normalize_component_unit_token(str(row.get("dose_unit", "") or "")))
-        except Exception:
-            dose = None
-        if dose is not None and dose in line_doses:
-            continue
-        pattern = _legacy_row_name_pattern(component)
-        if pattern is None or not pattern.search(unclaimed):
-            continue
-        kept.append(row)
+    unclaimed_keys = _lexicon_keys_in(unclaimed)
+    kept = [
+        row for row in rows
+        if canonical_nutrient_key(str(row.get("component", "") or "")) not in covered
+        and _generic_row_named_in(str(row.get("component", "") or ""), unclaimed, unclaimed_keys)
+    ]
     return [dict(r) for r in line_rows] + kept
 
 
