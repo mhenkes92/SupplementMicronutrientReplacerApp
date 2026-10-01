@@ -401,3 +401,54 @@ def test_iu_doses_read_iu(sw, unit):
     assert sw._dose_label({"dose_value": 1000, "dose_unit": unit}) == "1000 IU"
     assert sw._dose_label({"dose_value": 1000, "dose_max": 2000, "dose_unit": unit}) == "1000–2000 IU"
     assert sw._dose_label({"dose_value": 20, "dose_unit": "mcg"}) == "20 mcg"
+
+
+# --- F8: vitamin E IU against the EFSA limit (mg alpha-TE) ---------------------------------
+
+@pytest.mark.parametrize(
+    "text, warned",
+    [
+        ("Vitamin E 600 I.E.", True),
+        ("Vitamin E 450 IU", True),
+        ("Vitamin E (as dl-alpha tocopheryl acetate) 500 IU", True),
+        ("Vitamin E 400 IU (as d-alpha tocopherol)", False),   # ~268 mg alpha-TE
+        ("Vitamin E (as dl-alpha tocopheryl acetate) 400 IU", False),
+        ("Vitamin E 400 mg", True),
+        ("Vitamin E 200 mg", False),
+    ],
+)
+def test_vitamin_e_iu_upper_limit_uses_alpha_te(sw, text, warned):
+    [card] = _cards(sw, text)
+    warning = sw._upper_limit_warning(card["component_key"], card["dose_value"], card["dose_unit"], card["form"])
+    assert bool(warning) is warned, warning
+    if warned and card["dose_unit"] == "iu":
+        assert "mg alpha-TE" in warning
+
+
+def test_vitamin_e_food_portion_keeps_the_rda_factor(sw):
+    synthetic = _cards(sw, "Vitamin E (as dl-alpha tocopheryl acetate) 400 IU")[0]
+    almonds = _row("Nuts, almonds", "Nut and Seed Products", 25.63, "mg")
+    grams = sw._food_portion_grams(almonds, synthetic["dose_value"], synthetic["dose_unit"], synthetic["component"], synthetic["form"])
+    assert grams == pytest.approx(180 / 25.63 * 100, rel=0.01)  # 0.45 mg/IU for the food equivalent
+
+
+# --- F10: "Folate N mcg DFE (as folic acid)" ---------------------------------------------
+
+@pytest.mark.parametrize(
+    "text, warned",
+    [
+        ("Folate 2,000 mcg DFE (as folic acid)", True),
+        ("Folate (as folic acid) 2,000 mcg DFE", True),
+        ("Folate 1,700 mcg DFE (as folic acid)", False),  # = 1,000 µg folic acid
+        ("Folate 680 mcg DFE (as folic acid)", False),
+        ("Folate 2,000 mcg DFE (as L-methylfolate)", False),
+        ("Folate 1,360 mcg DFE (800 mcg folic acid)", False),
+        ("Folate 2,040 mcg DFE (1,200 mcg folic acid)", True),
+    ],
+)
+def test_folate_dfe_as_folic_acid_gets_the_upper_limit_check(sw, text, warned):
+    [card] = _cards(sw, text)
+    warning = sw._upper_limit_warning(card["component_key"], card["dose_value"], card["dose_unit"], card["form"])
+    assert bool(warning) is warned, (card["form"], warning)
+    if warned and "1,200" not in text:
+        assert "~1176 mcg folic acid" in warning

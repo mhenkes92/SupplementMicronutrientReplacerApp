@@ -1138,6 +1138,7 @@ _UPPER_LIMITS: dict[str, dict[str, Any]] = {
     "phosphorus": {"name": "phosphorus", "limit": 4000.0, "unit": "mg", "source": "NIH"},
     "choline": {"name": "choline", "limit": 3500.0, "unit": "mg", "source": "NIH"},
 }
+_VITAMIN_E_UL_MG_PER_IU = 0.67
 _NICOTINIC_ACID_UPPER_LIMIT = {"name": "niacin as nicotinic acid", "limit": 10.0, "unit": "mg", "source": "EFSA — the form that causes flushing"}
 _BETA_CAROTENE_SMOKER_MG = 15.0
 
@@ -1209,8 +1210,24 @@ def _upper_limit_dose(key: str, component: str, value: Any, unit: str, form: str
         if share:
             amount = _dose_in_unit(component, share.group(1), share.group(2), entry["unit"])
             return (amount, f"{bb.format_float(float(share.group(1)))} {share.group(2)} folic acid", entry) if amount is not None else None
+        if re.search(r"\bdfe\b", form_l) and re.search(r"\bfolic acid\b|\bfolsaure\b", form_l):
+            # "Folate 2,000 mcg DFE (as folic acid)": 1 µg folic acid = 1.7 µg DFE.
+            dfe = _dose_in_unit(component, value, unit, entry["unit"])
+            if dfe is None:
+                return None
+            folic = dfe / bb._FOLIC_ACID_TO_DFE
+            return folic, f"{_dose_text(value, unit)} DFE (~{bb.format_float(folic, 0)} {entry['unit']} folic acid)", entry
         if not bb._is_folic_acid_dose(component, form):
             return None  # food folate / methylfolate / DFE without a folic-acid share
+    if key == "vitamin e" and bb.normalize_lookup_key(str(unit or "")) in bb._IU_UNIT_KEYS:
+        # The EFSA limit is 300 mg alpha-TE, and 1 IU of any vitamin E form is
+        # ~0.67 mg alpha-TE (the 0.45 mg/IU of dl-alpha is an RDA activity
+        # factor, kept only for the food portions).
+        try:
+            amount = float(value) * _VITAMIN_E_UL_MG_PER_IU
+        except Exception:
+            return None
+        return amount, f"{_dose_text(value, unit)} (~{bb.format_float(amount, 0)} mg alpha-TE)", entry
     amount = _dose_in_unit(component, value, unit, entry["unit"], form)
     if amount is None:
         return None
