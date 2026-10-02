@@ -262,4 +262,5 @@ def test_a_refusal_is_never_sent_to_product_research(monkeypatch):
     at.session_state["swipe_analysis_kicked"] = True
     at.run()
     assert research == []
-    assert any("No analyzable input found" in e.value for e in at.error)
+    # The photo gave no label text: say so (and how to go on), not "no input".
+    assert any("Your photo couldn't be read" in e.value for e in at.error)

@@ -27,6 +27,21 @@ _lock = threading.Lock()
 _cache: "OrderedDict[str, str]" = OrderedDict()
 _inflight: dict[str, Future] = {}
 _partial: dict[str, str] = {}
+# Text that must never be served or stored as an answer (set by the app to
+# "is this a Blockbrain error?"). Also guards entries written by older code.
+_reject: Callable[[str], bool] | None = None
+
+
+def set_reject(fn: Callable[[str], bool] | None) -> None:
+    global _reject
+    _reject = fn
+
+
+def _rejected(text: str) -> bool:
+    try:
+        return bool(_reject and _reject(text))
+    except Exception:
+        return False
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="suppswipe-llm")
 
 
@@ -38,6 +53,9 @@ def make_key(*parts: Any) -> str:
 def get(key: str) -> str | None:
     with _lock:
         value = _cache.get(key)
+        if value is not None and _rejected(value):
+            _cache.pop(key, None)
+            return None
         if value is not None:
             _cache.move_to_end(key)
         return value
@@ -45,7 +63,7 @@ def get(key: str) -> str | None:
 
 def put(key: str, text: str) -> None:
     text = str(text or "").strip()
-    if not text:
+    if not text or _rejected(text):
         return
     with _lock:
         _cache[key] = text
