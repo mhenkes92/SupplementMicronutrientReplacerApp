@@ -66,8 +66,51 @@ def _bootstrap_blockbrain_env_from_secrets() -> None:
 
 _bootstrap_blockbrain_env_from_secrets()
 
-import blockbrain.app as bb  # noqa: E402
-import llm_cache  # noqa: E402
+def _load_current(name: str, alias: str, script: str | os.PathLike[str] | None = None):
+    """Import our own module `name` (used here as `alias.<attribute>`), reloading it when stale.
+
+    A running Streamlit process keeps every module it imported. When a redeploy
+    replaces the files on disk, this entry script is read again (new code) but
+    `blockbrain.app` and `llm_cache` stay the OLD objects, so the new script calls
+    something the old module doesn't have and the app dies on open until someone
+    reboots it. Stale means: the file changed since this process last loaded it, or
+    the module lacks an attribute this script uses (the process loaded it before
+    this guard existed, so there is no earlier timestamp to compare)."""
+    import importlib
+    import types
+
+    registry = sys.modules.get("_suppswipe_imports")
+    if registry is None:
+        registry = sys.modules.setdefault("_suppswipe_imports", types.ModuleType("_suppswipe_imports"))
+    with registry.__dict__.setdefault("lock", threading.RLock()):
+        stamps: dict[str, int | None] = registry.__dict__.setdefault("stamps", {})
+        module = importlib.import_module(name)
+        path = getattr(module, "__file__", None)
+        try:
+            stamp = os.stat(path).st_mtime_ns if path else None
+        except OSError:
+            stamp = None
+        if name in stamps:
+            stale = stamp is not None and stamps[name] != stamp
+        else:  # first sight in this process: is everything this script uses there?
+            try:
+                source = Path(script or __file__).read_text(encoding="utf-8")
+            except OSError:
+                source = ""
+            used = set(re.findall(r"\b" + re.escape(alias) + r"\.([A-Za-z_]\w*)", source))
+            stale = any(not hasattr(module, attribute) for attribute in used)
+        if stale:
+            module = importlib.reload(module)
+            try:
+                stamp = os.stat(path).st_mtime_ns if path else None
+            except OSError:
+                stamp = None
+        stamps[name] = stamp
+        return module
+
+
+bb = _load_current("blockbrain.app", "bb")
+llm_cache = _load_current("llm_cache", "llm_cache")
 
 # A Blockbrain error is never served or stored as an answer (also catches
 # entries an older build cached before this check existed).
