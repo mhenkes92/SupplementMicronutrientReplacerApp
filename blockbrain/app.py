@@ -9026,8 +9026,19 @@ _ERROR_LEAD_RE = re.compile(r"^\s*(?:\*{0,2}error\*{0,2}\s*:|ai_apicallerror\b|\
 # resolve (removed / not enabled) …
 _MODEL_CONFIG_ERROR_RE = re.compile(
     r"model\s+configuration|resolve\s+(?:the\s+)?model|unknown\s+model|invalid\s+model|unsupported\s+model"
-    r"|model\b.{0,60}\bnot\s+(?:found|supported|allowed|enabled|available)"
-    r"|not\s+available\s+for\s+(?:your|this)\s+(?:organi[sz]ation|plan|account|agent|workspace)",
+    r"|model_not_found|model\b.{0,60}\b(?:not\s+(?:found|supported|allowed|enabled|available)|does\s+not\s+exist"
+    r"|no\s+longer\s+available|deprecated|could\s+not\s+be\s+found)"
+    r"|not\s+available\s+for\s+(?:your|this)\s+(?:organi[sz]ation|plan|account|agent|workspace)"
+    r"|do\s+not\s+have\s+access\s+to\s+(?:it|this\s+model)",
+    re.IGNORECASE,
+)
+# … and failures of the whole agent (limits, credentials, outages): another
+# agent may work, so this one is cooled. Anything not listed is treated as a
+# problem of the model, which is bounded (3 per agent) and never leaves AI off.
+_AGENT_WIDE_ERROR_RE = re.compile(
+    r"rate[\s-]?limit|too\s+many\s+requests|\bquota\b|credit|unauthori[sz]ed|\bforbidden\b|invalid\s+(?:api\s+)?key"
+    r"|authenticat|\bdisabled\b|\bsuspended\b|billing|payment|internal\s+(?:server\s+)?error|service\s+unavailable"
+    r"|bad\s+gateway|gateway\s+time|timed?\s*out|\btimeout\b",
     re.IGNORECASE,
 )
 # … versus a reply with temporary wording: busy right now, not removed.
@@ -9038,24 +9049,37 @@ _MODEL_LOAD_ERROR_RE = re.compile(
 )
 # A vision model that never got the image (a text-only model). Not a reply
 # about the photo's quality ("too blurry, please attach a sharper photo") and
-# not label text with a note: those are answers.
-_IMAGE_NOT_RECEIVED_RE = re.compile(
-    r"\bno\s+(?:\w+\s+){0,2}(?:image|file|picture|photo|attachment|document)s?\b[^.]{0,40}?"
-    r"\b(?:has|have|was|were|is|are)\s+(?:been\s+)?(?:attached|provided|received|included|uploaded|shared|sent|visible|present)"
-    r"|\b(?:did\s*n[o']t|do\s*n[o']t|cannot|can't|could\s*n[o']t|unable\s+to)\s+(?:see|receive|access|view)\s+"
-    r"(?:the\s+|any\s+|an\s+|a\s+)?(?:\w+\s+)?(?:image|picture|photo|attachment)"
-    r"|\bplease\s+(?:attach|upload|provide|send|share)\s+(?:an?|the)\s+(?:\w+\s+){0,3}(?:image|picture|photo)"
-    r"|\bthere\s+is\s+no\s+(?:\w+\s+)?(?:image|picture|photo|attachment)"
-    r"|\bnothing\s+(?:for\s+me\s+)?to\s+(?:extract|read)",
+# not label text with a note: those are answers. Only the first two lines
+# count: a model that never saw the image says so at the start.
+_IMAGE_MISSING_RE = re.compile(
+    r"\b(?:no|kein(?:e|en)?)\s+(?:[\w-]+[\s,]+){0,3}?(?:image|file|picture|photo|attachment|document|bild|bilder|foto|datei)s?\b"
+    r"[^.]{0,50}?\b(?:has|have|was|were|is|are|ist|wurde|wurden)?\s*(?:been\s+)?"
+    r"(?:attached|provided|received|included|uploaded|shared|sent|visible|present|came\s+through|angeh[äa]ngt"
+    r"|hochgeladen|[üu]bermittelt|beigef[üu]gt|vorhanden|sehen)"
+    r"|\bthere\s+(?:is|'s)\s+no\s+(?:\w+\s+)?(?:image|picture|photo|attachment)"
+    r"|\b(?:image|photo|picture|upload|file)\b[^.]{0,30}\b(?:did\s*n[o']t|did\s+not|didn[o']t|not)\s+(?:come\s+through|upload|arrive|load|attach)"
+    r"|\bimage\s+not\s+(?:received|attached|provided)"
+    r"|\bnothing\s+(?:for\s+me\s+)?to\s+(?:extract|read)"
+    r"|\bonly\s+(?:see|read|received)\s+text"
+    r"|\bsehe\s+kein\s+(?:bild|foto)|\bkein\s+(?:bild|foto)\s+sehen",
+    re.IGNORECASE,
+)
+_IMAGE_CANNOT_SEE_RE = re.compile(
+    r"\b(?:don'?t|do\s+not|can'?t|cannot|couldn'?t|could\s+not|unable\s+to|not\s+able\s+to|never\s+received)\s+(?:\w+\s+){0,2}"
+    r"(?:see|receive|view|access|process|analy[sz]e|open)\s+(?:\w+\s+){0,3}(?:images?|pictures?|photos?|attachments?)"
+    r"|\b(?:don'?t|do\s+not)\s+have\s+(?:the\s+)?(?:ability|capability|access)\s+to\s+(?:\w+\s+){0,2}(?:images?|pictures?|photos?)"
+    r"|\b(?:don'?t|do\s+not)\s+have\s+(?:the\s+)?(?:ability|capability)\s+to\s+(?:see|view|process|analy[sz]e)"
+    r"|\bplease\s+(?:attach|upload|provide|send|share)\s+(?:an?|the|your)\s+(?:[\w-]+\s+){0,3}(?:image|picture|photo)"
+    r"|\bbitte\s+lade[n]?\s+sie\s+(?:\w+\s+){0,3}(?:bild|foto)",
     re.IGNORECASE,
 )
 _IMAGE_QUALITY_RE = re.compile(
-    r"blur|sharp|clear|focus|\bdark|resolution|legib|readab|unread|cut\s*off|too\s+(?:small|far|close)|glare|lighting|quality|crop",
+    r"blur|unscharf|schärfer|sharp|clearly|clearer|unclear|\bwell\b|\benough\b|properly|focus|\bdark|resolution"
+    r"|legib|readab|unread|hard\s+to\s+read|cut\s*off|too\s+(?:small|far|close|bright)|glare|lighting|quality|crop",
     re.IGNORECASE,
 )
-_ERROR_TEXT_PREFIXES = ("failed to resolve", "error:", "error ", "ai_apicallerror")
 _LABEL_VALUE_RE = re.compile(r"\d\s*(?:mg|[µμ]g|mcg|ug|g|iu|i\.e\.|kcal|%)", re.IGNORECASE)
-
+_ERROR_TEXT_PREFIXES = ("failed to resolve", "error:", "error ", "**error", '{"error', "ai_apicallerror", "agent ")
 # Models tried, in order, when an agent can't resolve the requested one (it
 # was removed or isn't enabled for the organisation). "" = the agent's own
 # default model (no "model" field), last because it can be slow — text only:
@@ -9064,15 +9088,17 @@ _LABEL_VALUE_RE = re.compile(r"\d\s*(?:mg|[µμ]g|mcg|ug|g|iu|i\.e\.|kcal|%)", r
 BLOCKBRAIN_TEXT_MODEL_FALLBACKS = ["gpt-4.1-mini", "gpt-4o-mini", "gemini-2.5-flash-lite", "anthropic-claude-haiku-4.5", ""]
 BLOCKBRAIN_VISION_MODEL_FALLBACKS = ["gpt-4.1", "gpt-4o", "gpt-4.1-mini", "anthropic-claude-haiku-4.5", "claude-sonnet-4.6-fast"]
 
-# Bounds for one call: a model is sent at most once per call (so a call never
-# sends more requests than there are models). An agent that can't resolve this
-# many models is parked for this kind of call (its configuration, not the
-# model) and the next agent goes on with the models not tried yet; an agent
-# whose models are busy this often is left to the next agent too (not parked).
+# Bounds for one call: a model that failed is not sent again in the same call
+# (a call is bounded by the number of models plus the number of endpoints). An
+# agent that can't resolve this many models is parked for this kind of call
+# (its configuration, not the model) and the next agent goes on with the models
+# not tried yet; an agent whose models are busy this often is left to the next
+# agent too, and cooled for a minute (not parked).
 # Vision: this many models that never received the image mean the attachment
 # is the problem, not the models.
 _MODEL_ERRORS_PER_AGENT = 3
 _LOAD_ERRORS_PER_AGENT = 2
+_BUSY_COOLDOWN_S = 60.0
 _IMAGE_BLIND_PER_CALL = 3
 
 # Process-wide, read and written under _STREAM_HEALTH_LOCK. Only a hint about
@@ -9106,6 +9132,8 @@ def _stream_error_text(event: Any) -> str:
     if not isinstance(event, dict):
         return ""
     etype = str(event.get("type", "") or "").strip().lower()
+    if etype.startswith("tool"):  # a failed tool call: the answer may still follow
+        return ""
     if etype != "error" and "errorText" not in event:
         return ""
     for key in ("errorText", "error", "message"):
@@ -9118,38 +9146,48 @@ def _stream_error_text(event: Any) -> str:
 
 
 def _classify_agent_error(text: Any, model: str) -> str:
-    """"model": this model can't be used on this agent (removed, not enabled);
-    "busy": this model is overloaded right now; "agent": anything else (rate
-    limit, auth, the agent is down)."""
+    """"model": this model can't be used on this agent (removed, not enabled, or
+    an error not recognised as anything else); "busy": this model is overloaded
+    right now; "agent": the whole agent fails (rate limit, credentials, outage)."""
     value = str(text or "")
     if _MODEL_CONFIG_PHRASE_RE.search(value):
         return "model"
     if _MODEL_LOAD_ERROR_RE.search(value):
         about_model = re.search(r"\bmodel\b", value, re.IGNORECASE) or (model and model.lower() in value.lower())
         return "busy" if about_model else "agent"
-    return "model" if _MODEL_CONFIG_ERROR_RE.search(value) else "agent"
+    if _MODEL_CONFIG_ERROR_RE.search(value):
+        return "model"
+    return "agent" if _AGENT_WIDE_ERROR_RE.search(value) else "model"
 
 
 def looks_like_agent_error(text: Any) -> bool:
     """True for a reply that is a Blockbrain error, not an answer: "[Agent X] …"
-    in any punctuation, the model-configuration error in a short reply, or a
-    short "Error: …" about a model. A real answer never reads like that."""
+    in any punctuation, the model-configuration error, "AI_APICallError: …", or
+    a short "Error: …" about a model. A real answer never reads like that."""
     value = str(text or "").strip()
-    if not value or len(value) > 400:
+    if not value:
         return False
-    if _AGENT_ERROR_PREFIX_RE.match(value):
+    if _AGENT_ERROR_PREFIX_RE.match(value) or _MODEL_CONFIG_PHRASE_RE.search(value[:1500]):
         return True
-    if len(value) <= 300 and _MODEL_CONFIG_PHRASE_RE.search(value):
+    if len(value) <= 300 and value[:15].lower().startswith("ai_apicallerror"):
         return True
     return len(value) <= 200 and bool(_ERROR_LEAD_RE.match(value) and _MODEL_CONFIG_ERROR_RE.search(value))
 
 
 def _image_not_received(text: Any) -> bool:
-    """A vision reply saying the image never arrived (not one about its quality)."""
-    value = str(text or "").strip()[:500]
-    if not value or _LABEL_VALUE_RE.search(value) or _IMAGE_QUALITY_RE.search(value):
+    """A vision reply saying the image never arrived (not one about its quality,
+    and not label text with a note)."""
+    value = str(text or "").strip()[:600]
+    if not value or _LABEL_VALUE_RE.search(value):
         return False
-    return bool(_IMAGE_NOT_RECEIVED_RE.search(value)) or _is_blockbrain_image_missing_response(value)
+    start = " ".join([ln.strip() for ln in value.splitlines() if ln.strip()][:2])
+    if _IMAGE_MISSING_RE.search(start):
+        return True  # "no image attached" stays true even when it asks for a sharp photo
+    if _IMAGE_QUALITY_RE.search(value):
+        return False
+    return bool(_IMAGE_CANNOT_SEE_RE.search(start)) or (
+        _is_blockbrain_image_missing_response(value) and not value[:1].isdigit()
+    )
 
 
 def unresolved_models() -> list[str]:
@@ -9186,7 +9224,9 @@ def _model_candidates(requested: str, fallbacks: Any, kind: str, agent: str, ski
         if model not in order:
             order.append(model)
     usable = [m for m in order if m not in bad and m not in skip]
-    usable.sort(key=lambda m: m in bad_elsewhere)  # stable: only moves those to the end
+    # Stable: only moves models to the end. The agent default can be slow, so it
+    # goes after every named model (unless it is what the operator asked for).
+    usable.sort(key=lambda m: (m == "" and requested != "", m in bad_elsewhere))
     if usable:
         return usable
     rest = [m for m in order if m not in skip]
@@ -9223,11 +9263,11 @@ def _parked_last(kind: str, endpoints: list[str]) -> list[str]:
     return [u for u in endpoints if agent_of(u) not in parked] + [u for u in endpoints if agent_of(u) in parked]
 
 
-def _cool_agent(sticky_key: str, endpoints: list[str], agent: str) -> None:
+def _cool_agent(sticky_key: str, endpoints: list[str], agent: str, cooldown_s: float = _ENDPOINT_COOLDOWN_S) -> None:
     """Move every API version of `agent` to the back for the cooldown."""
     for url in endpoints:
         if url.split("/api/agents/", 1)[-1].split("/", 1)[0] == agent:
-            _mark_stream_endpoint(sticky_key, url, ok=False)
+            _mark_stream_endpoint(sticky_key, url, ok=False, cooldown_s=cooldown_s)
 
 
 def _order_stream_endpoints(base_url: str, endpoints: list[str], primary: Any = ()) -> list[str]:
@@ -9505,6 +9545,7 @@ def _blockbrain_chat(
     # most once per call) and the number of models that never got the image.
     done_agents: set[str] = set()
     call_failed_models: set[str] = set()
+    agent_error_models: dict[str, set[str]] = {}
     image_blind = 0
     stop = False
     for stream_url in _parked_last(model_kind, _order_stream_endpoints(sticky_key, stream_endpoints, primary_endpoints)):
@@ -9566,7 +9607,15 @@ def _blockbrain_chat(
                 if resp.status_code != 200:
                     http_error = str(resp.text or "")[:400]
                     last_error = f"Blockbrain HTTP {resp.status_code}: {http_error[:200]}"
-                    if resp.status_code >= 500 or resp.status_code == 429:
+                    if (
+                        resp.status_code != 429
+                        and (_MODEL_CONFIG_PHRASE_RE.search(http_error) or _MODEL_CONFIG_ERROR_RE.search(http_error))
+                        and not _MODEL_LOAD_ERROR_RE.search(http_error)
+                    ):
+                        # The body says this model can't be used: handle it like the
+                        # same error inside a stream (mark the model, try the next one).
+                        stream_error, http_error = http_error, ""
+                    elif resp.status_code >= 500 or resp.status_code == 429:
                         _mark_stream_endpoint(sticky_key, stream_url, ok=False)
                 else:
                     last_push = 0.0
@@ -9677,13 +9726,23 @@ def _blockbrain_chat(
                     call_failed_models.add(model)
                     agent_load_errors += 1
                     if agent_load_errors >= _LOAD_ERRORS_PER_AGENT:
-                        done_agents.add(endpoint_agent)  # the next agent; this one isn't broken
+                        # Two models busy here: the next agent, and this one last for a minute.
+                        _cool_agent(sticky_key, stream_endpoints, endpoint_agent, _BUSY_COOLDOWN_S)
+                        done_agents.add(endpoint_agent)
                         break
                     continue
                 # Another agent failure (rate limit, auth, …): cool this agent
-                # (all its API versions) down and go on with the next agent.
+                # (all its API versions) down and go on with the next agent. The
+                # same model failing this way on two agents is the model's problem.
                 _cool_agent(sticky_key, stream_endpoints, endpoint_agent)
                 done_agents.add(endpoint_agent)
+                agents_for_model = agent_error_models.setdefault(model, set())
+                agents_for_model.add(endpoint_agent)
+                if len(agents_for_model) >= 2:
+                    # Two agents failing the same way for the same model: the model's problem.
+                    call_failed_models.add(model)
+                    for failed_agent in agents_for_model:
+                        _mark_model(model_kind, failed_agent, model, ok=False)
                 break
             # A vision model that never got the image: try another one. Nothing
             # is remembered, so a photo (or a text-only model) can't switch
@@ -9709,6 +9768,7 @@ def _blockbrain_chat(
                         pass
                 return _finish(merged, endpoint_path)
             last_error = last_error or f"Blockbrain {endpoint_path} returned no text"
+            call_failed_models.add(model)  # an empty reply: the next endpoint starts with another model
             break
         else:
             # Every candidate on this agent failed: don't repeat them on its

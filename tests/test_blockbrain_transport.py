@@ -336,11 +336,14 @@ def test_the_agent_default_model_is_the_last_text_fallback(monkeypatch):
     assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
     models = [m for _agent, _v, m in sent]
     assert models == ["gpt-4.1-nano"] + bb.BLOCKBRAIN_TEXT_MODEL_FALLBACKS  # every model once, the default last
-    # The next call goes straight to what worked, also on the agent that answered
-    # (which never saw the refused model itself).
-    sent.clear()
-    assert bb.call_blockbrain_text("sys", "again") == "**Breakfast** oats"
-    assert [m for _a, _v, m in sent] == [""]
+    # Only the agent default works: each agent learns that once (a call costs at most
+    # one request per model), then every call is one request to it.
+    counts = []
+    for _ in range(8):
+        sent.clear()
+        assert bb.call_blockbrain_text("sys", "again") == "**Breakfast** oats"
+        counts.append(len(sent))
+    assert max(counts) <= len(models) and counts[-1] == 1 and sent[-1][2] == ""
 
 
 def test_an_agent_error_is_never_returned_as_an_answer(monkeypatch):
@@ -634,7 +637,8 @@ def test_a_model_refused_on_one_agent_goes_last_on_the_others():
     # On the agent that refused it: left out.
     assert bb._model_candidates("gpt-4.1-nano", fallbacks, "text", "researchAgent") == fallbacks
     # On another agent: still tried, but last.
-    assert bb._model_candidates("gpt-4.1-nano", fallbacks, "text", "customAgent") == fallbacks + ["gpt-4.1-nano"]
+    # (the agent default can be slow: after every named model, marked or not)
+    assert bb._model_candidates("gpt-4.1-nano", fallbacks, "text", "customAgent") == ["gpt-4.1-mini", "gpt-4o-mini", "gpt-4.1-nano", ""]
     # The model that last worked leads, even if another agent refused it earlier.
     bb._MODEL_UNRESOLVED[("customAgent", "gpt-4o-mini")] = far
     bb._LAST_GOOD_MODEL["text"] = "gpt-4o-mini"
@@ -648,7 +652,7 @@ def test_marks_are_only_a_hint_when_nothing_else_is_left():
     fallbacks = ["gpt-4.1-mini", "gpt-4o-mini", ""]
     for model in ["gpt-4.1-nano"] + fallbacks:
         bb._MODEL_UNRESOLVED[("researchAgent", model)] = far
-    assert bb._model_candidates("gpt-4.1-nano", fallbacks, "text", "researchAgent") == fallbacks + ["gpt-4.1-nano"]
+    assert bb._model_candidates("gpt-4.1-nano", fallbacks, "text", "researchAgent") == ["gpt-4.1-mini", "gpt-4o-mini", "", "gpt-4.1-nano"]
     assert bb._model_candidates("gpt-4.1-nano", fallbacks, "text", "researchAgent", skip={"gpt-4.1-mini", ""}) == [
         "gpt-4o-mini", "gpt-4.1-nano"]
 
@@ -746,7 +750,10 @@ def test_busy_models_on_one_agent_move_on_without_blocking_it(monkeypatch):
     assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
     assert [a for a, _v, _m in sent].count(primary) == 2 and sent[-1][0] != primary
     assert len({m for _a, _v, m in sent}) == len(sent)  # a model is never sent twice
-    _no_state_left_behind()
+    assert bb._MODEL_UNRESOLVED == {} and bb._AGENT_PARKED == {}
+    # Two busy models: this agent goes last, for a minute only.
+    now = bb.time.monotonic()
+    assert bb._STREAM_ENDPOINT_COOLDOWN and all(until - now <= bb._BUSY_COOLDOWN_S + 1 for until in bb._STREAM_ENDPOINT_COOLDOWN.values())
 
 
 def test_models_disabled_for_the_organisation_are_skipped_not_waited_for(monkeypatch):
@@ -935,3 +942,181 @@ def test_the_custom_endpoint_reports_why_it_failed_and_never_returns_an_agent_er
     assert bb.call_blockbrain_text("sys", "q") == "ok" and bb.last_call_error() == ""
     monkeypatch.setattr(bb, "_http_post", lambda url, **kw: JsonResponse({"choices": [{"message": {"content": MODEL_ERROR}}]}))
     assert MODEL_ERROR not in (bb.call_blockbrain_text("sys", "q") or "")
+
+
+
+# --- Third review round (109e32f) ------------------------------------------------------------------
+
+IMAGE_REPLIES = [
+ # blind-model replies
+ ("No image has been attached to this message.", True),
+ ("No file, image, or document has been attached.", True),
+ ("I don't see any image attached. Please upload the label.", True),
+ ("I do not see any image in your message.", True),
+ ("There is no image in this conversation.", True),
+ ("I can't see any images - only text was provided.", True),
+ ("Please attach an image of the supplement label and I'll extract the nutrients.", True),
+ ("There is nothing for me to extract - no label image was shared.", True),
+ ("I don't see an image attached. Could you please upload a clear photo of the label?", True),
+ ("Please upload a clear image of the supplement label so I can extract the nutrients.", True),
+ ("Please provide a clear photo of the nutrition table and I will read it for you.", True),
+ ("I'm unable to view images. Please paste the label text.", True),
+ ("No image attached.", True),
+ ("No image provided.", True),
+ ("No image was provided. Please send a sharp photo of the label.", True),
+ ("There's no image attached to your message.", True),
+ ("It looks like no image came through. Could you try uploading it again?", True),
+ ("The image did not come through. Please upload it again.", True),
+ ("I can only see text, not an image. Could you re-upload?", True),
+ ("I'm sorry, but I can't see an image in our conversation. Could you upload the label photo?", True),
+ ("Sorry, I don't have the ability to see images in this chat.", True),
+ ("I cannot process images with this configuration.", True),
+ ("As a text-based model I can't analyze images.", True),
+ ("Es wurde kein Bild angehängt.", True),
+ ("Ich kann kein Bild sehen. Bitte laden Sie ein Foto des Etiketts hoch.", True),
+ ("Es wurde kein Bild hochgeladen.", True),
+ ("Bitte laden Sie ein Bild des Nahrungsergänzungsmittel-Etiketts hoch.", True),
+ ("Ich sehe kein Bild in Ihrer Nachricht.", True),
+ ("No label image was attached; please attach a clear picture of the Supplement Facts.", True),
+ # real answers (must NOT be treated as image-not-received)
+ ("I can't see the image clearly enough to read the nutrition table. Please take a sharper photo.", False),
+ ("I cannot see the photo well, it is too dark. Please retake it in better light.", False),
+ ("Das Foto ist zu unscharf, bitte ein schärferes Bild aufnehmen.", False),
+ ("Vitamin C 80 mg 100%\nVitamin D3 20 µg 400%\nZink 10 mg 100%\n(I can't see the image's lower part, it is cut off.)", False),
+ ("Centrum Men\nVitamin D 25 µg\nNote: I could not see the picture's right edge.", False),
+ ("Centrum Men\nServing size 1 tablet\nNo image of the back panel was provided, so only the front is read.", False),
+ ("Product: Nature Made Fish Oil\nNo nutrient table is visible in the photo.", False),
+ ("The photo shows only the front of the box: Brand X Multivitamin. No supplement facts panel is visible.", False),
+ ("Das Foto zeigt nur die Vorderseite: Doppelherz Magnesium. Keine Nährwerttabelle sichtbar.", False),
+ ("Doppelherz Magnesium 400\nPro Tablette: Magnesium 400 mg", False),
+ ("Vitamin D3 20 µg (800 I.E.) 400%\nNote: no photo of the ingredients list was provided.", False),
+ ("Magnesium Citrate\nNo document attached to the label; amounts per serving: Magnesium 200 mg", False),
+ ("Vitamin B12 (as methylcobalamin) 500 mcg\nVitamin B6 5 mg\nPlease attach the second photo for the ingredients.", False),
+]
+
+
+@pytest.mark.parametrize("reply, blind", IMAGE_REPLIES)
+def test_image_not_received_wordings(reply, blind):
+    """Review FRV-5: what a model that never got the photo says, in English and German, versus
+    what a model that did see it says about it (quality, label text with a note)."""
+    assert bb._image_not_received(reply) is blind
+
+
+@pytest.mark.parametrize("error", [
+    "[Agent researchAgent] - The model `gpt-4.1-nano` does not exist or you do not have access to it.",
+    "Error: The model `gpt-4.1-nano` does not exist or you do not have access to it.",
+    "[Agent researchAgent] - Something odd happened with gpt-4.1-nano",  # not recognised: still a model problem
+])
+def test_an_unrecognised_error_is_a_model_problem_not_an_agent_problem(monkeypatch, error):
+    """Review NEW-CLASSIFY-DEFAULT-AGENT: an unknown wording must not retry the removed model on every agent."""
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "error", "errorText": error}]) if model == "gpt-4.1-nano" else FakeResponse(events=GOOD_STREAM),
+    )
+    for _ in range(3):
+        sent.clear()
+        assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+        assert len(sent) <= 2
+    assert len(sent) == 1
+
+
+def test_the_same_model_failing_on_two_agents_is_skipped_for_the_call(monkeypatch):
+    """Review R1 wording 5: "high demand" without the word model is an agent error, but the same model
+    failing on two agents is the model's problem: the third agent starts with another one."""
+    error = "[Agent X] - We are experiencing high demand"
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "error", "errorText": error}]) if model == "gpt-4.1-nano" else FakeResponse(events=GOOD_STREAM),
+    )
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert [m for _a, _v, m in sent] == ["gpt-4.1-nano", "gpt-4.1-nano", "gpt-4.1-mini"]
+    sent.clear()
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert len(sent) == 1
+
+
+@pytest.mark.parametrize("status, body", [
+    (400, '{"message": "Failed to resolve model configuration"}'),
+    (422, '{"error": "Model gpt-4.1-nano not found"}'),
+    (500, '{"message": "Failed to resolve model configuration"}'),
+    (403, "Model gpt-4.1-nano is not enabled for your organisation"),
+])
+def test_a_model_error_in_an_http_body_falls_back_to_the_next_model(monkeypatch, status, body):
+    """Review NEW-HTTP-MODEL-ERROR: the same message with an HTTP status is still a model problem."""
+    def responder(url, model):
+        if model != "gpt-4.1-nano":
+            return FakeResponse(events=GOOD_STREAM)
+        response = FakeResponse(status_code=status)
+        response.text = body
+        return response
+
+    sent = _install_by_model(monkeypatch, responder)
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert [m for _a, _v, m in sent] == ["gpt-4.1-nano", "gpt-4.1-mini"]
+    assert bb._STREAM_ENDPOINT_COOLDOWN == {}  # the endpoint isn't at fault
+    sent.clear()
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert len(sent) == 1
+
+
+def test_a_failed_tool_call_does_not_discard_the_answer_that_follows(monkeypatch):
+    """Review NEW-TOOL-ERROR-EVENT: tool-output-error parts carry errorText but aren't fatal."""
+    events = [
+        {"type": "start"},
+        {"type": "tool-output-error", "toolCallId": "t1", "errorText": "Web search failed: upstream timeout"},
+        {"type": "text-delta", "id": "t", "delta": "Source: https://example.org/d3\nVitamin D3 25 µg"},
+        {"type": "finish"},
+    ]
+    sent = _install_by_model(monkeypatch, lambda url, model: FakeResponse(events=events))
+    assert bb.call_blockbrain_text("sys", "q", allow_tools=True).endswith("Vitamin D3 25 µg")
+    assert len(sent) == 1 and bb._STREAM_ENDPOINT_COOLDOWN == {}
+
+
+def test_an_empty_reply_moves_on_to_the_next_model(monkeypatch):
+    """Review NEW-EMPTY-REPLY-RETRY: a model that answers nothing isn't asked again on every endpoint."""
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "finish"}]) if model == "gpt-4.1-nano" else FakeResponse(events=GOOD_STREAM),
+    )
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert [m for _a, _v, m in sent] == ["gpt-4.1-nano", "gpt-4.1-mini"]
+
+
+def test_the_slow_agent_default_never_goes_before_a_named_model(monkeypatch):
+    """Review FRV-8: after a blip in which only the agent default answered, the next calls (marks still live)
+    use named models again, not the default."""
+    state = {"only_default": True}
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=GOOD_STREAM if (model == "" if state["only_default"] else model != "gpt-4.1-nano")
+                                        else [{"type": "error", "errorText": MODEL_ERROR}]),
+    )
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    state["only_default"] = False
+    for _ in range(3):  # marks are still live: no waiting for them to expire
+        sent.clear()
+        assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+        assert "" not in [m for _a, _v, m in sent]
+    assert len(sent) == 1
+
+
+@pytest.mark.parametrize("text", [
+    "AI_APICallError: Rate limit exceeded",
+    "AI_APICallError: Insufficient credits",
+    "[Agent 6a4bc43653952e29ba6ef1d6] - Failed to resolve model configuration for model gpt-4.1-nano. Details: " + "x" * 600,
+    "Failed to resolve model configuration. " + "The pinned model is not available. " * 30,
+    "[Agent Orange label reader] - something failed " + "y" * 800,
+])
+def test_longer_and_other_error_shapes_are_recognised(text):
+    """Review NEW-ERROR-SHAPES / NEW-LONG-ERROR-TEXT: no length cap for the exact phrase or the [Agent …] prefix."""
+    assert bb.looks_like_agent_error(text)
+
+
+@pytest.mark.parametrize("answer", [
+    "Vitamin D: 25 µg per day is plenty. In case of an error in dosing, ask your doctor.",
+    "[Agent-based models] are not used for nutrient advice. " + "z" * 600,
+    "Der Fehler liegt oft an der Dosierung; Magnesium 300 mg am Abend ist üblich.",
+    "Eisen: take it with vitamin C. [Agent Orange](https://example.org) is unrelated.",
+])
+def test_real_answers_are_never_mistaken_for_errors(answer):
+    assert not bb.looks_like_agent_error(answer)

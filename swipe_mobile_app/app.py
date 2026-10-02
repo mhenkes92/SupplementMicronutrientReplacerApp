@@ -4039,6 +4039,12 @@ def _ai_unavailable_message(what: str) -> str:
             "Photograph the nutrition table, paste it as text (🔗 Paste — that works without AI), "
             "or try again in a few minutes."
         )
+    if what == "page":
+        return (
+            "That page couldn't be read: it may block automated access or hold no supplement "
+            "facts table. Paste the nutrition table as text instead (🔗 Paste — that works "
+            "without AI), or try another link."
+        )
     if what == "link":
         return (
             "That product page couldn't be read: the AI page reader didn't respond. "
@@ -4121,6 +4127,9 @@ def _run_pending_analysis() -> None:
         # Set when an AI step (photo reading, product research, page reading)
         # failed: an empty result is then the AI's fault, not the user's input.
         ai_failed = ""
+        # Why a product link gave nothing when the AI isn't to blame (shown as a
+        # warning next to other input, or as the one message when it is all there is).
+        url_error = ""
 
         with st.spinner("Extracting and parsing supplement info…"):
             # A barcode the phone decoded in the browser is looked up first; if
@@ -4213,17 +4222,19 @@ def _run_pending_analysis() -> None:
                         elif bb.last_call_error():  # the page was fetched; its AI read failed
                             ai_failed = "link"
                         else:
-                            st.warning(f"URL fetch failed: {exc}")
+                            url_error = str(exc)
                 else:
                     _set_progress(58, "Processing text input…")
                     text_parts.append(manual)
 
             combined = "\n\n".join([x for x in text_parts if str(x).strip()]).strip()
             if not combined:
-                _abort(_ai_unavailable_message(ai_failed) if ai_failed else (
+                _abort(_ai_unavailable_message(ai_failed or ("page" if url_error else "")) if (ai_failed or url_error) else (
                     "No analyzable input found. Add a photo, barcode, URL, or supplement-facts text."
                 ))
                 return
+            if url_error:
+                st.warning(f"URL fetch failed: {url_error}")
 
             _set_progress(72, "Parsing micronutrients…")
             components = bb.parse_components(combined)

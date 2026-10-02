@@ -290,3 +290,22 @@ def test_a_link_that_needs_the_ai_after_the_limit_says_so_once(monkeypatch):
     messages = [e.value for e in at.error] + [w.value for w in at.warning]
     assert any("limit for AI answers" in m for m in messages)
     assert not any("URL fetch failed" in m or "No analyzable input" in m for m in messages)
+
+
+def test_a_link_that_cannot_be_read_says_so_once(monkeypatch):
+    """Review NEW-URL-DOUBLE-MSG-DOWNLOAD: one message, not "URL fetch failed" plus "No analyzable input"."""
+    from pathlib import Path
+
+    from streamlit.testing.v1 import AppTest
+
+    monkeypatch.setattr(bb, "extract_supplement_text_from_url", lambda url, llm_allowed=None: "")
+    app = str(Path(__file__).resolve().parent.parent / "swipe_mobile_app" / "app.py")
+    at = AppTest.from_file(app, default_timeout=60)
+    at.run()
+    at.session_state["swipe_pending_request"] = {"upload_bytes": b"", "camera_bytes": b"", "manual": "https://shop.example/vitamin-d", "camera_barcode": ""}
+    at.session_state["swipe_is_analyzing"] = True
+    at.session_state["swipe_analysis_kicked"] = True
+    at.run()
+    messages = [e.value for e in at.error] + [w.value for w in at.warning]
+    assert sum("That page couldn't be read" in m for m in messages) == 1
+    assert not any("URL fetch failed" in m or "No analyzable input" in m for m in messages)
