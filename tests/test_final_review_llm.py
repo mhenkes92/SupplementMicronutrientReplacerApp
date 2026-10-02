@@ -264,3 +264,29 @@ def test_a_refusal_is_never_sent_to_product_research(monkeypatch):
     assert research == []
     # The photo gave no label text: say so (and how to go on), not "no input".
     assert any("Your photo couldn't be read" in e.value for e in at.error)
+
+
+def test_a_link_that_needs_the_ai_after_the_limit_says_so_once(monkeypatch):
+    """Review FRV-10: the usage limit is named once — not "URL fetch failed" plus "No analyzable input"."""
+    import time
+    from pathlib import Path
+
+    from streamlit.testing.v1 import AppTest
+
+    def page_without_facts_table(url, llm_allowed=None):
+        if llm_allowed is not None:
+            llm_allowed()  # the AI read would be next: refused, the allowance is used up
+        return ""
+
+    monkeypatch.setattr(bb, "extract_supplement_text_from_url", page_without_facts_table)
+    app = str(Path(__file__).resolve().parent.parent / "swipe_mobile_app" / "app.py")
+    at = AppTest.from_file(app, default_timeout=60)
+    at.run()
+    at.session_state["_suppswipe_llm_usage"] = {"generate": [time.time()] * 500}
+    at.session_state["swipe_pending_request"] = {"upload_bytes": b"", "camera_bytes": b"", "manual": "https://shop.example/vitamin-d", "camera_barcode": ""}
+    at.session_state["swipe_is_analyzing"] = True
+    at.session_state["swipe_analysis_kicked"] = True
+    at.run()
+    messages = [e.value for e in at.error] + [w.value for w in at.warning]
+    assert any("limit for AI answers" in m for m in messages)
+    assert not any("URL fetch failed" in m or "No analyzable input" in m for m in messages)

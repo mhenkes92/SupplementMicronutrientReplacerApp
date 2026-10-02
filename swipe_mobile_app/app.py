@@ -4195,12 +4195,22 @@ def _run_pending_analysis() -> None:
                 elif re.match(r"https?://", manual, re.I):
                     _set_progress(56, "Fetching product page…")
                     bb.reset_call_error()
+                    quota_refused: list[bool] = []
+
+                    def _llm_allowed() -> bool:
+                        allowed = _consume_llm_quota("generate")
+                        if not allowed:
+                            quota_refused.append(True)
+                        return allowed
+
                     try:
-                        url_text = _cached_extract_from_url(manual, lambda: _consume_llm_quota("generate"))
+                        url_text = _cached_extract_from_url(manual, _llm_allowed)
                         if url_text.strip():
                             text_parts.append(url_text)
                     except Exception as exc:
-                        if bb.last_call_error():  # the page was fetched; its AI read failed
+                        if quota_refused:  # the page needs the AI and this session's allowance is used up
+                            ai_failed = "quota"
+                        elif bb.last_call_error():  # the page was fetched; its AI read failed
                             ai_failed = "link"
                         else:
                             st.warning(f"URL fetch failed: {exc}")
