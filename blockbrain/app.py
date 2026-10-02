@@ -9022,6 +9022,12 @@ def _typed_delta_piece(event: Any) -> str | None:
 _AGENT_ERROR_PREFIX_RE = re.compile(r"^\s*(?:\*{0,2}error:?\*{0,2}\s*)?\[agent[\s:]+[^\]\n]{1,80}\](?!\()", re.IGNORECASE)
 _MODEL_CONFIG_PHRASE_RE = re.compile(r"failed\s+to\s+resolve\s+(?:the\s+)?model\s+configuration", re.IGNORECASE)
 _ERROR_LEAD_RE = re.compile(r"^\s*(?:\*{0,2}error\*{0,2}\s*:|ai_apicallerror\b|\{\s*\"error\")", re.IGNORECASE)
+# A whole reply that is just an HTTP-style failure.
+_BARE_HTTP_ERROR_RE = re.compile(
+    r"^\W*(?:internal\s+server\s+error|service\s+unavailable|bad\s+gateway|gateway\s+time-?out|unauthori[sz]ed"
+    r"|forbidden|too\s+many\s+requests|rate\s+limit\s+exceeded|request\s+failed\s+with\s+status\s+code\s+\d{3})\W*$",
+    re.IGNORECASE,
+)
 # Applied only to text already known to be an error. A model the agent can't
 # resolve (removed / not enabled) …
 _MODEL_CONFIG_ERROR_RE = re.compile(
@@ -9038,7 +9044,7 @@ _MODEL_CONFIG_ERROR_RE = re.compile(
 _AGENT_WIDE_ERROR_RE = re.compile(
     r"rate[\s-]?limit|too\s+many\s+requests|\bquota\b|credit|unauthori[sz]ed|\bforbidden\b|invalid\s+(?:api\s+)?key"
     r"|authenticat|\bdisabled\b|\bsuspended\b|billing|payment|internal\s+(?:server\s+)?error|service\s+unavailable"
-    r"|bad\s+gateway|gateway\s+time|timed?\s*out|\btimeout\b",
+    r"|bad\s+gateway|gateway\s+time|timed?\s*out|\btimeout\b|status\s+code\s+(?:429|5\d\d)",
     re.IGNORECASE,
 )
 # … versus a reply with temporary wording: busy right now, not removed.
@@ -9171,6 +9177,12 @@ def looks_like_agent_error(text: Any) -> bool:
         return True
     if len(value) <= 300 and value[:15].lower().startswith("ai_apicallerror"):
         return True
+    if len(value) <= 80 and _BARE_HTTP_ERROR_RE.match(value):
+        return True
+    if len(value) <= 150 and _ERROR_LEAD_RE.match(value) and (
+        _AGENT_WIDE_ERROR_RE.search(value) or _MODEL_LOAD_ERROR_RE.search(value)
+    ):
+        return True  # "Error: Rate limit exceeded"
     return len(value) <= 200 and bool(_ERROR_LEAD_RE.match(value) and _MODEL_CONFIG_ERROR_RE.search(value))
 
 

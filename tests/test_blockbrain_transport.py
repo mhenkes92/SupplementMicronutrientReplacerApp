@@ -1106,6 +1106,13 @@ def test_the_slow_agent_default_never_goes_before_a_named_model(monkeypatch):
     "[Agent 6a4bc43653952e29ba6ef1d6] - Failed to resolve model configuration for model gpt-4.1-nano. Details: " + "x" * 600,
     "Failed to resolve model configuration. " + "The pinned model is not available. " * 30,
     "[Agent Orange label reader] - something failed " + "y" * 800,
+    "Error: Rate limit exceeded",
+    "Error: Insufficient credits",
+    "Error: Request failed with status code 429",
+    '{"error": "Rate limit exceeded"}',
+    "Internal Server Error",
+    "Service Unavailable",
+    "Unauthorized",
 ])
 def test_longer_and_other_error_shapes_are_recognised(text):
     """Review NEW-ERROR-SHAPES / NEW-LONG-ERROR-TEXT: no length cap for the exact phrase or the [Agent …] prefix."""
@@ -1117,6 +1124,9 @@ def test_longer_and_other_error_shapes_are_recognised(text):
     "[Agent-based models] are not used for nutrient advice. " + "z" * 600,
     "Der Fehler liegt oft an der Dosierung; Magnesium 300 mg am Abend ist üblich.",
     "Eisen: take it with vitamin C. [Agent Orange](https://example.org) is unrelated.",
+    "Error bars in the study show the effect of magnesium is not significant.",
+    "Error: dose not found on the label for Selen, so I assumed 55 µg.",
+    "The service unavailable message appears when the product page is down; the label itself lists Zinc 10 mg.",
 ])
 def test_real_answers_are_never_mistaken_for_errors(answer):
     assert not bb.looks_like_agent_error(answer)
