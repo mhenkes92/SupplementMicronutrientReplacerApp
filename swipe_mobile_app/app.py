@@ -68,6 +68,10 @@ _bootstrap_blockbrain_env_from_secrets()
 import blockbrain.app as bb  # noqa: E402
 import llm_cache  # noqa: E402
 
+# A Blockbrain error is never served or stored as an answer (also catches
+# entries an older build cached before this check existed).
+llm_cache.set_reject(bb.looks_like_agent_error)
+
 
 st.set_page_config(page_title="SuppSwipe", page_icon="🥗", layout="centered")
 
@@ -328,7 +332,7 @@ def _cached_extract_from_url(url: str, _llm_allowed: Any = None) -> str:
     # `_llm_allowed` (not part of the cache key) meters the LLM step: a cached
     # page or one the local parser reads costs no quota.
     text = str(bb.extract_supplement_text_from_url(url, llm_allowed=_llm_allowed) or "")
-    if not text.strip():
+    if not text.strip() or bb.looks_like_agent_error(text):
         raise RuntimeError("couldn't read supplement facts from that page")
     return text
 
@@ -365,6 +369,8 @@ def _cached_ocr(image_bytes: bytes) -> str:
         raise RuntimeError("vision OCR returned no text")
     if _is_ocr_refusal(text):
         raise RuntimeError("vision OCR returned a refusal, not label text")
+    if bb.looks_like_agent_error(text):
+        raise RuntimeError("vision OCR returned a Blockbrain error, not label text")
     return text
 
 
@@ -628,6 +634,8 @@ def _stream_llm_text(
         ).strip()
     except Exception:
         text = ""
+    if bb.looks_like_agent_error(text):  # a Blockbrain error is never an answer
+        text = ""
     if text:
         llm_cache.put(cache_key, text)
         if placeholder is not None:
@@ -648,9 +656,10 @@ def _await_background_text(cache_key: str, pending: Any, placeholder: Any = None
             shown = partial
         time.sleep(0.25)
     try:
-        return str(pending.result(timeout=0) or "").strip()
+        text = str(pending.result(timeout=0) or "").strip()
     except Exception:
         return ""
+    return "" if bb.looks_like_agent_error(text) else text
 
 
 def _looks_like_extraction_json(text: str) -> bool:
@@ -684,7 +693,17 @@ def _env_seconds(name: str, default: float) -> float:
         return default
 
 
-_ASK_AI_BOT_WAIT_S = _env_seconds("SUPPSWIPE_ASK_AI_BOT_WAIT_S", 8.0)
+_ASK_AI_BOT_WAIT_S = _env_seconds("SUPPSWIPE_ASK_AI_BOT_WAIT_S", 15.0)
+
+# Under every Ask AI answer: where it came from, so it is clear whether the
+# Examine knowledge base (the Knowledge Bot) answered or the general agent did.
+_SOURCE_KB = "\n\n_📚 From your Examine knowledge base_"
+_SOURCE_AGENT = "\n\n_🤖 General AI answer (not from your knowledge base)_"
+_SOURCE_AGENT_TIMEOUT = "\n\n_🤖 General AI answer — the knowledge base didn't reply in time_"
+_SOURCE_AGENT_FAILED = "\n\n_🤖 General AI answer — the knowledge base couldn't answer_"
+
+# Last Knowledge Bot call, for the ?debug=1 panel (process-wide, no user data).
+_LAST_BOT_STATUS: dict[str, Any] = {}
 
 
 def _ask_bot_within(message: str, bot_id: str | None, wait_s: float) -> str | None:
@@ -703,13 +722,23 @@ def _ask_bot_within(message: str, bot_id: str | None, wait_s: float) -> str | No
         except Exception:
             result["answer"] = None
 
+    global _LAST_BOT_STATUS
+    started = time.monotonic()
     worker = threading.Thread(target=_call, name="suppswipe-ask-bot", daemon=True)
     worker.start()
     worker.join(max(0.0, float(wait_s)))
+    waited = round(time.monotonic() - started, 2)
+    # One assignment per update, so a reader never sees a half-written status.
     if worker.is_alive():
+        _LAST_BOT_STATUS = {"status": "timeout", "waited_s": waited}
         return None
     answer = result.get("answer")
-    return answer if isinstance(answer, str) else None
+    if not isinstance(answer, str) or not answer.strip() or bb.looks_like_agent_error(answer):
+        error = str(getattr(bb, "LAST_BOT_ERROR", "") or (answer or "") or "no reply")[:200]
+        _LAST_BOT_STATUS = {"status": "error", "s": waited, "error": error}
+        return None
+    _LAST_BOT_STATUS = {"status": "ok", "s": waited}
+    return answer
 
 
 def _ask_ai_history(component_key: str) -> list[dict[str, str]]:
@@ -760,7 +789,8 @@ def _answer_ask_ai_question(
         cache_key = llm_cache.make_key("ask_ai", component_name.strip().lower(), dose_label.lower(), question.strip().lower())
         cached = llm_cache.get(cache_key)
         if cached:
-            return cached, ""
+            source = llm_cache.get(cache_key + ":source")
+            return cached, (_SOURCE_KB if source == "kb" else _SOURCE_AGENT if source == "agent" else "")
 
     history_block = ""
     if history:
@@ -801,7 +831,8 @@ def _answer_ask_ai_question(
     if bot_answer and bot_answer.strip() and not _looks_like_extraction_json(bot_answer):
         if cache_key:
             llm_cache.put(cache_key, bot_answer.strip())
-        return bot_answer.strip(), ""
+            llm_cache.put(cache_key + ":source", "kb")
+        return bot_answer.strip(), _SOURCE_KB
 
     # 2) Fallback: the general agent (streamed).
     system_prompt = (
@@ -828,7 +859,12 @@ def _answer_ask_ai_question(
         consume_quota=False,  # already counted for this question
     )
     if agent_answer:
-        return agent_answer, ""
+        if cache_key:
+            llm_cache.put(cache_key + ":source", "agent")
+        if _ASK_AI_BOT_WAIT_S <= 0:  # the knowledge base isn't asked at all
+            return agent_answer, _SOURCE_AGENT
+        timed_out = _LAST_BOT_STATUS.get("status") == "timeout"
+        return agent_answer, (_SOURCE_AGENT_TIMEOUT if timed_out else _SOURCE_AGENT_FAILED)
 
     # 3) Fallback: local research RAG index.
     return _local_rag_answer(scoped_question)
@@ -3713,6 +3749,13 @@ def _render_header() -> None:
                 color: #064e3b;
                 margin: 0 0 0.4rem 0;
             }
+            .brand-foot {
+                text-align: center;
+                font-size: 0.75rem;
+                font-weight: 600;
+                color: #64748b;
+                margin: 1.2rem 0 0.4rem 0;
+            }
             .brand-mark {
                 display: inline-flex;
                 align-items: center;
@@ -3977,6 +4020,21 @@ def _render_dietary_pills() -> None:
     )
 
 
+def _ai_unavailable_message(what: str) -> str:
+    """The analysis error when an AI step failed (not the user's input)."""
+    if what == "link":
+        return (
+            "That product page couldn't be read: the AI page reader didn't respond. "
+            "Paste the nutrition table as text instead (🔗 Paste — that works without AI), "
+            "or try again in a few minutes."
+        )
+    return (
+        "Your photo couldn't be read: the AI label reader returned no text (it may be busy, "
+        "or the photo too blurry). Try a sharp, straight photo of the nutrition table, paste "
+        "the table as text (🔗 Paste — that works without AI), or try again in a few minutes."
+    )
+
+
 def _run_pending_analysis() -> None:
     req = dict(st.session_state.get("swipe_pending_request") or {})
 
@@ -4043,6 +4101,9 @@ def _run_pending_analysis() -> None:
         # Where the doses came from; "ai_research" is surfaced on every card so the
         # user knows the values were looked up, not read from their own photo.
         label_source: dict[str, str] = {"kind": "input", "url": ""}
+        # Set when an AI step (photo reading, product research, page reading)
+        # failed: an empty result is then the AI's fault, not the user's input.
+        ai_failed = ""
 
         with st.spinner("Extracting and parsing supplement info…"):
             # A barcode the phone decoded in the browser is looked up first; if
@@ -4063,6 +4124,8 @@ def _run_pending_analysis() -> None:
                         ocr_text, _route = _extract_image_text_best_effort(bytes(img))
                         if ocr_text.strip():
                             text_parts.append(ocr_text)
+                        else:
+                            ai_failed = "photo"
                         # Barcode fallback: if the label text is not strong, try to
                         # read an EAN from the OCR text and research the product.
                         if not bb.extraction_gate_report("\n".join(text_parts)).get("passed"):
@@ -4086,8 +4149,13 @@ def _run_pending_analysis() -> None:
                             if researched_name:
                                 text_parts.append(researched_name)
                                 label_source = {"kind": "ai_research", "url": source_url}
+                            elif getattr(bb, "LAST_BLOCKBRAIN_ERROR", ""):
+                                ai_failed = "photo"
                     except Exception as exc:
-                        st.warning(f"Image OCR failed: {exc}")
+                        if str(exc) == _QUOTA_MESSAGE:
+                            st.warning(_QUOTA_MESSAGE)
+                        else:
+                            ai_failed = "photo"
 
             manual = str(req.get("manual", "") or "").strip()
             if manual:
@@ -4116,20 +4184,27 @@ def _run_pending_analysis() -> None:
                         if url_text.strip():
                             text_parts.append(url_text)
                     except Exception as exc:
-                        st.warning(f"URL fetch failed: {exc}")
+                        if getattr(bb, "LAST_BLOCKBRAIN_ERROR", ""):
+                            ai_failed = "link"
+                        else:
+                            st.warning(f"URL fetch failed: {exc}")
                 else:
                     _set_progress(58, "Processing text input…")
                     text_parts.append(manual)
 
             combined = "\n\n".join([x for x in text_parts if str(x).strip()]).strip()
             if not combined:
-                _abort("No analyzable input found. Add a photo, barcode, URL, or supplement-facts text.")
+                _abort(_ai_unavailable_message(ai_failed) if ai_failed else (
+                    "No analyzable input found. Add a photo, barcode, URL, or supplement-facts text."
+                ))
                 return
 
             _set_progress(72, "Parsing micronutrients…")
             components = bb.parse_components(combined)
             if not components:
-                _abort("No micronutrients could be parsed from the provided input.")
+                _abort(_ai_unavailable_message(ai_failed) if ai_failed else (
+                    "No micronutrients could be parsed from the provided input."
+                ))
                 return
 
             # Keep only scientifically recognised micronutrients (vitamins +
@@ -4137,6 +4212,9 @@ def _run_pending_analysis() -> None:
             # This drops macronutrients (protein/fat/carbs/sugar/calories),
             # fillers and label metadata so the user only swipes real nutrients.
             components = _apply_label_context(_filter_to_micronutrients(components), combined)
+            if not components and ai_failed:
+                _abort(_ai_unavailable_message(ai_failed))
+                return
             if not components:
                 _abort(
                     "No micronutrients found. The label's non-nutrient lines "
@@ -5705,6 +5783,8 @@ def _render_debug_panel() -> None:
                 "generation_model": _generation_model(),
                 "last_call": dict(getattr(bb, "LAST_BLOCKBRAIN_TIMING", {}) or {}),
                 "last_error": str(getattr(bb, "LAST_BLOCKBRAIN_ERROR", "") or ""),
+                "knowledge_bot": dict(_LAST_BOT_STATUS) or "not asked yet",
+                "models_that_failed": bb.unresolved_models(),
             }
         )
 
@@ -5735,6 +5815,7 @@ def _build_mobile_ui() -> None:
         show_debug = False
     if show_debug:
         _render_debug_panel()
+    st.markdown("<div class='brand-foot'>© mfitness92</div>", unsafe_allow_html=True)
     _sync_scan_history_with_browser()
 
 

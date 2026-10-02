@@ -125,8 +125,8 @@ def test_ask_ai_prefers_bot_and_caches_first_questions(sw, monkeypatch):
 
     monkeypatch.setattr(bb, "call_blockbrain_bot", fake_bot)
     monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: pytest.fail("agent not needed"))
-    assert sw._answer_ask_ai_question("Zinc", "Does zinc deplete copper?") == ("Bot answer", "")
-    assert sw._answer_ask_ai_question("Zinc", "does zinc deplete copper? ") == ("Bot answer", "")
+    assert sw._answer_ask_ai_question("Zinc", "Does zinc deplete copper?") == ("Bot answer", sw._SOURCE_KB)
+    assert sw._answer_ask_ai_question("Zinc", "does zinc deplete copper? ") == ("Bot answer", sw._SOURCE_KB)
     assert len(bot_calls) == 1
     assert bot_calls[0][1] == sw._ASK_AI_BOT_TIMEOUT
 
@@ -206,3 +206,67 @@ def test_ocr_failures_are_not_cached(sw, monkeypatch):
     with pytest.raises(RuntimeError):
         sw._cached_ocr(payload)
     assert sw._cached_ocr(payload) == "Vitamin C 90 mg"
+
+
+
+def test_ask_ai_labels_the_general_agent_answer_and_skips_agent_errors(sw, monkeypatch):
+    # The bot replies with a Blockbrain agent error: that is not an answer.
+    monkeypatch.setattr(bb, "call_blockbrain_bot", lambda *a, **k: "[Agent researchAgent] - Failed to resolve model configuration")
+    monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: "Zinc and copper compete for absorption.")
+    answer, source = sw._answer_ask_ai_question("Zinc", "Copper interaction?")
+    assert answer == "Zinc and copper compete for absorption."
+    assert source == sw._SOURCE_AGENT_FAILED  # the bot answered with an error, it didn't time out
+    assert sw._LAST_BOT_STATUS["status"] == "error"
+    # Cached: still marked as a general answer.
+    assert sw._answer_ask_ai_question("Zinc", "Copper interaction?") == (answer, sw._SOURCE_AGENT)
+
+
+def test_an_agent_error_is_never_shown_or_cached_as_an_answer(sw, monkeypatch):
+    monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: "[Agent researchAgent] - Failed to resolve model configuration")
+    box = Box()
+    assert sw._generate_meal_plan(REPLACE, "", 1, placeholder=box) == ""
+    _sys, _usr, key = sw._meal_plan_prompts(REPLACE, "", 1)
+    assert sw.llm_cache.get(key) is None
+    assert not any("Failed to resolve" in str(r) for r in box.renders)
+
+
+def test_llm_cache_never_serves_or_stores_a_blockbrain_error(sw):
+    """Review F4: also entries an older build cached before the check existed."""
+    key = sw.llm_cache.make_key("old-build-entry")
+    sw.llm_cache.set_reject(None)
+    sw.llm_cache.put(key, "[Agent researchAgent] - Failed to resolve model configuration")  # as the old build did
+    sw.llm_cache.set_reject(bb.looks_like_agent_error)
+    assert sw.llm_cache.get(key) is None
+    sw.llm_cache.put(key, "Failed to resolve model configuration")
+    assert sw.llm_cache.get(key) is None
+    sw.llm_cache.put(key, "**Breakfast** oats")
+    assert sw.llm_cache.get(key) == "**Breakfast** oats"
+
+
+def test_a_split_error_never_flashes_while_streaming(monkeypatch):
+    """Review F12: "[Agent" arriving first must not be pushed to the screen."""
+    import tests.test_blockbrain_transport as tt
+
+    pieces = ["[Agent", " researchAgent]", " - Failed", " to resolve model configuration"]
+
+    def responder(url, model):
+        if model == "gpt-4.1-nano":
+            return tt.FakeResponse(events=[{"type": "text-delta", "id": "t", "delta": p} for p in pieces] + [{"type": "finish"}])
+        return tt.FakeResponse(events=tt.GOOD_STREAM)
+
+    for state in (bb._STREAM_ENDPOINT_COOLDOWN, bb._LAST_GOOD_STREAM_URL, bb._MODEL_UNRESOLVED, bb._LAST_GOOD_MODEL, bb._MODEL_OUTAGE_UNTIL):
+        state.clear()
+    tt._install_by_model(monkeypatch, responder)
+    seen = []
+    monkeypatch.setattr(bb.time, "monotonic", iter(range(0, 10_000, 1)).__next__)  # every push is past the throttle
+    assert bb.call_blockbrain_text("sys", "q", on_text=seen.append) == "**Breakfast** oats"
+    assert seen and not any(s.lstrip().startswith("[") for s in seen)
+    for state in (bb._STREAM_ENDPOINT_COOLDOWN, bb._LAST_GOOD_STREAM_URL, bb._MODEL_UNRESOLVED, bb._LAST_GOOD_MODEL, bb._MODEL_OUTAGE_UNTIL):
+        state.clear()
+
+
+def test_a_failed_ai_step_explains_itself(sw):
+    """Review F2: when the AI returns nothing, say so — not "no micronutrients"."""
+    assert "Your photo couldn't be read" in sw._ai_unavailable_message("photo")
+    assert "Paste" in sw._ai_unavailable_message("photo")
+    assert "product page couldn't be read" in sw._ai_unavailable_message("link")
