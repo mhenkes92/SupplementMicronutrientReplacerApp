@@ -41,10 +41,10 @@ class FakeResponse:
 def _reset_transport_state(monkeypatch):
     monkeypatch.delenv("BLOCKBRAIN_CHAT_ENDPOINT", raising=False)
     monkeypatch.delenv("BLOCKBRAIN_STREAM_JOIN", raising=False)
-    for state in (bb._STREAM_ENDPOINT_COOLDOWN, bb._LAST_GOOD_STREAM_URL, bb._MODEL_UNRESOLVED, bb._LAST_GOOD_MODEL, bb._MODEL_OUTAGE_UNTIL):
+    for state in (bb._STREAM_ENDPOINT_COOLDOWN, bb._LAST_GOOD_STREAM_URL, bb._MODEL_UNRESOLVED, bb._LAST_GOOD_MODEL, bb._AGENT_PARKED):
         state.clear()
     yield
-    for state in (bb._STREAM_ENDPOINT_COOLDOWN, bb._LAST_GOOD_STREAM_URL, bb._MODEL_UNRESOLVED, bb._LAST_GOOD_MODEL, bb._MODEL_OUTAGE_UNTIL):
+    for state in (bb._STREAM_ENDPOINT_COOLDOWN, bb._LAST_GOOD_STREAM_URL, bb._MODEL_UNRESOLVED, bb._LAST_GOOD_MODEL, bb._AGENT_PARKED):
         state.clear()
 
 
@@ -328,20 +328,19 @@ def test_an_unresolvable_model_falls_back_to_the_next_model(monkeypatch, error_e
     assert [m for _agent, _v, m in sent] == [bb.BLOCKBRAIN_TEXT_MODEL_FALLBACKS[0]]
 
 
-def test_the_agent_default_model_is_among_the_text_fallbacks(monkeypatch):
+def test_the_agent_default_model_is_the_last_text_fallback(monkeypatch):
     sent = _install_by_model(
         monkeypatch,
         lambda url, model: FakeResponse(events=GOOD_STREAM if model == "" else [{"type": "error", "errorText": MODEL_ERROR}]),
     )
     assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
     models = [m for _agent, _v, m in sent]
-    assert models[-1] == "" and len(models) <= bb._MODEL_ERRORS_PER_CALL
-    # The slow agent default is never preferred: once the marks expire, the
-    # requested model is tried first again.
-    bb._MODEL_UNRESOLVED.clear()
+    assert models == ["gpt-4.1-nano"] + bb.BLOCKBRAIN_TEXT_MODEL_FALLBACKS  # every model once, the default last
+    # The next call goes straight to what worked, also on the agent that answered
+    # (which never saw the refused model itself).
     sent.clear()
-    bb.call_blockbrain_text("sys", "again")
-    assert sent[0][2] == "gpt-4.1-nano"
+    assert bb.call_blockbrain_text("sys", "again") == "**Breakfast** oats"
+    assert [m for _a, _v, m in sent] == [""]
 
 
 def test_an_agent_error_is_never_returned_as_an_answer(monkeypatch):
@@ -349,21 +348,31 @@ def test_an_agent_error_is_never_returned_as_an_answer(monkeypatch):
     sent = _install_by_model(monkeypatch, lambda url, model: FakeResponse(events=[{"type": "error", "errorText": MODEL_ERROR}]))
     assert bb.call_blockbrain_text("sys", "q") == ""
     assert "Failed to resolve model configuration" in bb.LAST_BLOCKBRAIN_ERROR
-    assert len(sent) <= bb._MODEL_ERRORS_PER_CALL  # bounded, not agents x models
-    assert len({a for a, _v, _m in sent}) == 3 and {v for _a, v, _m in sent} == {"v2"}  # no v1 retries
-    # While everything is known to fail, a call sends one probe, not the whole chain…
+    assert "Failed to resolve model configuration" in bb.last_call_error()
+    models = [m for _a, _v, m in sent]
+    assert len(models) == len(set(models)) == 1 + len(bb.BLOCKBRAIN_TEXT_MODEL_FALLBACKS)  # each model once
+    assert {v for _a, v, _m in sent} == {"v2"}  # no v1 retries
+    # Still down: bounded again, never more than every model once.
     sent.clear()
     assert bb.call_blockbrain_text("sys", "q") == ""
-    assert len(sent) == 1 and sent[0][2] == "gpt-4.1-nano"
+    assert len(sent) <= 1 + len(bb.BLOCKBRAIN_TEXT_MODEL_FALLBACKS)
 
 
 def test_the_app_recovers_as_soon_as_blockbrain_is_fixed(monkeypatch):
-    """Review F1: after a total outage the next call must reach a healthy Blockbrain."""
+    """Review F1/FR2: after a total outage the next call reaches a healthy Blockbrain,
+    also when the requested model itself stays removed (the live situation)."""
     _install_by_model(monkeypatch, lambda url, model: FakeResponse(events=[{"type": "error", "errorText": MODEL_ERROR}]))
     assert bb.call_blockbrain_text("sys", "q") == ""
-    sent = _install_by_model(monkeypatch, lambda url, model: FakeResponse(events=GOOD_STREAM))
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "error", "errorText": MODEL_ERROR}] if model == "gpt-4.1-nano" else GOOD_STREAM),
+    )
     assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
-    assert len(sent) == 1
+    # Every model failed somewhere, so the requested one may be tried once first.
+    assert len(sent) <= 2
+    sent.clear()
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert [m for _a, _v, m in sent] == [bb.BLOCKBRAIN_TEXT_MODEL_FALLBACKS[0]]
 
 
 def test_other_agent_errors_move_to_the_next_agent(monkeypatch):
@@ -488,7 +497,7 @@ def test_temporarily_unavailable_is_not_a_model_configuration_error():
     "[Agent researchAgent] — Failed to resolve model configuration",
     "[Agent researchAgent]: Failed to resolve model configuration",
     "Failed to resolve model configuration",
-    "Error: unknown model 'gpt-4.1-nano'",
+    "Error: Failed to resolve model configuration.",
 ])
 def test_error_variants_are_recognised(text):
     """Review F3."""
@@ -522,3 +531,94 @@ def test_bot_error_bodies_are_not_answers(monkeypatch):
     assert bb.call_blockbrain_bot("q") == "" and "Failed to resolve" in bb.LAST_BOT_ERROR
     replies["answer"] = R(body={"body": {"content": "Zinc and copper compete."}})
     assert bb.call_blockbrain_bot("q") == "Zinc and copper compete." and bb.LAST_BOT_ERROR == ""
+
+
+def test_a_blurry_photo_reply_is_an_answer_not_a_model_failure(monkeypatch):
+    """Review FR1: "please attach a sharper photo" must not switch photo reading off."""
+    reply = "The image is too blurry to read the nutrition table. Please attach a sharper photo."
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "error", "errorText": MODEL_ERROR}] if model == "gpt-4.1-nano"
+                                        else [{"type": "text-delta", "id": "t", "delta": reply}, {"type": "finish"}]),
+    )
+    buf = io.BytesIO()
+    Image.new("RGB", (600, 400), "white").save(buf, format="JPEG")
+    bb.call_blockbrain_vision(buf.getvalue())
+    assert len(sent) == 2  # nano refused, gpt-4.1 answered (about the photo)
+    assert not any(m != "gpt-4.1-nano" for (_a, m) in bb._MODEL_UNRESOLVED)
+    sent.clear()
+    bb.call_blockbrain_vision(buf.getvalue())
+    assert [m for _a, _v, m in sent] == ["gpt-4.1"]  # the next photo goes straight to it
+
+
+def test_a_busy_model_falls_back_without_blocking_anything(monkeypatch):
+    """Review R1/FR3: "temporarily not available" on the pinned model -> the next model."""
+    busy = "[Agent researchAgent] - Model gpt-4.1-nano is temporarily not available. Please try again later."
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "error", "errorText": busy}] if model == "gpt-4.1-nano" else GOOD_STREAM),
+    )
+    for _ in range(3):
+        sent.clear()
+        assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+        assert [m for _a, _v, m in sent] == ["gpt-4.1-nano", "gpt-4.1-mini"]  # busy is not blocked: tried again
+    assert bb._STREAM_ENDPOINT_COOLDOWN == {} and bb._AGENT_PARKED == {} and bb._MODEL_UNRESOLVED == {}
+
+
+@pytest.mark.parametrize("answer", [
+    "Short answer: the 'more is better' model is not supported by the evidence — 25 µg/day is plenty.",
+    "Not found — this product model is not found in the databases I checked.",
+    "Unknown model number; please photograph the Supplement Facts panel instead.",
+    "[Agent Orange](https://example.org) was a herbicide; it is unrelated to vitamin D.",
+    "[Agent-based models] are not used for nutrient advice.",
+])
+def test_short_real_answers_are_kept(monkeypatch, answer):
+    """Review FR4: an answer that merely mentions "model … not supported" is an answer."""
+    assert not bb.looks_like_agent_error(answer)
+    sent = _install_by_model(
+        monkeypatch, lambda url, model: FakeResponse(events=[{"type": "text-delta", "id": "t", "delta": answer}, {"type": "finish"}])
+    )
+    assert bb.call_blockbrain_text("sys", "q") == answer
+    assert len(sent) == 1
+
+
+def test_only_the_last_fallback_works_and_is_found_in_the_first_call(monkeypatch):
+    """Review R2: every distinct model is tried once before giving up."""
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=GOOD_STREAM if model == "anthropic-claude-haiku-4.5"
+                                        else [{"type": "error", "errorText": MODEL_ERROR}]),
+    )
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    sent.clear()
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert len(sent) == 1
+
+
+def test_the_failure_reason_is_per_thread():
+    """Review FR5/FR6: another visitor's failure never changes this visitor's messages."""
+    import threading
+
+    bb.reset_call_error()
+
+    def other_visitor():
+        bb._CALL_STATE.error = "Blockbrain bot convo HTTP 500"
+
+    worker = threading.Thread(target=other_visitor)
+    worker.start()
+    worker.join()
+    assert bb.last_call_error() == ""
+
+
+def test_a_model_refused_on_one_agent_goes_last_on_the_others():
+    far = float("inf")
+    bb._MODEL_UNRESOLVED[("researchAgent", "gpt-4.1-nano")] = far
+    fallbacks = ["gpt-4.1-mini", "gpt-4o-mini", ""]
+    # On the agent that refused it: left out.
+    assert bb._model_candidates("gpt-4.1-nano", fallbacks, "text", "researchAgent") == (fallbacks, False)
+    # On another agent: still tried, but last.
+    assert bb._model_candidates("gpt-4.1-nano", fallbacks, "text", "customAgent") == (fallbacks + ["gpt-4.1-nano"], False)
+    # The model that last worked leads, even if another agent refused it earlier.
+    bb._MODEL_UNRESOLVED[("customAgent", "gpt-4o-mini")] = far
+    bb._LAST_GOOD_MODEL["text"] = "gpt-4o-mini"
+    assert bb._model_candidates("gpt-4.1-nano", fallbacks, "text", "researchAgent")[0][0] == "gpt-4o-mini"
