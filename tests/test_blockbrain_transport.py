@@ -41,11 +41,11 @@ class FakeResponse:
 def _reset_transport_state(monkeypatch):
     monkeypatch.delenv("BLOCKBRAIN_CHAT_ENDPOINT", raising=False)
     monkeypatch.delenv("BLOCKBRAIN_STREAM_JOIN", raising=False)
-    bb._STREAM_ENDPOINT_COOLDOWN.clear()
-    bb._LAST_GOOD_STREAM_URL.clear()
+    for state in (bb._STREAM_ENDPOINT_COOLDOWN, bb._LAST_GOOD_STREAM_URL, bb._MODEL_UNRESOLVED, bb._LAST_GOOD_MODEL):
+        state.clear()
     yield
-    bb._STREAM_ENDPOINT_COOLDOWN.clear()
-    bb._LAST_GOOD_STREAM_URL.clear()
+    for state in (bb._STREAM_ENDPOINT_COOLDOWN, bb._LAST_GOOD_STREAM_URL, bb._MODEL_UNRESOLVED, bb._LAST_GOOD_MODEL):
+        state.clear()
 
 
 def _install(monkeypatch, responder):
@@ -189,7 +189,7 @@ def test_openai_endpoint_errors_reach_module_state(monkeypatch):
 def test_call_blockbrain_text_sends_history(monkeypatch):
     sent = {}
 
-    def fake_chat(payload, on_text=None, budget_s=None, allow_tools=False):
+    def fake_chat(payload, on_text=None, budget_s=None, allow_tools=False, **_kwargs):
         sent.update(payload)
         return "answer"
 
@@ -206,7 +206,7 @@ def test_call_blockbrain_text_sends_history(monkeypatch):
 def test_vision_never_uploads_full_resolution(monkeypatch):
     captured = {}
 
-    def fake_chat(payload, on_text=None, budget_s=None, allow_tools=False):
+    def fake_chat(payload, on_text=None, budget_s=None, allow_tools=False, **_kwargs):
         captured["payload"] = payload
         return "Vitamin C 90 mg"
 
@@ -287,3 +287,119 @@ def test_order_puts_the_configured_agent_first_unless_cooling():
     bb._STREAM_ENDPOINT_COOLDOWN[eps[1]] = float("inf")
     bb._LAST_GOOD_STREAM_URL["b"] = eps[2]
     assert bb._order_stream_endpoints("b", eps, eps[:2]) == [eps[2], eps[3], eps[0], eps[1]]
+
+
+# --- "Failed to resolve model configuration" (live failure, Oct 2026) -----------------
+
+MODEL_ERROR = "[Agent researchAgent] - Failed to resolve model configuration"
+GOOD_STREAM = [{"type": "text-delta", "id": "t", "delta": "**Breakfast** oats"}, {"type": "finish"}]
+
+
+def _install_by_model(monkeypatch, responder):
+    """fake _http_post that hands (url, sent model or "") to `responder`."""
+    sent = []
+
+    def fake_post(url, json=None, **kwargs):
+        model = str((json or {}).get("model", "") or "")
+        sent.append((url.split("/api/agents/")[1].split("/")[0], url.split("/")[3], model))
+        return responder(url, model)
+
+    monkeypatch.setattr(bb, "_http_post", fake_post)
+    return sent
+
+
+@pytest.mark.parametrize("error_events", [
+    [{"type": "error", "errorText": MODEL_ERROR}],                       # AI SDK error part
+    [{"type": "text-delta", "id": "t", "delta": MODEL_ERROR}, {"type": "finish"}],  # written as the answer
+])
+def test_an_unresolvable_model_falls_back_to_the_next_model(monkeypatch, error_events):
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=error_events if model == "gpt-4.1-nano" else GOOD_STREAM),
+    )
+    seen = []
+    out = bb.call_blockbrain_text("sys", "meals please", on_text=seen.append)
+    assert out == "**Breakfast** oats"
+    assert [m for _agent, _v, m in sent] == ["gpt-4.1-nano", bb.BLOCKBRAIN_TEXT_MODEL_FALLBACKS[0]]
+    assert not any("Failed to resolve" in text for text in seen)  # never shown while streaming
+    # The next call goes straight to the model that worked.
+    sent.clear()
+    assert bb.call_blockbrain_text("sys", "again") == "**Breakfast** oats"
+    assert [m for _agent, _v, m in sent] == [bb.BLOCKBRAIN_TEXT_MODEL_FALLBACKS[0]]
+
+
+def test_the_agent_default_model_is_the_last_text_fallback(monkeypatch):
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=GOOD_STREAM if model == "" else [{"type": "error", "errorText": MODEL_ERROR}]),
+    )
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    models = [m for _agent, _v, m in sent]
+    assert models[-1] == "" and models[:-1] == ["gpt-4.1-nano"] + bb.BLOCKBRAIN_TEXT_MODEL_FALLBACKS[:-1]
+
+
+def test_an_agent_error_is_never_returned_as_an_answer(monkeypatch):
+    # Every model and agent fails: the caller gets "" (and the error), not the message.
+    _install_by_model(monkeypatch, lambda url, model: FakeResponse(events=[{"type": "error", "errorText": MODEL_ERROR}]))
+    assert bb.call_blockbrain_text("sys", "q") == ""
+    assert "Failed to resolve model configuration" in bb.LAST_BLOCKBRAIN_ERROR
+    # A second call skips the models known to fail instead of retrying them all.
+    sent = _install_by_model(monkeypatch, lambda url, model: FakeResponse(events=[{"type": "error", "errorText": MODEL_ERROR}]))
+    assert bb.call_blockbrain_text("sys", "q") == ""
+    assert sent == []
+
+
+def test_other_agent_errors_move_to_the_next_agent(monkeypatch):
+    primary = bb._load_blockbrain_secrets()[2]
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(
+            events=[{"type": "error", "errorText": f"[Agent {primary}] - Rate limit exceeded"}]
+            if f"/{primary}/" in url else GOOD_STREAM
+        ),
+    )
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert sent[0][0] == primary and sent[-1][0] != primary
+    assert {m for _a, _v, m in sent} == {"gpt-4.1-nano"}  # not a model problem: same model
+
+
+def test_vision_falls_back_to_another_vision_model_never_the_agent_default(monkeypatch):
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(
+            events=[{"type": "error", "errorText": MODEL_ERROR}] if model == "gpt-4.1-nano"
+            else [{"type": "text-delta", "id": "t", "delta": "Vitamin C 80 mg"}, {"type": "finish"}]
+        ),
+    )
+    buf = io.BytesIO()
+    Image.new("RGB", (600, 400), "white").save(buf, format="JPEG")
+    assert bb.call_blockbrain_vision(buf.getvalue()) == "Vitamin C 80 mg"
+    assert [m for _a, _v, m in sent] == ["gpt-4.1-nano", bb.BLOCKBRAIN_VISION_MODEL_FALLBACKS[0]]
+    assert "" not in bb.BLOCKBRAIN_VISION_MODEL_FALLBACKS
+
+
+def test_looks_like_agent_error():
+    assert bb.looks_like_agent_error(MODEL_ERROR)
+    assert bb.looks_like_agent_error("[agent customAgent]: timeout")
+    assert not bb.looks_like_agent_error("**Breakfast** — oats with berries")
+    assert not bb.looks_like_agent_error("[Agent] tips: eat more beans " + "x" * 500)
+
+
+def test_an_agent_that_resolves_no_model_hands_over_to_another_agent(monkeypatch):
+    """Live setup: BLOCKBRAIN_AGENT_ID = "researchAgent" and that agent fails every model."""
+    key, base, _agent = bb._load_blockbrain_secrets()
+    monkeypatch.setattr(bb, "_load_blockbrain_secrets", lambda: (key or "k", base or "https://bb.example", "researchAgent"))
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(
+            events=[{"type": "error", "errorText": MODEL_ERROR}] if "/researchAgent/" in url else GOOD_STREAM
+        ),
+    )
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    agents = [a for a, _v, _m in sent]
+    assert agents[-1] != "researchAgent"
+    # researchAgent's v2 endpoint tried each model once; its v1 endpoint was skipped.
+    assert len([1 for a, v, _m in sent if a == "researchAgent" and v == "v1"]) == 0
+    sent.clear()
+    assert bb.call_blockbrain_text("sys", "again") == "**Breakfast** oats"
+    assert [a for a, _v, _m in sent] == [agents[-1]]  # straight to the agent that works

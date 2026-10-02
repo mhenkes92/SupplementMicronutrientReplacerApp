@@ -34,8 +34,9 @@ def _fresh_cache():
     llm_cache.clear()
 
 
-def test_default_wait_is_8_seconds(sw, monkeypatch):
-    assert sw._ASK_AI_BOT_WAIT_S == 8.0
+def test_default_wait_is_15_seconds(sw, monkeypatch):
+    # The Examine knowledge base gets time to answer before the general agent.
+    assert sw._ASK_AI_BOT_WAIT_S == 15.0
     monkeypatch.setenv("SUPPSWIPE_ASK_AI_BOT_WAIT_S", "0")
     assert sw._env_seconds("SUPPSWIPE_ASK_AI_BOT_WAIT_S", 8.0) == 0.0
     monkeypatch.setenv("SUPPSWIPE_ASK_AI_BOT_WAIT_S", "oops")
@@ -51,9 +52,9 @@ def test_fast_bot_answer_is_used_and_cached(sw, monkeypatch):
 
     monkeypatch.setattr(bb, "call_blockbrain_bot", fake_bot)
     monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: pytest.fail("agent not needed"))
-    assert sw._answer_ask_ai_question("Zinc", "Safe long-term?", dose_label="10 mg") == ("Bot answer", "")
+    assert sw._answer_ask_ai_question("Zinc", "Safe long-term?", dose_label="10 mg") == ("Bot answer", sw._SOURCE_KB)
     assert calls == ["suppswipe-ask-bot"]  # ran in the background thread
-    assert sw._answer_ask_ai_question("Zinc", "Safe long-term?", dose_label="10 mg") == ("Bot answer", "")
+    assert sw._answer_ask_ai_question("Zinc", "Safe long-term?", dose_label="10 mg") == ("Bot answer", sw._SOURCE_KB)
     assert len(calls) == 1  # cached
 
 

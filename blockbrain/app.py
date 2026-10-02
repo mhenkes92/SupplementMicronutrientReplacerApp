@@ -9011,6 +9011,85 @@ def _typed_delta_piece(event: Any) -> str | None:
     return None
 
 
+# Blockbrain reports some failures inside a 200 stream: an error event, or the
+# agent writes "[Agent researchAgent] - Failed to resolve model configuration"
+# as its only text. Neither may ever reach the UI or the cache as an answer.
+_AGENT_ERROR_TEXT_RE = re.compile(r"^\s*\[agent\s[^\]]{1,80}\]\s*[-:–]\s*\S", re.IGNORECASE)
+_MODEL_CONFIG_ERROR_RE = re.compile(
+    r"model\s+configuration|resolve\s+(?:the\s+)?model|unknown\s+model|invalid\s+model|unsupported\s+model"
+    r"|model\b.{0,40}\bnot\s+(?:found|available|supported|allowed|enabled)",
+    re.IGNORECASE,
+)
+
+# Models tried, in order, when Blockbrain can't resolve the requested one (it
+# was removed or isn't enabled for the organisation). "" = the agent's own
+# default model (no "model" field) — text only: the default backend can't see
+# images. All are models the benchmarks ran on Blockbrain.
+BLOCKBRAIN_TEXT_MODEL_FALLBACKS = ["gpt-4.1-mini", "gpt-4o-mini", "gemini-2.5-flash-lite", "anthropic-claude-haiku-4.5", ""]
+BLOCKBRAIN_VISION_MODEL_FALLBACKS = ["gpt-4.1", "gpt-4o", "gpt-4.1-mini", "anthropic-claude-haiku-4.5", "claude-sonnet-4.6-fast"]
+
+# (agent, model) pairs Blockbrain couldn't resolve, skipped for an hour, and
+# the model that last worked per call kind, tried first. Process-wide.
+_MODEL_UNRESOLVED: dict[tuple[str, str], float] = {}
+_LAST_GOOD_MODEL: dict[str, str] = {}
+_MODEL_UNRESOLVED_S = 3600.0
+
+
+def _stream_error_text(event: Any) -> str:
+    """The message of an SSE error event ({"type": "error", "errorText": ...}), or ""."""
+    if not isinstance(event, dict):
+        return ""
+    etype = str(event.get("type", "") or "").strip().lower()
+    if etype != "error" and "errorText" not in event:
+        return ""
+    for key in ("errorText", "error", "message"):
+        value = event.get(key)
+        if isinstance(value, dict):
+            value = value.get("message") or value.get("errorText") or value.get("text")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "Blockbrain stream error"
+
+
+def looks_like_agent_error(text: Any) -> bool:
+    """True for a short reply that is a Blockbrain agent error, not an answer."""
+    value = str(text or "").strip()
+    return bool(value) and len(value) <= 400 and bool(_AGENT_ERROR_TEXT_RE.match(value))
+
+
+def _is_model_config_error(text: Any) -> bool:
+    return bool(_MODEL_CONFIG_ERROR_RE.search(str(text or "")))
+
+
+def _model_candidates(requested: str, fallbacks: Any, kind: str, agent: str) -> list[str]:
+    """Models to try for one agent: the last one that worked for this kind of
+    call, the requested one, then the fallbacks. Models this agent couldn't
+    resolve in the last hour are skipped (an empty list skips the agent)."""
+    now = time.monotonic()
+    order: list[str] = []
+    with _STREAM_HEALTH_LOCK:
+        preferred = _LAST_GOOD_MODEL.get(kind)
+        bad = {m for (a, m), until in _MODEL_UNRESOLVED.items() if a == agent and until > now}
+    for model in ([preferred] if preferred is not None else []) + [requested] + list(fallbacks or []):
+        model = str(model or "").strip()
+        if model not in order:
+            order.append(model)
+    if fallbacks is None:  # no fallback chain: exactly the requested model
+        return [str(requested or "").strip()]
+    return [m for m in order if m not in bad]
+
+
+def _mark_model(kind: str, agent: str, model: str, ok: bool) -> None:
+    with _STREAM_HEALTH_LOCK:
+        if ok:
+            _LAST_GOOD_MODEL[kind] = model
+            _MODEL_UNRESOLVED.pop((agent, model), None)
+        else:
+            _MODEL_UNRESOLVED[(agent, model)] = time.monotonic() + _MODEL_UNRESOLVED_S
+            if _LAST_GOOD_MODEL.get(kind) == model:
+                _LAST_GOOD_MODEL.pop(kind, None)
+
+
 def _order_stream_endpoints(base_url: str, endpoints: list[str], primary: Any = ()) -> list[str]:
     """Try order: the configured (`primary`) agent's endpoints that are not
     cooling down (the one that last answered first), then the last endpoint
@@ -9048,6 +9127,8 @@ def _blockbrain_chat(
     on_text: Any = None,
     budget_s: float | None = None,
     allow_tools: bool = False,
+    model_fallbacks: list[str] | None = None,
+    kind: str = "text",
 ) -> str:
     """Send a request to Blockbrain and return the assistant text.
 
@@ -9060,6 +9141,9 @@ def _blockbrain_chat(
     `budget_s` caps the wall-clock time spent across all fallback endpoints.
     `allow_tools=True` lets the agent use its configured tools (e.g. web search)
     for this call instead of the default single-step, tool-free fast mode.
+    `model_fallbacks` are tried in turn on an agent that can't resolve the
+    requested model ("Failed to resolve model configuration"); an error event
+    or an agent-error reply is never returned as an answer.
     """
     global LAST_BLOCKBRAIN_ERROR
     global LAST_BLOCKBRAIN_MODEL
@@ -9270,130 +9354,164 @@ def _blockbrain_chat(
     # Tool calls remember their own last working endpoint, so a fast agent that
     # answered a meal plan never displaces the research agent for web lookups.
     sticky_key = base_url + ("|tools" if allow_tools else "")
+    requested_model = str((payload or {}).get("model", "") or "").strip()
+    model_kind = ("tools|" if allow_tools else "") + kind
+    out_of_budget = False
     for stream_url in _order_stream_endpoints(sticky_key, stream_endpoints, primary_endpoints):
-        if time.monotonic() - started > budget:
-            last_error = (last_error + " | " if last_error else "") + f"gave up after {int(budget)}s budget"
+        if out_of_budget:
             break
-        endpoint_path = stream_url[len(base_url):] if stream_url.startswith(base_url) else stream_url
-        attempt: dict[str, Any] = {"endpoint": endpoint_path, "status": None, "s": None}
-        timing["attempts"].append(attempt)
-        attempt_started = time.monotonic()
-        delta_parts: list[str] = []
-        text_parts: list[str] = []
+        endpoint_agent = stream_url.split("/api/agents/", 1)[1].split("/", 1)[0]
+        for model in _model_candidates(requested_model, model_fallbacks, model_kind, endpoint_agent):
+            if time.monotonic() - started > budget:
+                last_error = (last_error + " | " if last_error else "") + f"gave up after {int(budget)}s budget"
+                out_of_budget = True
+                break
+            request_payload = dict(payload or {})
+            if model:
+                request_payload["model"] = model
+            else:
+                request_payload.pop("model", None)
+            endpoint_path = stream_url[len(base_url):] if stream_url.startswith(base_url) else stream_url
+            attempt: dict[str, Any] = {"endpoint": endpoint_path, "model": model, "status": None, "s": None}
+            timing["attempts"].append(attempt)
+            attempt_started = time.monotonic()
+            delta_parts: list[str] = []
+            text_parts: list[str] = []
+            stream_error = ""
 
-        def _current_text() -> str:
-            if delta_parts:
-                return "".join(delta_parts).strip()
-            return "\n".join([c for c in text_parts if str(c).strip()]).strip()
+            def _current_text() -> str:
+                if delta_parts:
+                    return "".join(delta_parts).strip()
+                return "\n".join([c for c in text_parts if str(c).strip()]).strip()
 
-        try:
-            resp = _http_post(
-                stream_url,
-                headers=headers,
-                json=_fast_stream_payload(dict(payload or {}), endpoint_path),
-                timeout=timeout,
-                stream=True,
-            )
-        except Exception as exc:
-            last_error = f"Blockbrain request error: {exc}"
-            attempt["status"] = "error"
-            attempt["s"] = round(time.monotonic() - attempt_started, 2)
-            _mark_stream_endpoint(sticky_key, stream_url, ok=False)
-            continue
-
-        with resp:
-            attempt["status"] = resp.status_code
-            if resp.status_code == 404:
-                _mark_stream_endpoint(sticky_key, stream_url, ok=False, cooldown_s=_ENDPOINT_COOLDOWN_404_S)
-                attempt["s"] = round(time.monotonic() - attempt_started, 2)
-                continue
-            if resp.status_code != 200:
-                last_error = f"Blockbrain HTTP {resp.status_code}: {resp.text[:200]}"
-                if resp.status_code >= 500 or resp.status_code == 429:
-                    _mark_stream_endpoint(sticky_key, stream_url, ok=False)
-                attempt["s"] = round(time.monotonic() - attempt_started, 2)
-                continue
-
-            last_push = 0.0
-            # A server that keeps sending keep-alive bytes never trips the read
-            # timeout, so a single stream is also capped in wall-clock time.
-            stream_deadline = started + budget * 1.5
             try:
-                for raw_line in resp.iter_lines():
-                    if time.monotonic() > stream_deadline:
-                        raise TimeoutError(f"stream exceeded {int(budget * 1.5)}s")
-                    if not raw_line:
-                        continue
-                    line = raw_line.decode("utf-8", errors="replace") if isinstance(raw_line, bytes) else raw_line
-                    if not line.startswith("data:"):
-                        continue
-                    json_str = line[len("data:"):].strip()
-                    if not json_str or json_str == "[DONE]":
-                        continue
-                    try:
-                        event = json.loads(json_str)
-                    except Exception:
-                        continue
-
-                    if isinstance(event, dict):
-                        runtime_model = str(event.get("model", "") or event.get("resolved_model", "") or "").strip()
-                        if not runtime_model:
-                            try:
-                                runtime_model = str(
-                                    event.get("data", {})
-                                    .get("payload", {})
-                                    .get("request", {})
-                                    .get("body", {})
-                                    .get("model", "")
-                                    or ""
-                                ).strip()
-                            except Exception:
-                                runtime_model = ""
-                        if runtime_model:
-                            LAST_BLOCKBRAIN_MODEL = runtime_model
-
-                    added = False
-                    piece = _typed_delta_piece(event) if join_mode == "auto" else None
-                    if piece is not None:
-                        if piece:
-                            delta_parts.append(piece)
-                            added = True
-                    else:
-                        chunks = _collect_text_chunks(event)
-                        if chunks:
-                            text_parts.extend(chunks)
-                            added = True
-
-                    if added:
-                        if timing["ttft_s"] is None:
-                            timing["ttft_s"] = round(time.monotonic() - started, 2)
-                        if on_text is not None and time.monotonic() - last_push >= 0.12:
-                            last_push = time.monotonic()
-                            try:
-                                on_text(_current_text())
-                            except Exception:
-                                pass
-
-                    if isinstance(event, dict):
-                        event_type = str(event.get("type", "") or "").strip().lower()
-                        if event_type in {"finish", "done", "response.completed", "response.done", "message.stop"}:
-                            break
+                resp = _http_post(
+                    stream_url,
+                    headers=headers,
+                    json=_fast_stream_payload(request_payload, endpoint_path),
+                    timeout=timeout,
+                    stream=True,
+                )
             except Exception as exc:
-                last_error = f"Blockbrain stream error: {exc}"
-                delta_parts.clear()
-                text_parts.clear()
+                last_error = f"Blockbrain request error: {exc}"
+                attempt["status"] = "error"
+                attempt["s"] = round(time.monotonic() - attempt_started, 2)
+                _mark_stream_endpoint(sticky_key, stream_url, ok=False)
+                break
 
-        attempt["s"] = round(time.monotonic() - attempt_started, 2)
-        merged = _current_text()
-        if merged:
-            _mark_stream_endpoint(sticky_key, stream_url, ok=True)
-            if on_text is not None:
+            with resp:
+                attempt["status"] = resp.status_code
+                if resp.status_code == 404:
+                    _mark_stream_endpoint(sticky_key, stream_url, ok=False, cooldown_s=_ENDPOINT_COOLDOWN_404_S)
+                    attempt["s"] = round(time.monotonic() - attempt_started, 2)
+                    break
+                if resp.status_code != 200:
+                    last_error = f"Blockbrain HTTP {resp.status_code}: {resp.text[:200]}"
+                    if resp.status_code >= 500 or resp.status_code == 429:
+                        _mark_stream_endpoint(sticky_key, stream_url, ok=False)
+                    attempt["s"] = round(time.monotonic() - attempt_started, 2)
+                    if _is_model_config_error(resp.text[:400]):
+                        _mark_model(model_kind, endpoint_agent, model, ok=False)
+                        continue  # the next model on this agent
+                    break
+
+                last_push = 0.0
+                # A server that keeps sending keep-alive bytes never trips the read
+                # timeout, so a single stream is also capped in wall-clock time.
+                stream_deadline = started + budget * 1.5
                 try:
-                    on_text(merged)
-                except Exception:
-                    pass
-            return _finish(merged, endpoint_path)
-        last_error = last_error or f"Blockbrain {endpoint_path} returned no text"
+                    for raw_line in resp.iter_lines():
+                        if time.monotonic() > stream_deadline:
+                            raise TimeoutError(f"stream exceeded {int(budget * 1.5)}s")
+                        if not raw_line:
+                            continue
+                        line = raw_line.decode("utf-8", errors="replace") if isinstance(raw_line, bytes) else raw_line
+                        if not line.startswith("data:"):
+                            continue
+                        json_str = line[len("data:"):].strip()
+                        if not json_str or json_str == "[DONE]":
+                            continue
+                        try:
+                            event = json.loads(json_str)
+                        except Exception:
+                            continue
+
+                        if isinstance(event, dict):
+                            runtime_model = str(event.get("model", "") or event.get("resolved_model", "") or "").strip()
+                            if not runtime_model:
+                                try:
+                                    runtime_model = str(
+                                        event.get("data", {})
+                                        .get("payload", {})
+                                        .get("request", {})
+                                        .get("body", {})
+                                        .get("model", "")
+                                        or ""
+                                    ).strip()
+                                except Exception:
+                                    runtime_model = ""
+                            if runtime_model:
+                                LAST_BLOCKBRAIN_MODEL = runtime_model
+
+                        stream_error = _stream_error_text(event)
+                        if stream_error:
+                            break
+                        added = False
+                        piece = _typed_delta_piece(event) if join_mode == "auto" else None
+                        if piece is not None:
+                            if piece:
+                                delta_parts.append(piece)
+                                added = True
+                        else:
+                            chunks = _collect_text_chunks(event)
+                            if chunks:
+                                text_parts.extend(chunks)
+                                added = True
+
+                        if added:
+                            if timing["ttft_s"] is None:
+                                timing["ttft_s"] = round(time.monotonic() - started, 2)
+                            if (
+                                on_text is not None
+                                and time.monotonic() - last_push >= 0.12
+                                and not looks_like_agent_error(_current_text())
+                            ):
+                                last_push = time.monotonic()
+                                try:
+                                    on_text(_current_text())
+                                except Exception:
+                                    pass
+
+                        if isinstance(event, dict):
+                            event_type = str(event.get("type", "") or "").strip().lower()
+                            if event_type in {"finish", "done", "response.completed", "response.done", "message.stop"}:
+                                break
+                except Exception as exc:
+                    last_error = f"Blockbrain stream error: {exc}"
+                    delta_parts.clear()
+                    text_parts.clear()
+
+            attempt["s"] = round(time.monotonic() - attempt_started, 2)
+            merged = _current_text()
+            agent_error = stream_error or (merged if looks_like_agent_error(merged) else "")
+            if agent_error:
+                last_error = f"Blockbrain {endpoint_path}: {agent_error[:200]}"
+                attempt["status"] = "agent-error"
+                if _is_model_config_error(agent_error):
+                    _mark_model(model_kind, endpoint_agent, model, ok=False)
+                    continue  # the next model on this agent
+                break  # another failure: the next endpoint
+            if merged:
+                _mark_model(model_kind, endpoint_agent, model, ok=True)
+                _mark_stream_endpoint(sticky_key, stream_url, ok=True)
+                if on_text is not None:
+                    try:
+                        on_text(merged)
+                    except Exception:
+                        pass
+                return _finish(merged, endpoint_path)
+            last_error = last_error or f"Blockbrain {endpoint_path} returned no text"
+            break
 
     LAST_BLOCKBRAIN_ERROR = last_error or "Blockbrain response did not include assistant text"
     timing["total_s"] = round(time.monotonic() - started, 2)
@@ -9435,7 +9553,10 @@ def call_blockbrain_text(
     payload: dict[str, Any] = {"messages": messages}
     if requested_model:
         payload["model"] = requested_model
-    return _blockbrain_chat(payload, on_text=on_text, budget_s=budget_s, allow_tools=allow_tools)
+    return _blockbrain_chat(
+        payload, on_text=on_text, budget_s=budget_s, allow_tools=allow_tools,
+        model_fallbacks=BLOCKBRAIN_TEXT_MODEL_FALLBACKS,
+    )
 
 
 # Default Knowledge Bot (a "cortex"/nexus company bot). Unlike an agent, a
@@ -9668,7 +9789,7 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
     }
     if effective_model:
         payload["model"] = effective_model
-    out = _blockbrain_chat(payload)
+    out = _blockbrain_chat(payload, model_fallbacks=BLOCKBRAIN_VISION_MODEL_FALLBACKS, kind="vision")
     _record(out)
     if out and not _is_blockbrain_image_missing_response(out):
         return out

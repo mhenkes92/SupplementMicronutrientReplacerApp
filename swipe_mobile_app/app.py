@@ -628,6 +628,8 @@ def _stream_llm_text(
         ).strip()
     except Exception:
         text = ""
+    if bb.looks_like_agent_error(text):  # a Blockbrain error is never an answer
+        text = ""
     if text:
         llm_cache.put(cache_key, text)
         if placeholder is not None:
@@ -648,9 +650,10 @@ def _await_background_text(cache_key: str, pending: Any, placeholder: Any = None
             shown = partial
         time.sleep(0.25)
     try:
-        return str(pending.result(timeout=0) or "").strip()
+        text = str(pending.result(timeout=0) or "").strip()
     except Exception:
         return ""
+    return "" if bb.looks_like_agent_error(text) else text
 
 
 def _looks_like_extraction_json(text: str) -> bool:
@@ -684,7 +687,15 @@ def _env_seconds(name: str, default: float) -> float:
         return default
 
 
-_ASK_AI_BOT_WAIT_S = _env_seconds("SUPPSWIPE_ASK_AI_BOT_WAIT_S", 8.0)
+_ASK_AI_BOT_WAIT_S = _env_seconds("SUPPSWIPE_ASK_AI_BOT_WAIT_S", 15.0)
+
+# Under every Ask AI answer: where it came from, so it is clear whether the
+# Examine knowledge base (the Knowledge Bot) answered or the general agent did.
+_SOURCE_KB = "\n\n_📚 From your Examine knowledge base_"
+_SOURCE_AGENT = "\n\n_🤖 General AI answer — the knowledge base didn't reply in time_"
+
+# Last Knowledge Bot call, for the ?debug=1 panel (process-wide, no user data).
+_LAST_BOT_STATUS: dict[str, Any] = {}
 
 
 def _ask_bot_within(message: str, bot_id: str | None, wait_s: float) -> str | None:
@@ -703,13 +714,27 @@ def _ask_bot_within(message: str, bot_id: str | None, wait_s: float) -> str | No
         except Exception:
             result["answer"] = None
 
+    started = time.monotonic()
     worker = threading.Thread(target=_call, name="suppswipe-ask-bot", daemon=True)
     worker.start()
     worker.join(max(0.0, float(wait_s)))
+    waited = round(time.monotonic() - started, 2)
     if worker.is_alive():
+        _LAST_BOT_STATUS.clear()
+        _LAST_BOT_STATUS.update({"status": "timeout", "waited_s": waited})
         return None
     answer = result.get("answer")
-    return answer if isinstance(answer, str) else None
+    if not isinstance(answer, str) or not answer.strip() or bb.looks_like_agent_error(answer):
+        _LAST_BOT_STATUS.clear()
+        _LAST_BOT_STATUS.update({
+            "status": "error" if answer is None or bb.looks_like_agent_error(answer) else "empty",
+            "s": waited,
+            "error": str(getattr(bb, "LAST_BLOCKBRAIN_ERROR", "") or (answer or ""))[:200],
+        })
+        return None
+    _LAST_BOT_STATUS.clear()
+    _LAST_BOT_STATUS.update({"status": "ok", "s": waited})
+    return answer
 
 
 def _ask_ai_history(component_key: str) -> list[dict[str, str]]:
@@ -760,7 +785,8 @@ def _answer_ask_ai_question(
         cache_key = llm_cache.make_key("ask_ai", component_name.strip().lower(), dose_label.lower(), question.strip().lower())
         cached = llm_cache.get(cache_key)
         if cached:
-            return cached, ""
+            source = llm_cache.get(cache_key + ":source")
+            return cached, (_SOURCE_KB if source == "kb" else _SOURCE_AGENT if source == "agent" else "")
 
     history_block = ""
     if history:
@@ -801,7 +827,8 @@ def _answer_ask_ai_question(
     if bot_answer and bot_answer.strip() and not _looks_like_extraction_json(bot_answer):
         if cache_key:
             llm_cache.put(cache_key, bot_answer.strip())
-        return bot_answer.strip(), ""
+            llm_cache.put(cache_key + ":source", "kb")
+        return bot_answer.strip(), _SOURCE_KB
 
     # 2) Fallback: the general agent (streamed).
     system_prompt = (
@@ -828,7 +855,9 @@ def _answer_ask_ai_question(
         consume_quota=False,  # already counted for this question
     )
     if agent_answer:
-        return agent_answer, ""
+        if cache_key:
+            llm_cache.put(cache_key + ":source", "agent")
+        return agent_answer, _SOURCE_AGENT
 
     # 3) Fallback: local research RAG index.
     return _local_rag_answer(scoped_question)
@@ -3713,6 +3742,13 @@ def _render_header() -> None:
                 color: #064e3b;
                 margin: 0 0 0.4rem 0;
             }
+            .brand-foot {
+                text-align: center;
+                font-size: 0.75rem;
+                font-weight: 600;
+                color: #64748b;
+                margin: 1.2rem 0 0.4rem 0;
+            }
             .brand-mark {
                 display: inline-flex;
                 align-items: center;
@@ -5705,6 +5741,8 @@ def _render_debug_panel() -> None:
                 "generation_model": _generation_model(),
                 "last_call": dict(getattr(bb, "LAST_BLOCKBRAIN_TIMING", {}) or {}),
                 "last_error": str(getattr(bb, "LAST_BLOCKBRAIN_ERROR", "") or ""),
+                "knowledge_bot": dict(_LAST_BOT_STATUS) or "not asked yet",
+                "models_that_failed": sorted(m for (_agent, m) in getattr(bb, "_MODEL_UNRESOLVED", {})),
             }
         )
 
@@ -5735,6 +5773,7 @@ def _build_mobile_ui() -> None:
         show_debug = False
     if show_debug:
         _render_debug_panel()
+    st.markdown("<div class='brand-foot'>© mfitness92</div>", unsafe_allow_html=True)
     _sync_scan_history_with_browser()
 
 

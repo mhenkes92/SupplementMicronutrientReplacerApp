@@ -125,8 +125,8 @@ def test_ask_ai_prefers_bot_and_caches_first_questions(sw, monkeypatch):
 
     monkeypatch.setattr(bb, "call_blockbrain_bot", fake_bot)
     monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: pytest.fail("agent not needed"))
-    assert sw._answer_ask_ai_question("Zinc", "Does zinc deplete copper?") == ("Bot answer", "")
-    assert sw._answer_ask_ai_question("Zinc", "does zinc deplete copper? ") == ("Bot answer", "")
+    assert sw._answer_ask_ai_question("Zinc", "Does zinc deplete copper?") == ("Bot answer", sw._SOURCE_KB)
+    assert sw._answer_ask_ai_question("Zinc", "does zinc deplete copper? ") == ("Bot answer", sw._SOURCE_KB)
     assert len(bot_calls) == 1
     assert bot_calls[0][1] == sw._ASK_AI_BOT_TIMEOUT
 
@@ -206,3 +206,25 @@ def test_ocr_failures_are_not_cached(sw, monkeypatch):
     with pytest.raises(RuntimeError):
         sw._cached_ocr(payload)
     assert sw._cached_ocr(payload) == "Vitamin C 90 mg"
+
+
+
+def test_ask_ai_labels_the_general_agent_answer_and_skips_agent_errors(sw, monkeypatch):
+    # The bot replies with a Blockbrain agent error: that is not an answer.
+    monkeypatch.setattr(bb, "call_blockbrain_bot", lambda *a, **k: "[Agent researchAgent] - Failed to resolve model configuration")
+    monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: "Zinc and copper compete for absorption.")
+    answer, source = sw._answer_ask_ai_question("Zinc", "Copper interaction?")
+    assert answer == "Zinc and copper compete for absorption."
+    assert source == sw._SOURCE_AGENT
+    assert sw._LAST_BOT_STATUS["status"] == "error"
+    # Cached: the label stays with the answer.
+    assert sw._answer_ask_ai_question("Zinc", "Copper interaction?") == (answer, sw._SOURCE_AGENT)
+
+
+def test_an_agent_error_is_never_shown_or_cached_as_an_answer(sw, monkeypatch):
+    monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: "[Agent researchAgent] - Failed to resolve model configuration")
+    box = Box()
+    assert sw._generate_meal_plan(REPLACE, "", 1, placeholder=box) == ""
+    _sys, _usr, key = sw._meal_plan_prompts(REPLACE, "", 1)
+    assert sw.llm_cache.get(key) is None
+    assert not any("Failed to resolve" in str(r) for r in box.renders)
