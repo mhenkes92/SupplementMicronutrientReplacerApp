@@ -337,3 +337,39 @@ def test_importing_blockbrain_works_on_a_read_only_checkout():
     )
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=120, cwd=ROOT)
     assert "IMPORTED True" in result.stdout, result.stdout[-400:] + result.stderr[-600:]
+
+
+def test_a_rag_index_deploy_reloads_but_the_feedback_reports_the_app_writes_do_not(sw, package, tmp_path):
+    """Review (Copilot): the local RAG index is data.jsonl; feedback_reports.jsonl is written at run time."""
+    name, folder = package
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "fitness_rag_chunks.jsonl").write_text('{"v": 1}\n')
+    (data / "feedback_reports.jsonl").write_text("")
+    _write(folder / "mod.py", "state = []\n")  # a reload starts the module over: its state is empty again
+    first = sw._load_current(f"{name}.mod", watch=data)
+    first.state.append("loaded once")
+    time.sleep(0.05)
+    (data / "feedback_reports.jsonl").write_text('{"report": 1}\n')
+    assert sw._load_current(f"{name}.mod", watch=data).state == ["loaded once"]  # not a deploy
+    time.sleep(0.05)
+    (data / "fitness_rag_chunks.jsonl").write_text('{"v": 2}\n')
+    assert sw._load_current(f"{name}.mod", watch=data).state == []  # a deploy: reloaded
+
+
+def test_a_repaired_history_is_written_back_so_it_is_not_repaired_in_every_session(sw, monkeypatch):
+    """Review (Copilot): one damaged record keeps the list the same length, but the cleaned list must be saved."""
+    state: dict = {}
+    monkeypatch.setattr(sw.st, "session_state", state)
+    monkeypatch.setattr(sw.st, "rerun", lambda *a, **k: None)
+    damaged = {"ts": "2026-10-02 10:00", "diet": "d", "kept": [], "replaced": "text"}
+    monkeypatch.setattr(sw, "_history_store", lambda **kw: {"history": [damaged], "scan": None})
+    sw._sync_scan_history_with_browser()
+    repaired = {"ts": "2026-10-02 10:00", "diet": "d", "kept": [], "replaced": []}
+    assert state["suppswipe_scan_history"] == [repaired]
+    assert state["_suppswipe_history_save"] == [repaired]  # written back to the browser
+    # An already clean history is not written again.
+    state.clear()
+    monkeypatch.setattr(sw, "_history_store", lambda **kw: {"history": [repaired], "scan": None})
+    sw._sync_scan_history_with_browser()
+    assert "_suppswipe_history_save" not in state

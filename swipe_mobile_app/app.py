@@ -106,8 +106,13 @@ def _load_current(name: str, watch: str | os.PathLike[str] | None = None):
             try:
                 rows = []
                 for entry in os.scandir(watch):
-                    # Data the app itself rewrites at run time (logs) must not count as a deploy.
-                    if entry.is_file() and entry.name.rsplit(".", 1)[-1] in ("db", "csv", "json") and not entry.name.endswith("_log.csv"):
+                    # Data the app itself rewrites at run time (logs, feedback reports) must not count as a deploy.
+                    if (
+                        entry.is_file()
+                        and entry.name.rsplit(".", 1)[-1] in ("db", "csv", "json", "jsonl")
+                        and not entry.name.endswith("_log.csv")
+                        and not entry.name.startswith("feedback")
+                    ):
                         info = entry.stat()
                         rows.append((entry.name, info.st_mtime_ns, info.st_ctime_ns, info.st_size))
                 return tuple(sorted(rows))
@@ -3120,7 +3125,7 @@ def _sync_scan_history_with_browser() -> None:
             seen.add(sig)
             merged.append(entry)
         st.session_state["suppswipe_scan_history"] = merged[-_HISTORY_MAX:]
-        if len(merged) != len(stored_history):
+        if merged[-_HISTORY_MAX:] != stored_history:  # merged, cleaned or dropped something: write the repaired list back
             st.session_state["_suppswipe_history_save"] = merged[-_HISTORY_MAX:]
         st.rerun()
 
