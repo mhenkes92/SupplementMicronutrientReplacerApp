@@ -9021,11 +9021,16 @@ def _typed_delta_piece(event: Any) -> str | None:
 # in a short reply, or "Error: …" / "AI_APICallError: …" about a model.
 _AGENT_ERROR_PREFIX_RE = re.compile(r"^\s*(?:\*{0,2}error:?\*{0,2}\s*)?\[agent[\s:]+[^\]\n]{1,80}\](?!\()", re.IGNORECASE)
 _MODEL_CONFIG_PHRASE_RE = re.compile(r"failed\s+to\s+resolve\s+(?:the\s+)?model\s+configuration", re.IGNORECASE)
-_ERROR_LEAD_RE = re.compile(r"^\s*(?:\*{0,2}error\*{0,2}\s*:|ai_apicallerror\b|\{\s*\"error\")", re.IGNORECASE)
+_ERROR_LEAD_RE = re.compile(
+    r"^[\s\W]*(?:\*{0,2}error(?:\s+code)?\*{0,2}\s*[:\-]|ai_\w*error\b|\w+\.\w*error:|\{\s*\"error\")", re.IGNORECASE
+)
 # A whole reply that is just an HTTP-style failure.
 _BARE_HTTP_ERROR_RE = re.compile(
-    r"^\W*(?:internal\s+server\s+error|service\s+unavailable|bad\s+gateway|gateway\s+time-?out|unauthori[sz]ed"
-    r"|forbidden|too\s+many\s+requests|rate\s+limit\s+exceeded|request\s+failed\s+with\s+status\s+code\s+\d{3})\W*$",
+    r"^\W*(?:(?:(?:http|error)\s*(?:code\s*)?)?\d{3}\W*)?(?:internal\s+server\s+error|service\s+unavailable|bad\s+gateway"
+    r"|gateway\s+time-?out|unauthori[sz]ed|forbidden|too\s+many\s+requests"
+    r"|rate\s+limit\s+(?:exceeded|reached)(?:\W+please\s+try\s+again\s+later)?"
+    r"|request\s+failed\s+with\s+status\s+code\s+\d{3}"
+    r"|(?:an\s+)?error\s+occurred|something\s+went\s+wrong(?:\W+please\s+try\s+again)?|failed\s+to\s+fetch|fetch\s+failed)\W*$",
     re.IGNORECASE,
 )
 # Applied only to text already known to be an error. A model the agent can't
@@ -9039,8 +9044,7 @@ _MODEL_CONFIG_ERROR_RE = re.compile(
     re.IGNORECASE,
 )
 # … and failures of the whole agent (limits, credentials, outages): another
-# agent may work, so this one is cooled. Anything not listed is treated as a
-# problem of the model, which is bounded (3 per agent) and never leaves AI off.
+# agent may work, so this one is cooled.
 _AGENT_WIDE_ERROR_RE = re.compile(
     r"rate[\s-]?limit|too\s+many\s+requests|\bquota\b|credit|unauthori[sz]ed|\bforbidden\b|invalid\s+(?:api\s+)?key"
     r"|authenticat|\bdisabled\b|\bsuspended\b|billing|payment|internal\s+(?:server\s+)?error|service\s+unavailable"
@@ -9065,6 +9069,14 @@ _IMAGE_MISSING_RE = re.compile(
     r"|\bthere\s+(?:is|'s)\s+no\s+(?:\w+\s+)?(?:image|picture|photo|attachment)"
     r"|\b(?:image|photo|picture|upload|file)\b[^.]{0,30}\b(?:did\s*n[o']t|did\s+not|didn[o']t|not)\s+(?:come\s+through|upload|arrive|load|attach)"
     r"|\bimage\s+not\s+(?:received|attached|provided)"
+    r"|\b(?:image|photo|picture|attachment|bild|foto)\b[^.]{0,30}\b(?:is|was|were|are|seems?\s+to\s+be|appears?\s+to\s+be)\s+missing"
+    r"|\b(?:wasn'?t|was\s+not|weren'?t|isn'?t|is\s+not|hasn'?t\s+been|has\s+not\s+been)\s+(?:attached|included|provided|uploaded|received)"
+    r"|\b(?:haven'?t|have\s+not|did\s*n[o']t|did\s+not)\s+(?:received?|get|include)\b[^.]{0,30}\b(?:image|photo|picture|attachment)"
+    r"|\b(?:not\s+seeing|can'?t\s+look\s+at|cannot\s+look\s+at)\s+(?:\w+\s+){0,3}(?:image|photo|picture|attachment)s?"
+    r"|\btext-?based\b[^.]{0,60}\b(?:image|photo|picture)s?"
+    r"|\b(?:habe|hab)\s+(?:leider\s+)?kein(?:e|en)?\s+(?:bild|foto|datei)|\bkein\s+(?:bild|foto)\s+(?:erhalten|gesendet|gefunden|mitgeschickt|vorhanden)"
+    r"|\bsehe\s+(?:leider\s+)?kein(?:e|en)?\s+(?:bild|foto)"
+    r"|\b(?:aucune|pas\s+d['’])\s*image|\bne\s+vois\s+(?:aucune|pas)|\bno\s+(?:veo|hay)\s+(?:ninguna\s+)?(?:imagen|foto)"
     r"|\bnothing\s+(?:for\s+me\s+)?to\s+(?:extract|read)"
     r"|\bonly\s+(?:see|read|received)\s+text"
     r"|\bsehe\s+kein\s+(?:bild|foto)|\bkein\s+(?:bild|foto)\s+sehen",
@@ -9079,13 +9091,28 @@ _IMAGE_CANNOT_SEE_RE = re.compile(
     r"|\bbitte\s+lade[n]?\s+sie\s+(?:\w+\s+){0,3}(?:bild|foto)",
     re.IGNORECASE,
 )
+_ASSISTANT_START_RE = re.compile(
+    r"(?:i\b|i['’]|sorry|unfortunately|hello|hi\b|hey|thanks|thank\s+you|no\b|please|ich\b|bitte|leider|kein|hallo|je\b|no\s+veo|lo\s+siento"
+    r"|es\s+wurde|there\b|it\s+(?:looks|seems)|the\s+image|your\s+message)",
+    re.IGNORECASE,
+)
+# What an assistant says instead of label text: first person, a request, an apology.
+_ASSISTANT_SPEAK_RE = re.compile(
+    r"\b(?:i['’]?m|i\s+am|i\s+(?:can|cannot|can't|don't|do\s+not|have\s+not|haven't|couldn't|did\s+not|didn't|wasn't)"
+    r"|please|could\s+you|can\s+you|sorry|unfortunately|appears?\s+(?:to|that)|seems?\s+(?:to|that)|bitte|leider"
+    r"|ich\s+(?:kann|sehe|habe)|je\s+(?:ne|suis)|no\s+veo|lo\s+siento)\b",
+    re.IGNORECASE,
+)
 _IMAGE_QUALITY_RE = re.compile(
     r"blur|unscharf|schärfer|sharp|clearly|clearer|unclear|\bwell\b|\benough\b|properly|focus|\bdark|resolution"
     r"|legib|readab|unread|hard\s+to\s+read|cut\s*off|too\s+(?:small|far|close|bright)|glare|lighting|quality|crop",
     re.IGNORECASE,
 )
 _LABEL_VALUE_RE = re.compile(r"\d\s*(?:mg|[µμ]g|mcg|ug|g|iu|i\.e\.|kcal|%)", re.IGNORECASE)
-_ERROR_TEXT_PREFIXES = ("failed to resolve", "error:", "error ", "**error", '{"error', "ai_apicallerror", "agent ")
+_ERROR_TEXT_PREFIXES = (
+    "failed to resolve", "error:", "error ", "**error", '{"error', "ai_", "agent ", "internal server error",
+    "service unavailable", "bad gateway", "unauthorized", "too many requests", "rate limit",
+)
 # Models tried, in order, when an agent can't resolve the requested one (it
 # was removed or isn't enabled for the organisation). "" = the agent's own
 # default model (no "model" field), last because it can be slow — text only:
@@ -9103,6 +9130,7 @@ BLOCKBRAIN_VISION_MODEL_FALLBACKS = ["gpt-4.1", "gpt-4o", "gpt-4.1-mini", "anthr
 # Vision: this many models that never received the image mean the attachment
 # is the problem, not the models.
 _MODEL_ERRORS_PER_AGENT = 3
+_MODEL_ERRORS_PER_CALL = 8
 _LOAD_ERRORS_PER_AGENT = 2
 _BUSY_COOLDOWN_S = 60.0
 _IMAGE_BLIND_PER_CALL = 3
@@ -9152,18 +9180,21 @@ def _stream_error_text(event: Any) -> str:
 
 
 def _classify_agent_error(text: Any, model: str) -> str:
-    """"model": this model can't be used on this agent (removed, not enabled, or
-    an error not recognised as anything else); "busy": this model is overloaded
-    right now; "agent": the whole agent fails (rate limit, credentials, outage)."""
+    """"model": this model can't be used on this agent (removed, not enabled);
+    "busy": this model is overloaded right now; "agent": anything else (rate
+    limit, credentials, outage, a wording not recognised). An unrecognised
+    error only reorders: the agent is tried last for a while, and the same model
+    failing so on two agents is skipped, so one odd message can't exclude a
+    model or park a healthy agent."""
     value = str(text or "")
     if _MODEL_CONFIG_PHRASE_RE.search(value):
         return "model"
     if _MODEL_LOAD_ERROR_RE.search(value):
         about_model = re.search(r"\bmodel\b", value, re.IGNORECASE) or (model and model.lower() in value.lower())
         return "busy" if about_model else "agent"
-    if _MODEL_CONFIG_ERROR_RE.search(value):
+    if _MODEL_CONFIG_ERROR_RE.search(value) and not _AGENT_WIDE_ERROR_RE.search(value):
         return "model"
-    return "agent" if _AGENT_WIDE_ERROR_RE.search(value) else "model"
+    return "agent"
 
 
 def looks_like_agent_error(text: Any) -> bool:
@@ -9175,7 +9206,7 @@ def looks_like_agent_error(text: Any) -> bool:
         return False
     if _AGENT_ERROR_PREFIX_RE.match(value) or _MODEL_CONFIG_PHRASE_RE.search(value[:1500]):
         return True
-    if len(value) <= 300 and value[:15].lower().startswith("ai_apicallerror"):
+    if len(value) <= 300 and re.match(r"\s*ai_\w*error\b", value, re.IGNORECASE):
         return True
     if len(value) <= 80 and _BARE_HTTP_ERROR_RE.match(value):
         return True
@@ -9186,19 +9217,33 @@ def looks_like_agent_error(text: Any) -> bool:
     return len(value) <= 200 and bool(_ERROR_LEAD_RE.match(value) and _MODEL_CONFIG_ERROR_RE.search(value))
 
 
+def _name_like(line: str) -> bool:
+    """A short product-name line ("Nature Made Vitamin D3"): not a sentence from an assistant."""
+    return (
+        0 < len(line) <= 70
+        and not re.search(r"[.!?:;]", line)
+        and not _ASSISTANT_START_RE.match(line)
+    )
+
+
 def _image_not_received(text: Any) -> bool:
     """A vision reply saying the image never arrived (not one about its quality,
-    and not label text with a note)."""
+    not label text with a note, and not a product name followed by a note)."""
     value = str(text or "").strip()[:600]
     if not value or _LABEL_VALUE_RE.search(value):
         return False
-    start = " ".join([ln.strip() for ln in value.splitlines() if ln.strip()][:2])
+    lines = [ln.strip() for ln in value.splitlines() if ln.strip()]
+    if len(lines) > 1 and _name_like(lines[0]):
+        return False  # "Centrum Silver\nPlease send a photo of the back": a read of the front
+    start = " ".join(lines[:2])
     if _IMAGE_MISSING_RE.search(start):
         return True  # "no image attached" stays true even when it asks for a sharp photo
     if _IMAGE_QUALITY_RE.search(value):
         return False
-    return bool(_IMAGE_CANNOT_SEE_RE.search(start)) or (
-        _is_blockbrain_image_missing_response(value) and not value[:1].isdigit()
+    return bool(
+        _IMAGE_CANNOT_SEE_RE.search(start)
+        or _ASSISTANT_SPEAK_RE.search(start)
+        or (_is_blockbrain_image_missing_response(value) and not value[:1].isdigit())
     )
 
 
@@ -9242,7 +9287,7 @@ def _model_candidates(requested: str, fallbacks: Any, kind: str, agent: str, ski
     if usable:
         return usable
     rest = [m for m in order if m not in skip]
-    return [m for m in rest if m != requested] + [m for m in rest if m == requested]
+    return sorted(rest, key=lambda m: (m == "" and requested != "", m == requested))
 
 
 def _mark_model(kind: str, agent: str, model: str, ok: bool) -> None:
@@ -9309,7 +9354,9 @@ def _mark_stream_endpoint(base_url: str, url: str, ok: bool, cooldown_s: float =
             _STREAM_ENDPOINT_COOLDOWN.pop(url, None)
             _LAST_GOOD_STREAM_URL[base_url] = url
         else:
-            _STREAM_ENDPOINT_COOLDOWN[url] = time.monotonic() + float(cooldown_s)
+            _STREAM_ENDPOINT_COOLDOWN[url] = max(
+                _STREAM_ENDPOINT_COOLDOWN.get(url, 0.0), time.monotonic() + float(cooldown_s)
+            )
             if _LAST_GOOD_STREAM_URL.get(base_url) == url:
                 _LAST_GOOD_STREAM_URL.pop(base_url, None)
 
@@ -9558,6 +9605,9 @@ def _blockbrain_chat(
     done_agents: set[str] = set()
     call_failed_models: set[str] = set()
     agent_error_models: dict[str, set[str]] = {}
+    tried_models: set[str] = set()
+    pending_marks: set[tuple[str, str]] = set()
+    model_errors = 0
     image_blind = 0
     stop = False
     for stream_url in _parked_last(model_kind, _order_stream_endpoints(sticky_key, stream_endpoints, primary_endpoints)):
@@ -9572,6 +9622,15 @@ def _blockbrain_chat(
         candidates = _model_candidates(
             requested_model, model_fallbacks, model_kind, endpoint_agent, call_failed_models
         )
+        if (
+            model_errors >= _MODEL_ERRORS_PER_CALL - 2
+            and "" in (model_fallbacks or [])
+            and "" not in tried_models
+            and "" not in call_failed_models
+        ):
+            # Most named models failed already and the budget is nearly used: the agent's
+            # own default (it needs no model configuration) gets the last tries.
+            candidates = [""]
         for model in candidates:
             if time.monotonic() - started > budget:
                 last_error = (last_error + " | " if last_error else "") + f"gave up after {int(budget)}s budget"
@@ -9583,11 +9642,13 @@ def _blockbrain_chat(
             else:
                 request_payload.pop("model", None)
             attempt: dict[str, Any] = {"endpoint": endpoint_path, "model": model, "status": None, "s": None}
+            tried_models.add(model)
             timing["attempts"].append(attempt)
             attempt_started = time.monotonic()
             delta_parts: list[str] = []
             text_parts: list[str] = []
             stream_error = ""
+            stream_broke = False
 
             def _current_text() -> str:
                 if delta_parts:
@@ -9612,21 +9673,26 @@ def _blockbrain_chat(
             http_error = ""
             with resp:
                 attempt["status"] = resp.status_code
-                if resp.status_code == 404:
-                    _mark_stream_endpoint(sticky_key, stream_url, ok=False, cooldown_s=_ENDPOINT_COOLDOWN_404_S)
-                    attempt["s"] = round(time.monotonic() - attempt_started, 2)
-                    break  # no such endpoint: the next one (e.g. v1)
                 if resp.status_code != 200:
                     http_error = str(resp.text or "")[:400]
                     last_error = f"Blockbrain HTTP {resp.status_code}: {http_error[:200]}"
-                    if (
-                        resp.status_code != 429
-                        and (_MODEL_CONFIG_PHRASE_RE.search(http_error) or _MODEL_CONFIG_ERROR_RE.search(http_error))
-                        and not _MODEL_LOAD_ERROR_RE.search(http_error)
+                    if resp.status_code != 429 and (
+                        _MODEL_CONFIG_PHRASE_RE.search(http_error)
+                        # Looser wordings only from a client error / 404: a 5xx page that
+                        # says "upstream model server not available" is the endpoint's.
+                        or (
+                            resp.status_code < 500
+                            and _MODEL_CONFIG_ERROR_RE.search(http_error)
+                            and not _MODEL_LOAD_ERROR_RE.search(http_error)
+                        )
                     ):
                         # The body says this model can't be used: handle it like the
                         # same error inside a stream (mark the model, try the next one).
                         stream_error, http_error = http_error, ""
+                    elif resp.status_code == 404:
+                        _mark_stream_endpoint(sticky_key, stream_url, ok=False, cooldown_s=_ENDPOINT_COOLDOWN_404_S)
+                        attempt["s"] = round(time.monotonic() - attempt_started, 2)
+                        break  # no such endpoint: the next one (e.g. v1)
                     elif resp.status_code >= 500 or resp.status_code == 429:
                         _mark_stream_endpoint(sticky_key, stream_url, ok=False)
                 else:
@@ -9712,6 +9778,7 @@ def _blockbrain_chat(
                                     break
                     except Exception as exc:
                         last_error = f"Blockbrain stream error: {exc}"
+                        stream_broke = True
                         delta_parts.clear()
                         text_parts.clear()
 
@@ -9725,10 +9792,15 @@ def _blockbrain_chat(
                 attempt["status"] = "agent-error"
                 error_kind = _classify_agent_error(agent_error, model)
                 if error_kind == "model":
-                    # This agent can't use this model: skip it here for a while.
+                    # This agent can't use this model: skip it here for a while. Other
+                    # agents try it last (it may work there), not never.
                     _mark_model(model_kind, endpoint_agent, model, ok=False)
-                    call_failed_models.add(model)
                     agent_model_errors += 1
+                    model_errors += 1
+                    if model_errors >= _MODEL_ERRORS_PER_CALL:
+                        last_error += " | stopped: no model could be resolved"
+                        stop = True
+                        break
                     if agent_model_errors >= _MODEL_ERRORS_PER_AGENT:
                         _park_agent(model_kind, endpoint_agent)  # its configuration, not the model
                         break
@@ -9753,8 +9825,10 @@ def _blockbrain_chat(
                 if len(agents_for_model) >= 2:
                     # Two agents failing the same way for the same model: the model's problem.
                     call_failed_models.add(model)
-                    for failed_agent in agents_for_model:
-                        _mark_model(model_kind, failed_agent, model, ok=False)
+                    if not _AGENT_WIDE_ERROR_RE.search(agent_error):  # a shared limit is no reason to avoid a model later
+                        # Written only once another model answers in this call: an error that
+                        # depends on the prompt fails on every model and teaches nothing.
+                        pending_marks.update((failed_agent, model) for failed_agent in agents_for_model)
                 break
             # A vision model that never got the image: try another one. Nothing
             # is remembered, so a photo (or a text-only model) can't switch
@@ -9769,6 +9843,9 @@ def _blockbrain_chat(
                     break
                 continue
             if merged:
+                for failed_agent, failed_model in pending_marks:
+                    if (failed_agent, failed_model) != (endpoint_agent, model):
+                        _mark_model(model_kind, failed_agent, failed_model, ok=False)
                 _mark_model(model_kind, endpoint_agent, model, ok=True)
                 _mark_stream_endpoint(sticky_key, stream_url, ok=True)
                 timing["model"] = LAST_BLOCKBRAIN_MODEL or model or "(agent default)"
@@ -9780,7 +9857,8 @@ def _blockbrain_chat(
                         pass
                 return _finish(merged, endpoint_path)
             last_error = last_error or f"Blockbrain {endpoint_path} returned no text"
-            call_failed_models.add(model)  # an empty reply: the next endpoint starts with another model
+            if not stream_broke:  # an empty reply (not a dropped stream): the next endpoint starts with another model
+                call_failed_models.add(model)
             break
         else:
             # Every candidate on this agent failed: don't repeat them on its

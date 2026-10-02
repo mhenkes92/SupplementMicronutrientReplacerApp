@@ -4234,7 +4234,8 @@ def _run_pending_analysis() -> None:
                 ))
                 return
             if url_error:
-                st.warning(f"URL fetch failed: {url_error}")
+                # A toast: it survives the st.rerun() that opens the first card (a warning wouldn't).
+                st.toast(f"The link couldn't be read ({url_error}) — using the rest of your input.", icon="⚠️")
 
             _set_progress(72, "Parsing micronutrients…")
             components = bb.parse_components(combined)
