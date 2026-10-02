@@ -66,51 +66,103 @@ def _bootstrap_blockbrain_env_from_secrets() -> None:
 
 _bootstrap_blockbrain_env_from_secrets()
 
-def _load_current(name: str, alias: str, script: str | os.PathLike[str] | None = None):
-    """Import our own module `name` (used here as `alias.<attribute>`), reloading it when stale.
+def _load_current(name: str, watch: str | os.PathLike[str] | None = None):
+    """Import our own module `name`, reloading it when this process holds an outdated copy.
 
     A running Streamlit process keeps every module it imported. When a redeploy
     replaces the files on disk, this entry script is read again (new code) but
     `blockbrain.app` and `llm_cache` stay the OLD objects, so the new script calls
     something the old module doesn't have and the app dies on open until someone
-    reboots it. Stale means: the file changed since this process last loaded it, or
-    the module lacks an attribute this script uses (the process loaded it before
-    this guard existed, so there is no earlier timestamp to compare)."""
+    reboots it. A module is outdated when
+      * the file changed since this guard last loaded or checked it (the file's
+        mtime, ctime and size are compared: tar / `cp -p` / rsync restore the mtime
+        but never the ctime), or a data file in `watch` did (the module's cached
+        loaders read those: the weekly USDA refresh changes data only), or
+      * this guard has never seen it but it was already imported: an earlier entry
+        script (one without this guard) loaded it, so its version is unknown.
+    The file is stat-ed BEFORE the source is read, so a deploy that lands while the
+    module body runs shows up as a change on the next run instead of being
+    recorded as current. A reload that raises forgets the module (it is half new),
+    so every following run retries it."""
     import importlib
+    import importlib.util
     import types
 
     registry = sys.modules.get("_suppswipe_imports")
     if registry is None:
         registry = sys.modules.setdefault("_suppswipe_imports", types.ModuleType("_suppswipe_imports"))
     with registry.__dict__.setdefault("lock", threading.RLock()):
-        stamps: dict[str, int | None] = registry.__dict__.setdefault("stamps", {})
-        module = importlib.import_module(name)
-        path = getattr(module, "__file__", None)
+        seen: dict[str, tuple[Any, Any]] = registry.__dict__.setdefault("seen", {})
+        preloaded = name in sys.modules
         try:
-            stamp = os.stat(path).st_mtime_ns if path else None
-        except OSError:
-            stamp = None
-        if name in stamps:
-            stale = stamp is not None and stamps[name] != stamp
-        else:  # first sight in this process: is everything this script uses there?
+            spec = getattr(sys.modules.get(name), "__spec__", None) or importlib.util.find_spec(name)
+        except (ImportError, ValueError):
+            spec = None
+        path = getattr(spec, "origin", None)
+
+        def data_fingerprint() -> tuple[Any, ...]:
+            if watch is None:
+                return ()
             try:
-                source = Path(script or __file__).read_text(encoding="utf-8")
+                rows = []
+                for entry in os.scandir(watch):
+                    # Data the app itself rewrites at run time (logs, feedback reports) must not count as a deploy.
+                    if (
+                        entry.is_file()
+                        and entry.name.rsplit(".", 1)[-1] in ("db", "csv", "json", "jsonl")
+                        and not entry.name.endswith("_log.csv")
+                        and not entry.name.startswith("feedback")
+                    ):
+                        info = entry.stat()
+                        rows.append((entry.name, info.st_mtime_ns, info.st_ctime_ns, info.st_size))
+                return tuple(sorted(rows))
             except OSError:
-                source = ""
-            used = set(re.findall(r"\b" + re.escape(alias) + r"\.([A-Za-z_]\w*)", source))
-            stale = any(not hasattr(module, attribute) for attribute in used)
+                return ()
+
+        def fingerprint() -> tuple[Any, ...] | None:
+            try:
+                st = os.stat(path)  # type: ignore[arg-type]
+            except (OSError, TypeError, ValueError):
+                return None
+            return (st.st_mtime_ns, st.st_ctime_ns, st.st_size, data_fingerprint())
+
+        before = fingerprint()
+        module = importlib.import_module(name)
+        last = seen.get(name)
+        if last is None:
+            stale = preloaded  # imported by something else earlier: which version is unknown
+        elif last[0] is not module:
+            stale = False  # replaced behind our back (Streamlit evicts changed modules): fresh from disk
+        else:
+            stale = before is not None and last[1] != before
         if stale:
-            module = importlib.reload(module)
             try:
-                stamp = os.stat(path).st_mtime_ns if path else None
-            except OSError:
-                stamp = None
-        stamps[name] = stamp
+                importlib.invalidate_caches()
+                try:  # same mtime second + same size would let the import system reuse the old bytecode
+                    os.unlink(importlib.util.cache_from_source(path))  # type: ignore[arg-type]
+                except (OSError, TypeError, ValueError, NotImplementedError):
+                    pass
+                module = importlib.reload(module)
+            except BaseException:
+                seen.pop(name, None)  # half reloaded: no record, so the next run reloads again
+                raise
+            registry.__dict__["generation"] = registry.__dict__.get("generation", 0) + 1
+        seen[name] = (module, before)
         return module
 
 
-bb = _load_current("blockbrain.app", "bb")
-llm_cache = _load_current("llm_cache", "llm_cache")
+bb = _load_current("blockbrain.app", watch=ROOT_DIR / "blockbrain" / "data")
+llm_cache = _load_current("llm_cache")
+
+# st.cache_data / st.cache_resource key on the cached function's own source, not on the
+# modules it calls: their results were produced by the code a reload just replaced
+# (an OCR text or page text an older build accepted would be served for hours). Start
+# them over once per reload.
+_registry_state = sys.modules["_suppswipe_imports"].__dict__
+_CODE_RELOADED = _registry_state.get("cleared_generation", 0) != _registry_state.get("generation", 0)
+if _CODE_RELOADED:
+    _registry_state["cleared_generation"] = _registry_state.get("generation", 0)
+    st.cache_data.clear()
 
 # A Blockbrain error is never served or stored as an answer (also catches
 # entries an older build cached before this check existed).
@@ -178,7 +230,27 @@ SWIPE_CARD_DROPDOWN_MAX = 40
 
 # Bumped on notable releases so we can confirm which build is actually live on
 # Streamlit Cloud (shown as a tiny stamp under the title).
-BUILD_TAG = "2026-10-01 · speed+safety"
+def _build_commit() -> str:
+    """Short commit of this checkout (Streamlit Cloud runs from a git clone), or "". Plain file reads, no git."""
+    try:
+        git_dir = ROOT_DIR / ".git"
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+        if head.startswith("ref: "):
+            ref = head[5:]
+            ref_file = git_dir / ref
+            if ref_file.exists():
+                head = ref_file.read_text(encoding="utf-8").strip()
+            else:
+                head = next(
+                    (line.split(" ")[0] for line in (git_dir / "packed-refs").read_text(encoding="utf-8").splitlines() if line.endswith(" " + ref)),
+                    "",
+                )
+        return head[:7] if re.fullmatch(r"[0-9a-f]{40}", head) else ""
+    except Exception:
+        return ""
+
+
+BUILD_TAG = "2026-10-02 · deploy-safe" + (f" · {_commit}" if (_commit := _build_commit()) else "")
 
 # Shared formatting contract appended to LLM prompts whose reply is rendered with
 # st.markdown / st.write on a narrow mobile screen, so answers come back as clean,
@@ -537,6 +609,10 @@ def _cached_rag_chunks() -> list[dict[str, str]]:
     return chunks
 
 
+if _CODE_RELOADED:
+    _cached_rag_chunks.clear()  # (not st.cache_resource.clear(): that would also reset _global_llm_usage)
+
+
 # Per-session limits on LLM work so one anonymous visitor (or a stuck
 # button) can't burn the app owner's Blockbrain credits. Cached answers are
 # free. Override with SUPPSWIPE_MAX_GENERATIONS_PER_HOUR /
@@ -788,13 +864,31 @@ def _ask_bot_within(message: str, bot_id: str | None, wait_s: float) -> str | No
     return answer
 
 
+_SOURCE_LABEL_RE = re.compile(r"\n\n_(?:📚|🤖)[^\n]*_\s*$")
+
+
+def _chat_without_error_turns(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    """A chat that was open while an older build stored a Blockbrain error as the answer: drop that
+    "answer" and the question it was for (it is neither shown again nor sent to the model as history)."""
+    kept: list[dict[str, str]] = []
+    for msg in messages:
+        is_answer = str(msg.get("role", "")).lower() != "user"
+        if is_answer and bb.looks_like_agent_error(str(msg.get("content", "") or "")):
+            if kept and str(kept[-1].get("role", "")).lower() == "user":
+                kept.pop()
+            continue
+        kept.append(msg)
+    return kept
+
+
 def _ask_ai_history(component_key: str) -> list[dict[str, str]]:
-    """Recent turns of this card's chat, without the appended 'Sources:' line."""
+    """Recent turns of this card's chat, without the appended 'Sources:' line and answer labels."""
     chat_store = st.session_state.get("swipe_rag_chats", {}) or {}
     turns: list[dict[str, str]] = []
-    for msg in list(chat_store.get(component_key, []))[-_ASK_AI_HISTORY_MESSAGES:]:
+    for msg in _chat_without_error_turns(list(chat_store.get(component_key, [])))[-_ASK_AI_HISTORY_MESSAGES:]:
         role = "user" if str(msg.get("role", "")).lower() == "user" else "assistant"
         content = re.sub(r"\n\nSources: .*$", "", str(msg.get("content", "") or ""), flags=re.S).strip()
+        content = _SOURCE_LABEL_RE.sub("", content).strip()
         if content:
             turns.append({"role": role, "content": content[:1500]})
     return turns
@@ -2961,6 +3055,28 @@ def _saved_scan_args(state: Any) -> dict[str, Any] | None:
     return snapshot
 
 
+# A supplement label is a few hundred characters; this bounds what one visitor can make the shared
+# process parse (pasted text, or a scan restored from the browser's storage).
+_MAX_LABEL_CHARS = 20_000
+
+
+def _clean_history_entry(entry: Any) -> dict[str, Any] | None:
+    """A scan-history entry from the browser's storage, in the shape the popover needs, or None.
+    Whatever a device holds (an older build's data, hand-edited or damaged values) must never
+    make every run of the app fail."""
+    if not isinstance(entry, dict):
+        return None
+    clean = {str(k): v for k, v in entry.items() if k not in ("kept", "replaced")}
+    for key in ("kept", "replaced"):
+        value = entry.get(key)
+        clean[key] = [
+            {str(k): (v if isinstance(v, (str, int, float)) else str(v)) for k, v in item.items()}
+            for item in (value if isinstance(value, list) else [])
+            if isinstance(item, dict)
+        ]
+    return clean
+
+
 def _sync_scan_history_with_browser() -> None:
     """Render the invisible storage component (once per run, at the end of the
     page): persist any pending change (history and the scan in progress) and
@@ -3002,14 +3118,14 @@ def _sync_scan_history_with_browser() -> None:
         current = _load_scan_history()
         merged: list[dict[str, Any]] = []
         seen: set[str] = set()
-        for entry in [e for e in stored_history if isinstance(e, dict)] + current:
+        for entry in [c for c in (_clean_history_entry(e) for e in stored_history) if c] + current:
             sig = repr(sorted((k, repr(v)) for k, v in entry.items()))
             if sig in seen:
                 continue
             seen.add(sig)
             merged.append(entry)
         st.session_state["suppswipe_scan_history"] = merged[-_HISTORY_MAX:]
-        if len(merged) != len(stored_history):
+        if merged[-_HISTORY_MAX:] != stored_history:  # merged, cleaned or dropped something: write the repaired list back
             st.session_state["_suppswipe_history_save"] = merged[-_HISTORY_MAX:]
         st.rerun()
 
@@ -4435,10 +4551,11 @@ def _analyze_dialog() -> None:
                 "Paste a product URL, a barcode number, or the supplement facts text",
                 height=120,
                 key=f"dlg_manual_{nonce}",
+                max_chars=_MAX_LABEL_CHARS,
                 placeholder="e.g. https://… or 4006040000000 or 'Vitamin D3 20 µg, Zink 10 mg …'",
             )
             submitted = st.form_submit_button("Analyze", type="primary", width="stretch")
-        manual_text = str(manual or "").strip() if submitted else ""
+        manual_text = str(manual or "").strip()[:_MAX_LABEL_CHARS] if submitted else ""
         if submitted and not manual_text:
             st.warning("Paste a link, a barcode number or the label text first.")
 
@@ -4854,7 +4971,8 @@ def _resumable_scan(saved: Any, now: float | None = None) -> dict[str, Any] | No
 
     if not isinstance(saved, dict) or saved.get("v") != _SAVED_SCAN_VERSION:
         return None
-    if not str(saved.get("text", "") or "").strip():
+    text = str(saved.get("text", "") or "")
+    if not text.strip() or len(text) > _MAX_LABEL_CHARS:
         return None
     try:
         age = float(_time.time() if now is None else now) - float(saved.get("ts"))
@@ -4863,7 +4981,14 @@ def _resumable_scan(saved: Any, now: float | None = None) -> dict[str, Any] | No
         return None
     if total <= 0 or age > _SAVED_SCAN_MAX_AGE_S or age < -300:
         return None
-    return saved
+    if isinstance(saved.get("decisions"), dict) and isinstance(saved.get("label_source"), dict):
+        return saved
+    # The fields the restore indexes, in the shape it expects (a damaged value would raise on every run).
+    return {
+        **saved,
+        "decisions": saved.get("decisions") if isinstance(saved.get("decisions"), dict) else {},
+        "label_source": saved.get("label_source") if isinstance(saved.get("label_source"), dict) else {},
+    }
 
 
 def _resume_label(saved: dict[str, Any]) -> str:
@@ -5669,7 +5794,7 @@ def _render_ask_ai_chat(
 ) -> None:
     """Chat about a card (or the whole plan): history, one-tap suggestions, input."""
     chat_store: dict[str, list[dict[str, str]]] = st.session_state.get("swipe_rag_chats", {})
-    history = list(chat_store.get(component_key, []))
+    history = _chat_without_error_turns(list(chat_store.get(component_key, [])))
     for msg in history[-12:]:
         role = "user" if str(msg.get("role", "")).lower() == "user" else "assistant"
         with st.chat_message(role):
@@ -5751,6 +5876,8 @@ def _render_share_tab(
     meal_plan = ""
     if plan_key and st.session_state.get("swipe_meal_plan_key") == plan_key:
         meal_plan = str(st.session_state.get("swipe_meal_plan", "") or "")
+        if bb.looks_like_agent_error(meal_plan):  # stored by an older build: not a plan
+            meal_plan = ""
     share_text = _build_share_text(keep_items, replace_items, meal_plan)
     st.caption("Tap the copy icon on the box, or download the plan.")
     st.code(share_text, language=None, wrap_lines=True)
@@ -5861,6 +5988,7 @@ def _render_debug_panel() -> None:
         st.json(
             {
                 "build": BUILD_TAG,
+                "code_reloads_since_start": int(sys.modules["_suppswipe_imports"].__dict__.get("generation", 0)),
                 "generation_model": _generation_model(),
                 "last_call": dict(getattr(bb, "LAST_BLOCKBRAIN_TIMING", {}) or {}),
                 "last_error": str(getattr(bb, "LAST_BLOCKBRAIN_ERROR", "") or ""),
