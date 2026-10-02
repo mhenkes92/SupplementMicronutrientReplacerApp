@@ -254,14 +254,14 @@ def test_a_split_error_never_flashes_while_streaming(monkeypatch):
             return tt.FakeResponse(events=[{"type": "text-delta", "id": "t", "delta": p} for p in pieces] + [{"type": "finish"}])
         return tt.FakeResponse(events=tt.GOOD_STREAM)
 
-    for state in (bb._STREAM_ENDPOINT_COOLDOWN, bb._LAST_GOOD_STREAM_URL, bb._MODEL_UNRESOLVED, bb._LAST_GOOD_MODEL, bb._MODEL_OUTAGE_UNTIL):
+    for state in (bb._STREAM_ENDPOINT_COOLDOWN, bb._LAST_GOOD_STREAM_URL, bb._MODEL_UNRESOLVED, bb._LAST_GOOD_MODEL, bb._AGENT_PARKED):
         state.clear()
     tt._install_by_model(monkeypatch, responder)
     seen = []
     monkeypatch.setattr(bb.time, "monotonic", iter(range(0, 10_000, 1)).__next__)  # every push is past the throttle
     assert bb.call_blockbrain_text("sys", "q", on_text=seen.append) == "**Breakfast** oats"
     assert seen and not any(s.lstrip().startswith("[") for s in seen)
-    for state in (bb._STREAM_ENDPOINT_COOLDOWN, bb._LAST_GOOD_STREAM_URL, bb._MODEL_UNRESOLVED, bb._LAST_GOOD_MODEL, bb._MODEL_OUTAGE_UNTIL):
+    for state in (bb._STREAM_ENDPOINT_COOLDOWN, bb._LAST_GOOD_STREAM_URL, bb._MODEL_UNRESOLVED, bb._LAST_GOOD_MODEL, bb._AGENT_PARKED):
         state.clear()
 
 

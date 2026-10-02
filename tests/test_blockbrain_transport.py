@@ -41,10 +41,10 @@ class FakeResponse:
 def _reset_transport_state(monkeypatch):
     monkeypatch.delenv("BLOCKBRAIN_CHAT_ENDPOINT", raising=False)
     monkeypatch.delenv("BLOCKBRAIN_STREAM_JOIN", raising=False)
-    for state in (bb._STREAM_ENDPOINT_COOLDOWN, bb._LAST_GOOD_STREAM_URL, bb._MODEL_UNRESOLVED, bb._LAST_GOOD_MODEL, bb._MODEL_OUTAGE_UNTIL):
+    for state in (bb._STREAM_ENDPOINT_COOLDOWN, bb._LAST_GOOD_STREAM_URL, bb._MODEL_UNRESOLVED, bb._LAST_GOOD_MODEL, bb._AGENT_PARKED):
         state.clear()
     yield
-    for state in (bb._STREAM_ENDPOINT_COOLDOWN, bb._LAST_GOOD_STREAM_URL, bb._MODEL_UNRESOLVED, bb._LAST_GOOD_MODEL, bb._MODEL_OUTAGE_UNTIL):
+    for state in (bb._STREAM_ENDPOINT_COOLDOWN, bb._LAST_GOOD_STREAM_URL, bb._MODEL_UNRESOLVED, bb._LAST_GOOD_MODEL, bb._AGENT_PARKED):
         state.clear()
 
 
@@ -328,20 +328,22 @@ def test_an_unresolvable_model_falls_back_to_the_next_model(monkeypatch, error_e
     assert [m for _agent, _v, m in sent] == [bb.BLOCKBRAIN_TEXT_MODEL_FALLBACKS[0]]
 
 
-def test_the_agent_default_model_is_among_the_text_fallbacks(monkeypatch):
+def test_the_agent_default_model_is_the_last_text_fallback(monkeypatch):
     sent = _install_by_model(
         monkeypatch,
         lambda url, model: FakeResponse(events=GOOD_STREAM if model == "" else [{"type": "error", "errorText": MODEL_ERROR}]),
     )
     assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
     models = [m for _agent, _v, m in sent]
-    assert models[-1] == "" and len(models) <= bb._MODEL_ERRORS_PER_CALL
-    # The slow agent default is never preferred: once the marks expire, the
-    # requested model is tried first again.
-    bb._MODEL_UNRESOLVED.clear()
-    sent.clear()
-    bb.call_blockbrain_text("sys", "again")
-    assert sent[0][2] == "gpt-4.1-nano"
+    assert models[-1] == "" and len(models) <= bb._MODEL_ERRORS_PER_CALL  # reached within the budget, in the first call
+    # Only the agent default works: the agents learn that over a few calls (every call
+    # still works), then every call is one request to it.
+    counts = []
+    for _ in range(8):
+        sent.clear()
+        assert bb.call_blockbrain_text("sys", "again") == "**Breakfast** oats"
+        counts.append(len(sent))
+    assert max(counts) <= bb._MODEL_ERRORS_PER_CALL and counts[-1] == 1 and sent[-1][2] == ""
 
 
 def test_an_agent_error_is_never_returned_as_an_answer(monkeypatch):
@@ -349,19 +351,29 @@ def test_an_agent_error_is_never_returned_as_an_answer(monkeypatch):
     sent = _install_by_model(monkeypatch, lambda url, model: FakeResponse(events=[{"type": "error", "errorText": MODEL_ERROR}]))
     assert bb.call_blockbrain_text("sys", "q") == ""
     assert "Failed to resolve model configuration" in bb.LAST_BLOCKBRAIN_ERROR
-    assert len(sent) <= bb._MODEL_ERRORS_PER_CALL  # bounded, not agents x models
-    assert len({a for a, _v, _m in sent}) == 3 and {v for _a, v, _m in sent} == {"v2"}  # no v1 retries
-    # While everything is known to fail, a call sends one probe, not the whole chain…
+    assert "Failed to resolve model configuration" in bb.last_call_error()
+    models = [m for _a, _v, m in sent]
+    assert len(models) == bb._MODEL_ERRORS_PER_CALL  # bounded: the budget, not agents x models x versions
+    assert {v for _a, v, _m in sent} == {"v2"}  # no v1 retries
+    # Still down: bounded again.
     sent.clear()
     assert bb.call_blockbrain_text("sys", "q") == ""
-    assert len(sent) == 1 and sent[0][2] == "gpt-4.1-nano"
+    assert len(sent) <= bb._MODEL_ERRORS_PER_CALL
 
 
 def test_the_app_recovers_as_soon_as_blockbrain_is_fixed(monkeypatch):
-    """Review F1: after a total outage the next call must reach a healthy Blockbrain."""
+    """Review F1/FR2: after a total outage the next call reaches a healthy Blockbrain,
+    also when the requested model itself stays removed (the live situation)."""
     _install_by_model(monkeypatch, lambda url, model: FakeResponse(events=[{"type": "error", "errorText": MODEL_ERROR}]))
     assert bb.call_blockbrain_text("sys", "q") == ""
-    sent = _install_by_model(monkeypatch, lambda url, model: FakeResponse(events=GOOD_STREAM))
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "error", "errorText": MODEL_ERROR}] if model == "gpt-4.1-nano" else GOOD_STREAM),
+    )
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    # Every model failed somewhere, so the requested one may be tried once.
+    assert len(sent) <= 2 and sent[-1][2] != "gpt-4.1-nano"
+    sent.clear()
     assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
     assert len(sent) == 1
 
@@ -476,10 +488,27 @@ def test_a_rate_limited_agent_is_cooled_down_and_its_v1_skipped(monkeypatch):
     assert sent[0][0] == "customAgent"  # the rate-limited agent is cooling down
 
 
-def test_temporarily_unavailable_is_not_a_model_configuration_error():
-    """Review F1: load is not configuration — it must not block the model."""
-    assert not bb._is_model_config_error("[Agent X] - The model is temporarily not available due to high demand")
-    assert bb.looks_like_agent_error("[Agent X] - The model is temporarily not available due to high demand")
+@pytest.mark.parametrize("text, expected", [
+    ("[Agent X] - Failed to resolve model configuration", "model"),
+    ("[Agent X] - Failed to resolve model configuration. Please try again later.", "model"),
+    ("[Agent X] - Model gpt-4.1-nano is not available for your organisation.", "model"),
+    ("[Agent X] - Unknown model 'gpt-4.1-nano'", "model"),
+    # Temporary wording about a model: busy, not removed.
+    ("[Agent X] - The model is temporarily not available due to high demand", "busy"),
+    ("[Agent X] - Model gpt-4.1-nano is temporarily not available. Please try again later.", "busy"),
+    ("[Agent X] - gpt-4.1-nano is overloaded, retry later", "busy"),
+    # Temporary wording about the agent itself: rate limit, credits, outage.
+    ("[Agent X] - Rate limit exceeded. Please try again later.", "agent"),
+    ("[Agent X] - Agent is temporarily disabled by the administrator", "agent"),
+    ("[Agent X] - Your credits are temporarily exhausted", "agent"),
+    ("[Agent X] - Service temporarily unavailable", "agent"),
+    ("[Agent X] - Unauthorized", "agent"),
+])
+def test_agent_errors_are_classified(text, expected):
+    """Review R1/FRV-1/FRV-2/FRV-7: a removed model is marked, a busy model is only
+    skipped for this call, and anything about the agent moves on to the next agent."""
+    assert bb.looks_like_agent_error(text)
+    assert bb._classify_agent_error(text, "gpt-4.1-nano") == expected
 
 
 @pytest.mark.parametrize("text", [
@@ -488,7 +517,7 @@ def test_temporarily_unavailable_is_not_a_model_configuration_error():
     "[Agent researchAgent] — Failed to resolve model configuration",
     "[Agent researchAgent]: Failed to resolve model configuration",
     "Failed to resolve model configuration",
-    "Error: unknown model 'gpt-4.1-nano'",
+    "Error: Failed to resolve model configuration.",
 ])
 def test_error_variants_are_recognised(text):
     """Review F3."""
@@ -522,3 +551,888 @@ def test_bot_error_bodies_are_not_answers(monkeypatch):
     assert bb.call_blockbrain_bot("q") == "" and "Failed to resolve" in bb.LAST_BOT_ERROR
     replies["answer"] = R(body={"body": {"content": "Zinc and copper compete."}})
     assert bb.call_blockbrain_bot("q") == "Zinc and copper compete." and bb.LAST_BOT_ERROR == ""
+
+
+def test_a_blurry_photo_reply_is_an_answer_not_a_model_failure(monkeypatch):
+    """Review FR1: "please attach a sharper photo" must not switch photo reading off."""
+    reply = "The image is too blurry to read the nutrition table. Please attach a sharper photo."
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "error", "errorText": MODEL_ERROR}] if model == "gpt-4.1-nano"
+                                        else [{"type": "text-delta", "id": "t", "delta": reply}, {"type": "finish"}]),
+    )
+    buf = io.BytesIO()
+    Image.new("RGB", (600, 400), "white").save(buf, format="JPEG")
+    bb.call_blockbrain_vision(buf.getvalue())
+    assert len(sent) == 2  # nano refused, gpt-4.1 answered (about the photo)
+    assert not any(m != "gpt-4.1-nano" for (_a, m) in bb._MODEL_UNRESOLVED)
+    sent.clear()
+    bb.call_blockbrain_vision(buf.getvalue())
+    assert [m for _a, _v, m in sent] == ["gpt-4.1"]  # the next photo goes straight to it
+
+
+def test_a_busy_model_falls_back_without_blocking_anything(monkeypatch):
+    """Review R1/FR3: "temporarily not available" on the pinned model -> the next model."""
+    busy = "[Agent researchAgent] - Model gpt-4.1-nano is temporarily not available. Please try again later."
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "error", "errorText": busy}] if model == "gpt-4.1-nano" else GOOD_STREAM),
+    )
+    for _ in range(3):
+        sent.clear()
+        assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+        assert [m for _a, _v, m in sent] == ["gpt-4.1-nano", "gpt-4.1-mini"]  # busy is not blocked: tried again
+    assert bb._STREAM_ENDPOINT_COOLDOWN == {} and bb._AGENT_PARKED == {} and bb._MODEL_UNRESOLVED == {}
+
+
+@pytest.mark.parametrize("answer", [
+    "Short answer: the 'more is better' model is not supported by the evidence — 25 µg/day is plenty.",
+    "Not found — this product model is not found in the databases I checked.",
+    "Unknown model number; please photograph the Supplement Facts panel instead.",
+    "[Agent Orange](https://example.org) was a herbicide; it is unrelated to vitamin D.",
+    "[Agent-based models] are not used for nutrient advice.",
+])
+def test_short_real_answers_are_kept(monkeypatch, answer):
+    """Review FR4: an answer that merely mentions "model … not supported" is an answer."""
+    assert not bb.looks_like_agent_error(answer)
+    sent = _install_by_model(
+        monkeypatch, lambda url, model: FakeResponse(events=[{"type": "text-delta", "id": "t", "delta": answer}, {"type": "finish"}])
+    )
+    assert bb.call_blockbrain_text("sys", "q") == answer
+    assert len(sent) == 1
+
+
+def test_only_the_last_fallback_works_and_is_found_in_the_first_call(monkeypatch):
+    """Review R2: every distinct model is tried once before giving up."""
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=GOOD_STREAM if model == "anthropic-claude-haiku-4.5"
+                                        else [{"type": "error", "errorText": MODEL_ERROR}]),
+    )
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    sent.clear()
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert len(sent) == 1
+
+
+def test_the_failure_reason_is_per_thread():
+    """Review FR5/FR6: another visitor's failure never changes this visitor's messages."""
+    import threading
+
+    bb.reset_call_error()
+
+    def other_visitor():
+        bb._CALL_STATE.error = "Blockbrain bot convo HTTP 500"
+
+    worker = threading.Thread(target=other_visitor)
+    worker.start()
+    worker.join()
+    assert bb.last_call_error() == ""
+
+
+def test_a_model_refused_on_one_agent_goes_last_on_the_others():
+    far = float("inf")
+    bb._MODEL_UNRESOLVED[("researchAgent", "gpt-4.1-nano")] = far
+    fallbacks = ["gpt-4.1-mini", "gpt-4o-mini", ""]
+    # On the agent that refused it: left out.
+    assert bb._model_candidates("gpt-4.1-nano", fallbacks, "text", "researchAgent") == fallbacks
+    # On another agent: still tried, but last.
+    # (the agent default can be slow: after every named model, marked or not)
+    assert bb._model_candidates("gpt-4.1-nano", fallbacks, "text", "customAgent") == ["gpt-4.1-mini", "gpt-4o-mini", "gpt-4.1-nano", ""]
+    # The model that last worked leads, even if another agent refused it earlier.
+    bb._MODEL_UNRESOLVED[("customAgent", "gpt-4o-mini")] = far
+    bb._LAST_GOOD_MODEL["text"] = "gpt-4o-mini"
+    assert bb._model_candidates("gpt-4.1-nano", fallbacks, "text", "researchAgent")[0] == "gpt-4o-mini"
+
+
+def test_marks_are_only_a_hint_when_nothing_else_is_left():
+    """Review FR2/FRV-3/M5: with every model marked bad, the models are tried again
+    (the pinned one last), minus what this call already tried."""
+    far = float("inf")
+    fallbacks = ["gpt-4.1-mini", "gpt-4o-mini", ""]
+    for model in ["gpt-4.1-nano"] + fallbacks:
+        bb._MODEL_UNRESOLVED[("researchAgent", model)] = far
+    assert bb._model_candidates("gpt-4.1-nano", fallbacks, "text", "researchAgent") == ["gpt-4.1-mini", "gpt-4o-mini", "gpt-4.1-nano", ""]
+    assert bb._model_candidates("gpt-4.1-nano", fallbacks, "text", "researchAgent", skip={"gpt-4.1-mini", ""}) == [
+        "gpt-4o-mini", "gpt-4.1-nano"]
+
+
+
+# --- Second review round (5dd8ec5): every reproduced failure ------------------------------------
+
+def _no_state_left_behind():
+    assert bb._MODEL_UNRESOLVED == {} and bb._AGENT_PARKED == {} and bb._STREAM_ENDPOINT_COOLDOWN == {}
+
+
+def _only_nano_is_gone(monkeypatch, extra=None):
+    """The live situation: the pinned model can't be resolved, everything else works."""
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: extra(url, model) if extra and extra(url, model) is not None else FakeResponse(
+            events=[{"type": "error", "errorText": MODEL_ERROR}] if model == "gpt-4.1-nano" else GOOD_STREAM),
+    )
+    return sent
+
+
+@pytest.mark.parametrize("outage_calls", [1, 3, 4, 8])
+@pytest.mark.parametrize("kind", ["text", "vision"])
+def test_a_fixed_blockbrain_is_never_locked_out_after_an_outage(monkeypatch, kind, outage_calls):
+    """Review FR2/N1/FRV-3/M5: the calls after any number of failed ones must reach a
+    working model at once, also when the requested model stays removed."""
+    img = io.BytesIO()
+    Image.new("RGB", (400, 300), "white").save(img, format="JPEG")
+    call = (lambda: bb.call_blockbrain_text("sys", "q")) if kind == "text" else (lambda: bb.call_blockbrain_vision(img.getvalue()))
+    _install_by_model(monkeypatch, lambda url, model: FakeResponse(events=[{"type": "error", "errorText": MODEL_ERROR}]))
+    for _ in range(outage_calls):
+        assert call() == ""
+    sent = _only_nano_is_gone(monkeypatch)
+    assert call() != ""
+    assert len(sent) <= 2  # the removed pinned model is tried last, not first
+    sent.clear()
+    assert call() != ""
+    assert len(sent) == 1
+
+
+@pytest.mark.parametrize("status, body", [
+    (503, "<html><h1>503 Service Temporarily Unavailable</h1></html>"),
+    (429, '{"message": "Too many requests, please try again later"}'),
+    (502, "Bad gateway: upstream not available"),
+])
+def test_a_busy_http_reply_moves_to_the_next_agent(monkeypatch, status, body):
+    """Review FRV-1: an HTTP 5xx/429 is the endpoint's, whatever its body says."""
+    primary = bb._load_blockbrain_secrets()[2]
+
+    def responder(url, model):
+        if f"/{primary}/" in url:
+            response = FakeResponse(status_code=status)
+            response.text = body
+            return response
+        return FakeResponse(events=GOOD_STREAM)
+
+    sent = _install_by_model(monkeypatch, responder)
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert [a for a, _v, _m in sent].count(primary) <= 2 and sent[-1][0] != primary
+    sent.clear()
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert len(sent) == 1 and sent[0][0] != primary  # cooling down
+
+
+@pytest.mark.parametrize("error", [
+    "[Agent researchAgent] - Rate limit exceeded. Please try again later.",
+    "[Agent researchAgent] - Agent is temporarily disabled by the administrator",
+    "[Agent researchAgent] - Your credits are temporarily exhausted",
+    "[Agent researchAgent] - Service temporarily unavailable",
+])
+def test_an_agent_wide_error_moves_to_the_next_agent_and_cools_the_agent(monkeypatch, error):
+    """Review FRV-2 / rate-limited agent: temporary wording that isn't about a model."""
+    primary = bb._load_blockbrain_secrets()[2]
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "error", "errorText": error}]) if f"/{primary}/" in url else FakeResponse(events=GOOD_STREAM),
+    )
+    for kind_call in (lambda: bb.call_blockbrain_text("sys", "q"), lambda: bb.call_blockbrain_text("sys", "q", allow_tools=True)):
+        sent.clear()
+        bb._STREAM_ENDPOINT_COOLDOWN.clear()
+        assert kind_call() == "**Breakfast** oats"
+        assert [a for a, _v, _m in sent].count(primary) == 1  # one request, not one per model
+    sent.clear()
+    assert bb.call_blockbrain_text("sys", "q", allow_tools=True) == "**Breakfast** oats"
+
+
+def test_busy_models_on_one_agent_move_on_without_blocking_it(monkeypatch):
+    """Review FRV-2/FRV-7: two busy models and the next agent answers; nothing is blocked."""
+    busy = "[Agent researchAgent] - The model is temporarily not available due to high demand"
+    primary = bb._load_blockbrain_secrets()[2]
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "error", "errorText": busy}]) if f"/{primary}/" in url else FakeResponse(events=GOOD_STREAM),
+    )
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert [a for a, _v, _m in sent].count(primary) == 2 and sent[-1][0] != primary
+    assert len({m for _a, _v, m in sent}) == len(sent)  # a model is never sent twice
+    assert bb._MODEL_UNRESOLVED == {} and bb._AGENT_PARKED == {}
+    # Two busy models: this agent goes last, for a minute only.
+    now = bb.time.monotonic()
+    assert bb._STREAM_ENDPOINT_COOLDOWN and all(until - now <= bb._BUSY_COOLDOWN_S + 1 for until in bb._STREAM_ENDPOINT_COOLDOWN.values())
+
+
+def test_models_disabled_for_the_organisation_are_skipped_not_waited_for(monkeypatch):
+    """Review FRV-7: "not available for your organisation" is configuration: mark, go on."""
+    gone = "[Agent researchAgent] - Model {m} is not available for your organisation."
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=GOOD_STREAM if model in ("gemini-2.5-flash-lite", "anthropic-claude-haiku-4.5", "")
+                                        else [{"type": "error", "errorText": gone.format(m=model)}]),
+    )
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert len({m for _a, _v, m in sent}) == len(sent)
+    sent.clear()
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert len(sent) == 1
+
+
+@pytest.mark.parametrize("reply", [
+    "Please attach an image of the supplement label and I'll extract the nutrients.",
+    "I do not see any image in your message.",
+    "There is nothing for me to extract - no label image was shared.",
+    "I don't see an image attached. Could you upload the label?",
+    "No image has been attached to your message.",
+])
+def test_a_vision_model_that_never_got_the_image_is_skipped(monkeypatch, reply):
+    """Review FRV-5: every wording of "no image" goes on to the next vision model, and a
+    blind model is never remembered as the model that works."""
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "text-delta", "id": "t", "delta": reply}, {"type": "finish"}])
+        if model == "gpt-4.1-nano" else FakeResponse(events=[{"type": "text-delta", "id": "t", "delta": "Vitamin C 80 mg"}, {"type": "finish"}]),
+    )
+    img = io.BytesIO()
+    Image.new("RGB", (400, 300), "white").save(img, format="JPEG")
+    assert bb.call_blockbrain_vision(img.getvalue()) == "Vitamin C 80 mg"
+    assert [m for _a, _v, m in sent] == ["gpt-4.1-nano", "gpt-4.1"]
+    assert bb._LAST_GOOD_MODEL["vision"] == "gpt-4.1" and bb._MODEL_UNRESOLVED == {}
+    # Nothing is remembered against the blind model (a false positive can't lock photos
+    # out): the next photo pays one cheap extra request instead.
+    sent.clear()
+    assert bb.call_blockbrain_vision(img.getvalue()) == "Vitamin C 80 mg"
+    assert [m for _a, _v, m in sent] == ["gpt-4.1-nano", "gpt-4.1"]
+
+
+@pytest.mark.parametrize("reply", [
+    "I can't see the image clearly enough to read the nutrition table - it is too blurry.",
+    "I cannot see the photo well, it is too dark.",
+    "The image is too blurry to read. Please attach a sharper photo.",
+    "Vitamin C 80 mg 100%\nZink 10 mg 100%\n(I can't see the image's lower part, it is cut off.)",
+])
+def test_a_reply_about_the_photo_is_an_answer_and_blocks_nothing(monkeypatch, reply):
+    """Review FRV-6/blurry: quality complaints and label text with a note are answers: one
+    upload, nothing remembered — four blurry photos in a row can't turn photo reading off."""
+    sent = _install_by_model(
+        monkeypatch, lambda url, model: FakeResponse(events=[{"type": "text-delta", "id": "t", "delta": reply}, {"type": "finish"}]))
+    img = io.BytesIO()
+    Image.new("RGB", (400, 300), "white").save(img, format="JPEG")
+    for _ in range(4):
+        sent.clear()
+        bb.call_blockbrain_vision(img.getvalue())
+        assert len(sent) == 1
+    assert bb._MODEL_UNRESOLVED == {}
+    sent2 = _install_by_model(monkeypatch, lambda url, model: FakeResponse(events=[{"type": "text-delta", "id": "t", "delta": "Zink 10 mg"}, {"type": "finish"}]))
+    assert bb.call_blockbrain_vision(img.getvalue()) == "Zink 10 mg" and len(sent2) == 1
+
+
+def test_models_that_never_get_the_image_stop_the_call_after_three(monkeypatch):
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "text-delta", "id": "t", "delta": "No image has been attached."}, {"type": "finish"}]))
+    img = io.BytesIO()
+    Image.new("RGB", (400, 300), "white").save(img, format="JPEG")
+    assert bb.call_blockbrain_vision(img.getvalue()) == ""
+    assert len(sent) == bb._IMAGE_BLIND_PER_CALL
+    assert bb._MODEL_UNRESOLVED == {} and bb._AGENT_PARKED == {}  # the photo's problem, not the models'
+
+
+@pytest.mark.parametrize("error", [
+    "Failed to resolve model configuration for model gpt-4.1-nano",
+    "Failed to resolve model configuration: model gpt-4.1-nano not found",
+    "[agent: 6a4bc43653952e29ba6ef1d6] Failed to resolve model configuration",
+    "Error: [Agent 6a4bc43653952e29ba6ef1d6] - Failed to resolve model configuration",
+    "[Agent SuppSwipe Label Reader] - Failed to resolve model configuration",
+    "Agent researchAgent - Failed to resolve model configuration",
+    "Error Failed to resolve model configuration",
+    '{"error": "Failed to resolve model configuration"}',
+    "[researchAgent] - Failed to resolve model configuration",
+    "Error: Failed to resolve model configuration (code 500)",
+    "AI_APICallError: Failed to resolve model configuration",
+    "**Error:** Failed to resolve model configuration",
+    "Error: Model 'gpt-4.1-nano' not found",
+])
+def test_every_error_wording_is_caught_and_never_shown_or_cached(monkeypatch, error):
+    """Review FRV-4 / NEW-ERRTEXT-LEAK: wherever the error is written, it is not an answer."""
+    assert bb.looks_like_agent_error(error)
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "text-delta", "id": "t", "delta": error}, {"type": "finish"}])
+        if model == "gpt-4.1-nano" else FakeResponse(events=GOOD_STREAM),
+    )
+    seen = []
+    assert bb.call_blockbrain_text("sys", "q", on_text=seen.append) == "**Breakfast** oats"
+    assert not any(error[:10] in s for s in seen)
+    assert [m for _a, _v, m in sent][:2] == ["gpt-4.1-nano", "gpt-4.1-mini"]
+
+
+@pytest.mark.parametrize("pieces", [
+    ["Fail", "ed to resolve model configuration"],
+    ["Err", "or: Failed to resolve model configuration"],
+    ["F", "ailed to resolve ", "model configuration"],
+    ["[Age", "nt X] - Failed to resolve model configuration"],
+])
+def test_a_split_error_never_shows_its_first_fragment(monkeypatch, pieces):
+    """Review FRV-12: a prefix of a known error is held until it turns out to be an answer."""
+    monkeypatch.setattr(bb.time, "monotonic", iter(range(0, 10_000, 1)).__next__)  # every push is past the throttle
+    _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "text-delta", "id": "t", "delta": p} for p in pieces] + [{"type": "finish"}])
+        if model == "gpt-4.1-nano" else FakeResponse(events=GOOD_STREAM),
+    )
+    seen = []
+    assert bb.call_blockbrain_text("sys", "q", on_text=seen.append) == "**Breakfast** oats"
+    assert seen and all(s.startswith("**Breakfast**") for s in seen)
+
+
+def test_an_answer_that_starts_like_an_error_prefix_is_still_shown(monkeypatch):
+    _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "text-delta", "id": "t", "delta": d} for d in ("Fib", "er is ", "found in oats")] + [{"type": "finish"}]),
+    )
+    monkeypatch.setattr(bb.time, "monotonic", iter(range(0, 10_000, 1)).__next__)
+    seen = []
+    assert bb.call_blockbrain_text("sys", "q", on_text=seen.append) == "Fiber is found in oats"
+    assert any(s.startswith("Fib") for s in seen)
+
+
+def test_the_slow_agent_default_never_becomes_the_preferred_model(monkeypatch):
+    """Review FRV-8: one blip where only the agent default works must not pin every
+    later text call to it (it can take minutes)."""
+    working = {"only_default": True}
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=GOOD_STREAM if (model == "" or not working["only_default"] and model != "gpt-4.1-nano")
+                                        else [{"type": "error", "errorText": MODEL_ERROR}]),
+    )
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert bb._LAST_GOOD_MODEL.get("text") != ""
+    working["only_default"] = False
+    bb._MODEL_UNRESOLVED.clear()  # ten minutes later
+    bb._AGENT_PARKED.clear()
+    bb._STREAM_ENDPOINT_COOLDOWN.clear()
+    sent.clear()
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert [m for _a, _v, m in sent][-1] == "gpt-4.1-mini"
+    sent.clear()
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert [m for _a, _v, m in sent] == ["gpt-4.1-mini"]
+
+
+def test_the_custom_endpoint_reports_why_it_failed_and_never_returns_an_agent_error(monkeypatch):
+    """Review FRV-11: BLOCKBRAIN_CHAT_ENDPOINT must set the per-thread failure reason too."""
+    monkeypatch.setenv("BLOCKBRAIN_CHAT_ENDPOINT", "/v1/chat/completions")
+
+    class JsonResponse:
+        status_code = 200
+        text = ""
+        content = b"{}"
+
+        def __init__(self, body):
+            self._body = body
+
+        def json(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(bb, "_http_post", lambda url, **kw: JsonResponse({"choices": [{"message": {"content": ""}}]}))
+    bb.reset_call_error()
+    assert bb.call_blockbrain_text("sys", "q") == ""
+    assert bb.last_call_error()
+    monkeypatch.setattr(bb, "_http_post", lambda url, **kw: JsonResponse({"choices": [{"message": {"content": "ok"}}]}))
+    assert bb.call_blockbrain_text("sys", "q") == "ok" and bb.last_call_error() == ""
+    monkeypatch.setattr(bb, "_http_post", lambda url, **kw: JsonResponse({"choices": [{"message": {"content": MODEL_ERROR}}]}))
+    assert MODEL_ERROR not in (bb.call_blockbrain_text("sys", "q") or "")
+
+
+
+# --- Third review round (109e32f) ------------------------------------------------------------------
+
+IMAGE_REPLIES = [
+ # blind-model replies
+ ("No image has been attached to this message.", True),
+ ("No file, image, or document has been attached.", True),
+ ("I don't see any image attached. Please upload the label.", True),
+ ("I do not see any image in your message.", True),
+ ("There is no image in this conversation.", True),
+ ("I can't see any images - only text was provided.", True),
+ ("Please attach an image of the supplement label and I'll extract the nutrients.", True),
+ ("There is nothing for me to extract - no label image was shared.", True),
+ ("I don't see an image attached. Could you please upload a clear photo of the label?", True),
+ ("Please upload a clear image of the supplement label so I can extract the nutrients.", True),
+ ("Please provide a clear photo of the nutrition table and I will read it for you.", True),
+ ("I'm unable to view images. Please paste the label text.", True),
+ ("No image attached.", True),
+ ("No image provided.", True),
+ ("No image was provided. Please send a sharp photo of the label.", True),
+ ("There's no image attached to your message.", True),
+ ("It looks like no image came through. Could you try uploading it again?", True),
+ ("The image did not come through. Please upload it again.", True),
+ ("I can only see text, not an image. Could you re-upload?", True),
+ ("I'm sorry, but I can't see an image in our conversation. Could you upload the label photo?", True),
+ ("Sorry, I don't have the ability to see images in this chat.", True),
+ ("I cannot process images with this configuration.", True),
+ ("As a text-based model I can't analyze images.", True),
+ ("Es wurde kein Bild angehängt.", True),
+ ("Ich kann kein Bild sehen. Bitte laden Sie ein Foto des Etiketts hoch.", True),
+ ("Es wurde kein Bild hochgeladen.", True),
+ ("Bitte laden Sie ein Bild des Nahrungsergänzungsmittel-Etiketts hoch.", True),
+ ("Ich sehe kein Bild in Ihrer Nachricht.", True),
+ ("No label image was attached; please attach a clear picture of the Supplement Facts.", True),
+ # real answers (must NOT be treated as image-not-received)
+ ("I can't see the image clearly enough to read the nutrition table. Please take a sharper photo.", False),
+ ("I cannot see the photo well, it is too dark. Please retake it in better light.", False),
+ ("Das Foto ist zu unscharf, bitte ein schärferes Bild aufnehmen.", False),
+ ("Vitamin C 80 mg 100%\nVitamin D3 20 µg 400%\nZink 10 mg 100%\n(I can't see the image's lower part, it is cut off.)", False),
+ ("Centrum Men\nVitamin D 25 µg\nNote: I could not see the picture's right edge.", False),
+ ("Centrum Men\nServing size 1 tablet\nNo image of the back panel was provided, so only the front is read.", False),
+ ("Product: Nature Made Fish Oil\nNo nutrient table is visible in the photo.", False),
+ ("The photo shows only the front of the box: Brand X Multivitamin. No supplement facts panel is visible.", False),
+ ("Das Foto zeigt nur die Vorderseite: Doppelherz Magnesium. Keine Nährwerttabelle sichtbar.", False),
+ ("Doppelherz Magnesium 400\nPro Tablette: Magnesium 400 mg", False),
+ ("Vitamin D3 20 µg (800 I.E.) 400%\nNote: no photo of the ingredients list was provided.", False),
+ ("Magnesium Citrate\nNo document attached to the label; amounts per serving: Magnesium 200 mg", False),
+ ("Vitamin B12 (as methylcobalamin) 500 mcg\nVitamin B6 5 mg\nPlease attach the second photo for the ingredients.", False),
+]
+
+
+@pytest.mark.parametrize("reply, blind", IMAGE_REPLIES)
+def test_image_not_received_wordings(reply, blind):
+    """Review FRV-5: what a model that never got the photo says, in English and German, versus
+    what a model that did see it says about it (quality, label text with a note)."""
+    assert bb._image_not_received(reply) is blind
+
+
+@pytest.mark.parametrize("error", [
+    "[Agent researchAgent] - The model `gpt-4.1-nano` does not exist or you do not have access to it.",
+    "Error: The model `gpt-4.1-nano` does not exist or you do not have access to it.",
+    "[Agent researchAgent] - Something odd happened with gpt-4.1-nano",  # not recognised: still a model problem
+])
+def test_an_unrecognised_error_is_a_model_problem_not_an_agent_problem(monkeypatch, error):
+    """Review NEW-CLASSIFY-DEFAULT-AGENT: an unknown wording must not retry the removed model on every agent."""
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "error", "errorText": error}]) if model == "gpt-4.1-nano" else FakeResponse(events=GOOD_STREAM),
+    )
+    for _ in range(3):
+        sent.clear()
+        assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+        assert len(sent) <= 3  # nano on two agents (skipped from then on), then another model
+    assert len(sent) == 1
+
+
+def test_the_same_model_failing_on_two_agents_is_skipped_for_the_call(monkeypatch):
+    """Review R1 wording 5: "high demand" without the word model is an agent error, but the same model
+    failing on two agents is the model's problem: the third agent starts with another one."""
+    error = "[Agent X] - We are experiencing high demand"
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "error", "errorText": error}]) if model == "gpt-4.1-nano" else FakeResponse(events=GOOD_STREAM),
+    )
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert [m for _a, _v, m in sent] == ["gpt-4.1-nano", "gpt-4.1-nano", "gpt-4.1-mini"]
+    sent.clear()
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert len(sent) == 1
+
+
+@pytest.mark.parametrize("status, body", [
+    (400, '{"message": "Failed to resolve model configuration"}'),
+    (422, '{"error": "Model gpt-4.1-nano not found"}'),
+    (500, '{"message": "Failed to resolve model configuration"}'),
+    (403, "Model gpt-4.1-nano is not enabled for your organisation"),
+])
+def test_a_model_error_in_an_http_body_falls_back_to_the_next_model(monkeypatch, status, body):
+    """Review NEW-HTTP-MODEL-ERROR: the same message with an HTTP status is still a model problem."""
+    def responder(url, model):
+        if model != "gpt-4.1-nano":
+            return FakeResponse(events=GOOD_STREAM)
+        response = FakeResponse(status_code=status)
+        response.text = body
+        return response
+
+    sent = _install_by_model(monkeypatch, responder)
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert [m for _a, _v, m in sent] == ["gpt-4.1-nano", "gpt-4.1-mini"]
+    assert bb._STREAM_ENDPOINT_COOLDOWN == {}  # the endpoint isn't at fault
+    sent.clear()
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert len(sent) == 1
+
+
+def test_a_failed_tool_call_does_not_discard_the_answer_that_follows(monkeypatch):
+    """Review NEW-TOOL-ERROR-EVENT: tool-output-error parts carry errorText but aren't fatal."""
+    events = [
+        {"type": "start"},
+        {"type": "tool-output-error", "toolCallId": "t1", "errorText": "Web search failed: upstream timeout"},
+        {"type": "text-delta", "id": "t", "delta": "Source: https://example.org/d3\nVitamin D3 25 µg"},
+        {"type": "finish"},
+    ]
+    sent = _install_by_model(monkeypatch, lambda url, model: FakeResponse(events=events))
+    assert bb.call_blockbrain_text("sys", "q", allow_tools=True).endswith("Vitamin D3 25 µg")
+    assert len(sent) == 1 and bb._STREAM_ENDPOINT_COOLDOWN == {}
+
+
+def test_an_empty_reply_moves_on_to_the_next_model(monkeypatch):
+    """Review NEW-EMPTY-REPLY-RETRY: a model that answers nothing isn't asked again on every endpoint."""
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "finish"}]) if model == "gpt-4.1-nano" else FakeResponse(events=GOOD_STREAM),
+    )
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert [m for _a, _v, m in sent] == ["gpt-4.1-nano", "gpt-4.1-mini"]
+
+
+def test_the_slow_agent_default_never_goes_before_a_named_model(monkeypatch):
+    """Review FRV-8: after a blip in which only the agent default answered, the next calls (marks still live)
+    use named models again, not the default."""
+    state = {"only_default": True}
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=GOOD_STREAM if (model == "" if state["only_default"] else model != "gpt-4.1-nano")
+                                        else [{"type": "error", "errorText": MODEL_ERROR}]),
+    )
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    state["only_default"] = False
+    for _ in range(3):  # marks are still live: no waiting for them to expire
+        sent.clear()
+        assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+        assert "" not in [m for _a, _v, m in sent]
+    assert len(sent) == 1
+
+
+@pytest.mark.parametrize("text", [
+    "AI_APICallError: Rate limit exceeded",
+    "AI_APICallError: Insufficient credits",
+    "[Agent 6a4bc43653952e29ba6ef1d6] - Failed to resolve model configuration for model gpt-4.1-nano. Details: " + "x" * 600,
+    "Failed to resolve model configuration. " + "The pinned model is not available. " * 30,
+    "[Agent Orange label reader] - something failed " + "y" * 800,
+    "Error: Rate limit exceeded",
+    "Error: Insufficient credits",
+    "Error: Request failed with status code 429",
+    '{"error": "Rate limit exceeded"}',
+    "Internal Server Error",
+    "Service Unavailable",
+    "Unauthorized",
+])
+def test_longer_and_other_error_shapes_are_recognised(text):
+    """Review NEW-ERROR-SHAPES / NEW-LONG-ERROR-TEXT: no length cap for the exact phrase or the [Agent …] prefix."""
+    assert bb.looks_like_agent_error(text)
+
+
+@pytest.mark.parametrize("answer", [
+    "Vitamin D: 25 µg per day is plenty. In case of an error in dosing, ask your doctor.",
+    "[Agent-based models] are not used for nutrient advice. " + "z" * 600,
+    "Der Fehler liegt oft an der Dosierung; Magnesium 300 mg am Abend ist üblich.",
+    "Eisen: take it with vitamin C. [Agent Orange](https://example.org) is unrelated.",
+    "Error bars in the study show the effect of magnesium is not significant.",
+    "Error: dose not found on the label for Selen, so I assumed 55 µg.",
+    "The service unavailable message appears when the product page is down; the label itself lists Zinc 10 mg.",
+])
+def test_real_answers_are_never_mistaken_for_errors(answer):
+    assert not bb.looks_like_agent_error(answer)
+
+
+
+# --- Fourth review round (855c9e9) -------------------------------------------------------------------
+
+PRIMARY = None
+
+
+def _by_agent(monkeypatch, responder):
+    """fake _http_post that hands (agent, version, model, url) to `responder`."""
+    sent = []
+
+    def fake_post(url, json=None, **kwargs):
+        model = str((json or {}).get("model", "") or "")
+        agent = url.split("/api/agents/")[1].split("/")[0]
+        version = url.split("/")[3]
+        sent.append((agent, version, model))
+        return responder(agent, version, model, url)
+
+    monkeypatch.setattr(bb, "_http_post", fake_post)
+    return sent
+
+
+def _agent_order():
+    """The agents in the order a fresh call tries them."""
+    primary = bb._load_blockbrain_secrets()[2]
+    return [primary] + [a for a in bb.BLOCKBRAIN_FALLBACK_AGENTS if a != primary]
+
+
+def test_two_broken_agents_do_not_starve_the_healthy_ones(monkeypatch):
+    """Review LOOP-1: a model that failed on one agent is only tried last on the others, so a healthy
+    third agent is reached in the first call."""
+    broken = set(_agent_order()[:2])
+    sent = _by_agent(monkeypatch, lambda agent, v, model, url: FakeResponse(
+        events=[{"type": "error", "errorText": MODEL_ERROR}] if agent in broken else GOOD_STREAM))
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert len(sent) <= bb._MODEL_ERRORS_PER_CALL
+    sent.clear()
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert len(sent) == 1 and sent[0][0] not in broken
+
+
+@pytest.mark.parametrize("wording", ["An error occurred.", "Connection error.", "Something went wrong", "Bad request: invalid parameters"])
+def test_an_unrecognised_error_from_two_agents_does_not_burn_the_healthy_one(monkeypatch, wording):
+    """Review CLASSIFY-1/2/3: an unknown wording only reorders: the agent is tried last, nothing is
+    excluded, and nothing is marked unless another model then answers."""
+    broken = set(_agent_order()[:2])
+    sent = _by_agent(monkeypatch, lambda agent, v, model, url: FakeResponse(
+        events=[{"type": "error", "errorText": f"[Agent {agent}] - {wording}"}] if agent in broken else GOOD_STREAM))
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert len(sent) == 3  # one request per broken agent, then the healthy one
+    # The pinned model failed the same way on two agents and another model then answered:
+    # only that is remembered (on those two agents), and no agent is parked.
+    assert set(bb._MODEL_UNRESOLVED) == {(a, "gpt-4.1-nano") for a in _agent_order()[:2]} and bb._AGENT_PARKED == {}
+    sent.clear()
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert len(sent) == 1
+
+
+def test_a_prompt_specific_error_marks_nothing(monkeypatch):
+    """Review CLASSIFY-2: an error that depends on the prompt fails on every model: no model is blamed."""
+    sent = _by_agent(monkeypatch, lambda agent, v, model, url: FakeResponse(
+        events=[{"type": "error", "errorText": "[Agent X] - The response was filtered by the content policy"}]))
+    assert bb.call_blockbrain_text("sys", "q") == ""
+    assert bb._MODEL_UNRESOLVED == {} and bb._AGENT_PARKED == {}
+    assert len(sent) <= bb._MODEL_ERRORS_PER_CALL
+
+
+def test_a_shared_rate_limit_does_not_make_the_app_avoid_models_afterwards(monkeypatch):
+    """Review matrix-ratelimit-marks (M9A): "Rate limit exceeded" on every agent, then it ends."""
+    state = {"limited": True}
+    _by_agent(monkeypatch, lambda agent, v, model, url: FakeResponse(
+        events=[{"type": "error", "errorText": "[Agent X] - Rate limit exceeded"}] if state["limited"] else GOOD_STREAM))
+    assert bb.call_blockbrain_text("sys", "q") == ""
+    state["limited"] = False
+    bb._STREAM_ENDPOINT_COOLDOWN.clear()
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert bb._MODEL_UNRESOLVED == {}
+
+
+@pytest.mark.parametrize("status, body", [
+    (502, "Bad Gateway: upstream model server not available"),
+    (503, '{"error": "The model service is not available"}'),
+])
+def test_a_5xx_body_that_mentions_the_model_is_still_the_endpoints_failure(monkeypatch, status, body):
+    """Review HTTP-1: only the exact Blockbrain phrase makes a 5xx a model problem."""
+    primary = _agent_order()[0]
+
+    def responder(agent, v, model, url):
+        if agent == primary:
+            response = FakeResponse(status_code=status)
+            response.text = body
+            return response
+        return FakeResponse(events=GOOD_STREAM)
+
+    sent = _by_agent(monkeypatch, responder)
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert bb._MODEL_UNRESOLVED == {} and bb._AGENT_PARKED == {}
+    assert sent[-1][0] != primary and sent[-1][2] == "gpt-4.1-nano"  # the healthy agent got the pinned model
+    assert bb._STREAM_ENDPOINT_COOLDOWN  # the dead endpoint is cooled
+
+
+def test_a_404_that_says_the_model_does_not_exist_is_a_model_problem(monkeypatch):
+    """Review HTTP-2: OpenAI's model_not_found is a 404; the endpoint is fine."""
+    def responder(agent, v, model, url):
+        if model == "gpt-4.1-nano":
+            response = FakeResponse(status_code=404)
+            response.text = '{"error": {"message": "The model `gpt-4.1-nano` does not exist", "code": "model_not_found"}}'
+            return response
+        return FakeResponse(events=GOOD_STREAM)
+
+    sent = _by_agent(monkeypatch, responder)
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert [m for _a, _v, m in sent] == ["gpt-4.1-nano", "gpt-4.1-mini"]
+    assert bb._STREAM_ENDPOINT_COOLDOWN == {}
+
+
+def test_the_exact_phrase_with_try_again_later_over_http_is_a_model_problem(monkeypatch):
+    """Review HTTP-3: the same text as in a stream."""
+    def responder(agent, v, model, url):
+        if model == "gpt-4.1-nano":
+            response = FakeResponse(status_code=500)
+            response.text = "Failed to resolve model configuration. Please try again later."
+            return response
+        return FakeResponse(events=GOOD_STREAM)
+
+    sent = _by_agent(monkeypatch, responder)
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert [m for _a, _v, m in sent] == ["gpt-4.1-nano", "gpt-4.1-mini"] and bb._STREAM_ENDPOINT_COOLDOWN == {}
+
+
+def test_a_dropped_stream_is_retried_with_the_same_model_on_the_next_version(monkeypatch):
+    """Review EMPTY-1: a connection reset is not the model's answer; only gpt-4.1-nano works here."""
+    calls = {"n": 0}
+
+    def responder(agent, v, model, url):
+        calls["n"] += 1
+        if model != "gpt-4.1-nano":
+            return FakeResponse(events=[{"type": "error", "errorText": MODEL_ERROR}])
+        return FakeResponse(events=GOOD_STREAM, raise_after=0) if calls["n"] == 1 else FakeResponse(events=GOOD_STREAM)
+
+    sent = _by_agent(monkeypatch, responder)
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert [m for _a, _v, m in sent] == ["gpt-4.1-nano", "gpt-4.1-nano"]
+
+
+def test_a_cooldown_is_never_shortened_by_a_later_one():
+    url = "https://blockbrain.test/v1/api/agents/x/stream"
+    bb._mark_stream_endpoint("k", url, ok=False, cooldown_s=3600)
+    first = bb._STREAM_ENDPOINT_COOLDOWN[url]
+    bb._mark_stream_endpoint("k", url, ok=False, cooldown_s=60)
+    assert bb._STREAM_ENDPOINT_COOLDOWN[url] == first
+
+
+@pytest.mark.parametrize("pieces", [
+    ["Inter", "nal Server Error"],
+    ["Service", " Unavail", "able"],
+    ["Rate lim", "it exceeded"],
+    ["AI_Retry", "Error: Failed after 3 attempts"],
+])
+def test_a_split_bare_http_error_never_shows_its_first_fragment(monkeypatch, pieces):
+    monkeypatch.setattr(bb.time, "monotonic", iter(range(0, 10_000, 1)).__next__)
+    _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "text-delta", "id": "t", "delta": p} for p in pieces] + [{"type": "finish"}])
+        if model == "gpt-4.1-nano" else FakeResponse(events=GOOD_STREAM),
+    )
+    seen = []
+    assert bb.call_blockbrain_text("sys", "q", on_text=seen.append) == "**Breakfast** oats"
+    assert seen and all(s.startswith("**Breakfast**") for s in seen)
+
+
+@pytest.mark.parametrize("text", [
+    "AI_RetryError: Failed after 3 attempts. Last error: Rate limit exceeded",
+    "AI_LoadAPIKeyError: API key is missing",
+    "Error code: 404 - {'error': {'message': 'The model `gpt-4.1-nano` does not exist', 'code': 'model_not_found'}}",
+    "openai.NotFoundError: The model `gpt-4.1-nano` does not exist",
+    "Rate limit exceeded. Please try again later.",
+    "HTTP 502 Bad Gateway",
+    "Error 503: Service Unavailable",
+    "502 Bad Gateway",
+    "Something went wrong. Please try again.",
+    "An error occurred.",
+    "Failed to fetch",
+    "⚠️ Error: Rate limit exceeded",
+])
+def test_more_error_shapes_are_recognised(text):
+    """Review ERRTXT-1."""
+    assert bb.looks_like_agent_error(text)
+
+
+@pytest.mark.parametrize("reply", [
+    "I'm not seeing an image in your message.", "The image appears to be missing.", "The image wasn't attached.",
+    "There doesn't appear to be an image attached.", "It looks like your message didn't include an image.",
+    "I have not received an image.", "I'm a text-based assistant, so I can't look at photos.",
+    "Ich sehe leider kein Bild.", "Ich habe kein Bild erhalten.", "Es wurde kein Bild gesendet.",
+    "Je ne vois aucune image.", "No veo ninguna imagen.",
+])
+def test_more_blind_model_wordings(reply):
+    """Review IMG-1."""
+    assert bb._image_not_received(reply)
+
+
+@pytest.mark.parametrize("reply", [
+    "Nature Made Vitamin D3\nPlease upload a photo of the Supplement Facts panel.",
+    "Centrum Silver Women 50+\nNo nutrient table visible. Please send a photo of the back of the package.",
+    "Doppelherz Magnesium\nBitte laden Sie ein Foto der Rückseite hoch.",
+    "Garden of Life Vitamin Code\nNo photo of the supplement facts was provided, only the front of the bottle.",
+    "Doppelherz Magnesium 400",
+    "Orthomol Immun",
+])
+def test_a_read_of_the_front_of_the_pack_is_an_answer(reply):
+    """Review IMG-2: a product name followed by a note is label text for the product research."""
+    assert not bb._image_not_received(reply)
+
+
+
+# --- Copilot review of the PR ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text, expected", [
+    ("[Agent X] - Model gpt-4.1-nano is not available for your organisation. Please try again later.", "model"),
+    ("[Agent X] - Unknown model gpt-4.1-nano. Please try again later.", "model"),
+    ("[Agent X] - Model gpt-4.1-nano not found, retry later", "model"),
+    # Temporary by its own words: still busy, also with retry advice.
+    ("[Agent X] - Model gpt-4.1-nano is temporarily unavailable. Please try again later.", "busy"),
+    ("[Agent X] - The model is overloaded, try again later", "busy"),
+    # Only generic advice about a model: busy; about the agent: the agent.
+    ("[Agent X] - Rate limit reached for model gpt-4.1-nano. Please try again later.", "busy"),
+    ("[Agent X] - Rate limit exceeded. Please try again later.", "agent"),
+])
+def test_definitive_configuration_wording_beats_retry_advice(text, expected):
+    assert bb._classify_agent_error(text, "gpt-4.1-nano") == expected
+
+
+def test_a_removed_model_with_retry_advice_is_marked_not_retried_on_every_call(monkeypatch):
+    error = "[Agent researchAgent] - Model gpt-4.1-nano is not available for your organisation. Please try again later."
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "error", "errorText": error}]) if model == "gpt-4.1-nano" else FakeResponse(events=GOOD_STREAM),
+    )
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert [m for _a, _v, m in sent] == ["gpt-4.1-nano", "gpt-4.1-mini"]
+    assert ("6a4bc43653952e29ba6ef1d6", "gpt-4.1-nano") in bb._MODEL_UNRESOLVED  # remembered
+    sent.clear()
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert len(sent) == 1
+
+
+def test_a_4xx_body_with_retry_advice_is_still_a_model_problem(monkeypatch):
+    def responder(url, model):
+        if model != "gpt-4.1-nano":
+            return FakeResponse(events=GOOD_STREAM)
+        response = FakeResponse(status_code=403)
+        response.text = "Model gpt-4.1-nano is not available for your organisation. Please try again later."
+        return response
+
+    sent = _install_by_model(monkeypatch, responder)
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert [m for _a, _v, m in sent] == ["gpt-4.1-nano", "gpt-4.1-mini"] and bb._STREAM_ENDPOINT_COOLDOWN == {}
+
+
+ERROR_REPLIES = [
+    "Something went wrong. Please try again.", "Something went wrong", "An error occurred.", "Error occurred",
+    "Failed to fetch", "fetch failed", "HTTP 502 Bad Gateway", "Error 503: Service Unavailable", "502 Bad Gateway",
+    "Internal Server Error", "Service Unavailable", "Unauthorized", "Too many requests", "Rate limit exceeded",
+    "Request failed with status code 429", "Gateway Timeout", "Error: Rate limit exceeded",
+    "Failed to resolve model configuration", "[Agent researchAgent] - Failed to resolve model configuration",
+    '{"error": "Rate limit exceeded"}', "AI_RetryError: Failed after 3 attempts", "**Error:** Rate limit exceeded",
+]
+
+
+@pytest.mark.parametrize("reply", ERROR_REPLIES)
+def test_no_recognised_error_is_ever_streamed_whatever_the_split(monkeypatch, reply):
+    """Review (Copilot): split a recognised whole-reply error at EVERY position: no fragment of it reaches on_text,
+    the fallback model answers, and the visitor only ever sees the answer."""
+    assert bb.looks_like_agent_error(reply)
+    monkeypatch.setattr(bb.time, "monotonic", iter(range(0, 10_000_000, 1)).__next__)  # every push is past the throttle
+    for cut in range(1, len(reply)):
+        pieces = [reply[:cut], reply[cut:]]
+        bb._MODEL_UNRESOLVED.clear(); bb._LAST_GOOD_MODEL.clear(); bb._AGENT_PARKED.clear(); bb._STREAM_ENDPOINT_COOLDOWN.clear()
+        _install_by_model(
+            monkeypatch,
+            lambda url, model, pieces=pieces: FakeResponse(events=[{"type": "text-delta", "id": "t", "delta": d} for d in pieces] + [{"type": "finish"}])
+            if model == "gpt-4.1-nano" else FakeResponse(events=GOOD_STREAM),
+        )
+        seen = []
+        assert bb.call_blockbrain_text("sys", "q", on_text=seen.append) == "**Breakfast** oats", (reply, cut)
+        assert all(s.startswith("**Breakfast**") for s in seen), (reply, cut, seen)
+
+
+@pytest.mark.parametrize("answer", [
+    "Something about iron: take it with vitamin C.", "Failed attempts at taking zinc on an empty stomach cause nausea.",
+    "Service stations sell magnesium bars; a bar has about 60 mg.", "502 mg of vitamin C is too much for one dose.",
+    "Forbidden foods in pregnancy include liver.", "Error bars in the study are small.",
+])
+def test_answers_that_start_like_an_error_are_still_streamed(monkeypatch, answer):
+    monkeypatch.setattr(bb.time, "monotonic", iter(range(0, 10_000_000, 1)).__next__)
+    words = answer.split(" ")
+    pieces = [w + " " for w in words[:-1]] + [words[-1]]
+    _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "text-delta", "id": "t", "delta": d} for d in pieces] + [{"type": "finish"}]),
+    )
+    seen = []
+    assert bb.call_blockbrain_text("sys", "q", on_text=seen.append) == answer
+    assert seen and seen[-1] == answer

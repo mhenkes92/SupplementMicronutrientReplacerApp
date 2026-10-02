@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -65,8 +66,51 @@ def _bootstrap_blockbrain_env_from_secrets() -> None:
 
 _bootstrap_blockbrain_env_from_secrets()
 
-import blockbrain.app as bb  # noqa: E402
-import llm_cache  # noqa: E402
+def _load_current(name: str, alias: str, script: str | os.PathLike[str] | None = None):
+    """Import our own module `name` (used here as `alias.<attribute>`), reloading it when stale.
+
+    A running Streamlit process keeps every module it imported. When a redeploy
+    replaces the files on disk, this entry script is read again (new code) but
+    `blockbrain.app` and `llm_cache` stay the OLD objects, so the new script calls
+    something the old module doesn't have and the app dies on open until someone
+    reboots it. Stale means: the file changed since this process last loaded it, or
+    the module lacks an attribute this script uses (the process loaded it before
+    this guard existed, so there is no earlier timestamp to compare)."""
+    import importlib
+    import types
+
+    registry = sys.modules.get("_suppswipe_imports")
+    if registry is None:
+        registry = sys.modules.setdefault("_suppswipe_imports", types.ModuleType("_suppswipe_imports"))
+    with registry.__dict__.setdefault("lock", threading.RLock()):
+        stamps: dict[str, int | None] = registry.__dict__.setdefault("stamps", {})
+        module = importlib.import_module(name)
+        path = getattr(module, "__file__", None)
+        try:
+            stamp = os.stat(path).st_mtime_ns if path else None
+        except OSError:
+            stamp = None
+        if name in stamps:
+            stale = stamp is not None and stamps[name] != stamp
+        else:  # first sight in this process: is everything this script uses there?
+            try:
+                source = Path(script or __file__).read_text(encoding="utf-8")
+            except OSError:
+                source = ""
+            used = set(re.findall(r"\b" + re.escape(alias) + r"\.([A-Za-z_]\w*)", source))
+            stale = any(not hasattr(module, attribute) for attribute in used)
+        if stale:
+            module = importlib.reload(module)
+            try:
+                stamp = os.stat(path).st_mtime_ns if path else None
+            except OSError:
+                stamp = None
+        stamps[name] = stamp
+        return module
+
+
+bb = _load_current("blockbrain.app", "bb")
+llm_cache = _load_current("llm_cache", "llm_cache")
 
 # A Blockbrain error is never served or stored as an answer (also catches
 # entries an older build cached before this check existed).
@@ -702,8 +746,11 @@ _SOURCE_AGENT = "\n\n_🤖 General AI answer (not from your knowledge base)_"
 _SOURCE_AGENT_TIMEOUT = "\n\n_🤖 General AI answer — the knowledge base didn't reply in time_"
 _SOURCE_AGENT_FAILED = "\n\n_🤖 General AI answer — the knowledge base couldn't answer_"
 
-# Last Knowledge Bot call, for the ?debug=1 panel (process-wide, no user data).
+# Last Knowledge Bot call, for the ?debug=1 panel (process-wide, no user data),
+# and the same per session thread for the answer label (another visitor's bot
+# call must not change this visitor's label).
 _LAST_BOT_STATUS: dict[str, Any] = {}
+_BOT_STATUS_HERE = threading.local()
 
 
 def _ask_bot_within(message: str, bot_id: str | None, wait_s: float) -> str | None:
@@ -730,14 +777,14 @@ def _ask_bot_within(message: str, bot_id: str | None, wait_s: float) -> str | No
     waited = round(time.monotonic() - started, 2)
     # One assignment per update, so a reader never sees a half-written status.
     if worker.is_alive():
-        _LAST_BOT_STATUS = {"status": "timeout", "waited_s": waited}
+        _LAST_BOT_STATUS = _BOT_STATUS_HERE.status = {"status": "timeout", "waited_s": waited}
         return None
     answer = result.get("answer")
     if not isinstance(answer, str) or not answer.strip() or bb.looks_like_agent_error(answer):
         error = str(getattr(bb, "LAST_BOT_ERROR", "") or (answer or "") or "no reply")[:200]
-        _LAST_BOT_STATUS = {"status": "error", "s": waited, "error": error}
+        _LAST_BOT_STATUS = _BOT_STATUS_HERE.status = {"status": "error", "s": waited, "error": error}
         return None
-    _LAST_BOT_STATUS = {"status": "ok", "s": waited}
+    _LAST_BOT_STATUS = _BOT_STATUS_HERE.status = {"status": "ok", "s": waited}
     return answer
 
 
@@ -819,6 +866,7 @@ def _answer_ask_ai_question(
             placeholder.info(_QUOTA_MESSAGE)
         return _local_rag_answer(scoped_question)
     research_bot_id = os.getenv("BLOCKBRAIN_RESEARCH_BOT_ID", "").strip()
+    _BOT_STATUS_HERE.status = None
     if placeholder is not None and _ASK_AI_BOT_WAIT_S > 0:
         placeholder.markdown(
             "<div class='plan-writing'><span class='plan-dots'><i></i><i></i><i></i></span>"
@@ -863,7 +911,8 @@ def _answer_ask_ai_question(
             llm_cache.put(cache_key + ":source", "agent")
         if _ASK_AI_BOT_WAIT_S <= 0:  # the knowledge base isn't asked at all
             return agent_answer, _SOURCE_AGENT
-        timed_out = _LAST_BOT_STATUS.get("status") == "timeout"
+        status = dict(getattr(_BOT_STATUS_HERE, "status", None) or {})
+        timed_out = status.get("status") == "timeout"
         return agent_answer, (_SOURCE_AGENT_TIMEOUT if timed_out else _SOURCE_AGENT_FAILED)
 
     # 3) Fallback: local research RAG index.
@@ -4022,6 +4071,23 @@ def _render_dietary_pills() -> None:
 
 def _ai_unavailable_message(what: str) -> str:
     """The analysis error when an AI step failed (not the user's input)."""
+    if what == "quota":
+        return (
+            f"{_QUOTA_MESSAGE} Until then, paste the nutrition table as text (🔗 Paste — that "
+            "works without AI)."
+        )
+    if what == "research":
+        return (
+            "We read the front of the pack, but couldn't look the product up online right now. "
+            "Photograph the nutrition table, paste it as text (🔗 Paste — that works without AI), "
+            "or try again in a few minutes."
+        )
+    if what == "page":
+        return (
+            "That page couldn't be read: it may block automated access or hold no supplement "
+            "facts table. Paste the nutrition table as text instead (🔗 Paste — that works "
+            "without AI), or try another link."
+        )
     if what == "link":
         return (
             "That product page couldn't be read: the AI page reader didn't respond. "
@@ -4104,6 +4170,9 @@ def _run_pending_analysis() -> None:
         # Set when an AI step (photo reading, product research, page reading)
         # failed: an empty result is then the AI's fault, not the user's input.
         ai_failed = ""
+        # Why a product link gave nothing when the AI isn't to blame (shown as a
+        # warning next to other input, or as the one message when it is all there is).
+        url_error = ""
 
         with st.spinner("Extracting and parsing supplement info…"):
             # A barcode the phone decoded in the browser is looked up first; if
@@ -4145,17 +4214,15 @@ def _run_pending_analysis() -> None:
                             and not bb.extraction_gate_report("\n".join(text_parts)).get("passed")
                         ):
                             _set_progress(min(96, pct + 6), "Researching the product from the label…")
+                            bb.reset_call_error()
                             researched_name, source_url = _research_product_from_label_text(ocr_text)
                             if researched_name:
                                 text_parts.append(researched_name)
                                 label_source = {"kind": "ai_research", "url": source_url}
-                            elif getattr(bb, "LAST_BLOCKBRAIN_ERROR", ""):
-                                ai_failed = "photo"
+                            elif bb.last_call_error():
+                                ai_failed = "research"  # the photo was read; the online lookup failed
                     except Exception as exc:
-                        if str(exc) == _QUOTA_MESSAGE:
-                            st.warning(_QUOTA_MESSAGE)
-                        else:
-                            ai_failed = "photo"
+                        ai_failed = "quota" if str(exc) == _QUOTA_MESSAGE else "photo"
 
             manual = str(req.get("manual", "") or "").strip()
             if manual:
@@ -4179,25 +4246,39 @@ def _run_pending_analysis() -> None:
                         )
                 elif re.match(r"https?://", manual, re.I):
                     _set_progress(56, "Fetching product page…")
+                    bb.reset_call_error()
+                    quota_refused: list[bool] = []
+
+                    def _llm_allowed() -> bool:
+                        allowed = _consume_llm_quota("generate")
+                        if not allowed:
+                            quota_refused.append(True)
+                        return allowed
+
                     try:
-                        url_text = _cached_extract_from_url(manual, lambda: _consume_llm_quota("generate"))
+                        url_text = _cached_extract_from_url(manual, _llm_allowed)
                         if url_text.strip():
                             text_parts.append(url_text)
                     except Exception as exc:
-                        if getattr(bb, "LAST_BLOCKBRAIN_ERROR", ""):
+                        if quota_refused:  # the page needs the AI and this session's allowance is used up
+                            ai_failed = "quota"
+                        elif bb.last_call_error():  # the page was fetched; its AI read failed
                             ai_failed = "link"
                         else:
-                            st.warning(f"URL fetch failed: {exc}")
+                            url_error = str(exc)
                 else:
                     _set_progress(58, "Processing text input…")
                     text_parts.append(manual)
 
             combined = "\n\n".join([x for x in text_parts if str(x).strip()]).strip()
             if not combined:
-                _abort(_ai_unavailable_message(ai_failed) if ai_failed else (
+                _abort(_ai_unavailable_message(ai_failed or ("page" if url_error else "")) if (ai_failed or url_error) else (
                     "No analyzable input found. Add a photo, barcode, URL, or supplement-facts text."
                 ))
                 return
+            if url_error:
+                # A toast: it survives the st.rerun() that opens the first card (a warning wouldn't).
+                st.toast(f"The link couldn't be read ({url_error}) — using the rest of your input.", icon="⚠️")
 
             _set_progress(72, "Parsing micronutrients…")
             components = bb.parse_components(combined)
