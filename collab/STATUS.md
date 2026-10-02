@@ -13,6 +13,8 @@ All LLM/OCR calls go through `blockbrain_llm_client.py` (the owner's verified mo
 | Streamlit Cloud secrets: `BLOCKBRAIN_API_KEY`, `BLOCKBRAIN_ORG_ID`, `BLOCKBRAIN_MODEL` (or `BLOCKBRAIN_BOT_ID`) | owner | open |
 | Merge to `master` (deploys the live app) | owner | after the secrets are set and the selftest passes; no PR is open yet |
 
+| Key check, secrets in Streamlit + cloud env, bots, host allow-list | vsc + owner | **open** - see `inbox/vsc/2026-10-02-003-cloud-needs-your-hands.md` |
+
 ## Blocked / known gaps
 * cloud has no Blockbrain key and the Blockbrain hosts are blocked by the cloud network policy: it tests against a local fake
   server only. Real-world proof must come from `vsc`.
