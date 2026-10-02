@@ -1,39 +1,27 @@
-"""Benchmark Blockbrain models on SuppSwipe's real meal-plan prompt.
+"""Benchmark Blockbrain models for SuppSwipe through blockbrain_llm_client.py (the app's only Blockbrain integration).
 
-Measures, per model: time to first streamed text (what the user feels), total
-time, output length, and whether the answer looks like a usable meal plan.
-Use it to pick BLOCKBRAIN_MODEL_GENERATION (meal plans, benefit comparisons,
-Ask AI) — then set that key in Streamlit Cloud → App settings → Secrets.
+Per model (a KNOWN_MODELS key of the owner's sandbox org, or your own BLOCKBRAIN_BOT_ID) it measures
+  * text: the real meal-plan prompt - seconds and answer length,
+  * OCR (with --images): the app's label prompt on your photos - seconds, doses found, nutrients the parser
+    recognises and the label-gate verdict. Compare against what is printed on the labels: LLM OCR can misread digits.
+Pick the fastest model that is still exact, then set BLOCKBRAIN_MODEL (Streamlit secrets / environment) to it.
 
-Usage (needs BLOCKBRAIN_API_KEY in env or blockbrain/.streamlit/secrets.toml):
+Needs BLOCKBRAIN_API_KEY and BLOCKBRAIN_ORG_ID in the environment (never put them in a file). Costs Compute Blocks.
 
-    python scripts/benchmark_blockbrain_models.py
-    python scripts/benchmark_blockbrain_models.py --models gpt-4.1-nano gemini-2.5-flash-lite --runs 3
+    python scripts/benchmark_blockbrain_models.py --models claude-sonnet-5 gemini-3.8-flash gpt-5.5 --runs 2
+    python scripts/benchmark_blockbrain_models.py --models claude-sonnet-5 kimi-k3 --images front.jpg back.jpg --via agentic
 """
 from __future__ import annotations
 
 import argparse
-import os
 import statistics
 import sys
-import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover
-    tomllib = None  # type: ignore
-
-DEFAULT_MODELS = [
-    "gpt-4.1-nano",
-    "gpt-4o-mini",
-    "gemini-2.5-flash-lite",
-    "gpt-4.1-mini",
-    "anthropic-claude-haiku-4.5",
-]
+import blockbrain_llm_client as client  # noqa: E402
 
 SYSTEM_PROMPT = (
     "You are a practical sports nutritionist and recipe writer for the SuppSwipe app. "
@@ -53,66 +41,55 @@ USER_PROMPT = (
 )
 
 
-def _load_secrets_into_env() -> None:
-    path = ROOT / "blockbrain" / ".streamlit" / "secrets.toml"
-    if tomllib is None or not path.exists():
-        return
-    try:
-        raw = tomllib.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return
-    for key, value in raw.items():
-        if isinstance(value, str) and key.startswith("BLOCKBRAIN_") and not os.getenv(key):
-            os.environ[key] = value
+def _text_bench(model: str, runs: int) -> None:
+    bb = client.Blockbrain(model=model)
+    times, sizes = [], []
+    for _ in range(runs):
+        try:
+            reply = bb.chat(USER_PROMPT, system=SYSTEM_PROMPT)
+        except Exception as exc:  # report every model, do not stop at the first failure
+            print(f"  text  FAIL: {exc}")
+            return
+        times.append(reply.seconds)
+        sizes.append(len(reply.text))
+    print(f"  text  median {statistics.median(times):5.1f}s  (min {min(times):.1f}s, max {max(times):.1f}s)  "
+          f"~{int(statistics.median(sizes))} chars  resolved model: {reply.model}")
+
+
+def _ocr_bench(model: str, images: list[str], via: str) -> None:
+    import blockbrain.app as app  # the app's own label prompt, parser and gate
+
+    bb = client.Blockbrain(model=model)
+    for image in images:
+        try:
+            reply = bb.ocr(image, prompt=app._VISION_PROMPT, via=via, max_side=app.BLOCKBRAIN_VISION_MAX_SIDE)
+        except Exception as exc:
+            print(f"  ocr   {Path(image).name}: FAIL: {exc}")
+            continue
+        gate = app.extraction_gate_report(reply.text)
+        parsed = app.parse_components(reply.text)
+        print(f"  ocr   {Path(image).name}: {reply.seconds:5.1f}s  doses={gate['dose_hits']}  parsed nutrients={len(parsed)}  "
+              f"gate={'pass' if gate['passed'] else 'FAIL'}  route={reply.via}")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--models", nargs="+", default=DEFAULT_MODELS)
-    parser.add_argument("--runs", type=int, default=2)
-    args = parser.parse_args()
-
-    _load_secrets_into_env()
-    if not os.getenv("BLOCKBRAIN_API_KEY", "").strip():
-        print("BLOCKBRAIN_API_KEY is not set (env or blockbrain/.streamlit/secrets.toml).")
-        return 2
-
-    import blockbrain.app as bb
-
-    print(f"{'model':32} {'first text':>11} {'total':>8} {'chars':>6}  ok  endpoint")
-    rows = []
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--models", nargs="+", default=["claude-sonnet-5", "gemini-3.8-flash", "gpt-5.5"],
+                    help=f"KNOWN_MODELS keys: {', '.join(client.KNOWN_MODELS)}")
+    ap.add_argument("--runs", type=int, default=2, help="text calls per model")
+    ap.add_argument("--images", nargs="*", default=[], help="label photos to OCR with every model")
+    ap.add_argument("--via", default="agentic", choices=["agentic", "cortex"])
+    args = ap.parse_args()
     for model in args.models:
-        ttfts, totals, sizes, oks = [], [], [], []
-        endpoint = ""
-        for _ in range(max(1, args.runs)):
-            first = {"t": None}
-            start = time.monotonic()
-
-            def _on_text(_partial: str, _first=first, _start=start) -> None:
-                if _first["t"] is None:
-                    _first["t"] = time.monotonic() - _start
-
-            text = bb.call_blockbrain_text(SYSTEM_PROMPT, USER_PROMPT, model=model, on_text=_on_text)
-            total = time.monotonic() - start
-            endpoint = str((bb.LAST_BLOCKBRAIN_TIMING or {}).get("endpoint", "") or "")
-            ok = bool(text) and text.count("**") >= 6 and "salmon" in text.lower()
-            ttfts.append(first["t"] if first["t"] is not None else total)
-            totals.append(total)
-            sizes.append(len(text or ""))
-            oks.append(ok)
-            if not text:
-                print(f"  {model}: empty reply ({bb.LAST_BLOCKBRAIN_ERROR})")
-        row = (model, statistics.median(ttfts), statistics.median(totals), int(statistics.median(sizes)), all(oks), endpoint)
-        rows.append(row)
-        print(f"{row[0]:32} {row[1]:10.1f}s {row[2]:7.1f}s {row[3]:6d}  {'yes' if row[4] else 'NO ':3} {row[5]}")
-
-    usable = [r for r in rows if r[4]]
-    if usable:
-        best = min(usable, key=lambda r: r[2])
-        print(f"\nFastest usable model: {best[0]} (median total {best[2]:.1f}s, first text after {best[1]:.1f}s)")
-        print(f'Set in Streamlit secrets:  BLOCKBRAIN_MODEL_GENERATION = "{best[0]}"')
+        print(f"{model}")
+        try:
+            _text_bench(model, max(1, args.runs))
+            if args.images:
+                _ocr_bench(model, args.images, args.via)
+        except client.BlockbrainError as exc:
+            print(f"  not usable: {exc}")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

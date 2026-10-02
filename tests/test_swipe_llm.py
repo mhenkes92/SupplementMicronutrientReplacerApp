@@ -116,23 +116,15 @@ def test_prefetch_can_be_disabled(sw, monkeypatch):
     sw._prefetch_meal_plan(REPLACE, "", 3)
 
 
-def test_ask_ai_prefers_bot_and_caches_first_questions(sw, monkeypatch):
-    bot_calls = []
-
-    def fake_bot(message, bot_id=None, timeout=None):
-        bot_calls.append((message, timeout))
-        return "Bot answer"
-
-    monkeypatch.setattr(bb, "call_blockbrain_bot", fake_bot)
-    monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: pytest.fail("agent not needed"))
-    assert sw._answer_ask_ai_question("Zinc", "Does zinc deplete copper?") == ("Bot answer", sw._SOURCE_KB)
-    assert sw._answer_ask_ai_question("Zinc", "does zinc deplete copper? ") == ("Bot answer", sw._SOURCE_KB)
-    assert len(bot_calls) == 1
-    assert bot_calls[0][1] == sw._ASK_AI_BOT_TIMEOUT
+def test_ask_ai_caches_first_questions(sw, monkeypatch):
+    calls = []
+    monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: calls.append(1) or "Zinc and copper compete.")
+    assert sw._answer_ask_ai_question("Zinc", "Does zinc deplete copper?") == ("Zinc and copper compete.", sw._SOURCE_AGENT)
+    assert sw._answer_ask_ai_question("Zinc", "does zinc deplete copper? ") == ("Zinc and copper compete.", sw._SOURCE_AGENT)
+    assert len(calls) == 1
 
 
-def test_ask_ai_follow_up_sends_history_to_agent(sw, monkeypatch):
-    monkeypatch.setattr(bb, "call_blockbrain_bot", lambda *a, **k: "")
+def test_ask_ai_follow_up_sends_history_to_the_model(sw, monkeypatch):
     seen = {}
 
     def fake_text(system, user, model=None, on_text=None, history=None, budget_s=None, allow_tools=False):
@@ -149,20 +141,12 @@ def test_ask_ai_follow_up_sends_history_to_agent(sw, monkeypatch):
     assert box.renders[-1] == "Agent answer"
 
 
-def test_research_returns_source_url_and_uses_tools(sw, monkeypatch):
-    seen = {}
-
-    def fake_text(system, user, model=None, on_text=None, history=None, budget_s=None, allow_tools=False):
-        seen["allow_tools"] = allow_tools
-        return "Source: https://example.com/product\nVitamin D 25 mcg\nZinc 10 mg"
-
-    monkeypatch.setattr(bb, "call_blockbrain_text", fake_text)
-    text, url = sw._research_product_from_label_text("Brand X Vitamin D3 + Zinc 60 tablets")
-    assert seen["allow_tools"] is True
-    assert url == "https://example.com/product"
-    assert text == "Vitamin D 25 mcg\nZinc 10 mg"
-    monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: "NONE")
-    assert sw._research_product_from_label_text("Brand X") == ("", "")
+def test_a_front_of_pack_photo_never_asks_the_llm_to_guess_doses(sw):
+    """The product look-up by name needed web tools (the researchAgent). A plain LLM conversation has none, and a model
+    answering from memory invents doses: the app asks for the nutrition table instead."""
+    assert not hasattr(sw, "_research_product_from_label_text")
+    message = sw._ai_unavailable_message("front")
+    assert "nutrition table" in message and "Paste" in message and "barcode" in message
 
 
 def _photo(w=4000, h=3000, color="white"):
@@ -208,21 +192,20 @@ def test_ocr_failures_are_not_cached(sw, monkeypatch):
     assert sw._cached_ocr(payload) == "Vitamin C 90 mg"
 
 
-
-def test_ask_ai_labels_the_general_agent_answer_and_skips_agent_errors(sw, monkeypatch):
-    # The bot replies with a Blockbrain agent error: that is not an answer.
-    monkeypatch.setattr(bb, "call_blockbrain_bot", lambda *a, **k: "[Agent researchAgent] - Failed to resolve model configuration")
+def test_ask_ai_labels_the_answer_and_skips_agent_errors(sw, monkeypatch):
+    # The model "answers" with a Blockbrain platform error: that is not an answer, and not cached.
+    monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: "[Agent customAgent] - Failed to resolve model configuration")
+    monkeypatch.setattr(sw, "_cached_rag_chunks", lambda: [])
+    assert sw._answer_ask_ai_question("Zinc", "Copper interaction?") == (None, "")
     monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: "Zinc and copper compete for absorption.")
     answer, source = sw._answer_ask_ai_question("Zinc", "Copper interaction?")
-    assert answer == "Zinc and copper compete for absorption."
-    assert source == sw._SOURCE_AGENT_FAILED  # the bot answered with an error, it didn't time out
-    assert sw._LAST_BOT_STATUS["status"] == "error"
+    assert answer == "Zinc and copper compete for absorption." and source == sw._SOURCE_AGENT
     # Cached: still marked as a general answer.
     assert sw._answer_ask_ai_question("Zinc", "Copper interaction?") == (answer, sw._SOURCE_AGENT)
 
 
 def test_an_agent_error_is_never_shown_or_cached_as_an_answer(sw, monkeypatch):
-    monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: "[Agent researchAgent] - Failed to resolve model configuration")
+    monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: "[Agent customAgent] - Failed to resolve model configuration")
     box = Box()
     assert sw._generate_meal_plan(REPLACE, "", 1, placeholder=box) == ""
     _sys, _usr, key = sw._meal_plan_prompts(REPLACE, "", 1)
@@ -234,7 +217,7 @@ def test_llm_cache_never_serves_or_stores_a_blockbrain_error(sw):
     """Review F4: also entries an older build cached before the check existed."""
     key = sw.llm_cache.make_key("old-build-entry")
     sw.llm_cache.set_reject(None)
-    sw.llm_cache.put(key, "[Agent researchAgent] - Failed to resolve model configuration")  # as the old build did
+    sw.llm_cache.put(key, "[Agent customAgent] - Failed to resolve model configuration")  # as the old build did
     sw.llm_cache.set_reject(bb.looks_like_agent_error)
     assert sw.llm_cache.get(key) is None
     sw.llm_cache.put(key, "Failed to resolve model configuration")
@@ -242,27 +225,6 @@ def test_llm_cache_never_serves_or_stores_a_blockbrain_error(sw):
     sw.llm_cache.put(key, "**Breakfast** oats")
     assert sw.llm_cache.get(key) == "**Breakfast** oats"
 
-
-def test_a_split_error_never_flashes_while_streaming(monkeypatch):
-    """Review F12: "[Agent" arriving first must not be pushed to the screen."""
-    import tests.test_blockbrain_transport as tt
-
-    pieces = ["[Agent", " researchAgent]", " - Failed", " to resolve model configuration"]
-
-    def responder(url, model):
-        if model == "gpt-4.1-nano":
-            return tt.FakeResponse(events=[{"type": "text-delta", "id": "t", "delta": p} for p in pieces] + [{"type": "finish"}])
-        return tt.FakeResponse(events=tt.GOOD_STREAM)
-
-    for state in (bb._STREAM_ENDPOINT_COOLDOWN, bb._LAST_GOOD_STREAM_URL, bb._MODEL_UNRESOLVED, bb._LAST_GOOD_MODEL, bb._AGENT_PARKED):
-        state.clear()
-    tt._install_by_model(monkeypatch, responder)
-    seen = []
-    monkeypatch.setattr(bb.time, "monotonic", iter(range(0, 10_000, 1)).__next__)  # every push is past the throttle
-    assert bb.call_blockbrain_text("sys", "q", on_text=seen.append) == "**Breakfast** oats"
-    assert seen and not any(s.lstrip().startswith("[") for s in seen)
-    for state in (bb._STREAM_ENDPOINT_COOLDOWN, bb._LAST_GOOD_STREAM_URL, bb._MODEL_UNRESOLVED, bb._LAST_GOOD_MODEL, bb._AGENT_PARKED):
-        state.clear()
 
 
 def test_a_failed_ai_step_explains_itself(sw):

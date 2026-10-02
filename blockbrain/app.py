@@ -1,4 +1,3 @@
-import base64
 import csv
 import difflib
 import functools
@@ -21,7 +20,6 @@ import subprocess
 import threading
 import time
 import unicodedata
-import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -152,143 +150,86 @@ load_dotenv()
 # Also load .env from the app directory so VS Code Play/Run works from any CWD.
 load_dotenv(APP_DIR / ".env")
 
-# Blockbrain-first configuration: all LLM and vision calls route through Blockbrain.
-# Credentials are loaded from .streamlit/secrets.toml (preferred) or environment variables.
-def _load_blockbrain_secrets() -> tuple[str, str, str]:
-    """Load Blockbrain credentials from st.secrets or env at runtime.
-    Returns (api_key, base_url, agent_id).
-    agent_id is retained for backward compatibility with older configs.
-    """
-    _default_base = "https://agentic.theblockbrain.ai"
-    # Primary route = the user's custom Blockbrain agent (created for supplement
-    # label extraction + web-grounded product research). If it errors (e.g. the
-    # HTTP 500 this id returned in the past), calls automatically fall back to
-    # the verified named agents in BLOCKBRAIN_FALLBACK_AGENTS, so the app keeps
-    # working for both text and vision. Override via BLOCKBRAIN_AGENT_ID.
-    _default_route_id = "6a4bc43653952e29ba6ef1d6"
+# Blockbrain: ONE integration for every LLM and vision call - blockbrain_llm_client.py in the repo root (the owner's verified
+# module; read its docstring first). Nothing else in this file talks to Blockbrain.
+# Configuration comes from the ENVIRONMENT only (a Streamlit secret or a local .env feeds the environment):
+#   BLOCKBRAIN_API_KEY   secret - never hard-code, print, log or commit it
+#   BLOCKBRAIN_ORG_ID    the organisation the key belongs to
+#   BLOCKBRAIN_MODEL     model key of the owner's sandbox org (claude-sonnet-5, gemini-3.8-flash, ...), or
+#   BLOCKBRAIN_BOT_ID    a bot of your own organisation (the model of that bot answers)
+#   BLOCKBRAIN_OCR_ROUTE optional, "agentic" (default) or "cortex": the route that reads photos; the other one is the fallback.
+try:
+    import blockbrain_llm_client as _bbc
+except ImportError:  # started as a script from blockbrain/: the repo root is not on sys.path yet
+    sys.path.insert(0, str(APP_DIR.parent))
+    import blockbrain_llm_client as _bbc
 
-    def _strip_path(base: str) -> str:
-        """Return only the scheme+host, stripping any /v1/... path."""
-        base = base.strip()
-        for suffix in ["/v1/chat/completions", "/v1"]:
-            if base.endswith(suffix):
-                base = base[: -len(suffix)]
-        return base.rstrip("/")
+_BLOCKBRAIN_ENV_NAMES = (
+    "BLOCKBRAIN_API_KEY",
+    "BLOCKBRAIN_ORG_ID",
+    "BLOCKBRAIN_MODEL",
+    "BLOCKBRAIN_BOT_ID",
+    "BLOCKBRAIN_OCR_ROUTE",
+)
 
+
+def _sync_blockbrain_env_from_secrets() -> None:
+    """Streamlit secrets -> environment variables (the client reads the environment only).
+    A variable that is already set is never overridden."""
+    missing = [n for n in _BLOCKBRAIN_ENV_NAMES if not str(os.environ.get(n, "") or "").strip()]
+    if not missing:
+        return
     try:
-        import streamlit as st  # noqa: F401
-        api_key = st.secrets.get("BLOCKBRAIN_API_KEY", "") or os.getenv("BLOCKBRAIN_API_KEY", "")
-        base_url = (
-            st.secrets.get("BLOCKBRAIN_BASE_URL", "")
-            or st.secrets.get("BLOCKBRAIN_API_URL", "")  # legacy
-            or os.getenv("BLOCKBRAIN_BASE_URL", "")
-            or os.getenv("BLOCKBRAIN_API_URL", "")
-            or _default_base
-        )
-        # Allow overriding the agent via secrets/env so a dead agent can be
-        # fixed by config instead of code.
-        route_id = (
-            st.secrets.get("BLOCKBRAIN_AGENT_ID", "")
-            or os.getenv("BLOCKBRAIN_AGENT_ID", "")
-            or _default_route_id
-        )
-        return str(api_key).strip(), _strip_path(str(base_url)), str(route_id).strip()
-    except Exception:
-        base_url = os.getenv("BLOCKBRAIN_BASE_URL") or os.getenv("BLOCKBRAIN_API_URL") or _default_base
-        route_id = os.getenv("BLOCKBRAIN_AGENT_ID", "") or _default_route_id
-        return (
-            os.getenv("BLOCKBRAIN_API_KEY", ""),
-            _strip_path(base_url),
-            route_id,
-        )
+        import streamlit as st
+
+        for name in missing:
+            value = str(st.secrets.get(name, "") or "").strip()
+            if value:
+                os.environ[name] = value
+    except Exception:  # no secrets file / not running under Streamlit
+        pass
 
 
-# Fallback agents tried (in order) when the primary agent errors (e.g. HTTP 500
-# because an agent was removed). All are verified working for text + vision.
-BLOCKBRAIN_FALLBACK_AGENTS = ["customAgent", "researchAgent", "scientificAgent"]
-
-
-def _load_blockbrain_research_agent_id() -> str:
-    """Optional agent for calls that need web tools (product research).
-
-    Lets BLOCKBRAIN_AGENT_ID point at a fast, tool-free SuppSwipe agent for OCR,
-    meal plans and answers, while slow research agents are only used when a
-    product has to be looked up online. Empty = use BLOCKBRAIN_AGENT_ID.
-    """
+def blockbrain_config_error() -> str:
+    """"" when the environment can reach Blockbrain, else what is missing (variable NAMES only, never values)."""
+    _sync_blockbrain_env_from_secrets()
     try:
-        import streamlit as st  # noqa: F401
-        value = st.secrets.get("BLOCKBRAIN_RESEARCH_AGENT_ID", "") or os.getenv("BLOCKBRAIN_RESEARCH_AGENT_ID", "")
+        _bbc.Blockbrain()
+    except _bbc.BlockbrainError as exc:
+        return str(exc)
+    return ""
+
+
+def _text_llm_available() -> bool:
+    # Activate text generation paths when Blockbrain is configured.
+    try:
+        return not blockbrain_config_error()
     except Exception:
-        value = os.getenv("BLOCKBRAIN_RESEARCH_AGENT_ID", "")
-    return str(value or "").strip()
+        return False
 
 
-# Pinned vision model for nutrition-label OCR (agentic vision route).
-# Benchmarked live on the real One A Day Men's 50+ label (22 ground-truth values,
-# image downscaled to ~140 KB), per-call latency; ACCURACY WAS IDENTICAL across
-# all 21 models tested (22/22 names+values, 20/22 exact doses) because every
-# request routes through the same agent — the pinned model id only toggles the
-# slow "thinking" step, i.e. it changes SPEED, not accuracy:
-#   xai-grok-2-vision            ~4.0s
-#   gpt-4o / gpt-4.1             ~4.9s
-#   gpt-4.1-nano                 ~5.2s   <-- chosen: fast, cheapest tier, same family as text
-#   claude-sonnet-4.6-fast       ~5.3s
-#   anthropic-claude-haiku-4.5   ~5.5s   (previous pin)
-#   gpt-4o-mini                  ~15.1s
-#   anthropic-claude-sonnet-4.6  ~15.3s  (thinking — avoid)
-# Override via BLOCKBRAIN_MODEL_VISION (env or secrets) when needed.
-BLOCKBRAIN_PINNED_VISION_MODEL = "gpt-4.1-nano"
+def _redact(text: Any) -> str:
+    """`text` without the API key (defence in depth: no message we keep or log may carry it)."""
+    out = str(text or "")
+    key = str(os.environ.get("BLOCKBRAIN_API_KEY", "") or "").strip()
+    return out.replace(key, "***") if len(key) >= 8 else out
+
 
 # Longest image edge ever sent to the vision model (px). Labels stay legible
 # well below this; larger uploads only add latency and cost.
 BLOCKBRAIN_VISION_MAX_SIDE = 2000
 
-# Fastest verified text model for the "Resolving nutrient mappings" step
-# (build_ai_food_matches -> strict JSON generation). Benchmarked on the real
-# mapping prompt (10 components, up to 5 foods each):
-#   gpt-4.1-nano / gpt-4o-mini / gemini-2.5-flash-lite   ~1-2s, valid JSON
-#   platform default (bedrock claude sonnet, thinking)   >120s cold  <-- "takes forever"
-# A fast non-thinking model is pinned so mapping is near-instant instead of
-# running on the slow default reasoning backend. anthropic-claude-haiku-4.5 is
-# NOT used for text (it was ~40s on this JSON task).
-# Override via BLOCKBRAIN_MODEL_TEXT (env or secrets) when needed.
-BLOCKBRAIN_PINNED_TEXT_MODEL = "gpt-4.1-nano"
-
 
 def _load_blockbrain_model_defaults() -> tuple[str, str]:
-    """Load default Blockbrain model preferences (text, vision).
+    """(text model, vision model) shown by the stand-alone analyzer UI: the model of the
+    configured bot (BLOCKBRAIN_MODEL, or the bot id), the same for both."""
+    _sync_blockbrain_env_from_secrets()
+    name = str(os.environ.get("BLOCKBRAIN_MODEL", "") or "").strip() or str(os.environ.get("BLOCKBRAIN_BOT_ID", "") or "").strip()
+    return name, name
 
-    Both default to the fastest benchmarked models unless overridden, so the
-    nutrient-mapping and label-OCR steps stay fast instead of using the slow
-    default reasoning backend.
-    """
-    try:
-        import streamlit as st  # noqa: F401
-        text_model = (
-            st.secrets.get("BLOCKBRAIN_MODEL_TEXT", "")
-            or os.getenv("BLOCKBRAIN_MODEL_TEXT", "")
-            or BLOCKBRAIN_PINNED_TEXT_MODEL
-        )
-        vision_model = (
-            st.secrets.get("BLOCKBRAIN_MODEL_VISION", "")
-            or os.getenv("BLOCKBRAIN_MODEL_VISION", "")
-            or BLOCKBRAIN_PINNED_VISION_MODEL
-        )
-        return str(text_model).strip(), str(vision_model).strip()
-    except Exception:
-        return (
-            str(os.getenv("BLOCKBRAIN_MODEL_TEXT", "") or BLOCKBRAIN_PINNED_TEXT_MODEL).strip(),
-            str(os.getenv("BLOCKBRAIN_MODEL_VISION", "") or BLOCKBRAIN_PINNED_VISION_MODEL).strip(),
-        )
-
-
-BLOCKBRAIN_API_KEY = ""
-BLOCKBRAIN_BOT_ID = ""
 
 TESSERACT_CMD = os.getenv("TESSERACT_CMD", "")
 
-BLOCKBRAIN_API_GATEWAY = ""
-BLOCKBRAIN_CHAT_ENDPOINT = ""
 HTTP_TIMEOUT = 120
 LOCAL_URL_KEYWORD_WINDOW_CHARS = 260
 
@@ -371,14 +312,6 @@ def _load_title_push_toggle() -> bool:
     return True
 LAST_RAG_ERROR = ""
 
-
-def _text_llm_available() -> bool:
-    # Activate text generation paths when Blockbrain is configured.
-    try:
-        api_key, _, _ = _load_blockbrain_secrets()
-        return bool(api_key)
-    except Exception:
-        return False
 
 ALLOWED_DOSE_UNITS: set[str] = {"", "mg", "mcg", "g", "iu", "kcal"}
 
@@ -3823,7 +3756,7 @@ def _dietary_llm_adjudicate_cached(
         '{"decision":"allow|block|uncertain","confidence":0.0,"reason":"short reason"}'
     )
 
-    raw = call_text_llm(system_prompt, user_prompt, model=BLOCKBRAIN_PINNED_TEXT_MODEL)
+    raw = call_text_llm(system_prompt, user_prompt)
     candidate = clean_json_block(raw) or str(raw or "").strip()
     if not candidate:
         return "uncertain", 0.0, "Empty adjudication response"
@@ -8881,24 +8814,11 @@ def resolve_tesseract_cmd() -> str:
 
 @functools.lru_cache(maxsize=1)
 def _get_blockbrain_models_catalog() -> list[dict[str, Any]]:
-    """Fetch model catalog once per app process for model pickers."""
-    api_key, base_url, _ = _load_blockbrain_secrets()
-    if not api_key or not base_url:
-        return []
+    """Fetch the model catalog once per app process (through the client) for the analyzer's model pickers."""
     try:
-        response = _http_get(
-            f"{base_url}/v1/api/models",
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=20,
-        )
-        if response.status_code != 200:
-            return []
-        payload = response.json() if response.content else {}
-        items = payload.get("items", []) if isinstance(payload, dict) else []
-        return [x for x in items if isinstance(x, dict)]
+        return [x for x in _client().models() if isinstance(x, dict)]
     except Exception:
         return []
-
 
 def _list_blockbrain_chat_model_ids(*, vision_required: bool = False) -> list[str]:
     items = _get_blockbrain_models_catalog()
@@ -8945,85 +8865,23 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
 
 
-# (connect, read) timeouts for Blockbrain calls. The read timeout is the longest
-# allowed silence between streamed bytes (not the total time); the whole
-# endpoint-fallback chain is additionally capped by a wall-clock budget so one
-# stuck agent can't block the UI for many minutes.
+# Seconds. BLOCKBRAIN_CONNECT_TIMEOUT_S also bounds the connect step of page fetches. A call to Blockbrain is capped by a
+# wall-clock budget (the client itself would wait up to 900 s for a line that only sends keep-alives); the read timeout is
+# the longest silence between streamed bytes.
 BLOCKBRAIN_CONNECT_TIMEOUT_S = _env_float("BLOCKBRAIN_CONNECT_TIMEOUT_S", 10.0)
-BLOCKBRAIN_READ_TIMEOUT_S = _env_float("BLOCKBRAIN_READ_TIMEOUT_S", 75.0)
+BLOCKBRAIN_READ_TIMEOUT_S = _env_float("BLOCKBRAIN_READ_TIMEOUT_S", 240.0)
 BLOCKBRAIN_TOTAL_BUDGET_S = _env_float("BLOCKBRAIN_TOTAL_BUDGET_S", 150.0)
+BLOCKBRAIN_VISION_BUDGET_S = _env_float("BLOCKBRAIN_VISION_BUDGET_S", 120.0)
 
-# Endpoints that just failed are tried LAST for a while, so every call doesn't
-# first pay for a known-dead agent before it reaches a working one; the last
-# endpoint that returned text is tried FIRST. Process-wide (not user data).
-_ENDPOINT_COOLDOWN_S = 600.0
-_ENDPOINT_COOLDOWN_404_S = 3600.0
-_STREAM_ENDPOINT_COOLDOWN: dict[str, float] = {}
-_LAST_GOOD_STREAM_URL: dict[str, str] = {}
-_STREAM_HEALTH_LOCK = threading.Lock()
-
-# Timing diagnostics for the most recent Blockbrain call (best-effort; shown in
-# the app's ?debug=1 panel). Keys: endpoint, model, ttft_s, total_s, attempts.
+# Diagnostics of the most recent Blockbrain call (best-effort; shown in the app's ?debug=1 panel).
+# Keys: kind, route, model, total_s, usage, error.
 LAST_BLOCKBRAIN_TIMING: dict[str, Any] = {}
-# The Knowledge Bot's last error (agent calls overwrite LAST_BLOCKBRAIN_ERROR).
-LAST_BOT_ERROR = ""
 
-# Typed incremental-text events whose payload is a raw slice of the model
-# output (Vercel AI SDK UI-message stream "text-delta", Anthropic/OpenAI
-# Responses delta events). These must be concatenated verbatim.
-_TEXT_DELTA_EVENT_TYPES = {
-    "text-delta",
-    "text_delta",
-    "content_block_delta",
-    "response.output_text.delta",
-}
-
-
-def _stream_join_mode() -> str:
-    """'auto' (default) or 'legacy' (strip every chunk + newline-join, the
-    pre-2026-10 behaviour). Set BLOCKBRAIN_STREAM_JOIN=legacy to roll back."""
-    mode = str(os.getenv("BLOCKBRAIN_STREAM_JOIN", "auto") or "auto").strip().lower()
-    return "legacy" if mode == "legacy" else "auto"
-
-
-def _typed_delta_piece(event: Any) -> str | None:
-    """Return the verbatim text of a typed delta event.
-
-    None  -> not a typed delta event (caller uses the legacy collector);
-    ""    -> a typed event that carries no answer text (e.g. reasoning/thinking
-             deltas, which must not leak into the answer).
-    """
-    if not isinstance(event, dict):
-        return None
-    etype = str(event.get("type", "") or "").strip().lower()
-    if etype and ("reasoning" in etype or "thinking" in etype):
-        return ""
-    if etype in _TEXT_DELTA_EVENT_TYPES:
-        delta = event.get("delta")
-        if isinstance(delta, dict):
-            if str(delta.get("type", "") or "").lower() in {"thinking_delta", "signature_delta"}:
-                return ""
-            delta = delta.get("text")
-        if not isinstance(delta, str):
-            delta = event.get("textDelta", event.get("text"))
-        return delta if isinstance(delta, str) else ""
-    if str(event.get("object", "") or "") == "chat.completion.chunk":
-        pieces: list[str] = []
-        for choice in event.get("choices") or []:
-            if isinstance(choice, dict) and isinstance(choice.get("delta"), dict):
-                content = choice["delta"].get("content")
-                if isinstance(content, str):
-                    pieces.append(content)
-        return "".join(pieces)
-    return None
-
-
-# Blockbrain reports some failures inside a 200 stream: an error event, or the
-# agent writes "[Agent researchAgent] - Failed to resolve model configuration"
-# as its only text. Neither may ever reach the UI or a cache as an answer.
-# Only Blockbrain's own shapes count, so a real answer is never thrown away:
-# "[Agent <name>]" at the start (not a markdown link), the error phrase itself
-# in a short reply, or "Error: …" / "AI_APICallError: …" about a model.
+# Blockbrain reports some failures inside a 200 stream: an error event, or the agent writes
+# "[Agent customAgent] - Failed to resolve model configuration" as its only text. Neither may ever reach the UI or a
+# cache as an answer. Only Blockbrain's own shapes count, so a real answer is never thrown away:
+# "[Agent <name>]" at the start (not a markdown link), the error phrase itself in a short reply, or
+# "Error: …" / "AI_APICallError: …" about a model.
 _AGENT_ERROR_PREFIX_RE = re.compile(r"^\s*(?:\*{0,2}error:?\*{0,2}\s*)?\[agent[\s:]+[^\]\n]{1,80}\](?!\()", re.IGNORECASE)
 _MODEL_CONFIG_PHRASE_RE = re.compile(r"failed\s+to\s+resolve\s+(?:the\s+)?model\s+configuration", re.IGNORECASE)
 _ERROR_LEAD_RE = re.compile(
@@ -9117,69 +8975,11 @@ _IMAGE_QUALITY_RE = re.compile(
     re.IGNORECASE,
 )
 _LABEL_VALUE_RE = re.compile(r"\d\s*(?:mg|[µμ]g|mcg|ug|g|iu|i\.e\.|kcal|%)", re.IGNORECASE)
-_ERROR_TEXT_PREFIXES = (
-    "failed to resolve", "error:", "error ", "**error", '{"error', "ai_", "agent ", "http ",
-)
-# The whole-reply errors looks_like_agent_error accepts (also with an "HTTP 502 " / "Error 503: " /
-# "502 " lead): while a streamed reply is still a prefix of one of these, it is not shown.
-_BARE_ERROR_PHRASES = (
-    "internal server error", "service unavailable", "bad gateway", "gateway timeout", "gateway time-out",
-    "unauthorized", "unauthorised", "forbidden", "too many requests", "rate limit exceeded", "rate limit reached",
-    "request failed with status code", "an error occurred", "error occurred", "something went wrong",
-    "failed to fetch", "fetch failed",
-)
 
-
-def _may_become_error(text: str) -> bool:
-    """True while `text` (a streamed reply so far) could still grow into an error message."""
-    lead = " ".join(str(text or "").lower().split())
-    if not lead or len(lead) >= 80:
-        return False
-    if lead.startswith("[") or any(p.startswith(lead) or lead.startswith(p) for p in _ERROR_TEXT_PREFIXES):
-        return True
-    if any(p.startswith(lead) or lead.startswith(p) for p in _BARE_ERROR_PHRASES):
-        return True
-    status = re.match(r"(?:(?:http|error)\s*(?:code\s*)?)?\d{1,3}\W*(.*)$", lead)  # "502 Bad Gateway"
-    if status is not None:
-        rest = status.group(1)
-        return not rest or any(p.startswith(rest) or rest.startswith(p) for p in _BARE_ERROR_PHRASES)
-    return False
-# Models tried, in order, when an agent can't resolve the requested one (it
-# was removed or isn't enabled for the organisation). "" = the agent's own
-# default model (no "model" field), last because it can be slow — text only:
-# the default backend can't see images. All are models the benchmarks ran on
-# Blockbrain.
-BLOCKBRAIN_TEXT_MODEL_FALLBACKS = ["gpt-4.1-mini", "gpt-4o-mini", "gemini-2.5-flash-lite", "anthropic-claude-haiku-4.5", ""]
-BLOCKBRAIN_VISION_MODEL_FALLBACKS = ["gpt-4.1", "gpt-4o", "gpt-4.1-mini", "anthropic-claude-haiku-4.5", "claude-sonnet-4.6-fast"]
-
-# Bounds for one call: a model that failed is not sent again in the same call
-# (a call is bounded by the number of models plus the number of endpoints). An
-# agent that can't resolve this many models is parked for this kind of call
-# (its configuration, not the model) and the next agent goes on with the models
-# not tried yet; an agent whose models are busy this often is left to the next
-# agent too, and cooled for a minute (not parked).
-# Vision: this many models that never received the image mean the attachment
-# is the problem, not the models.
-_MODEL_ERRORS_PER_AGENT = 3
-_MODEL_ERRORS_PER_CALL = 8
-_LOAD_ERRORS_PER_AGENT = 2
-_BUSY_COOLDOWN_S = 60.0
-_IMAGE_BLIND_PER_CALL = 3
-
-# Process-wide, read and written under _STREAM_HEALTH_LOCK. Only a hint about
-# where to start: (agent, model) pairs that failed to resolve are skipped on
-# that agent for ten minutes while something else is left (when nothing is,
-# they are tried again, so a fixed Blockbrain is used at once); the named
-# model that last worked per call kind; and (kind, agent) pairs parked after
-# too many model errors.
-_MODEL_UNRESOLVED: dict[tuple[str, str], float] = {}
-_LAST_GOOD_MODEL: dict[str, str] = {}
-_AGENT_PARKED: dict[tuple[str, str], float] = {}
-_MODEL_UNRESOLVED_S = 600.0
 
 # Why the last Blockbrain call of THIS thread failed ("" = it worked). Each
-# Streamlit session runs in its own thread, so one visitor's failure (or the
-# Ask AI bot thread) never changes another visitor's messages.
+# Streamlit session runs in its own thread, so one visitor's failure never
+# changes another visitor's messages.
 _CALL_STATE = threading.local()
 
 
@@ -9192,42 +8992,224 @@ def reset_call_error() -> None:
     _CALL_STATE.error = ""
 
 
-def _stream_error_text(event: Any) -> str:
-    """The message of an SSE error event ({"type": "error", "errorText": ...}), or ""."""
-    if not isinstance(event, dict):
-        return ""
-    etype = str(event.get("type", "") or "").strip().lower()
-    if etype.startswith("tool"):  # a failed tool call: the answer may still follow
-        return ""
-    if etype != "error" and "errorText" not in event:
-        return ""
-    for key in ("errorText", "error", "message"):
-        value = event.get(key)
-        if isinstance(value, dict):
-            value = value.get("message") or value.get("errorText") or value.get("text")
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return "Blockbrain stream error"
+def _client() -> Any:
+    """A client for the current environment. Cheap: it only reads the configuration (BlockbrainError when it is incomplete)."""
+    _sync_blockbrain_env_from_secrets()
+    _bbc.READ_TIMEOUT = max(5.0, float(BLOCKBRAIN_READ_TIMEOUT_S))
+    return _bbc.Blockbrain()
 
 
-def _classify_agent_error(text: Any, model: str) -> str:
-    """"model": this model can't be used on this agent (removed, not enabled);
-    "busy": this model is overloaded right now; "agent": anything else (rate
-    limit, credentials, outage, a wording not recognised). An unrecognised
-    error only reorders: the agent is tried last for a while, and the same model
-    failing so on two agents is skipped, so one odd message can't exclude a
-    model or park a healthy agent."""
-    value = str(text or "")
-    about_model = bool(re.search(r"\bmodel\b", value, re.IGNORECASE) or (model and model.lower() in value.lower()))
-    if _MODEL_CONFIG_PHRASE_RE.search(value):
-        return "model"
-    if _MODEL_LOAD_ERROR_RE.search(value):  # temporary by its own words ("temporarily", "overloaded", …)
-        return "busy" if about_model else "agent"
-    if _MODEL_CONFIG_ERROR_RE.search(value) and not _AGENT_WIDE_ERROR_RE.search(value):
-        return "model"  # definitive wording wins over a trailing "please try again later"
-    if _RETRY_ADVICE_RE.search(value):
-        return "busy" if about_model else "agent"
-    return "agent"
+def _run_with_budget(fn: Callable[[], Any], budget_s: float) -> Any:
+    """fn() with a wall-clock cap: TimeoutError when it takes longer (its thread then finishes on its own)."""
+    box: dict[str, Any] = {}
+
+    def _target() -> None:
+        try:
+            box["value"] = fn()
+        except BaseException as exc:  # handed to the caller below
+            box["error"] = exc
+
+    worker = threading.Thread(target=_target, name="blockbrain-call", daemon=True)
+    worker.start()
+    worker.join(max(1.0, float(budget_s)))
+    if worker.is_alive():
+        raise TimeoutError(f"Blockbrain did not answer within {float(budget_s):.0f} s")
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
+
+
+def _note_failure(kind: str, why: Any, started: float, route: str = "") -> str:
+    """Remember (per thread and process) and log why a call failed; returns the message. Never holds the key."""
+    global LAST_BLOCKBRAIN_ERROR, LAST_BLOCKBRAIN_TIMING
+    message = _redact(why if isinstance(why, str) else (str(why) or type(why).__name__))[:300]
+    elapsed = round(time.monotonic() - started, 2)
+    LAST_BLOCKBRAIN_ERROR = message
+    _CALL_STATE.error = message
+    LAST_BLOCKBRAIN_TIMING = {"kind": kind, "route": route, "total_s": elapsed, "error": message}
+    logger.warning("blockbrain %s call failed after %ss: %s", kind, elapsed, message[:200])
+    return message
+
+
+def _note_success(kind: str, reply: Any, started: float) -> None:
+    global LAST_BLOCKBRAIN_ERROR, LAST_BLOCKBRAIN_MODEL, LAST_BLOCKBRAIN_TIMING
+    LAST_BLOCKBRAIN_ERROR = ""
+    _CALL_STATE.error = ""
+    LAST_BLOCKBRAIN_MODEL = str(getattr(reply, "model", "") or "").strip()
+    LAST_BLOCKBRAIN_TIMING = {
+        "kind": kind,
+        "route": str(getattr(reply, "via", "") or ""),
+        "model": LAST_BLOCKBRAIN_MODEL,
+        "total_s": round(time.monotonic() - started, 2),
+        "usage": dict(getattr(reply, "usage", None) or {}),
+    }
+
+
+def call_blockbrain_text(
+    system_prompt: str,
+    user_prompt: str,
+    model: str | None = None,
+    on_text: Any = None,
+    history: list[dict[str, str]] | None = None,
+    budget_s: float | None = None,
+    allow_tools: bool = False,
+) -> str:
+    """Ask Blockbrain a text question (blockbrain_llm_client.Blockbrain.chat); returns the answer or "" on any failure
+    (then last_call_error() says why).
+
+    `history` is an optional list of prior {"role", "content"} turns (chat memory). `budget_s` caps the wall-clock time.
+    `on_text(answer)` is called once with the complete answer: the client does not stream. `model` and `allow_tools` are
+    accepted for the older call sites and ignored: the model is the one of the configured bot (BLOCKBRAIN_MODEL /
+    BLOCKBRAIN_BOT_ID) and the client's conversations have no web or tools.
+    """
+    started = time.monotonic()
+    reset_call_error()
+    prompt = str(user_prompt or "").strip()
+    if not prompt:
+        return ""
+    system = str(system_prompt or "").strip() or None
+    turns: list[dict[str, str]] = []
+    for turn in history or []:
+        role = str((turn or {}).get("role", "") or "").strip().lower()
+        content = str((turn or {}).get("content", "") or "").strip()
+        if role in {"user", "assistant"} and content:
+            turns.append({"role": role, "content": content})
+    try:
+        client = _client()
+        reply = _run_with_budget(
+            lambda: client.chat(prompt, system=system, history=turns), float(budget_s or BLOCKBRAIN_TOTAL_BUDGET_S)
+        )
+    except Exception as exc:
+        _note_failure("text", exc, started)
+        return ""
+    text = str(getattr(reply, "text", "") or "").strip()
+    if not text or looks_like_agent_error(text):  # a platform error written as the answer is never an answer
+        _note_failure("text", text or "Blockbrain returned no text", started, str(getattr(reply, "via", "") or ""))
+        return ""
+    _note_success("text", reply, started)
+    if on_text is not None:
+        try:
+            on_text(text)
+        except Exception:
+            pass
+    return text
+
+
+# What the vision model is asked: the nutrient table only (the biggest speed-up for a read is fewer output tokens), but
+# VERBATIM - a model that "corrects" a label corrupts doses.
+_VISION_PROMPT = (
+    "You are a strict OCR transcriber for supplement and nutrition labels. From this photo, output ONLY:\n"
+    "1. the product name and brand, if visible, on the first line;\n"
+    "2. the serving line (e.g. 'Serving size 1 tablet' or 'pro Tagesdosis (1 Tablette)');\n"
+    "3. every vitamin, mineral and other nutrient line of the nutrition / supplement facts table, "
+    "exactly as printed, one per line, with its amount, unit, any '(as ...)' form and the %NRV / %DV "
+    "if shown (e.g. 'Vitamin D3 20 µg (800 I.E.) 400%').\n"
+    "Transcribe verbatim: keep the label's language, spelling and number format (decimal commas, µg, I.E./IU); never "
+    "correct, translate, round, convert or guess a digit; write [unreadable] for a part you cannot read. Skip "
+    "ingredient lists, directions, warnings, marketing text and addresses. If the photo shows no "
+    "nutrient table, output only the visible product name, brand and any barcode digits. "
+    "Plain text lines only — no markdown, no commentary."
+)
+
+
+def _ocr_routes() -> list[str]:
+    """The routes tried for a photo: BLOCKBRAIN_OCR_ROUTE first (default agentic), the other one as the fallback."""
+    _sync_blockbrain_env_from_secrets()
+    first = str(os.environ.get("BLOCKBRAIN_OCR_ROUTE", "") or "").strip().lower()
+    first = first if first in {"agentic", "cortex"} else "agentic"
+    return [first, "cortex" if first == "agentic" else "agentic"]
+
+
+def _vision_jpeg_payload(data: bytes) -> bytes:
+    # Vision latency/cost is dominated by image size: never upload a full
+    # 12 MP phone photo. Already-small upright JPEGs (the OCR variants) are
+    # sent unchanged; anything else is decoded once, upright and capped.
+    try:
+        image = Image.open(io.BytesIO(data))
+        try:
+            orientation = int(image.getexif().get(0x0112, 1) or 1)
+        except Exception:
+            orientation = 1
+        if (
+            str(image.format or "").upper() == "JPEG"
+            and orientation == 1
+            and max(image.size) <= BLOCKBRAIN_VISION_MAX_SIDE
+            and len(data) <= 1_500_000
+        ):
+            return data
+    except Exception:
+        return b""
+    upright = _load_upright_image(data, BLOCKBRAIN_VISION_MAX_SIDE)
+    return _jpeg_bytes(upright, 88) if upright is not None else b""
+
+
+def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
+    """Read a label photo with Blockbrain's vision model (blockbrain_llm_client.Blockbrain.ocr); returns the transcribed
+    label text, or "" on any failure (then last_call_error() says why).
+
+    The configured route (BLOCKBRAIN_OCR_ROUTE, default agentic) is tried first and the other route when it fails or the
+    model says it got no image. `model` is accepted for the older call sites and ignored (see call_blockbrain_text).
+    """
+    global LAST_VISION_RAW_RESPONSE
+    global LAST_VISION_ATTEMPT_LOG
+    LAST_VISION_RAW_RESPONSE = ""
+    LAST_VISION_ATTEMPT_LOG = []
+    started = time.monotonic()
+    reset_call_error()
+    jpeg_bytes = _vision_jpeg_payload(image_bytes)
+    if not jpeg_bytes:
+        LAST_VISION_ATTEMPT_LOG.append("image:refused (unreadable or oversized image)")
+        _note_failure("vision", "the image is unreadable or too large", started)
+        return ""
+    try:
+        client = _client()
+    except Exception as exc:
+        _note_failure("vision", exc, started)
+        return ""
+    for via in _ocr_routes():
+        left = float(BLOCKBRAIN_VISION_BUDGET_S) - (time.monotonic() - started)
+        if left < 0.5:
+            break
+        try:
+            reply = _run_with_budget(
+                lambda via=via: client.ocr(jpeg_bytes, prompt=_VISION_PROMPT, via=via, max_side=BLOCKBRAIN_VISION_MAX_SIDE),
+                left,
+            )
+        except TimeoutError as exc:
+            LAST_VISION_ATTEMPT_LOG.append(f"{via}:timeout")
+            _note_failure("vision", exc, started, via)
+            return ""  # the budget is spent: no second route
+        except Exception as exc:
+            LAST_VISION_ATTEMPT_LOG.append(f"{via}:error | {_redact(exc)[:180]}")
+            _note_failure("vision", exc, started, via)
+            continue
+        out = str(getattr(reply, "text", "") or "").strip()
+        snippet = out.replace("\n", " ")[:180]
+        if out:
+            LAST_VISION_RAW_RESPONSE = out
+        if not out:
+            LAST_VISION_ATTEMPT_LOG.append(f"{via}:empty")
+            _note_failure("vision", "Blockbrain vision returned no text", started, via)
+            continue
+        if looks_like_agent_error(out):
+            LAST_VISION_ATTEMPT_LOG.append(f"{via}:platform_error | {snippet}")
+            _note_failure("vision", out, started, via)
+            continue
+        if _image_not_received(out) or _is_blockbrain_image_missing_response(out):
+            LAST_VISION_ATTEMPT_LOG.append(f"{via}:image_missing | {snippet}")
+            _note_failure(
+                "vision",
+                "the model did not receive the image (is the configured model or bot able to read images?)",
+                started,
+                via,
+            )
+            continue
+        LAST_VISION_ATTEMPT_LOG.append(f"{via}:text | {snippet}")
+        _note_success("vision", reply, started)
+        return out
+    if not last_call_error():
+        _note_failure("vision", "Blockbrain vision did not answer in time", started)
+    return ""
 
 
 def looks_like_agent_error(text: Any) -> bool:
@@ -9278,927 +9260,6 @@ def _image_not_received(text: Any) -> bool:
         or _ASSISTANT_SPEAK_RE.search(start)
         or (_is_blockbrain_image_missing_response(value) and not value[:1].isdigit())
     )
-
-
-def unresolved_models() -> list[str]:
-    """"agent: model" pairs that currently fail to resolve (for diagnostics)."""
-    now = time.monotonic()
-    with _STREAM_HEALTH_LOCK:
-        return sorted(f"{a}: {m or '(agent default)'}" for (a, m), until in _MODEL_UNRESOLVED.items() if until > now)
-
-
-def _model_candidates(requested: str, fallbacks: Any, kind: str, agent: str, skip: Any = ()) -> list[str]:
-    """The models to try on `agent`, best first.
-
-    The requested model leads unless an agent recently couldn't resolve it;
-    the named model that last worked for this kind of call comes next, then
-    the fallbacks. Models another agent couldn't resolve in the last ten
-    minutes go last; left out are the ones this agent couldn't resolve, and
-    `skip` (models that already failed in this call). Marks are only a hint:
-    when nothing else is left, those models are tried again (the pinned one
-    last), so a Blockbrain that was fixed is used at once."""
-    requested = str(requested or "").strip()
-    if fallbacks is None:  # no fallback chain: exactly the requested model
-        return [requested]
-    now = time.monotonic()
-    with _STREAM_HEALTH_LOCK:
-        preferred = _LAST_GOOD_MODEL.get(kind)
-        live = [(a, m) for (a, m), until in _MODEL_UNRESOLVED.items() if until > now]
-    bad = {m for a, m in live if a == agent}
-    bad_elsewhere = {m for _a, m in live} - {preferred}
-    skip = set(skip or ())
-    head = [requested] if requested not in bad_elsewhere and requested not in bad else []
-    order: list[str] = []
-    for model in head + ([preferred] if preferred is not None else []) + [requested] + list(fallbacks or []):
-        model = str(model or "").strip()
-        if model not in order:
-            order.append(model)
-    usable = [m for m in order if m not in bad and m not in skip]
-    # Stable: only moves models to the end. The agent default can be slow, so it
-    # goes after every named model (unless it is what the operator asked for).
-    usable.sort(key=lambda m: (m == "" and requested != "", m in bad_elsewhere))
-    if usable:
-        return usable
-    rest = [m for m in order if m not in skip]
-    return sorted(rest, key=lambda m: (m == "" and requested != "", m == requested))
-
-
-def _mark_model(kind: str, agent: str, model: str, ok: bool) -> None:
-    with _STREAM_HEALTH_LOCK:
-        if ok:
-            _MODEL_UNRESOLVED.pop((agent, model), None)
-            _AGENT_PARKED.pop((kind, agent), None)
-            if model:  # the agent default is often slow: never the preferred model
-                _LAST_GOOD_MODEL[kind] = model
-        else:
-            _MODEL_UNRESOLVED[(agent, model)] = time.monotonic() + _MODEL_UNRESOLVED_S
-            if _LAST_GOOD_MODEL.get(kind) == model:
-                _LAST_GOOD_MODEL.pop(kind, None)
-
-
-def _park_agent(kind: str, agent: str) -> None:
-    """Try `agent` last for this kind of call for a while (it rejected too
-    many models: its configuration, not one model)."""
-    with _STREAM_HEALTH_LOCK:
-        _AGENT_PARKED[(kind, agent)] = time.monotonic() + _MODEL_UNRESOLVED_S
-
-
-def _parked_last(kind: str, endpoints: list[str]) -> list[str]:
-    now = time.monotonic()
-    with _STREAM_HEALTH_LOCK:
-        parked = {a for (k, a), until in _AGENT_PARKED.items() if k == kind and until > now}
-    if not parked:
-        return endpoints
-    agent_of = lambda url: url.split("/api/agents/", 1)[-1].split("/", 1)[0]  # noqa: E731
-    return [u for u in endpoints if agent_of(u) not in parked] + [u for u in endpoints if agent_of(u) in parked]
-
-
-def _cool_agent(sticky_key: str, endpoints: list[str], agent: str, cooldown_s: float = _ENDPOINT_COOLDOWN_S) -> None:
-    """Move every API version of `agent` to the back for the cooldown."""
-    for url in endpoints:
-        if url.split("/api/agents/", 1)[-1].split("/", 1)[0] == agent:
-            _mark_stream_endpoint(sticky_key, url, ok=False, cooldown_s=cooldown_s)
-
-
-def _order_stream_endpoints(base_url: str, endpoints: list[str], primary: Any = ()) -> list[str]:
-    """Try order: the configured (`primary`) agent's endpoints that are not
-    cooling down (the one that last answered first), then the last endpoint
-    that answered, then the other healthy ones, then the cooling ones. So one
-    transient error of the operator's chosen agent moves calls to a fallback
-    only for its cooldown, not for the rest of the process lifetime."""
-    now = time.monotonic()
-    with _STREAM_HEALTH_LOCK:
-        preferred = _LAST_GOOD_STREAM_URL.get(base_url, "")
-        cooling = {url for url, until in _STREAM_ENDPOINT_COOLDOWN.items() if until > now}
-    primary_set = set(primary or ())
-    head = [url for url in endpoints if url in primary_set and url not in cooling]
-    if preferred in head:
-        head = [preferred] + [url for url in head if url != preferred]
-    elif preferred in endpoints and preferred not in cooling:
-        head.append(preferred)
-    healthy = [url for url in endpoints if url not in head and url not in cooling]
-    cold = [url for url in endpoints if url not in head and url in cooling]
-    return head + healthy + cold
-
-
-def _mark_stream_endpoint(base_url: str, url: str, ok: bool, cooldown_s: float = _ENDPOINT_COOLDOWN_S) -> None:
-    with _STREAM_HEALTH_LOCK:
-        if ok:
-            _STREAM_ENDPOINT_COOLDOWN.pop(url, None)
-            _LAST_GOOD_STREAM_URL[base_url] = url
-        else:
-            _STREAM_ENDPOINT_COOLDOWN[url] = max(
-                _STREAM_ENDPOINT_COOLDOWN.get(url, 0.0), time.monotonic() + float(cooldown_s)
-            )
-            if _LAST_GOOD_STREAM_URL.get(base_url) == url:
-                _LAST_GOOD_STREAM_URL.pop(base_url, None)
-
-
-def _blockbrain_chat(
-    payload: dict[str, Any],
-    on_text: Any = None,
-    budget_s: float | None = None,
-    allow_tools: bool = False,
-    model_fallbacks: list[str] | None = None,
-    kind: str = "text",
-) -> str:
-    """Send a request to Blockbrain and return the assistant text.
-
-    Primary transport is the Blockbrain agent stream endpoint (v2 first, v1
-    fallback). If BLOCKBRAIN_CHAT_ENDPOINT is set (for example an
-    OpenAI-compatible /v1/chat/completions route), that is tried first.
-
-    `on_text(text_so_far)` is called (throttled) while the answer streams in, so
-    the UI can render it progressively instead of waiting for the full reply.
-    `budget_s` caps the wall-clock time spent across all fallback endpoints.
-    `allow_tools=True` lets the agent use its configured tools (e.g. web search)
-    for this call instead of the default single-step, tool-free fast mode.
-    `model_fallbacks` are tried in turn on an agent that can't resolve the
-    requested model ("Failed to resolve model configuration"); an error event
-    or an agent-error reply is never returned as an answer.
-    """
-    global LAST_BLOCKBRAIN_ERROR
-    global LAST_BLOCKBRAIN_MODEL
-    global LAST_BLOCKBRAIN_TIMING
-    LAST_BLOCKBRAIN_ERROR = ""
-    LAST_BLOCKBRAIN_MODEL = ""
-    started = time.monotonic()
-    budget = float(budget_s or BLOCKBRAIN_TOTAL_BUDGET_S)
-    timing: dict[str, Any] = {
-        "endpoint": "",
-        "model": str((payload or {}).get("model", "") or ""),
-        "ttft_s": None,
-        "total_s": None,
-        "attempts": [],
-    }
-    LAST_BLOCKBRAIN_TIMING = timing
-    _CALL_STATE.error = ""
-    api_key, base_url, agent_id = _load_blockbrain_secrets()
-    if not api_key:
-        LAST_BLOCKBRAIN_ERROR = _CALL_STATE.error = "Blockbrain API key not configured"
-        return ""
-    if not base_url:
-        LAST_BLOCKBRAIN_ERROR = _CALL_STATE.error = "Blockbrain base URL not configured"
-        return ""
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    timeout = (BLOCKBRAIN_CONNECT_TIMEOUT_S, BLOCKBRAIN_READ_TIMEOUT_S)
-
-    def _coerce_content_to_text(content: Any) -> str:
-        if isinstance(content, str):
-            return content.strip()
-        if isinstance(content, dict):
-            for key in ("text", "content", "value"):
-                value = content.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
-            return ""
-        if isinstance(content, list):
-            parts: list[str] = []
-            for item in content:
-                if isinstance(item, str):
-                    if item.strip():
-                        parts.append(item.strip())
-                    continue
-                if not isinstance(item, dict):
-                    continue
-                item_type = str(item.get("type", "") or "").strip().lower()
-                if item_type == "text" and isinstance(item.get("text"), str):
-                    text_part = item.get("text", "").strip()
-                    if text_part:
-                        parts.append(text_part)
-                    continue
-                nested_text = item.get("text")
-                if isinstance(nested_text, dict):
-                    value = nested_text.get("value")
-                    if isinstance(value, str) and value.strip():
-                        parts.append(value.strip())
-            return "\n".join(parts).strip()
-        return ""
-
-    def _try_openai_chat(endpoint_path: str) -> tuple[bool, str]:
-        """Try an OpenAI-compatible chat completions endpoint. Returns (handled, text)."""
-        global LAST_BLOCKBRAIN_ERROR
-        global LAST_BLOCKBRAIN_MODEL
-        url = f"{base_url}{endpoint_path}"
-        request_payload = dict(payload or {})
-        request_payload["stream"] = False
-        try:
-            resp = _http_post(url, headers=headers, json=request_payload, timeout=timeout)
-        except Exception as exc:
-            LAST_BLOCKBRAIN_ERROR = f"Blockbrain request error: {exc}"
-            return False, ""
-        if resp.status_code == 404:
-            return False, ""  # endpoint not available; fall back to agent stream
-        if resp.status_code != 200:
-            LAST_BLOCKBRAIN_ERROR = f"Blockbrain HTTP {resp.status_code}: {resp.text[:200]}"
-            return False, ""  # fall back to the agent stream instead of failing
-        try:
-            payload_json = resp.json() if resp.content else {}
-        except ValueError:
-            LAST_BLOCKBRAIN_ERROR = "Blockbrain returned invalid JSON"
-            return False, ""
-        if isinstance(payload_json, dict):
-            runtime_model = str(payload_json.get("model", "") or payload_json.get("resolved_model", "") or "").strip()
-            if runtime_model:
-                LAST_BLOCKBRAIN_MODEL = runtime_model
-            choices = payload_json.get("choices", [])
-            if isinstance(choices, list) and choices:
-                message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
-                content = message.get("content", "") if isinstance(message, dict) else ""
-                text = _coerce_content_to_text(content)
-                if text:
-                    return True, text
-            top_level = payload_json.get("output", payload_json.get("content", ""))
-            text = _coerce_content_to_text(top_level)
-            if text:
-                return True, text
-            for key in ("reply", "message", "response", "text"):
-                text = _coerce_content_to_text(payload_json.get(key, ""))
-                if text:
-                    return True, text
-        LAST_BLOCKBRAIN_ERROR = "Blockbrain response did not include assistant text"
-        return True, ""
-
-    def _collect_text_chunks(value: Any) -> list[str]:
-        chunks: list[str] = []
-        if isinstance(value, str):
-            text = value.strip()
-            if text and text != "[DONE]":
-                chunks.append(text)
-            return chunks
-        if isinstance(value, list):
-            for item in value:
-                chunks.extend(_collect_text_chunks(item))
-            return chunks
-        if not isinstance(value, dict):
-            return chunks
-
-        # Common event-level fields across v1/v2 stream variants.
-        for key in ("text", "delta", "content", "value"):
-            raw = value.get(key)
-            if isinstance(raw, str) and raw.strip():
-                chunks.append(raw.strip())
-
-        # OpenAI-style delta/messages payloads.
-        choices = value.get("choices")
-        if isinstance(choices, list):
-            for choice in choices:
-                if not isinstance(choice, dict):
-                    continue
-                chunks.extend(_collect_text_chunks(choice.get("delta")))
-                chunks.extend(_collect_text_chunks(choice.get("message")))
-
-        # Recurse through nested structures where streaming payload text often lives.
-        for nested_key in ("data", "payload", "message", "messages", "parts", "output"):
-            nested = value.get(nested_key)
-            if nested is not None:
-                chunks.extend(_collect_text_chunks(nested))
-
-        return chunks
-
-    def _fast_stream_payload(src: dict[str, Any], endpoint_path: str) -> dict[str, Any]:
-        out = dict(src or {})
-        fast_mode = str(os.getenv("BLOCKBRAIN_FAST_STREAM", "1") or "1").strip().lower() not in {"0", "false", "off", "no"}
-        if not fast_mode:
-            return out
-        # Only add these to v2 stream calls where they are expected.
-        if "/v2/" in endpoint_path and allow_tools:
-            out.setdefault("trigger", "submit-message")
-            return out
-        if "/v2/" in endpoint_path:
-            out.setdefault("maxSteps", 1)
-            out.setdefault("activeTools", [])
-            out.setdefault("toolChoice", "none")
-            out.setdefault("trigger", "submit-message")
-        return out
-
-    def _finish(text: str, endpoint: str) -> str:
-        timing["endpoint"] = endpoint
-        timing["total_s"] = round(time.monotonic() - started, 2)
-        if LAST_BLOCKBRAIN_MODEL and not timing.get("model"):
-            timing["model"] = LAST_BLOCKBRAIN_MODEL
-        logger.info(
-            "blockbrain ok endpoint=%s model=%s ttft=%ss total=%ss attempts=%d chars=%d",
-            endpoint, timing["model"], timing["ttft_s"], timing["total_s"], len(timing["attempts"]), len(text or ""),
-        )
-        return text
-
-    # Optional OpenAI-compatible endpoint override (tried first when configured).
-    custom_endpoint = os.getenv("BLOCKBRAIN_CHAT_ENDPOINT", "").strip()
-    if custom_endpoint:
-        endpoint_path = custom_endpoint if custom_endpoint.startswith("/") else f"/{custom_endpoint}"
-        handled, text = _try_openai_chat(endpoint_path)
-        if handled and text and looks_like_agent_error(text):
-            LAST_BLOCKBRAIN_ERROR = f"Blockbrain {endpoint_path}: {text[:200]}"
-            handled = False  # an error written as the answer: use the agent stream
-        if handled:
-            _CALL_STATE.error = "" if text else (LAST_BLOCKBRAIN_ERROR or "Blockbrain response did not include assistant text")
-            if text and on_text is not None:
-                try:
-                    on_text(text)
-                except Exception:
-                    pass
-            return _finish(text, endpoint_path)
-
-    # Primary transport: Blockbrain agent stream endpoint (SSE), preferring v2.
-    # Include fallback agents so a single dead/500 agent cannot break the app
-    # (the previously pinned agent started returning HTTP 500 and silently killed
-    # image OCR). Ordered, de-duplicated: the configured agent first (unless it
-    # is cooling down after a failure), then the last working endpoint, then
-    # fallbacks; recently failed endpoints go last.
-    agent_order: list[str] = []
-    primary_agents = [agent_id]
-    if allow_tools:
-        research_agent = _load_blockbrain_research_agent_id()
-        if research_agent:
-            primary_agents.insert(0, research_agent)
-    for _a in primary_agents + list(BLOCKBRAIN_FALLBACK_AGENTS):
-        _a = str(_a or "").strip()
-        if _a and _a not in agent_order:
-            agent_order.append(_a)
-
-    stream_endpoints: list[str] = []
-    for _a in agent_order:
-        stream_endpoints.append(f"{base_url}/v2/api/agents/{_a}/stream")
-        stream_endpoints.append(f"{base_url}/v1/api/agents/{_a}/stream")
-    configured = {str(_a or "").strip() for _a in primary_agents}
-    primary_endpoints = [url for url in stream_endpoints if url.split("/api/agents/", 1)[1].split("/", 1)[0] in configured]
-    join_mode = _stream_join_mode()
-    last_error = ""
-    # Tool calls remember their own last working endpoint, so a fast agent that
-    # answered a meal plan never displaces the research agent for web lookups.
-    sticky_key = base_url + ("|tools" if allow_tools else "") + ("|vision" if kind == "vision" else "")
-    requested_model = str((payload or {}).get("model", "") or "").strip()
-    model_kind = ("tools|" if allow_tools else "") + kind
-    # Per call: agents done with, models that failed (each model is sent at
-    # most once per call) and the number of models that never got the image.
-    done_agents: set[str] = set()
-    call_failed_models: set[str] = set()
-    agent_error_models: dict[str, set[str]] = {}
-    tried_models: set[str] = set()
-    pending_marks: set[tuple[str, str]] = set()
-    model_errors = 0
-    image_blind = 0
-    stop = False
-    for stream_url in _parked_last(model_kind, _order_stream_endpoints(sticky_key, stream_endpoints, primary_endpoints)):
-        if stop:
-            break
-        endpoint_agent = stream_url.split("/api/agents/", 1)[1].split("/", 1)[0]
-        if endpoint_agent in done_agents:
-            continue
-        endpoint_path = stream_url[len(base_url):] if stream_url.startswith(base_url) else stream_url
-        agent_model_errors = 0
-        agent_load_errors = 0
-        candidates = _model_candidates(
-            requested_model, model_fallbacks, model_kind, endpoint_agent, call_failed_models
-        )
-        if (
-            model_errors >= _MODEL_ERRORS_PER_CALL - 2
-            and "" in (model_fallbacks or [])
-            and "" not in tried_models
-            and "" not in call_failed_models
-        ):
-            # Most named models failed already and the budget is nearly used: the agent's
-            # own default (it needs no model configuration) gets the last tries.
-            candidates = [""]
-        for model in candidates:
-            if time.monotonic() - started > budget:
-                last_error = (last_error + " | " if last_error else "") + f"gave up after {int(budget)}s budget"
-                stop = True
-                break
-            request_payload = dict(payload or {})
-            if model:
-                request_payload["model"] = model
-            else:
-                request_payload.pop("model", None)
-            attempt: dict[str, Any] = {"endpoint": endpoint_path, "model": model, "status": None, "s": None}
-            tried_models.add(model)
-            timing["attempts"].append(attempt)
-            attempt_started = time.monotonic()
-            delta_parts: list[str] = []
-            text_parts: list[str] = []
-            stream_error = ""
-            stream_broke = False
-
-            def _current_text() -> str:
-                if delta_parts:
-                    return "".join(delta_parts).strip()
-                return "\n".join([c for c in text_parts if str(c).strip()]).strip()
-
-            try:
-                resp = _http_post(
-                    stream_url,
-                    headers=headers,
-                    json=_fast_stream_payload(request_payload, endpoint_path),
-                    timeout=timeout,
-                    stream=True,
-                )
-            except Exception as exc:
-                last_error = f"Blockbrain request error: {exc}"
-                attempt["status"] = "error"
-                attempt["s"] = round(time.monotonic() - attempt_started, 2)
-                _mark_stream_endpoint(sticky_key, stream_url, ok=False)
-                break  # this endpoint is unreachable: the next one
-
-            http_error = ""
-            with resp:
-                attempt["status"] = resp.status_code
-                if resp.status_code != 200:
-                    http_error = str(resp.text or "")[:400]
-                    last_error = f"Blockbrain HTTP {resp.status_code}: {http_error[:200]}"
-                    if resp.status_code != 429 and (
-                        _MODEL_CONFIG_PHRASE_RE.search(http_error)
-                        # Looser wordings only from a client error / 404: a 5xx page that
-                        # says "upstream model server not available" is the endpoint's.
-                        or (
-                            resp.status_code < 500
-                            and _MODEL_CONFIG_ERROR_RE.search(http_error)
-                            and not _MODEL_LOAD_ERROR_RE.search(http_error)
-                        )
-                    ):
-                        # The body says this model can't be used: handle it like the
-                        # same error inside a stream (mark the model, try the next one).
-                        stream_error, http_error = http_error, ""
-                    elif resp.status_code == 404:
-                        _mark_stream_endpoint(sticky_key, stream_url, ok=False, cooldown_s=_ENDPOINT_COOLDOWN_404_S)
-                        attempt["s"] = round(time.monotonic() - attempt_started, 2)
-                        break  # no such endpoint: the next one (e.g. v1)
-                    elif resp.status_code >= 500 or resp.status_code == 429:
-                        _mark_stream_endpoint(sticky_key, stream_url, ok=False)
-                else:
-                    last_push = 0.0
-                    # A server that keeps sending keep-alive bytes never trips the read
-                    # timeout, so a single stream is also capped in wall-clock time.
-                    stream_deadline = started + budget * 1.5
-                    try:
-                        for raw_line in resp.iter_lines():
-                            if time.monotonic() > stream_deadline:
-                                raise TimeoutError(f"stream exceeded {int(budget * 1.5)}s")
-                            if not raw_line:
-                                continue
-                            line = raw_line.decode("utf-8", errors="replace") if isinstance(raw_line, bytes) else raw_line
-                            if not line.startswith("data:"):
-                                continue
-                            json_str = line[len("data:"):].strip()
-                            if not json_str or json_str == "[DONE]":
-                                continue
-                            try:
-                                event = json.loads(json_str)
-                            except Exception:
-                                continue
-
-                            if isinstance(event, dict):
-                                runtime_model = str(event.get("model", "") or event.get("resolved_model", "") or "").strip()
-                                if not runtime_model:
-                                    try:
-                                        runtime_model = str(
-                                            event.get("data", {})
-                                            .get("payload", {})
-                                            .get("request", {})
-                                            .get("body", {})
-                                            .get("model", "")
-                                            or ""
-                                        ).strip()
-                                    except Exception:
-                                        runtime_model = ""
-                                if runtime_model:
-                                    LAST_BLOCKBRAIN_MODEL = runtime_model
-
-                            stream_error = _stream_error_text(event)
-                            if stream_error:
-                                break
-                            added = False
-                            piece = _typed_delta_piece(event) if join_mode == "auto" else None
-                            if piece is not None:
-                                if piece:
-                                    delta_parts.append(piece)
-                                    added = True
-                            else:
-                                chunks = _collect_text_chunks(event)
-                                if chunks:
-                                    text_parts.extend(chunks)
-                                    added = True
-
-                            if added:
-                                if timing["ttft_s"] is None:
-                                    timing["ttft_s"] = round(time.monotonic() - started, 2)
-                                current = _current_text()
-                                # An error can arrive split over deltas ("[Agent", " X] - …"):
-                                # nothing that may still turn into one is shown.
-                                held = _may_become_error(current)
-                                if (
-                                    on_text is not None
-                                    and time.monotonic() - last_push >= 0.12
-                                    and not held
-                                    and not looks_like_agent_error(current)
-                                ):
-                                    last_push = time.monotonic()
-                                    try:
-                                        on_text(current)
-                                    except Exception:
-                                        pass
-
-                            if isinstance(event, dict):
-                                event_type = str(event.get("type", "") or "").strip().lower()
-                                if event_type in {"finish", "done", "response.completed", "response.done", "message.stop"}:
-                                    break
-                    except Exception as exc:
-                        last_error = f"Blockbrain stream error: {exc}"
-                        stream_broke = True
-                        delta_parts.clear()
-                        text_parts.clear()
-
-            attempt["s"] = round(time.monotonic() - attempt_started, 2)
-            merged = _current_text()
-            agent_error = http_error if http_error else (stream_error or (merged if looks_like_agent_error(merged) else ""))
-            if http_error:
-                break  # an HTTP failure of this endpoint (cooled above): the next endpoint
-            if agent_error:
-                last_error = f"Blockbrain {endpoint_path}: {agent_error[:200]}"
-                attempt["status"] = "agent-error"
-                error_kind = _classify_agent_error(agent_error, model)
-                if error_kind == "model":
-                    # This agent can't use this model: skip it here for a while. Other
-                    # agents try it last (it may work there), not never.
-                    _mark_model(model_kind, endpoint_agent, model, ok=False)
-                    agent_model_errors += 1
-                    model_errors += 1
-                    if model_errors >= _MODEL_ERRORS_PER_CALL:
-                        last_error += " | stopped: no model could be resolved"
-                        stop = True
-                        break
-                    if agent_model_errors >= _MODEL_ERRORS_PER_AGENT:
-                        _park_agent(model_kind, endpoint_agent)  # its configuration, not the model
-                        break
-                    continue  # the next model on this agent
-                if error_kind == "busy":
-                    # A busy model: try another one, block nothing.
-                    call_failed_models.add(model)
-                    agent_load_errors += 1
-                    if agent_load_errors >= _LOAD_ERRORS_PER_AGENT:
-                        # Two models busy here: the next agent, and this one last for a minute.
-                        _cool_agent(sticky_key, stream_endpoints, endpoint_agent, _BUSY_COOLDOWN_S)
-                        done_agents.add(endpoint_agent)
-                        break
-                    continue
-                # Another agent failure (rate limit, auth, …): cool this agent
-                # (all its API versions) down and go on with the next agent. The
-                # same model failing this way on two agents is the model's problem.
-                _cool_agent(sticky_key, stream_endpoints, endpoint_agent)
-                done_agents.add(endpoint_agent)
-                agents_for_model = agent_error_models.setdefault(model, set())
-                agents_for_model.add(endpoint_agent)
-                if len(agents_for_model) >= 2:
-                    # Two agents failing the same way for the same model: the model's problem.
-                    call_failed_models.add(model)
-                    if not _AGENT_WIDE_ERROR_RE.search(agent_error):  # a shared limit is no reason to avoid a model later
-                        # Written only once another model answers in this call: an error that
-                        # depends on the prompt fails on every model and teaches nothing.
-                        pending_marks.update((failed_agent, model) for failed_agent in agents_for_model)
-                break
-            # A vision model that never got the image: try another one. Nothing
-            # is remembered, so a photo (or a text-only model) can't switch
-            # photo reading off for everyone.
-            if kind == "vision" and _image_not_received(merged):
-                call_failed_models.add(model)
-                image_blind += 1
-                last_error = f"Blockbrain {endpoint_path}: {model or 'agent default'} did not receive the image"
-                attempt["status"] = "image-not-received"
-                if image_blind >= _IMAGE_BLIND_PER_CALL:
-                    stop = True
-                    break
-                continue
-            if merged:
-                for failed_agent, failed_model in pending_marks:
-                    if (failed_agent, failed_model) != (endpoint_agent, model):
-                        _mark_model(model_kind, failed_agent, failed_model, ok=False)
-                _mark_model(model_kind, endpoint_agent, model, ok=True)
-                _mark_stream_endpoint(sticky_key, stream_url, ok=True)
-                timing["model"] = LAST_BLOCKBRAIN_MODEL or model or "(agent default)"
-                _CALL_STATE.error = ""
-                if on_text is not None:
-                    try:
-                        on_text(merged)
-                    except Exception:
-                        pass
-                return _finish(merged, endpoint_path)
-            last_error = last_error or f"Blockbrain {endpoint_path} returned no text"
-            if not stream_broke:  # an empty reply (not a dropped stream): the next endpoint starts with another model
-                call_failed_models.add(model)
-            break
-        else:
-            # Every candidate on this agent failed: don't repeat them on its
-            # other API version.
-            if candidates and not stop:
-                done_agents.add(endpoint_agent)
-        if agent_model_errors >= _MODEL_ERRORS_PER_AGENT:
-            done_agents.add(endpoint_agent)
-
-    LAST_BLOCKBRAIN_ERROR = last_error or "Blockbrain response did not include assistant text"
-    _CALL_STATE.error = LAST_BLOCKBRAIN_ERROR
-    timing["total_s"] = round(time.monotonic() - started, 2)
-    logger.warning(
-        "blockbrain failed model=%s total=%ss attempts=%s error=%s",
-        timing["model"], timing["total_s"],
-        [(a.get("endpoint"), a.get("status")) for a in timing["attempts"]], LAST_BLOCKBRAIN_ERROR[:200],
-    )
-    return ""
-
-
-
-def call_blockbrain_text(
-    system_prompt: str,
-    user_prompt: str,
-    model: str | None = None,
-    on_text: Any = None,
-    history: list[dict[str, str]] | None = None,
-    budget_s: float | None = None,
-    allow_tools: bool = False,
-) -> str:
-    """Send a text-only request to Blockbrain chat completions.
-
-    `history` is an optional list of prior {"role", "content"} turns inserted
-    between the system prompt and the new user message (chat memory).
-    `on_text` streams partial text to the caller (see _blockbrain_chat).
-    """
-    requested_model = str(model or "").strip()
-    if not requested_model:
-        selected_text_model, _ = _get_selected_blockbrain_models()
-        requested_model = str(selected_text_model or "").strip()
-    messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt.strip()}]
-    for turn in history or []:
-        role = str((turn or {}).get("role", "") or "").strip().lower()
-        content = str((turn or {}).get("content", "") or "").strip()
-        if role in {"user", "assistant"} and content:
-            messages.append({"role": role, "content": content})
-    messages.append({"role": "user", "content": user_prompt.strip()})
-    payload: dict[str, Any] = {"messages": messages}
-    if requested_model:
-        payload["model"] = requested_model
-    return _blockbrain_chat(
-        payload, on_text=on_text, budget_s=budget_s, allow_tools=allow_tools,
-        model_fallbacks=BLOCKBRAIN_TEXT_MODEL_FALLBACKS,
-    )
-
-
-# Default Knowledge Bot (a "cortex"/nexus company bot). Unlike an agent, a
-# Knowledge Bot can have a knowledge base attached. The bot is addressed by its
-# DEFINITION id (...cd) on the cortex API host (blocky.theblockbrain.ai); the
-# runtime "active bot" id (...d0, seen in the share URL) is derived server-side.
-# We talk to it via: create a conversation, then post the question to
-# /cortex/completions/v2/user-input (non-streaming) and read body.content.
-# Override via BLOCKBRAIN_BOT_ID / BLOCKBRAIN_BOT_BASE_URL.
-_DEFAULT_BLOCKBRAIN_BOT_ID = "699721de74b22e46331a67cd"
-_DEFAULT_BLOCKBRAIN_BOT_BASE_URL = "https://blocky.theblockbrain.ai"
-
-
-def _load_blockbrain_bot_config() -> tuple[str, str, str]:
-    """Return (api_key, bot_base_url, bot_id) for the Knowledge Bot endpoint."""
-    api_key, _agent_base, _agent_id = _load_blockbrain_secrets()
-
-    def _get(name: str, default: str = "") -> str:
-        try:
-            import streamlit as st  # noqa: F401
-            val = st.secrets.get(name, "") or os.getenv(name, "")
-        except Exception:
-            val = os.getenv(name, "")
-        return str(val or default).strip()
-
-    bot_id = _get("BLOCKBRAIN_BOT_ID", _DEFAULT_BLOCKBRAIN_BOT_ID)
-    bot_base = _get("BLOCKBRAIN_BOT_BASE_URL", _DEFAULT_BLOCKBRAIN_BOT_BASE_URL).rstrip("/")
-    return api_key, bot_base, bot_id
-
-
-def _extract_bot_text_from_json(obj: Any) -> str:
-    """Best-effort extraction of assistant text from a bot JSON payload."""
-    if isinstance(obj, str):
-        text = obj.strip()
-        return "" if text in ("", "[DONE]") else text
-    if isinstance(obj, list):
-        return "\n".join(t for t in (_extract_bot_text_from_json(x) for x in obj) if t).strip()
-    if not isinstance(obj, dict):
-        return ""
-    # Direct textual fields first.
-    for key in ("content", "text", "answer", "message", "response", "delta", "value", "output"):
-        val = obj.get(key)
-        if isinstance(val, str) and val.strip() and val.strip() != "[DONE]":
-            return val.strip()
-        if isinstance(val, (dict, list)):
-            nested = _extract_bot_text_from_json(val)
-            if nested:
-                return nested
-    # OpenAI-style choices.
-    choices = obj.get("choices")
-    if isinstance(choices, list):
-        parts = [_extract_bot_text_from_json(c) for c in choices]
-        joined = "\n".join(p for p in parts if p).strip()
-        if joined:
-            return joined
-    return ""
-
-
-def call_blockbrain_bot(prompt: str, bot_id: str | None = None, timeout: float | None = None) -> str:
-    """Ask the Blockbrain Knowledge Bot (nexus company bot) a question.
-
-    Flow: create a conversation for the bot, then post the message to
-    /cortex/completions/v2/user-input (non-streaming) and read the answer from
-    the JSON body. The bot answers from its attached knowledge base. Pass
-    `bot_id` to target a specific bot; otherwise the configured default is used.
-    Returns assistant text, or "" on any failure (with LAST_BLOCKBRAIN_ERROR set)
-    so callers can fall back.
-    """
-    global LAST_BLOCKBRAIN_ERROR, LAST_BOT_ERROR
-    LAST_BLOCKBRAIN_ERROR = ""
-    LAST_BOT_ERROR = ""
-    answer = _call_blockbrain_bot_once(prompt, bot_id=bot_id, timeout=timeout)
-    if not answer:
-        LAST_BOT_ERROR = LAST_BLOCKBRAIN_ERROR or "Blockbrain bot returned no text"
-    return answer
-
-
-def _call_blockbrain_bot_once(prompt: str, bot_id: str | None = None, timeout: float | None = None) -> str:
-    global LAST_BLOCKBRAIN_ERROR
-    text = str(prompt or "").strip()
-    if not text:
-        return ""
-    api_key, bot_base, default_bot_id = _load_blockbrain_bot_config()
-    bot_id = str(bot_id or default_bot_id or "").strip()
-    if not api_key:
-        LAST_BLOCKBRAIN_ERROR = "Blockbrain API key not configured"
-        return ""
-    if not (bot_base and bot_id):
-        LAST_BLOCKBRAIN_ERROR = "Blockbrain bot not configured"
-        return ""
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    session_id = str(uuid.uuid4())
-
-    # 1) Create a conversation for this bot.
-    try:
-        rc = _http_post(
-            f"{bot_base}/cortex/active-bot/{bot_id}/convo",
-            headers=headers,
-            json={"sessionId": session_id, "isCompanyGptBot": False},
-            timeout=timeout or HTTP_TIMEOUT,
-        )
-    except Exception as exc:
-        LAST_BLOCKBRAIN_ERROR = f"Blockbrain bot convo error: {exc}"
-        return ""
-    if rc.status_code != 200:
-        LAST_BLOCKBRAIN_ERROR = f"Blockbrain bot convo HTTP {rc.status_code}: {rc.text[:200]}"
-        return ""
-    try:
-        convo_body = rc.json().get("body", {}) if rc.content else {}
-    except Exception:
-        convo_body = {}
-    convo_id = str(
-        convo_body.get("dataRoomId")
-        or convo_body.get("convoId")
-        or convo_body.get("_id")
-        or ""
-    ).strip()
-    if not convo_id:
-        LAST_BLOCKBRAIN_ERROR = "Blockbrain bot conversation id missing"
-        return ""
-
-    # 2) Post the question (non-streaming) and read body.content.
-    payload = {
-        "convoId": convo_id,
-        "sessionId": session_id,
-        "content": text,
-        "messageType": "user-question",
-        "enableStreaming": False,
-    }
-    try:
-        resp = _http_post(
-            f"{bot_base}/cortex/completions/v2/user-input",
-            headers=headers,
-            json=payload,
-            timeout=timeout or HTTP_TIMEOUT,
-        )
-    except Exception as exc:
-        LAST_BLOCKBRAIN_ERROR = f"Blockbrain bot request error: {exc}"
-        return ""
-    if resp.status_code != 200:
-        LAST_BLOCKBRAIN_ERROR = f"Blockbrain bot HTTP {resp.status_code}: {resp.text[:200]}"
-        return ""
-    try:
-        data = resp.json() if resp.content else {}
-    except Exception:
-        # An HTML maintenance page or a proxy error, not an answer.
-        LAST_BLOCKBRAIN_ERROR = "Blockbrain bot returned a non-JSON reply"
-        return ""
-    if isinstance(data, dict):
-        try:
-            status = int(str(data.get("statusCode", "") or "200").strip() or 200)
-        except ValueError:
-            status = 200
-        if status >= 400 or data.get("success") is False or data.get("error"):
-            message = data.get("message") or data.get("error") or f"status {status}"
-            LAST_BLOCKBRAIN_ERROR = f"Blockbrain bot error: {str(message)[:200]}"
-            return ""
-    body = data.get("body", data) if isinstance(data, dict) else data
-    answer = _extract_bot_text_from_json(body)
-    if answer:
-        return answer
-    LAST_BLOCKBRAIN_ERROR = LAST_BLOCKBRAIN_ERROR or "Blockbrain bot returned no text"
-    return ""
-
-
-def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
-    """Send an image to Blockbrain vision model; returns extracted label text."""
-    global LAST_VISION_RAW_RESPONSE
-    global LAST_VISION_ATTEMPT_LOG
-    LAST_VISION_RAW_RESPONSE = ""
-    LAST_VISION_ATTEMPT_LOG = []
-    _, selected_vision_model = _get_selected_blockbrain_models()
-    requested_model = str(model or selected_vision_model or "").strip()
-
-    def _as_jpeg_payload(data: bytes) -> bytes:
-        # Vision latency/cost is dominated by image size: never upload a full
-        # 12 MP phone photo. Already-small upright JPEGs (the OCR variants) are
-        # sent unchanged; anything else is decoded once, upright and capped.
-        try:
-            image = Image.open(io.BytesIO(data))
-            try:
-                orientation = int(image.getexif().get(0x0112, 1) or 1)
-            except Exception:
-                orientation = 1
-            if (
-                str(image.format or "").upper() == "JPEG"
-                and orientation == 1
-                and max(image.size) <= BLOCKBRAIN_VISION_MAX_SIDE
-                and len(data) <= 1_500_000
-            ):
-                return data
-        except Exception:
-            return b""
-        upright = _load_upright_image(data, BLOCKBRAIN_VISION_MAX_SIDE)
-        return _jpeg_bytes(upright, 88) if upright is not None else b""
-
-    jpeg_bytes = _as_jpeg_payload(image_bytes)
-    if not jpeg_bytes:
-        LAST_VISION_ATTEMPT_LOG.append("content_image:refused (unreadable or oversized image)")
-        return ""
-    b64 = base64.b64encode(jpeg_bytes).decode("utf-8")
-    # Only what the parser needs: fewer output tokens is the biggest speed-up
-    # for a vision read (a full transcription of ingredients, directions and
-    # marketing copy can be several times longer than the nutrient table).
-    vision_prompt = (
-        "You are a strict OCR extractor for supplement and nutrition labels. From this photo, output ONLY:\n"
-        "1. the product name and brand, if visible, on the first line;\n"
-        "2. the serving line (e.g. 'Serving size 1 tablet' or 'pro Tagesdosis (1 Tablette)');\n"
-        "3. every vitamin, mineral and other nutrient line of the nutrition / supplement facts table, "
-        "exactly as printed, one per line, with its amount, unit, any '(as ...)' form and the %NRV / %DV "
-        "if shown (e.g. 'Vitamin D3 20 µg (800 I.E.) 400%').\n"
-        "Keep the label's language, spelling and number format (decimal commas, µg, I.E./IU). Skip "
-        "ingredient lists, directions, warnings, marketing text and addresses. If the photo shows no "
-        "nutrient table, output only the visible product name, brand and any barcode digits. "
-        "Plain text lines only — no markdown, no commentary."
-    )
-
-    def _record(out: str) -> None:
-        global LAST_VISION_RAW_RESPONSE
-        snippet = str(out or "").strip().replace("\n", " ")[:180]
-        if out and _is_blockbrain_image_missing_response(out):
-            status = "image_missing"
-        elif out and str(out).strip():
-            status = "text"
-        else:
-            status = "empty"
-        LAST_VISION_ATTEMPT_LOG.append("content_image:" + status + (f" | {snippet}" if snippet else ""))
-        if out and str(out).strip():
-            LAST_VISION_RAW_RESPONSE = str(out).strip()
-
-    # Single verified path: the content_image schema with the pinned best model.
-    # Vision requires a pinned vision-capable model (the default agent backend
-    # returns "no image attached"). Benchmarks proved accuracy is identical across
-    # models, so there is exactly ONE model and ONE schema here — no fan-out.
-    effective_model = requested_model or BLOCKBRAIN_PINNED_VISION_MODEL
-    payload = {
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": vision_prompt},
-                    {"type": "image", "image": f"data:image/jpeg;base64,{b64}"},
-                ],
-            }
-        ],
-    }
-    if effective_model:
-        payload["model"] = effective_model
-    out = _blockbrain_chat(payload, model_fallbacks=BLOCKBRAIN_VISION_MODEL_FALLBACKS, kind="vision")
-    _record(out)
-    if out and not _is_blockbrain_image_missing_response(out):
-        return out
-    return ""
 
 
 def _is_blockbrain_image_missing_response(text: str) -> bool:
@@ -13528,13 +12589,8 @@ def _render_analyze_tab(tab_analyze: Any) -> None:
 
         pass  # LLM route caption hidden for simpler UX
 
-        # AI model selection is pinned for best UX: the vision model defaults to the
-        # fastest benchmarked label-OCR model (anthropic-claude-haiku-4.5) and the
-        # text model to the fastest mapping model (gpt-4.1-nano), so "Resolving
-        # nutrient mappings" and label OCR stay fast instead of using the slow
-        # default reasoning backend. The manual picker is intentionally hidden;
-        # advanced users can override via BLOCKBRAIN_MODEL_VISION /
-        # BLOCKBRAIN_MODEL_TEXT (env or secrets).
+        # The model is a property of the configured Blockbrain bot (BLOCKBRAIN_MODEL / BLOCKBRAIN_BOT_ID), not of a
+        # request: there is no picker, and the defaults below only name it for the diagnostics.
         default_text_model, default_vision_model = _load_blockbrain_model_defaults()
         st.session_state["analyze_blockbrain_text_model"] = default_text_model
         st.session_state["analyze_blockbrain_vision_model"] = default_vision_model

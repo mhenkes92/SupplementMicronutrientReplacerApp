@@ -11,14 +11,9 @@ from PIL import Image
 import blockbrain.app as bb
 import llm_cache
 
-from test_blockbrain_transport import FakeResponse, _install  # noqa: F401  (shared fakes)
-
 
 @pytest.fixture(autouse=True)
-def _reset(monkeypatch):
-    monkeypatch.delenv("BLOCKBRAIN_CHAT_ENDPOINT", raising=False)
-    bb._STREAM_ENDPOINT_COOLDOWN.clear()
-    bb._LAST_GOOD_STREAM_URL.clear()
+def _reset():
     llm_cache.clear()
     yield
 
@@ -69,27 +64,6 @@ def test_rag_fallback_shows_excerpts_when_llm_is_down(monkeypatch):
     assert "200-400 mg" in answer and meta["reason"] == "llm_unavailable"
 
 
-def test_keep_alive_stream_is_cut_by_wall_clock(monkeypatch):
-    lines = [b": ping"] * 50 + [b'data: {"type":"text-delta","delta":"late"}']
-    _install(monkeypatch, lambda url, n: FakeResponse(raw_lines=lines))
-    clock = iter(range(0, 100_000, 10))
-    monkeypatch.setattr(bb.time, "monotonic", lambda: float(next(clock)))
-    assert bb._blockbrain_chat({"messages": []}, budget_s=100) == ""
-    assert "exceeded" in bb.LAST_BLOCKBRAIN_ERROR or "budget" in bb.LAST_BLOCKBRAIN_ERROR
-
-
-def test_custom_endpoint_error_falls_back_to_agent_stream(monkeypatch):
-    monkeypatch.setenv("BLOCKBRAIN_CHAT_ENDPOINT", "/v1/chat/completions")
-
-    def fake_post(url, **kwargs):
-        if url.endswith("/v1/chat/completions"):
-            return FakeResponse(status_code=500)
-        return FakeResponse(events=[{"type": "text-delta", "delta": "from agent"}])
-
-    monkeypatch.setattr(bb, "_http_post", fake_post)
-    assert bb._blockbrain_chat({"messages": []}) == "from agent"
-
-
 def _png(w, h):
     buf = io.BytesIO()
     Image.new("RGB", (w, h), "white").save(buf, format="PNG")
@@ -99,7 +73,7 @@ def _png(w, h):
 def test_oversized_images_are_refused_before_decoding(monkeypatch):
     monkeypatch.setattr(bb, "VISION_MAX_INPUT_PIXELS", 10_000)
     assert bb.build_vision_image_variants(_png(200, 200)) == []
-    monkeypatch.setattr(bb, "_blockbrain_chat", lambda *a, **k: pytest.fail("must not upload"))
+    monkeypatch.setattr(bb, "_client", lambda: pytest.fail("must not upload"))
     assert bb.call_blockbrain_vision(_png(200, 200)) == ""
 
 
@@ -126,7 +100,6 @@ def test_generation_quota_per_session(sw, monkeypatch):
 def test_ask_ai_sends_the_card_dose(sw, monkeypatch):
     sw.st.session_state.pop("_suppswipe_llm_usage", None)
     seen = {}
-    monkeypatch.setattr(bb, "call_blockbrain_bot", lambda message, **k: seen.setdefault("bot", message) and "")
-    monkeypatch.setattr(bb, "call_blockbrain_text", lambda system, user, **k: seen.setdefault("agent", user) and "ok")
+    monkeypatch.setattr(bb, "call_blockbrain_text", lambda system, user, **k: seen.setdefault("user", user) and "ok")
     sw._answer_ask_ai_question("Vitamin D3", "Is this dose usually safe long-term?", dose_label="125 mcg")
-    assert "125 mcg" in seen["bot"] and "125 mcg" in seen["agent"]
+    assert "125 mcg" in seen["user"]

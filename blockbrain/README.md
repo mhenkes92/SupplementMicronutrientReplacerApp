@@ -47,17 +47,12 @@ This keeps the proxy restarted if it exits and brings it back at login.
 
 Use blockbrain/.streamlit/secrets.toml (recommended) or environment variables.
 
-Primary keys:
+Blockbrain keys (environment variables; read by `blockbrain_llm_client.py` in the repo root):
 
-- BLOCKBRAIN_API_KEY
-- BLOCKBRAIN_BASE_URL (defaults to <https://agentic.theblockbrain.ai>)
-- BLOCKBRAIN_AGENT_ID (defaults to researchAgent)
-
-Optional model routing:
-
-- BLOCKBRAIN_ROUTE_MODE: agent_default or model_pinned
-- BLOCKBRAIN_MODEL_TEXT
-- BLOCKBRAIN_MODEL_VISION
+- BLOCKBRAIN_API_KEY (secret)
+- BLOCKBRAIN_ORG_ID
+- BLOCKBRAIN_MODEL (a KNOWN_MODELS key of the sandbox org) or BLOCKBRAIN_BOT_ID (a bot of your own org)
+- BLOCKBRAIN_OCR_ROUTE (optional: agentic | cortex)
 
 Optional pricing integrations:
 

@@ -30,20 +30,18 @@ def session(sw, monkeypatch):
 
 # --- F2: quotas -----------------------------------------------------------------------------
 
-def test_each_ask_ai_question_counts_once_even_with_the_agent_fallback(sw, session, monkeypatch):
+def test_each_ask_ai_question_counts_once(sw, session, monkeypatch):
     monkeypatch.setenv("SUPPSWIPE_MAX_GENERATIONS_PER_HOUR", "2")
-    monkeypatch.setattr(sw, "_ASK_AI_BOT_WAIT_S", 0.5)
-    bot_calls, agent_calls = [], []
-    monkeypatch.setattr(bb, "call_blockbrain_bot", lambda *a, **k: bot_calls.append(1) or "")
+    agent_calls = []
     monkeypatch.setattr(bb, "call_blockbrain_text", lambda *a, **k: agent_calls.append(1) or "Agent answer")
     monkeypatch.setattr(sw, "_cached_rag_chunks", lambda: [])
     assert sw._answer_ask_ai_question("Iron", "Q1?")[0] == "Agent answer"
     assert sw._answer_ask_ai_question("Iron", "Q2?")[0] == "Agent answer"
-    assert sw._answer_ask_ai_question("Iron", "Q3?") == (None, "")  # quota used up: no bot, no agent
-    assert len(bot_calls) == 2 and len(agent_calls) == 2
+    assert sw._answer_ask_ai_question("Iron", "Q3?") == (None, "")  # quota used up: no model call
+    assert len(agent_calls) == 2
     # A cached first question is still answered for free.
     assert sw._answer_ask_ai_question("Iron", "Q1?")[0] == "Agent answer"
-    assert len(bot_calls) == 2
+    assert len(agent_calls) == 2
 
 
 def test_url_extraction_asks_before_its_llm_call(monkeypatch):

@@ -115,7 +115,7 @@ def test_the_app_starts_when_the_running_process_holds_the_old_modules():
         sys.path[:0] = [r"%s", r"%s"]
         import blockbrain.app as bb, llm_cache
         # What a process that loaded the previous deploy looks like:
-        for name in ("looks_like_agent_error", "reset_call_error", "last_call_error", "unresolved_models"):
+        for name in ("looks_like_agent_error", "reset_call_error", "last_call_error", "blockbrain_config_error"):
             delattr(bb, name)
         delattr(llm_cache, "set_reject")
         from streamlit.testing.v1 import AppTest
