@@ -525,6 +525,8 @@ def _extract_image_text_best_effort(image_bytes: bytes) -> tuple[str, str]:
         except Exception:
             text = ""
         if not text:
+            if bb.last_call_error():
+                break  # the call itself failed (down, refused, timed out): a second try would only cost the budget again
             continue
         route = f"Blockbrain vision OCR ({variant_name})"
         try:
@@ -677,12 +679,12 @@ _QUOTA_MESSAGE = (
 
 
 def _generation_model() -> str:
-    """The Blockbrain model (or bot) that writes long-form answers: BLOCKBRAIN_MODEL / BLOCKBRAIN_BOT_ID.
+    """Names the Blockbrain model (or a hash of the bot) that writes long-form answers: BLOCKBRAIN_MODEL / BLOCKBRAIN_BOT_ID.
 
     The model is a property of the bot, not of a request, so this is only part of the cache keys: answers
     written by a model that has since been replaced are never served for the new one."""
     try:
-        return bb._load_blockbrain_model_defaults()[0]
+        return bb.blockbrain_model_fingerprint()
     except Exception:
         return ""
 
@@ -715,6 +717,11 @@ def _stream_llm_text(
                 placeholder.markdown(text)
             return text
 
+    if bb.blockbrain_config_error():  # nothing can be asked: no allowance used, and the caller's message says why
+        bb.note_config_error()
+        if placeholder is not None:
+            placeholder.empty()
+        return ""
     if consume_quota and not _consume_llm_quota("generate"):
         if placeholder is not None:
             placeholder.info(_QUOTA_MESSAGE)
@@ -832,6 +839,10 @@ def _answer_ask_ai_question(
         cached = llm_cache.get(cache_key)
         if cached:
             return cached, _SOURCE_AGENT
+
+    if bb.blockbrain_config_error():
+        bb.note_config_error()
+        return _local_rag_answer(scoped_question)
 
     # One question = one unit of the session's generation allowance (a cached first question above is free).
     if not _consume_llm_quota("generate"):
@@ -2748,12 +2759,8 @@ def _prefetch_meal_plan(replace_items: list[dict[str, Any]], diet_label: str, nu
         return
     if str(os.getenv("SUPPSWIPE_PREFETCH_MEALS", "1") or "1").strip().lower() in {"0", "false", "off", "no"}:
         return
-    if not os.getenv("BLOCKBRAIN_API_KEY", "").strip():
-        try:
-            if not str(st.secrets.get("BLOCKBRAIN_API_KEY", "") or "").strip():
-                return
-        except Exception:
-            return
+    if bb.blockbrain_config_error():
+        return
     system_prompt, user_prompt, key = _meal_plan_prompts(replace_items, diet_label, num_meals)
     if llm_cache.get(key) is not None or llm_cache.inflight(key) is not None:
         return
@@ -3987,8 +3994,32 @@ def _render_dietary_pills() -> None:
     )
 
 
+def _ai_service_problem() -> str:
+    """A sentence for a failure that retrying cannot fix (the app's Blockbrain settings), else ""."""
+    error = bb.last_call_error()
+    if re.search(r"missing configuration|not a known model key", error, re.IGNORECASE):
+        return "The app's Blockbrain connection isn't set up yet (missing settings). "
+    if re.search(r"HTTP (?:401|403)\b|unauthori[sz]ed|forbidden", error, re.IGNORECASE):
+        return "The AI service refused the app's login (its key or organisation), so retrying won't help. "
+    if re.search(r"HTTP 404\b", error):
+        return "The AI service doesn't know the model or bot the app is set up with, so retrying won't help. "
+    return ""
+
+
+def _ai_retry_note(default: str) -> str:
+    """`default` ("… — please try again."), or the settings problem when that is the reason."""
+    problem = _ai_service_problem()
+    return f"{problem}The app's owner needs to check its Blockbrain settings." if problem else default
+
+
 def _ai_unavailable_message(what: str) -> str:
     """The analysis error when an AI step failed (not the user's input)."""
+    problem = _ai_service_problem() if what in {"photo", "link"} else ""
+    if problem:
+        return (
+            f"{problem}Paste the nutrition table as text instead (🔗 Paste — that works without AI) "
+            "and tell the app's owner."
+        )
     if what == "quota":
         return (
             f"{_QUOTA_MESSAGE} Until then, paste the nutrition table as text (🔗 Paste — that "
@@ -4091,6 +4122,8 @@ def _run_pending_analysis() -> None:
         # Why a product link gave nothing when the AI isn't to blame (shown as a
         # warning next to other input, or as the one message when it is all there is).
         url_error = ""
+        # True once label text came from a photo (not from a barcode database, pasted text or a link).
+        photo_read = False
 
         with st.spinner("Extracting and parsing supplement info…"):
             # A barcode the phone decoded in the browser is looked up first; if
@@ -4111,6 +4144,7 @@ def _run_pending_analysis() -> None:
                         ocr_text, _route = _extract_image_text_best_effort(bytes(img))
                         if ocr_text.strip():
                             text_parts.append(ocr_text)
+                            photo_read = True
                         else:
                             ai_failed = "photo"
                         # Barcode fallback: if the label text is not strong, try to
@@ -4190,6 +4224,9 @@ def _run_pending_analysis() -> None:
                 # A toast: it survives the st.rerun() that opens the first card (a warning wouldn't).
                 st.toast(f"The link couldn't be read ({url_error}) — using the rest of your input.", icon="⚠️")
 
+            if "[unreadable]" in combined.lower():
+                # The model marked parts it could not read (never guessed): a toast survives the st.rerun() below.
+                st.toast("Part of the label was unreadable — some values may be missing. Retake a sharper photo to be sure.", icon="⚠️")
             _set_progress(72, "Parsing micronutrients…")
             components = bb.parse_components(combined)
             if not components:
@@ -4203,6 +4240,18 @@ def _run_pending_analysis() -> None:
             # This drops macronutrients (protein/fat/carbs/sugar/calories),
             # fillers and label metadata so the user only swipes real nutrients.
             components = _apply_label_context(_filter_to_micronutrients(components), combined)
+            if (
+                components
+                and photo_read
+                and not manual
+                and label_source.get("kind") == "input"
+                and all(c.get("dose_value") is None for c in components)
+                and not bb.extraction_gate_report(combined).get("passed")
+            ):
+                # A product shot that names nutrients but gives no doses (the front of the pack): swipe cards without a single
+                # dose would be useless, and looking the product up needs web access we don't have.
+                _abort(_ai_unavailable_message("front"))
+                return
             if not components and ai_failed:
                 _abort(_ai_unavailable_message(ai_failed))
                 return
@@ -4295,7 +4344,7 @@ def _analyze_dialog() -> None:
     nonce = int(st.session_state.get("swipe_reset_nonce", 0))
     precheck_error = _blockbrain_ready_error()
     if precheck_error:
-        st.error(precheck_error)
+        st.error(f"{precheck_error} Photos and links need the AI; pasting the label text or a barcode still works.")
     method = st.segmented_control(
         "How would you like to add your supplement?",
         options=["📷 Camera", "🖼️ Upload", "🔗 Paste"],
@@ -4353,7 +4402,12 @@ def _analyze_dialog() -> None:
         if submitted and not manual_text:
             st.warning("Paste a link, a barcode number or the label text first.")
 
-    if not precheck_error and _stage_analysis_from_inputs(upload_bytes, camera_bytes, manual_text, camera_barcode):
+    # Photos and links are read by the AI; pasted label text and barcodes are not (they must work on a fresh deploy,
+    # before the Blockbrain settings exist).
+    needs_ai = bool(upload_bytes or camera_bytes) or bool(re.match(r"https?://", manual_text, re.I))
+    if (not precheck_error or not needs_ai) and _stage_analysis_from_inputs(
+        upload_bytes, camera_bytes, manual_text, camera_barcode
+    ):
         # Close the dialog and let the main app run the analysis immediately.
         _close_analyze_dialog()
         st.rerun(scope="app")
@@ -5427,7 +5481,7 @@ def _render_plan_tab(
                 with st.spinner("Gathering whole-food benefits…"):
                     benefits = _generate_whole_food_benefits(replace_items, placeholder=benefits_box)
                 if not benefits:
-                    st.warning("Couldn't fetch the comparison right now — please try again.")
+                    st.warning(_ai_retry_note("Couldn't fetch the comparison right now — please try again."))
     _render_athlete_rda_popup()
 
 
@@ -5489,7 +5543,7 @@ def _render_meals_tab(replace_items: list[dict[str, Any]], diet_label: str, excl
         st.session_state["swipe_meal_plan"] = plan
         st.session_state["swipe_meal_plan_key"] = plan_key
         if not plan:
-            st.warning("Couldn't generate meals right now — please try again.")
+            st.warning(_ai_retry_note("Couldn't generate meals right now — please try again."))
     return plan_key
 
 
@@ -5632,7 +5686,7 @@ def _render_ask_ai_chat(
                     dose_label=str(card.get("dose_label", "") or ""),
                 )
         if answer is None:
-            st.error("Ask AI is unavailable right now — please try again in a moment.")
+            st.error(_ai_retry_note("Ask AI is unavailable right now — please try again in a moment."))
         else:
             chat_store[component_key] = history + [
                 {"role": "user", "content": asked},
@@ -5783,12 +5837,13 @@ def _render_debug_panel() -> None:
             {
                 "build": BUILD_TAG,
                 "code_reloads_since_start": int(sys.modules["_suppswipe_imports"].__dict__.get("generation", 0)),
-                "generation_model": _generation_model(),
+                "model": bb.blockbrain_model_label() or "(none configured)",
                 # Names and timings only: never the key, the org id or the bot id.
                 "blockbrain_config": bb.blockbrain_config_error() or "complete",
                 "ocr_routes": bb._ocr_routes(),
-                "last_call": dict(getattr(bb, "LAST_BLOCKBRAIN_TIMING", {}) or {}),
-                "last_error": str(getattr(bb, "LAST_BLOCKBRAIN_ERROR", "") or ""),
+                # Timings are process-wide and carry no text from a server; the error is this session's own.
+                "last_call": {k: v for k, v in dict(getattr(bb, "LAST_BLOCKBRAIN_TIMING", {}) or {}).items() if k != "error"},
+                "last_error": bb.last_call_error(),
             }
         )
 

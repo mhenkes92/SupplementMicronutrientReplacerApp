@@ -21,6 +21,8 @@ Live app = branch `master` (Streamlit Cloud, entry `swipe_mobile_app/app.py`); o
   `BLOCKBRAIN_OCR_ROUTE`. Never hard-code, print, log or commit the key (`tests/test_no_secrets_in_tree.py`).
 * Do not use the VS Code proxy (127.0.0.1:4891: it exists only on the owner's PC) and not the researchAgent. Keep
   `blockbrain_llm_client.py` byte-identical to the owner's version; ask for changes (e.g. streaming) instead of editing it.
+* Text features need a bot bound to a custom agent (`chat()` = the `customAgent` stream route); only photo reading also has the
+  `cortex` route (any ordinary bot). The model has no web access: never ask it for facts it can only know from a lookup.
 * LLM OCR can misread digits: the app validates what it reads (dose vs. printed %NRV, units, magnitudes, upper limits) in code.
 * Tests never reach Blockbrain: `tests/fake_blockbrain.py` is a local fake of the routes, `tests/conftest.py` forces a fake key.
   Real proof (`python blockbrain_llm_client.py selftest`, real labels) needs the real key and runs on the owner's machine.

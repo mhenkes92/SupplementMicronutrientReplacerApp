@@ -52,6 +52,9 @@ secret with the same name is copied into the environment.
 | `SUPPSWIPE_MAX_SCANS_PER_HOUR`, `SUPPSWIPE_MAX_GENERATIONS_PER_HOUR` | Per-visitor AI limits (15 / 40) |
 
 The model is a property of the bot, not of a request: to change the model, change `BLOCKBRAIN_MODEL` / `BLOCKBRAIN_BOT_ID`.
+**Text features need an agent-bound bot:** meal plans, comparisons, Ask AI and link reading use the client's `chat()`
+(the `customAgent` stream route), so the bot must be bound to a custom agent (the 8 sandbox bots are). Only photo reading
+has the second route (`cortex`, any ordinary bot); the app remembers which photo route worked last for 15 minutes.
 The key and the org must belong together: a `KNOWN_MODELS` key only works with a key of the owner's sandbox org; in
 any other organisation create a bot and set `BLOCKBRAIN_BOT_ID`. Do not use the VS Code proxy (127.0.0.1:4891): it
 exists only on the owner's PC. The researchAgent is not used.

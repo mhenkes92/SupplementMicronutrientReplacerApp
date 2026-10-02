@@ -175,7 +175,12 @@ _BLOCKBRAIN_ENV_NAMES = (
 
 def _sync_blockbrain_env_from_secrets() -> None:
     """Streamlit secrets -> environment variables (the client reads the environment only).
-    A variable that is already set is never overridden."""
+    A variable that is already set is never overridden (only stray whitespace / a trailing newline from a pasted
+    secret is removed: it would make every call fail with a confusing 401)."""
+    for name in _BLOCKBRAIN_ENV_NAMES:
+        raw = os.environ.get(name)
+        if raw is not None and raw != raw.strip():
+            os.environ[name] = raw.strip()
     missing = [n for n in _BLOCKBRAIN_ENV_NAMES if not str(os.environ.get(n, "") or "").strip()]
     if not missing:
         return
@@ -190,14 +195,45 @@ def _sync_blockbrain_env_from_secrets() -> None:
         pass
 
 
+def _bbc_now() -> Any:
+    """The client module that is in sys.modules now: the deploy guard may have replaced the object this module imported."""
+    return sys.modules.get("blockbrain_llm_client", _bbc)
+
+
 def blockbrain_config_error() -> str:
     """"" when the environment can reach Blockbrain, else what is missing (variable NAMES only, never values)."""
     _sync_blockbrain_env_from_secrets()
+    module = _bbc_now()
     try:
-        _bbc.Blockbrain()
-    except _bbc.BlockbrainError as exc:
-        return str(exc)
+        module.Blockbrain()
+    except module.BlockbrainError as exc:
+        message = str(exc)
+        model = str(os.environ.get("BLOCKBRAIN_MODEL", "") or "").strip()
+        if model and model not in module.KNOWN_MODELS and "BLOCKBRAIN_BOT_ID or BLOCKBRAIN_MODEL" in message:
+            return message.replace(
+                "BLOCKBRAIN_BOT_ID or BLOCKBRAIN_MODEL",
+                f"BLOCKBRAIN_MODEL {model!r} is not a known model key ({', '.join(module.KNOWN_MODELS)}); "
+                "set BLOCKBRAIN_BOT_ID for a bot of your own organisation",
+            )
+        return message
     return ""
+
+
+def blockbrain_model_label() -> str:
+    """The model's public name for diagnostics: BLOCKBRAIN_MODEL, or "custom bot" (a bot id is an internal id: never shown)."""
+    _sync_blockbrain_env_from_secrets()
+    if str(os.environ.get("BLOCKBRAIN_BOT_ID", "") or "").strip():  # a bot id wins over a model key in the client
+        return "custom bot"
+    return str(os.environ.get("BLOCKBRAIN_MODEL", "") or "").strip()
+
+
+def blockbrain_model_fingerprint() -> str:
+    """Names the configured model or bot inside cache keys without exposing a bot id."""
+    _sync_blockbrain_env_from_secrets()
+    bot = str(os.environ.get("BLOCKBRAIN_BOT_ID", "") or "").strip()
+    if bot:
+        return "bot-" + hashlib.sha256(bot.encode("utf-8")).hexdigest()[:10]
+    return str(os.environ.get("BLOCKBRAIN_MODEL", "") or "").strip()
 
 
 def _text_llm_available() -> bool:
@@ -208,11 +244,22 @@ def _text_llm_available() -> bool:
         return False
 
 
+_KEY_LIKE_RE = re.compile(r"sk-kb-[A-Za-z0-9_\-]{3,}|Bearer\s+[A-Za-z0-9._~+/=\-]{6,}", re.IGNORECASE)
+
+
 def _redact(text: Any) -> str:
-    """`text` without the API key (defence in depth: no message we keep or log may carry it)."""
+    """`text` without the API key (defence in depth: no message we keep or log may carry it). Also a key that was cut in
+    the middle (the client keeps only the first 300 characters of a server reply) and anything shaped like a key."""
     out = str(text or "")
     key = str(os.environ.get("BLOCKBRAIN_API_KEY", "") or "").strip()
-    return out.replace(key, "***") if len(key) >= 8 else out
+    if len(key) >= 8:
+        out = out.replace(key, "***")
+        tail = out.rstrip()
+        for size in range(len(key) - 1, 5, -1):  # a dangling prefix of the key at the very end
+            if tail.endswith(key[:size]):
+                out = tail[: len(tail) - size] + "***"
+                break
+    return _KEY_LIKE_RE.sub("***", out)
 
 
 # Longest image edge ever sent to the vision model (px). Labels stay legible
@@ -221,10 +268,9 @@ BLOCKBRAIN_VISION_MAX_SIDE = 2000
 
 
 def _load_blockbrain_model_defaults() -> tuple[str, str]:
-    """(text model, vision model) shown by the stand-alone analyzer UI: the model of the
-    configured bot (BLOCKBRAIN_MODEL, or the bot id), the same for both."""
-    _sync_blockbrain_env_from_secrets()
-    name = str(os.environ.get("BLOCKBRAIN_MODEL", "") or "").strip() or str(os.environ.get("BLOCKBRAIN_BOT_ID", "") or "").strip()
+    """(text model, vision model) shown by the stand-alone analyzer UI: the configured model (BLOCKBRAIN_MODEL, or
+    "custom bot" when a bot id is set), the same for both."""
+    name = blockbrain_model_label()
     return name, name
 
 
@@ -8944,6 +8990,10 @@ _IMAGE_MISSING_RE = re.compile(
     r"|\bsehe\s+(?:leider\s+)?kein(?:e|en)?\s+(?:bild|foto)"
     r"|\b(?:aucune|pas\s+d['’])\s*image|\bne\s+vois\s+(?:aucune|pas)|\bno\s+(?:veo|hay)\s+(?:ninguna\s+)?(?:imagen|foto)"
     r"|\bnothing\s+(?:for\s+me\s+)?to\s+(?:extract|read)"
+    r"|\bvision\s+(?:is\s+)?(?:currently\s+)?not\s+(?:supported|available|enabled)"
+    r"|\b(?:does\s*n[o']t|do\s+not|doesn['’]t|cannot|can['’]?t)\s+support\s+(?:\w+\s+){0,2}(?:images?|vision|visual|multimodal)"
+    r"|\[\s*(?:image|file|attachment)s?\s+(?:omitted|removed)\s*\]|\b(?:image|attachment)s?\s+(?:was\s+|were\s+)?omitted\b"
+    r"|\battachments?\s+(?:is\s+|are\s+)?(?:not\s+available|unavailable|removed)\b"
     r"|\bonly\s+(?:see|read|received)\s+text"
     r"|\bsehe\s+kein\s+(?:bild|foto)|\bkein\s+(?:bild|foto)\s+sehen",
     re.IGNORECASE,
@@ -8995,12 +9045,22 @@ def reset_call_error() -> None:
 def _client() -> Any:
     """A client for the current environment. Cheap: it only reads the configuration (BlockbrainError when it is incomplete)."""
     _sync_blockbrain_env_from_secrets()
-    _bbc.READ_TIMEOUT = max(5.0, float(BLOCKBRAIN_READ_TIMEOUT_S))
-    return _bbc.Blockbrain()
+    module = _bbc_now()
+    module.READ_TIMEOUT = max(5.0, float(BLOCKBRAIN_READ_TIMEOUT_S))
+    return module.Blockbrain()
+
+
+# A call that ran out of its budget keeps its thread (and its open line) until Blockbrain closes it: cap how many
+# calls may be running at once, abandoned ones included, so a stalled platform cannot pile up threads and Compute Blocks.
+_WORKER_SLOTS = threading.BoundedSemaphore(max(1, int(_env_float("BLOCKBRAIN_MAX_CONCURRENT", 8.0))))
 
 
 def _run_with_budget(fn: Callable[[], Any], budget_s: float) -> Any:
-    """fn() with a wall-clock cap: TimeoutError when it takes longer (its thread then finishes on its own)."""
+    """fn() with a wall-clock cap: TimeoutError when it takes longer (its thread then finishes on its own);
+    RuntimeError at once when too many calls are already running."""
+    slots = _WORKER_SLOTS  # the worker gives back the slot it took, even if the module-level semaphore was replaced meanwhile
+    if not slots.acquire(blocking=False):
+        raise RuntimeError("Blockbrain is busy: too many calls are still running. Try again in a minute.")
     box: dict[str, Any] = {}
 
     def _target() -> None:
@@ -9008,9 +9068,15 @@ def _run_with_budget(fn: Callable[[], Any], budget_s: float) -> Any:
             box["value"] = fn()
         except BaseException as exc:  # handed to the caller below
             box["error"] = exc
+        finally:
+            slots.release()
 
     worker = threading.Thread(target=_target, name="blockbrain-call", daemon=True)
-    worker.start()
+    try:
+        worker.start()
+    except BaseException:
+        slots.release()
+        raise
     worker.join(max(1.0, float(budget_s)))
     if worker.is_alive():
         raise TimeoutError(f"Blockbrain did not answer within {float(budget_s):.0f} s")
@@ -9043,6 +9109,14 @@ def _note_success(kind: str, reply: Any, started: float) -> None:
         "total_s": round(time.monotonic() - started, 2),
         "usage": dict(getattr(reply, "usage", None) or {}),
     }
+
+
+def note_config_error() -> str:
+    """Record the incomplete configuration as this thread's last call error (so the caller's message can say why)."""
+    message = blockbrain_config_error()
+    if message:
+        _note_failure("config", message, time.monotonic())
+    return message
 
 
 def call_blockbrain_text(
@@ -9112,12 +9186,45 @@ _VISION_PROMPT = (
 )
 
 
-def _ocr_routes() -> list[str]:
-    """The routes tried for a photo: BLOCKBRAIN_OCR_ROUTE first (default agentic), the other one as the fallback."""
+# Without an explicit BLOCKBRAIN_OCR_ROUTE the route that worked last leads for a while: a bot that is not bound to a
+# custom agent fails the agentic route on every photo (about five wasted requests) before cortex answers.
+_ROUTE_PREFERENCE: dict[str, Any] = {"route": "", "until": 0.0}
+_ROUTE_MEMORY_S = 900.0
+
+
+def _configured_ocr_route() -> str:
     _sync_blockbrain_env_from_secrets()
-    first = str(os.environ.get("BLOCKBRAIN_OCR_ROUTE", "") or "").strip().lower()
+    value = str(os.environ.get("BLOCKBRAIN_OCR_ROUTE", "") or "").strip().lower()
+    return value if value in {"agentic", "cortex"} else ""
+
+
+def _ocr_routes() -> list[str]:
+    """The routes tried for a photo: BLOCKBRAIN_OCR_ROUTE first, else the route that worked last (for 15 minutes), else
+    agentic; the other one is the fallback."""
+    first = _configured_ocr_route()
+    if not first and time.monotonic() < float(_ROUTE_PREFERENCE.get("until", 0.0)):
+        first = str(_ROUTE_PREFERENCE.get("route", "") or "")
     first = first if first in {"agentic", "cortex"} else "agentic"
     return [first, "cortex" if first == "agentic" else "agentic"]
+
+
+def _remember_ocr_route(route: str) -> None:
+    if _configured_ocr_route():
+        return
+    if route == "agentic":
+        _ROUTE_PREFERENCE.update(route="", until=0.0)
+    else:
+        _ROUTE_PREFERENCE.update(route=route, until=time.monotonic() + _ROUTE_MEMORY_S)
+
+
+# A digit next to the [unreadable] marker is part of the unreadable number: "5 [unreadable]" must not stay "5".
+_UNREADABLE_NUMBER_RE = re.compile(r"[\d.,]*\[unreadable\][\d.,]*", re.IGNORECASE)
+
+
+def _mask_unreadable_numbers(text: str) -> str:
+    """The label text with every number that touches an [unreadable] marker replaced by the bare marker, so the dose
+    becomes unknown ("Dose not found") instead of a different number ("Zink [unreadable]5 mg" must not read 5 mg)."""
+    return _UNREADABLE_NUMBER_RE.sub(" [unreadable] ", str(text or ""))
 
 
 def _vision_jpeg_payload(data: bytes) -> bytes:
@@ -9206,7 +9313,8 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
             continue
         LAST_VISION_ATTEMPT_LOG.append(f"{via}:text | {snippet}")
         _note_success("vision", reply, started)
-        return out
+        _remember_ocr_route(via)
+        return _mask_unreadable_numbers(out)
     if not last_call_error():
         _note_failure("vision", "Blockbrain vision did not answer in time", started)
     return ""

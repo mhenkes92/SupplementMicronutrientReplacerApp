@@ -34,7 +34,15 @@ def _free_port() -> int:
 @pytest.fixture(scope="module")
 def server():
     port = _free_port()
-    env = dict(os.environ, BLOCKBRAIN_API_KEY="dummy-offline-key", SUPPSWIPE_PREFETCH_MEALS="0")
+    # Unconfigured on purpose (no org, no model, no bot): this server has no network guard, so no AI call may ever leave it.
+    env = dict(
+        os.environ,
+        BLOCKBRAIN_API_KEY="dummy-offline-key",
+        BLOCKBRAIN_ORG_ID="",
+        BLOCKBRAIN_MODEL="",
+        BLOCKBRAIN_BOT_ID="",
+        SUPPSWIPE_PREFETCH_MEALS="0",
+    )
     proc = subprocess.Popen(
         [sys.executable, "-m", "streamlit", "run", str(ROOT / "swipe_mobile_app" / "app.py"),
          "--server.port", str(port), "--server.headless", "true", "--browser.gatherUsageStats", "false"],

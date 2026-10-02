@@ -80,3 +80,13 @@ def fake_bb(monkeypatch):
     monkeypatch.setattr(client, "time", types.SimpleNamespace(time=_time.time, sleep=lambda _s: None))
     yield server
     server.stop()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_route_memory():
+    """The photo route that worked last is remembered for 15 minutes (process-wide): never across tests."""
+    import blockbrain.app as app
+
+    app._ROUTE_PREFERENCE.update(route="", until=0.0)
+    yield
+    app._ROUTE_PREFERENCE.update(route="", until=0.0)
