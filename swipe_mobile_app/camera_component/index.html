@@ -2,19 +2,32 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SuppSwipe camera</title>
 <style>
   html, body { margin: 0; padding: 0; background: transparent; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
   #wrap { width: 100%; }
+  #viewport { position: relative; }
   video, #preview {
     width: 100%;
     height: 300px;
-    border-radius: 14px;
+    border-radius: 16px;
     background: #0f172a;
     display: block;
     object-fit: cover;
   }
   #preview { display: none; }
+  /* Framing guide over the live picture. */
+  #guide {
+    position: absolute; inset: 22px 18px 34px 18px;
+    border: 2px dashed rgba(255, 255, 255, 0.75); border-radius: 14px;
+    pointer-events: none;
+  }
+  #guideText {
+    position: absolute; left: 0; right: 0; bottom: 10px; text-align: center;
+    color: #ffffff; font-size: 0.8rem; font-weight: 700; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+    pointer-events: none;
+  }
   .btnrow { display: flex; gap: 8px; margin-top: 10px; }
   button {
     flex: 1;
@@ -25,15 +38,17 @@
     font-weight: 800;
     cursor: pointer;
   }
-  .primary { background: #16a34a; color: #fff; }
+  .primary { background: #047857; color: #fff; }
   .ghost { background: #e2e8f0; color: #0f172a; }
-  #err { color: #b91c1c; font-size: 0.85rem; margin-top: 8px; min-height: 1em; }
+  #err { color: #b91c1c; font-size: 0.9rem; line-height: 1.4; margin-top: 8px; }
+  #err:empty { display: none; }
+  #err.blocked { background: #fef2f2; border: 1px solid #fecaca; border-radius: 12px; padding: 10px 12px; margin-top: 0; }
   .hint { color: #64748b; font-size: 0.8rem; margin-top: 6px; text-align: center; }
   #processing { display: none; text-align: center; padding: 18px 0 8px 0; }
   .cam-spinner {
     width: 42px; height: 42px; margin: 0 auto 10px auto;
     border-radius: 999px;
-    border: 4px solid #d5deeb; border-top-color: #16a34a;
+    border: 4px solid #d5deeb; border-top-color: #047857;
     animation: cam-spin 0.9s linear infinite;
   }
   .cam-proc-text { color: #0f766e; font-size: 0.95rem; font-weight: 800; }
@@ -42,8 +57,12 @@
 </head>
 <body>
 <div id="wrap">
-  <video id="video" playsinline autoplay muted></video>
-  <img id="preview" alt="captured" />
+  <div id="viewport">
+    <video id="video" playsinline autoplay muted></video>
+    <div id="guide" aria-hidden="true"></div>
+    <div id="guideText" aria-hidden="true">Fit the nutrition table or barcode in the frame</div>
+    <img id="preview" alt="Captured photo" />
+  </div>
   <div class="btnrow" id="liveBtns">
     <button class="primary" id="snap">📸 Capture</button>
   </div>
@@ -56,7 +75,7 @@
     <div class="cam-proc-text">Sending photo for analysis…</div>
   </div>
   <div class="hint">Uses your device's <b>back camera</b> when available.</div>
-  <div id="err"></div>
+  <div id="err" role="alert" aria-live="assertive"></div>
 </div>
 <script>
 (function () {
@@ -65,9 +84,18 @@
   var liveBtns = document.getElementById("liveBtns");
   var previewBtns = document.getElementById("previewBtns");
   var errEl = document.getElementById("err");
-  var HEIGHT = 450;
+  var lastHeight = 0;
   var stream = null;
   var lastDataUrl = "";
+  var lastBarcode = "";
+  // Native barcode reading (Chrome/Android, some desktop browsers). Where it is
+  // missing the photo is still read by the vision model, so this is optional.
+  var detector = null;
+  try {
+    if ("BarcodeDetector" in window) {
+      detector = new window.BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e"] });
+    }
+  } catch (e) { detector = null; }
 
   function send(type, extra) {
     var msg = { isStreamlitMessage: true, type: type };
@@ -75,10 +103,20 @@
     window.parent.postMessage(msg, "*");
   }
   function setHeight(h) { send("streamlit:setFrameHeight", { height: h }); }
+  // The frame always fits what is shown (live view, preview, an error, ...).
+  function fit() {
+    var h = Math.ceil(document.getElementById("wrap").getBoundingClientRect().height) + 6;
+    if (Math.abs(h - lastHeight) > 1) { lastHeight = h; setHeight(h); }
+  }
+  function guide(show) {
+    document.getElementById("guide").style.display = show ? "block" : "none";
+    document.getElementById("guideText").style.display = show ? "block" : "none";
+  }
   function setValue(v) { send("streamlit:setComponentValue", { value: v, dataType: "json" }); }
 
   async function startCamera() {
     errEl.textContent = "";
+    errEl.style.color = "";
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
@@ -87,9 +125,25 @@
       video.srcObject = stream;
       await video.play().catch(function () {});
     } catch (e) {
-      errEl.textContent = "Camera unavailable: " + (e && e.message ? e.message : e) + ". Use the File / Gallery tab instead.";
+      var name = e && e.name ? e.name : "";
+      var msg;
+      if (name === "NotAllowedError" || name === "SecurityError") {
+        msg = "Camera access is blocked. Allow the camera for this site in your browser settings, or use the Upload tab.";
+      } else if (name === "NotFoundError" || name === "OverconstrainedError") {
+        msg = "No camera was found on this device. Use the Upload tab instead.";
+      } else if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        msg = "This browser can't open the camera here. Use the Upload tab instead.";
+      } else {
+        msg = "The camera couldn't start (it may be in use by another app). Use the Upload tab instead.";
+      }
+      errEl.textContent = msg;
+      errEl.className = "blocked";
+      liveBtns.style.display = "none";
+      video.style.display = "none";
+      guide(false);
+      document.querySelector(".hint").style.display = "none";
     }
-    setHeight(HEIGHT);
+    fit();
   }
 
   function stopCamera() {
@@ -99,14 +153,18 @@
   function showLive() {
     preview.style.display = "none";
     video.style.display = "block";
+    guide(true);
     liveBtns.style.display = "flex";
     previewBtns.style.display = "none";
+    fit();
   }
   function showPreview() {
     video.style.display = "none";
+    guide(false);
     preview.style.display = "block";
     liveBtns.style.display = "none";
     previewBtns.style.display = "flex";
+    fit();
   }
 
   document.getElementById("snap").addEventListener("click", function () {
@@ -120,7 +178,19 @@
     canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
     lastDataUrl = canvas.toDataURL("image/jpeg", 0.72);
     preview.src = lastDataUrl;
+    lastBarcode = "";
+    errEl.textContent = "";
     showPreview();
+    if (detector) {
+      detector.detect(canvas).then(function (codes) {
+        if (codes && codes.length && codes[0].rawValue) {
+          lastBarcode = String(codes[0].rawValue);
+          errEl.style.color = "#047857";
+          errEl.textContent = "Barcode " + lastBarcode + " found — tap Use photo to look it up.";
+          fit();
+        }
+      }).catch(function () {});
+    }
   });
 
   document.getElementById("retake").addEventListener("click", function () {
@@ -136,22 +206,27 @@
     preview.style.display = "none";
     liveBtns.style.display = "none";
     previewBtns.style.display = "none";
+    guide(false);
+    document.querySelector(".hint").style.display = "none";
     document.getElementById("processing").style.display = "block";
+    fit();
     stopCamera();
     // Defer the (large) value post one frame so the processing UI paints first.
     requestAnimationFrame(function () {
-      setTimeout(function () { setValue({ image: lastDataUrl, id: Date.now() }); }, 0);
+      setTimeout(function () { setValue({ image: lastDataUrl, barcode: lastBarcode, id: Date.now() }); }, 0);
     });
   });
 
   window.addEventListener("message", function (event) {
     var d = event.data;
+    if (event.source !== window.parent) return; // only our Streamlit host
     if (!d || d.type !== "streamlit:render") return;
-    setHeight(HEIGHT);
+    fit();
   });
+  window.addEventListener("resize", fit);
 
   send("streamlit:componentReady", { apiVersion: 1 });
-  setHeight(HEIGHT);
+  fit();
   startCamera();
 })();
 </script>

@@ -14,7 +14,8 @@ $escapedScript = '"' + $scriptPath + '"'
 $escapedRepo = '"' + $RepoPath + '"'
 $command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File $escapedScript -RepoPath $escapedRepo -Branch master"
 
-# Create/update scheduled task every 5 minutes.
+# Create/update scheduled task every 5 minutes (local snapshots only; the
+# script never pushes - see auto_commit_push.ps1).
 # Runs under current user context.
 schtasks /Create /F /SC MINUTE /MO 5 /TN $TaskName /TR $command | Out-Null
 

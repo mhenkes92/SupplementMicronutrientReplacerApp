@@ -1,0 +1,2 @@
+-r swipe_mobile_app/requirements.txt
+pytest>=8

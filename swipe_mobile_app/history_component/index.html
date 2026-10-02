@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8" /></head>
+<body style="margin:0;padding:0;">
+<script>
+// Invisible helper: keeps SuppSwipe's scan history in THIS browser's
+// localStorage (so it's private to the device) instead of a file on the server
+// shared by every visitor. Args: save (array|null) to persist, clear (bool).
+// A second key holds the scan in progress so it can be resumed after a
+// refresh. Args: saveScan (object|null) to persist, clearScan (bool).
+// Sends {history, scan} back to Python once per Streamlit session: `session`
+// (a token per session) is remembered in sessionStorage, so an iframe that
+// Streamlit remounts mid-session doesn't send it again (that forced an extra
+// rerun which closed a just-opened dialog).
+(function () {
+  var KEY = "suppswipe_scan_history_v1";
+  var SCAN_KEY = "suppswipe_current_scan_v1";
+  var SENT_KEY = "suppswipe_history_sent_session";
+  var sentOnce = false;
+  function send(type, extra) {
+    var msg = { isStreamlitMessage: true, type: type };
+    if (extra) { for (var k in extra) { msg[k] = extra[k]; } }
+    window.parent.postMessage(msg, "*");
+  }
+  function read() {
+    try {
+      var v = JSON.parse(window.localStorage.getItem(KEY) || "[]");
+      return Array.isArray(v) ? v : [];
+    } catch (e) { return []; }
+  }
+  function readScan() {
+    try {
+      var v = JSON.parse(window.localStorage.getItem(SCAN_KEY) || "null");
+      return (v && typeof v === "object" && !Array.isArray(v)) ? v : null;
+    } catch (e) { return null; }
+  }
+  window.addEventListener("message", function (event) {
+    var d = event.data;
+    if (event.source !== window.parent) return; // only our Streamlit host
+    if (!d || d.type !== "streamlit:render") return;
+    var args = d.args || {};
+    if (!sentOnce && args.session) {
+      try { sentOnce = window.sessionStorage.getItem(SENT_KEY) === String(args.session); } catch (e) { /* blocked */ }
+    }
+    // Read what this device stored BEFORE applying this run's writes.
+    var stored = sentOnce ? null : read();
+    var scan = sentOnce ? null : readScan();
+    try {
+      if (args.clear) { window.localStorage.removeItem(KEY); }
+      if (Array.isArray(args.save)) { window.localStorage.setItem(KEY, JSON.stringify(args.save.slice(-30))); }
+      if (args.clearScan) { window.localStorage.removeItem(SCAN_KEY); }
+      if (args.saveScan && typeof args.saveScan === "object") {
+        window.localStorage.setItem(SCAN_KEY, JSON.stringify(args.saveScan));
+      }
+    } catch (e) { /* storage blocked (private mode): nothing is kept */ }
+    if (!sentOnce) {
+      sentOnce = true;
+      try { if (args.session) { window.sessionStorage.setItem(SENT_KEY, String(args.session)); } } catch (e) { /* blocked */ }
+      if (stored.length || scan) {
+        send("streamlit:setComponentValue", { value: { history: stored, scan: scan }, dataType: "json" });
+      }
+    }
+    send("streamlit:setFrameHeight", { height: 0 });
+  });
+  send("streamlit:componentReady", { apiVersion: 1 });
+  send("streamlit:setFrameHeight", { height: 0 });
+})();
+</script>
+</body>
+</html>

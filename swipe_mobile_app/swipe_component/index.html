@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SuppSwipe card</title>
 <style>
   html, body {
     margin: 0;
@@ -13,12 +14,14 @@
     -webkit-user-select: none;
     user-select: none;
   }
+  #wrap { display: flex; flex-direction: column; height: 100vh; }
   #stage {
     position: relative;
     width: 100%;
-    height: 100vh;
+    flex: 1 1 auto;
+    min-height: 0;
     overflow: hidden;
-    touch-action: none;
+    touch-action: pan-y;
   }
   .rail {
     position: absolute;
@@ -38,65 +41,89 @@
   .rail.repl  { right: 16px; color: #047857; border-color: #10b981; transform: rotate(12deg); }
   .tcard {
     position: absolute;
-    inset: 0;
+    inset: 0 0 6px 0; /* room for the shadow */
     z-index: 2;
-    border-radius: 18px;
-    padding: 16px 16px 12px 16px;
+    border-radius: 20px;
+    padding: 14px 14px 12px 14px;
     box-sizing: border-box;
     background: var(--card-bg, linear-gradient(160deg, #ffffff 0%, #f8fbff 55%, #f4f7fb 100%));
-    border: none;
-    box-shadow: none;
+    border: 1px solid rgba(15, 23, 42, 0.06);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.07);
     cursor: grab;
-    touch-action: none;
+    touch-action: pan-y;
     display: flex;
     flex-direction: column;
     will-change: transform;
+    outline: none;
+    overflow-y: auto;
   }
-  .tcard::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: 26px;
-    background: linear-gradient(135deg, var(--accent, #64748b) 0%, transparent 46%);
-    opacity: 0.16;
-    pointer-events: none;
-  }
+  .tcard:focus-visible { box-shadow: 0 0 0 3px #2563eb inset; }
   .tcard:active { cursor: grabbing; }
-  .stack {
-    position: absolute;
-    left: 10px; right: 10px;
-    border-radius: 26px;
-    background: #e8eef6;
-    border: 1px solid #d4deea;
-    z-index: 1;
-    display: none;
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .count { font-size: .74rem; font-weight: 800; color: #475569; letter-spacing: .02em; }
+  .prev { font-size: .72rem; font-weight: 700; color: #334155; background: rgba(15,23,42,0.06); border-radius: 999px; padding: 2px 8px; }
+  .bar { height: 4px; border-radius: 999px; background: rgba(15,23,42,0.08); margin-top: 6px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; border-radius: 999px; background: var(--accent, #64748b); }
+  .head { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+  .badge {
+    flex: 0 0 48px; height: 48px; border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.5rem; background: #ffffff; box-shadow: 0 2px 8px rgba(15,23,42,0.08);
   }
-  .stack.s1 { top: 10px; bottom: 6px; opacity: .8; transform: scale(.985); }
-  .stack.s2 { top: 4px;  bottom: 12px; opacity: .5; transform: scale(.97); }
-  .row { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .count { font-size: .74rem; font-weight: 800; color: #64748b; }
-  .name { position: relative; z-index: 2; font-size: 1.7rem; font-weight: 900; line-height: 1.05; color: var(--ink, #0f172a); margin-top: 8px; letter-spacing: -0.02em; }
-  .dose { position: relative; z-index: 2; margin-top: 8px; color: #334155; font-size: 1rem; font-weight: 600; }
-  .foodwrap { position: relative; z-index: 2; margin-top: auto; }
-  .foodlbl { font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #64748b; }
-  .food { margin-top: 4px; font-size: 1.02rem; font-weight: 800; color: #0f172a; line-height: 1.15; }
-  .portion { position: relative; z-index: 2; margin-top: 10px; padding: 8px 10px; border-radius: 12px; background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.30); color: #234a32; font-size: .82rem; line-height: 1.5; }
+  .name { font-size: 1.6rem; font-weight: 900; line-height: 1.05; color: var(--ink, #0f172a); letter-spacing: -0.02em; }
+  .dose { margin-top: 4px; color: #334155; font-size: .9rem; font-weight: 600; }
+  .dose b { color: #0f172a; }
+  .foodwrap {
+    margin-top: 12px; padding: 12px; border-radius: 16px;
+    background: rgba(255,255,255,0.82); border: 1px solid rgba(15,23,42,0.06);
+  }
+  .foodlbl { font-size: .7rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: #047857; }
+  .foodrow { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+  .ficon { flex: 0 0 auto; font-size: 1.7rem; line-height: 1; }
+  .food { font-size: 1.05rem; font-weight: 800; color: #0f172a; line-height: 1.2; }
+  .portion { margin-top: 10px; padding: 8px 10px; border-radius: 12px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #14532d; font-size: .84rem; line-height: 1.5; }
   .portion .pl { display: block; }
   .portion b { color: #0f172a; }
-  .hint { position: relative; z-index: 2; text-align: center; margin-top: 12px; font-size: .78rem; color: #64748b; }
-  .hint b.k { color: #b91c1c; }
-  .hint b.r { color: #047857; }
-  .warn { position: relative; z-index: 2; margin-top: 6px; padding: 5px 9px; border-radius: 8px; background: rgba(239,68,68,0.10); border: 1px solid rgba(239,68,68,0.30); color: #9b1c1c; font-size: .72rem; font-weight: 700; line-height: 1.3; }
-  .bio { position: relative; z-index: 2; margin-top: 8px; padding: 6px 9px; border-radius: 10px; background: rgba(59,130,246,0.09); border: 1px solid rgba(59,130,246,0.22); color: #24425f; font-size: .74rem; line-height: 1.35; }
+  .warn { margin-top: 10px; padding: 7px 10px; border-radius: 12px; background: #fff7ed; border: 1px solid #fed7aa; color: #7c2d12; font-size: .78rem; font-weight: 600; line-height: 1.4; }
+  .bio { margin-top: 8px; padding: 7px 10px; border-radius: 12px; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a5f; font-size: .76rem; line-height: 1.4; }
+  .hint { text-align: center; margin-top: 10px; font-size: .74rem; color: #475569; }
+  #actions { display: flex; gap: 8px; padding: 8px 2px 2px 2px; flex: 0 0 auto; }
+  #actions button {
+    flex: 1 1 0;
+    min-height: 46px;
+    border-radius: 12px;
+    font: inherit;
+    font-size: .95rem;
+    font-weight: 800;
+    cursor: pointer;
+    border: 2px solid;
+    background: #fff;
+  }
+  #actions button:focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
+  #actions #btnBack { flex: 0 0 52px; border-color: #e2e8f0; color: #334155; }
+  #actions #btnKeep { border-color: #fca5a5; color: #b91c1c; }
+  #actions #btnRepl { border-color: #047857; color: #ffffff; background: #047857; }
+  #actions button:not(:disabled):active { transform: scale(0.97); }
+  #actions button:disabled { opacity: .45; cursor: not-allowed; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+  @media (prefers-reduced-motion: reduce) {
+    .tcard, .rail { transition: none !important; }
+  }
 </style>
 </head>
 <body>
-<div id="stage">
-  <div class="stack s2"></div>
-  <div class="stack s1"></div>
-  <div class="rail keep" id="railKeep">KEEP</div>
-  <div class="rail repl" id="railRepl">REPLACE</div>
-  <div class="tcard" id="card"></div>
+<div id="wrap">
+  <div id="stage">
+    <div class="rail keep" id="railKeep" aria-hidden="true">KEEP</div>
+    <div class="rail repl" id="railRepl" aria-hidden="true">REPLACE</div>
+    <div class="tcard" id="card" tabindex="0" role="group" aria-roledescription="swipe card"></div>
+  </div>
+  <div id="actions">
+    <button type="button" id="btnBack" aria-label="Back to the previous card" title="Back">&#8617;</button>
+    <button type="button" id="btnKeep" aria-label="Keep the pill">&#9664; Keep pill</button>
+    <button type="button" id="btnRepl" aria-label="Replace with the whole food">Replace &#9654;</button>
+  </div>
+  <div id="live" class="sr-only" aria-live="polite"></div>
 </div>
 <script>
 (function () {
@@ -104,9 +131,26 @@
   var card = document.getElementById("card");
   var railKeep = document.getElementById("railKeep");
   var railRepl = document.getElementById("railRepl");
-  var HEIGHT = 360;
+  var btnBack = document.getElementById("btnBack");
+  var btnKeep = document.getElementById("btnKeep");
+  var btnRepl = document.getElementById("btnRepl");
+  var live = document.getElementById("live");
+  var HEIGHT = 420;   // minimum frame height (from Python)
+  var lastHeight = 0;
   var committed = false;
   var canReplace = true;
+  var canBack = false;
+  // The iframe is reused for every card of a scan (stable Streamlit key), so
+  // each swipe carries the card it was made on and a unique id; Python applies
+  // it once and answers with the next card's props in the same script run.
+  var cardId = "";
+  var cardIndex = 0;
+  var seq = 0;
+  var animEnd = 0;      // fly-out animation end; new props wait for it
+  var pendingArgs = null;
+  var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Mouse / trackpad users get the arrow-key hint; touch screens don't need it.
+  var finePointer = window.matchMedia && window.matchMedia("(pointer: fine)").matches;
 
   function send(type, extra) {
     var msg = { isStreamlitMessage: true, type: type };
@@ -114,11 +158,27 @@
     window.parent.postMessage(msg, "*");
   }
   function setHeight(h) { send("streamlit:setFrameHeight", { height: h }); }
+
+  // Size the frame to the card's content (narrow phones need more height,
+  // wide screens less), never below the minimum Python asked for.
+  function fitHeight() {
+    var probe = card.cloneNode(true);
+    probe.removeAttribute("id");
+    probe.style.cssText = "position:absolute;visibility:hidden;left:0;top:0;right:auto;bottom:auto;" +
+      "height:auto;overflow:visible;width:" + card.clientWidth + "px;";
+    stage.appendChild(probe);
+    var contentHeight = probe.scrollHeight;
+    stage.removeChild(probe);
+    var actionsHeight = document.getElementById("actions").offsetHeight + 6;
+    var h = Math.max(HEIGHT, Math.min(780, contentHeight + actionsHeight + 10));
+    if (Math.abs(h - lastHeight) > 2) { lastHeight = h; setHeight(h); }
+  }
+  window.addEventListener("resize", function () { if (!committed) { fitHeight(); } });
   function setValue(v) { send("streamlit:setComponentValue", { value: v, dataType: "json" }); }
 
   function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
   }
 
@@ -126,9 +186,14 @@
     args = args || {};
     committed = false;
     canReplace = (args.canReplace !== false);
-    HEIGHT = parseInt(args.height || 360, 10) || 360;
-    stage.style.setProperty("--accent", args.accent || "#64748b");
-    stage.style.setProperty("--ink", args.ink || "#0f172a");
+    cardId = String(args.cardId || "");
+    cardIndex = parseInt(args.index || 0, 10) || 0;
+    // Opened from the results ("edit mode"): Back returns to the results.
+    var editing = !!args.editing;
+    canBack = editing || cardIndex > 0;
+    btnBack.setAttribute("aria-label", editing ? "Back to your results" : "Back to the previous card");
+    btnBack.title = editing ? "Back to results" : "Back";
+    HEIGHT = parseInt(args.height || 420, 10) || 420;
     card.style.setProperty("--accent", args.accent || "#64748b");
     card.style.setProperty("--ink", args.ink || "#0f172a");
     if (args.bg) { card.style.setProperty("--card-bg", args.bg); }
@@ -137,32 +202,55 @@
     var total = parseInt(args.total || 1, 10);
     var foodTxt = args.food ? esc(args.food) : "Pick a food below";
     var portionRows = "";
+    // "eat" only before an actual amount ("~85 g"), not before verdicts such as
+    // "not practical from food alone (~2.3 kg/day)" or "a lot of food (...)".
+    function portion(txt) {
+      var t = String(txt || "");
+      return (/^[~<\d]/.test(t) ? "eat " : "") + "<b>" + esc(t) + "</b>";
+    }
     if (args.matchDose) {
-      portionRows += '<span class="pl">💊 Match this dose &rarr; eat <b>' + esc(args.matchDose) + '</b></span>';
+      portionRows += '<span class="pl">💊 Match this dose &rarr; ' + portion(args.matchDose) + '</span>';
     }
     if (args.rdaAmount) {
-      portionRows += '<span class="pl">🏃 Athlete RDA' +
+      portionRows += '<span class="pl">🏃 Athlete daily target' +
         (args.rdaLabel ? ' (' + esc(args.rdaLabel) + ')' : '') +
-        ' &rarr; eat <b>' + esc(args.rdaAmount) + '</b></span>';
+        ' &rarr; ' + portion(args.rdaAmount) + '</span>';
     }
     var portionHtml = portionRows ? '<div class="portion">' + portionRows + '</div>' : '';
-    var warnHtml = args.warn ? '<div class="warn">' + esc(args.warn) + '</div>' : '';
+    var warnHtml = args.warn ? '<div class="warn" role="note">' + esc(args.warn) + '</div>' : '';
     var bioHtml = args.bioNote ? '<div class="bio">💡 ' + esc(args.bioNote) + '</div>' : '';
+    var prevHtml = args.previous ? '<span class="prev">Your choice: ' + esc(args.previous) + '</span>' : '';
+    var pct = Math.max(4, Math.min(100, Math.round(100 * idx / Math.max(total, 1))));
+    var foodIcon = args.foodIcon ? '<span class="ficon" aria-hidden="true">' + esc(args.foodIcon) + '</span>' : '';
     card.innerHTML =
-      '<div class="row"><span class="count">Card ' + idx + ' / ' + total + '</span></div>' +
-      warnHtml +
+      '<div class="row"><span class="count">Card ' + idx + ' of ' + total + '</span>' + prevHtml + '</div>' +
+      '<div class="bar" aria-hidden="true"><span style="width:' + pct + '%"></span></div>' +
+      '<div class="head"><span class="badge" aria-hidden="true">💊</span><div>' +
       '<div class="name">' + esc(args.name || "Micronutrient") + '</div>' +
-      '<div class="dose">Dose: <b>' + esc(args.dose || "n/a") + '</b></div>' +
-      '<div class="foodwrap"><div class="foodlbl">Whole-food replacement</div><div class="food">' + foodTxt + '</div>' + portionHtml + bioHtml + '</div>' +
+      '<div class="dose">In your pill: <b>' + esc(args.dose || "n/a") + '</b></div></div></div>' +
+      warnHtml +
+      '<div class="foodwrap"><div class="foodlbl">Eat instead</div>' +
+      '<div class="foodrow">' + foodIcon + '<div class="food">' + foodTxt + '</div></div>' + portionHtml + '</div>' +
+      bioHtml +
       '<div class="hint">' + (canReplace
-        ? 'Swipe <b class="k">◀ left = keep pill</b> · <b class="r">replace = whole food ▶</b>'
-        : '<b class="k">◀ Swipe left to keep</b> · no whole-food match to replace') + '</div>';
+        ? 'Swipe <b>◀ keep the pill</b> · <b>eat the food ▶</b>' + (finePointer ? ' (or ← →)' : '')
+        : 'No whole-food match for this one — keep the pill or go back') +
+        (editing ? '<br>Editing from your results — your choice takes you straight back.' : '') + '</div>';
+    card.setAttribute("aria-label",
+      "Card " + idx + " of " + total + ": " + (args.name || "Micronutrient") + ", dose " + (args.dose || "not available") +
+      (args.food ? ". Whole-food replacement: " + args.food : "") +
+      (args.matchDose ? ". To match the dose: " + args.matchDose : "") +
+      (args.warn ? ". Warning: " + args.warn : ""));
 
+    btnRepl.disabled = !canReplace;
+    btnBack.disabled = !canBack;
+    btnKeep.disabled = false;
     card.style.transition = "none";
     card.style.transform = "";
     railKeep.style.opacity = 0;
     railRepl.style.opacity = 0;
-    setHeight(HEIGHT);
+    if (!lastHeight) { lastHeight = HEIGHT; setHeight(HEIGHT); }
+    requestAnimationFrame(fitHeight);
   }
 
   function rails(dx) {
@@ -171,63 +259,109 @@
     railKeep.style.opacity = dx < -8 ? t : 0;
   }
 
-  function fly(dir) {
+  function commit(dir) {
     if (committed) return;
+    if (dir === "right" && !canReplace) return;
+    if (dir === "back" && !canBack) return;
     committed = true;
+    btnKeep.disabled = btnRepl.disabled = btnBack.disabled = true;
+    live.textContent = dir === "right" ? "Replaced with the whole food" : (dir === "left" ? "Kept the pill" : "Going back");
+    seq += 1;
+    var value = { dir: dir, id: Date.now() + "-" + seq, card: cardId, index: cardIndex };
+    if (dir === "back" || reduceMotion) {
+      setValue(value);
+      return;
+    }
     var w = Math.max(window.innerWidth, 480);
     var off = dir === "right" ? w : -w;
-    card.style.transition = "transform .34s ease";
+    card.style.transition = "transform .3s ease";
     card.style.transform = "translate(" + off + "px, -30px) rotate(" + (dir === "right" ? 22 : -22) + "deg)";
     (dir === "right" ? railRepl : railKeep).style.opacity = 1;
-    setTimeout(function () { setValue({ dir: dir, id: Date.now() }); }, 250);
+    // Send right away: the server round trip overlaps the fly-out, and the next
+    // card's props are held until the animation is done (see onRender).
+    animEnd = Date.now() + 220;
+    setValue(value);
   }
 
-  var dragging = false, sx = 0, sy = 0, dx = 0, dy = 0;
-  var THRESH = 90;
-
-  function down(e) {
-    if (committed) return;
-    dragging = true;
-    var p = e.touches ? e.touches[0] : e;
-    sx = p.clientX; sy = p.clientY; dx = 0; dy = 0;
-    card.style.transition = "none";
-    if (card.setPointerCapture && e.pointerId != null) {
-      try { card.setPointerCapture(e.pointerId); } catch (err) {}
+  function onRender(args) {
+    var wait = animEnd - Date.now();
+    if (wait <= 0) { pendingArgs = null; render(args); return; }
+    var first = pendingArgs === null;
+    pendingArgs = args;
+    if (first) {
+      setTimeout(function () { var a = pendingArgs; pendingArgs = null; render(a); }, wait);
     }
   }
-  function move(e) {
+
+  // Drag-to-swipe. Pointer Events cover mouse, pen and touch; the legacy touch
+  // listeners are only used on browsers without Pointer Events, so a single
+  // touch never triggers both paths.
+  var dragging = false, sx = 0, sy = 0, dx = 0, dy = 0, horizontal = null;
+  var THRESH = 80;
+
+  function down(x, y) {
+    if (committed) return;
+    dragging = true; horizontal = null;
+    sx = x; sy = y; dx = 0; dy = 0;
+    card.style.transition = "none";
+  }
+  function move(x, y, ev) {
     if (!dragging) return;
-    var p = e.touches ? e.touches[0] : e;
-    dx = p.clientX - sx; dy = p.clientY - sy;
+    dx = x - sx; dy = y - sy;
+    if (horizontal === null && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+      horizontal = Math.abs(dx) > Math.abs(dy);
+    }
+    if (!horizontal) return; // vertical gesture: let the card content scroll
     card.style.transform = "translate(" + dx + "px," + (dy * 0.22) + "px) rotate(" + (dx / 18) + "deg)";
     rails(dx);
-    if (e.cancelable) e.preventDefault();
+    if (ev && ev.cancelable) ev.preventDefault();
   }
   function up() {
     if (!dragging) return;
     dragging = false;
-    if (dx > THRESH && canReplace) {
-      fly("right");
-    } else if (dx < -THRESH) {
-      fly("left");
+    if (horizontal && dx > THRESH && canReplace) {
+      commit("right");
+    } else if (horizontal && dx < -THRESH) {
+      commit("left");
     } else {
-      card.style.transition = "transform .22s ease";
+      card.style.transition = reduceMotion ? "none" : "transform .2s ease";
       card.style.transform = "";
       rails(0);
     }
   }
 
-  card.addEventListener("pointerdown", down);
-  window.addEventListener("pointermove", move, { passive: false });
-  window.addEventListener("pointerup", up);
-  card.addEventListener("touchstart", down, { passive: false });
-  window.addEventListener("touchmove", move, { passive: false });
-  window.addEventListener("touchend", up);
+  if (window.PointerEvent) {
+    card.addEventListener("pointerdown", function (e) {
+      if (e.button != null && e.button !== 0) return;
+      down(e.clientX, e.clientY);
+      try { card.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    card.addEventListener("pointermove", function (e) { move(e.clientX, e.clientY, e); });
+    card.addEventListener("pointerup", up);
+    card.addEventListener("pointercancel", up);
+  } else {
+    card.addEventListener("touchstart", function (e) { var t = e.touches[0]; down(t.clientX, t.clientY); }, { passive: true });
+    card.addEventListener("touchmove", function (e) { var t = e.touches[0]; move(t.clientX, t.clientY, e); }, { passive: false });
+    card.addEventListener("touchend", up);
+    card.addEventListener("mousedown", function (e) { down(e.clientX, e.clientY); });
+    window.addEventListener("mousemove", function (e) { move(e.clientX, e.clientY, e); });
+    window.addEventListener("mouseup", up);
+  }
+
+  btnKeep.addEventListener("click", function () { commit("left"); });
+  btnRepl.addEventListener("click", function () { commit("right"); });
+  btnBack.addEventListener("click", function () { commit("back"); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowLeft") { commit("left"); e.preventDefault(); }
+    else if (e.key === "ArrowRight") { commit("right"); e.preventDefault(); }
+    else if (e.key === "Backspace") { commit("back"); e.preventDefault(); }
+  });
 
   window.addEventListener("message", function (event) {
     var d = event.data;
+    if (event.source !== window.parent) return; // only our Streamlit host
     if (!d || d.type !== "streamlit:render") return;
-    render(d.args);
+    onRender(d.args);
   });
 
   send("streamlit:componentReady", { apiVersion: 1 });

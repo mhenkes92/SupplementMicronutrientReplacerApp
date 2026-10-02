@@ -1,7 +1,9 @@
-# Dependencies for the SuppSwap Swipe UI (imports blockbrain.app for core logic).
-# Mirrors blockbrain/requirements.txt since this app reuses that module.
-streamlit>=1.39.0
-requests>=2.32.3
-beautifulsoup4>=4.12.3
-python-dotenv>=1.0.1
-pillow>=10.4.0
+# Streamlit Community Cloud installs this file (it sits next to the entrypoint
+# swipe_mobile_app/app.py). Versions are pinned to the set the test suite runs
+# against so a new upstream release can't silently change the live app; bump
+# them deliberately and re-run `pytest` before pushing.
+streamlit==1.64.0
+requests==2.34.2
+beautifulsoup4==4.15.0
+python-dotenv==1.2.4
+pillow==12.3.0

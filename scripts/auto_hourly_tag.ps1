@@ -44,9 +44,5 @@ while ((git tag --list $newTag) -and $counter -lt 100) {
 
 git tag -a $newTag -m "Auto restore point $newTag"
 
-try {
-    git push origin $Branch
-    git push origin $newTag
-} catch {
-    # Keep local tag even if push fails.
-}
+# Local restore points only: never push branches or tags automatically (the
+# repository is public). To stop the task: schtasks /Delete /TN SuppSwapHourlyTag /F

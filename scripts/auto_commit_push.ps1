@@ -3,45 +3,32 @@ param(
     [string]$Branch = "master"
 )
 
+# Local autosave snapshot (restore point) - SAFE MODE.
+#
+# This used to run `git add -A` and push to the PUBLIC master every 5 minutes,
+# which published API keys, local binaries and half-finished work (and
+# redeployed the live app constantly). It now:
+#   - only snapshots files git already tracks (`git add -u`), so new files such
+#     as .env, secrets.toml, model binaries or screenshots are never added;
+#   - never pushes. Push deliberately, after reviewing `git status`.
+# To stop the scheduled task completely:
+#   schtasks /Delete /TN SuppSwapAutoCommit /F
+
 $ErrorActionPreference = "Stop"
 
 Set-Location $RepoPath
 
-# Skip if not a git repo.
 if (-not (Test-Path ".git")) {
     exit 0
 }
 
-# Skip commit when nothing changed.
-$hasChanges = (git status --porcelain)
-if (-not $hasChanges) {
-    exit 0
-}
-
-# Avoid committing large local model artifacts.
-$excludePaths = @(
-    "assets/models/*.gguf"
-)
-
-foreach ($pattern in $excludePaths) {
-    git reset -q -- $pattern 2>$null
-}
-
-# Stage and re-check after exclusions.
-git add -A
+# Only modifications/deletions of tracked files.
+git add -u
 $staged = (git diff --cached --name-only)
 if (-not $staged) {
     exit 0
 }
 
 $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-$message = "Auto snapshot $timestamp"
-
-git commit -m $message
-
-# Push best-effort. If push fails (auth/network), keep local commit.
-try {
-    git push origin $Branch
-} catch {
-    # Intentionally ignore push failures to preserve local history.
-}
+git commit -m "Auto snapshot $timestamp (local only)"
+# Intentionally no `git push`.
