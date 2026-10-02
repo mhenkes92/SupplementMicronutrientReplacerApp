@@ -7,11 +7,11 @@ All LLM/OCR calls go through `blockbrain_llm_client.py` (the owner's verified mo
 ## Now
 | Item | Owner | State |
 |---|---|---|
-| Wire the app to `blockbrain_llm_client.py` (text + OCR) | cloud | in progress on `claude/gracious-davinci-0bpnyh` |
-| Run `python blockbrain_llm_client.py selftest` (+ `--via cortex`, `--format pdf`, `--hard`) with the app key | vsc | **open** - see `inbox/vsc/2026-10-02-001-cloud-handshake.md` |
+| Wire the app to `blockbrain_llm_client.py` (text + OCR) | cloud | **done** on `claude/gracious-davinci-0bpnyh` (2012 offline tests green); independent review running |
+| Run `python blockbrain_llm_client.py selftest` (+ `--via cortex`, `--format pdf`, `--hard`) with the app key | vsc | **open** - see `inbox/vsc/2026-10-02-001-cloud-handshake.md` and `-002-cloud-client-wired.md` |
 | 10-20 real label photos: OCR accuracy per model | vsc | open |
 | Streamlit Cloud secrets: `BLOCKBRAIN_API_KEY`, `BLOCKBRAIN_ORG_ID`, `BLOCKBRAIN_MODEL` (or `BLOCKBRAIN_BOT_ID`) | owner | open |
-| Merge to `master` (deploys the live app) | owner | after the above |
+| Merge to `master` (deploys the live app) | owner | after the secrets are set and the selftest passes; no PR is open yet |
 
 ## Blocked / known gaps
 * cloud has no Blockbrain key and the Blockbrain hosts are blocked by the cloud network policy: it tests against a local fake
