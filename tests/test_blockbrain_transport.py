@@ -1344,3 +1344,95 @@ def test_more_blind_model_wordings(reply):
 def test_a_read_of_the_front_of_the_pack_is_an_answer(reply):
     """Review IMG-2: a product name followed by a note is label text for the product research."""
     assert not bb._image_not_received(reply)
+
+
+
+# --- Copilot review of the PR ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text, expected", [
+    ("[Agent X] - Model gpt-4.1-nano is not available for your organisation. Please try again later.", "model"),
+    ("[Agent X] - Unknown model gpt-4.1-nano. Please try again later.", "model"),
+    ("[Agent X] - Model gpt-4.1-nano not found, retry later", "model"),
+    # Temporary by its own words: still busy, also with retry advice.
+    ("[Agent X] - Model gpt-4.1-nano is temporarily unavailable. Please try again later.", "busy"),
+    ("[Agent X] - The model is overloaded, try again later", "busy"),
+    # Only generic advice about a model: busy; about the agent: the agent.
+    ("[Agent X] - Rate limit reached for model gpt-4.1-nano. Please try again later.", "busy"),
+    ("[Agent X] - Rate limit exceeded. Please try again later.", "agent"),
+])
+def test_definitive_configuration_wording_beats_retry_advice(text, expected):
+    assert bb._classify_agent_error(text, "gpt-4.1-nano") == expected
+
+
+def test_a_removed_model_with_retry_advice_is_marked_not_retried_on_every_call(monkeypatch):
+    error = "[Agent researchAgent] - Model gpt-4.1-nano is not available for your organisation. Please try again later."
+    sent = _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "error", "errorText": error}]) if model == "gpt-4.1-nano" else FakeResponse(events=GOOD_STREAM),
+    )
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert [m for _a, _v, m in sent] == ["gpt-4.1-nano", "gpt-4.1-mini"]
+    assert ("6a4bc43653952e29ba6ef1d6", "gpt-4.1-nano") in bb._MODEL_UNRESOLVED  # remembered
+    sent.clear()
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert len(sent) == 1
+
+
+def test_a_4xx_body_with_retry_advice_is_still_a_model_problem(monkeypatch):
+    def responder(url, model):
+        if model != "gpt-4.1-nano":
+            return FakeResponse(events=GOOD_STREAM)
+        response = FakeResponse(status_code=403)
+        response.text = "Model gpt-4.1-nano is not available for your organisation. Please try again later."
+        return response
+
+    sent = _install_by_model(monkeypatch, responder)
+    assert bb.call_blockbrain_text("sys", "q") == "**Breakfast** oats"
+    assert [m for _a, _v, m in sent] == ["gpt-4.1-nano", "gpt-4.1-mini"] and bb._STREAM_ENDPOINT_COOLDOWN == {}
+
+
+ERROR_REPLIES = [
+    "Something went wrong. Please try again.", "Something went wrong", "An error occurred.", "Error occurred",
+    "Failed to fetch", "fetch failed", "HTTP 502 Bad Gateway", "Error 503: Service Unavailable", "502 Bad Gateway",
+    "Internal Server Error", "Service Unavailable", "Unauthorized", "Too many requests", "Rate limit exceeded",
+    "Request failed with status code 429", "Gateway Timeout", "Error: Rate limit exceeded",
+    "Failed to resolve model configuration", "[Agent researchAgent] - Failed to resolve model configuration",
+    '{"error": "Rate limit exceeded"}', "AI_RetryError: Failed after 3 attempts", "**Error:** Rate limit exceeded",
+]
+
+
+@pytest.mark.parametrize("reply", ERROR_REPLIES)
+def test_no_recognised_error_is_ever_streamed_whatever_the_split(monkeypatch, reply):
+    """Review (Copilot): split a recognised whole-reply error at EVERY position: no fragment of it reaches on_text,
+    the fallback model answers, and the visitor only ever sees the answer."""
+    assert bb.looks_like_agent_error(reply)
+    monkeypatch.setattr(bb.time, "monotonic", iter(range(0, 10_000_000, 1)).__next__)  # every push is past the throttle
+    for cut in range(1, len(reply)):
+        pieces = [reply[:cut], reply[cut:]]
+        bb._MODEL_UNRESOLVED.clear(); bb._LAST_GOOD_MODEL.clear(); bb._AGENT_PARKED.clear(); bb._STREAM_ENDPOINT_COOLDOWN.clear()
+        _install_by_model(
+            monkeypatch,
+            lambda url, model, pieces=pieces: FakeResponse(events=[{"type": "text-delta", "id": "t", "delta": d} for d in pieces] + [{"type": "finish"}])
+            if model == "gpt-4.1-nano" else FakeResponse(events=GOOD_STREAM),
+        )
+        seen = []
+        assert bb.call_blockbrain_text("sys", "q", on_text=seen.append) == "**Breakfast** oats", (reply, cut)
+        assert all(s.startswith("**Breakfast**") for s in seen), (reply, cut, seen)
+
+
+@pytest.mark.parametrize("answer", [
+    "Something about iron: take it with vitamin C.", "Failed attempts at taking zinc on an empty stomach cause nausea.",
+    "Service stations sell magnesium bars; a bar has about 60 mg.", "502 mg of vitamin C is too much for one dose.",
+    "Forbidden foods in pregnancy include liver.", "Error bars in the study are small.",
+])
+def test_answers_that_start_like_an_error_are_still_streamed(monkeypatch, answer):
+    monkeypatch.setattr(bb.time, "monotonic", iter(range(0, 10_000_000, 1)).__next__)
+    words = answer.split(" ")
+    pieces = [w + " " for w in words[:-1]] + [words[-1]]
+    _install_by_model(
+        monkeypatch,
+        lambda url, model: FakeResponse(events=[{"type": "text-delta", "id": "t", "delta": d} for d in pieces] + [{"type": "finish"}]),
+    )
+    seen = []
+    assert bb.call_blockbrain_text("sys", "q", on_text=seen.append) == answer
+    assert seen and seen[-1] == answer

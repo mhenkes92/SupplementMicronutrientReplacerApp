@@ -9053,10 +9053,13 @@ _AGENT_WIDE_ERROR_RE = re.compile(
 )
 # … versus a reply with temporary wording: busy right now, not removed.
 _MODEL_LOAD_ERROR_RE = re.compile(
-    r"temporar|overload|high\s+demand|capacity|try\s+again\s+later|retry\s+later|\bbusy\b"
+    r"temporar|overload|high\s+demand|capacity|\bbusy\b"
     r"|(?:currently|right\s+now)\s+(?:not\s+available|unavailable)",
     re.IGNORECASE,
 )
+# Generic advice that providers append to any error, including a removed model:
+# on its own it says the model is busy, but never over a definitive configuration message.
+_RETRY_ADVICE_RE = re.compile(r"try\s+again\s+later|retry\s+later|please\s+retry", re.IGNORECASE)
 # A vision model that never got the image (a text-only model). Not a reply
 # about the photo's quality ("too blurry, please attach a sharper photo") and
 # not label text with a note: those are answers. Only the first two lines
@@ -9110,9 +9113,32 @@ _IMAGE_QUALITY_RE = re.compile(
 )
 _LABEL_VALUE_RE = re.compile(r"\d\s*(?:mg|[µμ]g|mcg|ug|g|iu|i\.e\.|kcal|%)", re.IGNORECASE)
 _ERROR_TEXT_PREFIXES = (
-    "failed to resolve", "error:", "error ", "**error", '{"error', "ai_", "agent ", "internal server error",
-    "service unavailable", "bad gateway", "unauthorized", "too many requests", "rate limit",
+    "failed to resolve", "error:", "error ", "**error", '{"error', "ai_", "agent ", "http ",
 )
+# The whole-reply errors looks_like_agent_error accepts (also with an "HTTP 502 " / "Error 503: " /
+# "502 " lead): while a streamed reply is still a prefix of one of these, it is not shown.
+_BARE_ERROR_PHRASES = (
+    "internal server error", "service unavailable", "bad gateway", "gateway timeout", "gateway time-out",
+    "unauthorized", "unauthorised", "forbidden", "too many requests", "rate limit exceeded", "rate limit reached",
+    "request failed with status code", "an error occurred", "error occurred", "something went wrong",
+    "failed to fetch", "fetch failed",
+)
+
+
+def _may_become_error(text: str) -> bool:
+    """True while `text` (a streamed reply so far) could still grow into an error message."""
+    lead = " ".join(str(text or "").lower().split())
+    if not lead or len(lead) >= 80:
+        return False
+    if lead.startswith("[") or any(p.startswith(lead) or lead.startswith(p) for p in _ERROR_TEXT_PREFIXES):
+        return True
+    if any(p.startswith(lead) or lead.startswith(p) for p in _BARE_ERROR_PHRASES):
+        return True
+    status = re.match(r"(?:(?:http|error)\s*(?:code\s*)?)?\d{1,3}\W*(.*)$", lead)  # "502 Bad Gateway"
+    if status is not None:
+        rest = status.group(1)
+        return not rest or any(p.startswith(rest) or rest.startswith(p) for p in _BARE_ERROR_PHRASES)
+    return False
 # Models tried, in order, when an agent can't resolve the requested one (it
 # was removed or isn't enabled for the organisation). "" = the agent's own
 # default model (no "model" field), last because it can be slow — text only:
@@ -9187,13 +9213,15 @@ def _classify_agent_error(text: Any, model: str) -> str:
     failing so on two agents is skipped, so one odd message can't exclude a
     model or park a healthy agent."""
     value = str(text or "")
+    about_model = bool(re.search(r"\bmodel\b", value, re.IGNORECASE) or (model and model.lower() in value.lower()))
     if _MODEL_CONFIG_PHRASE_RE.search(value):
         return "model"
-    if _MODEL_LOAD_ERROR_RE.search(value):
-        about_model = re.search(r"\bmodel\b", value, re.IGNORECASE) or (model and model.lower() in value.lower())
+    if _MODEL_LOAD_ERROR_RE.search(value):  # temporary by its own words ("temporarily", "overloaded", …)
         return "busy" if about_model else "agent"
     if _MODEL_CONFIG_ERROR_RE.search(value) and not _AGENT_WIDE_ERROR_RE.search(value):
-        return "model"
+        return "model"  # definitive wording wins over a trailing "please try again later"
+    if _RETRY_ADVICE_RE.search(value):
+        return "busy" if about_model else "agent"
     return "agent"
 
 
@@ -9211,7 +9239,7 @@ def looks_like_agent_error(text: Any) -> bool:
     if len(value) <= 80 and _BARE_HTTP_ERROR_RE.match(value):
         return True
     if len(value) <= 150 and _ERROR_LEAD_RE.match(value) and (
-        _AGENT_WIDE_ERROR_RE.search(value) or _MODEL_LOAD_ERROR_RE.search(value)
+        _AGENT_WIDE_ERROR_RE.search(value) or _MODEL_LOAD_ERROR_RE.search(value) or _RETRY_ADVICE_RE.search(value)
     ):
         return True  # "Error: Rate limit exceeded"
     return len(value) <= 200 and bool(_ERROR_LEAD_RE.match(value) and _MODEL_CONFIG_ERROR_RE.search(value))
@@ -9755,11 +9783,7 @@ def _blockbrain_chat(
                                 current = _current_text()
                                 # An error can arrive split over deltas ("[Agent", " X] - …"):
                                 # nothing that may still turn into one is shown.
-                                lead = current.lstrip().lower()
-                                held = len(current) < 80 and (
-                                    lead.startswith("[")
-                                    or any(p.startswith(lead) or lead.startswith(p) for p in _ERROR_TEXT_PREFIXES)
-                                )
+                                held = _may_become_error(current)
                                 if (
                                     on_text is not None
                                     and time.monotonic() - last_push >= 0.12
