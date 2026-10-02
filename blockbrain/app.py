@@ -132,15 +132,20 @@ def _http_post(url: str, **kwargs) -> requests.Response:
 
 APP_DIR = Path(__file__).resolve().parent
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(APP_DIR / 'app.log'),
-        logging.StreamHandler()
-    ]
-)
+# Configure logging (once: a reload of this module must not open the log file again).
+# The file is optional: a read-only checkout logs to stdout only, which is where
+# Streamlit Cloud shows it anyway.
+if not logging.getLogger().handlers:
+    _log_handlers: list[logging.Handler] = [logging.StreamHandler()]
+    try:
+        _log_handlers.insert(0, logging.FileHandler(APP_DIR / 'app.log'))
+    except OSError:
+        pass
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=_log_handlers,
+    )
 logger = logging.getLogger(__name__)
 
 load_dotenv()

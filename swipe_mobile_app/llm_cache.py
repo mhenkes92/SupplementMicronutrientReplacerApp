@@ -23,13 +23,25 @@ from typing import Any, Callable
 
 _MAX_ENTRIES = 256
 
-_lock = threading.Lock()
-_cache: "OrderedDict[str, str]" = OrderedDict()
-_inflight: dict[str, Future] = {}
-_partial: dict[str, str] = {}
+
+def _keep(name: str, make: Callable[[], Any]) -> Any:
+    """What this module already holds under `name`, else a new one.
+
+    A redeploy reloads this module in place (see _load_current in app.py). Fresh
+    objects would orphan the cache, the lock, the in-flight bookkeeping and the
+    worker pool that still-running background jobs use, and the app would start the
+    same generation a second time."""
+    return globals()[name] if name in globals() else make()
+
+
+_lock = _keep("_lock", threading.Lock)
+_cache: "OrderedDict[str, str]" = _keep("_cache", OrderedDict)
+_inflight: dict[str, Future] = _keep("_inflight", dict)
+_partial: dict[str, str] = _keep("_partial", dict)
 # Text that must never be served or stored as an answer (set by the app to
 # "is this a Blockbrain error?"). Also guards entries written by older code.
-_reject: Callable[[str], bool] | None = None
+_reject: Callable[[str], bool] | None = _keep("_reject", lambda: None)
+_executor = _keep("_executor", lambda: ThreadPoolExecutor(max_workers=4, thread_name_prefix="suppswipe-llm"))
 
 
 def set_reject(fn: Callable[[str], bool] | None) -> None:
@@ -42,7 +54,6 @@ def _rejected(text: str) -> bool:
         return bool(_reject and _reject(text))
     except Exception:
         return False
-_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="suppswipe-llm")
 
 
 def make_key(*parts: Any) -> str:
