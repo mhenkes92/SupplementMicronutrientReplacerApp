@@ -78,7 +78,7 @@ def test_oversized_images_are_refused_before_decoding(monkeypatch):
 
 
 def test_vision_variants_come_from_one_upright_decode():
-    variants = bb.build_vision_image_variants(_png(3000, 4000))
+    variants = bb.build_vision_image_variants(_png(2400, 3200))
     sizes = [Image.open(io.BytesIO(b)).size for _, b in variants]
     assert [n for n, _ in variants] == ["fast_jpeg", "detail_jpeg"]
     assert max(sizes[0]) == 1400 and max(sizes[1]) == 2000

@@ -80,7 +80,7 @@ def test_a_failing_model_falls_back_to_the_local_index(sw, monkeypatch):
 
     monkeypatch.setattr(sw, "_consume_llm_quota", lambda kind: True)
     monkeypatch.setattr(sw, "_cached_rag_chunks", lambda: [{"source": "guide.pdf", "text": "Iron: red meat, lentils."}])
-    monkeypatch.setattr(bb, "answer_rag_question", lambda q, chunks: ("Local answer", ["guide.pdf"], {}))
+    monkeypatch.setattr(bb, "answer_rag_question", lambda q, chunks, **kw: ("Local answer", ["guide.pdf"], {}))
     for model in (broken, lambda *a, **k: ""):
         monkeypatch.setattr(bb, "call_blockbrain_text", model)
         answer, sources = sw._answer_ask_ai_question("Iron", "Best food source?")

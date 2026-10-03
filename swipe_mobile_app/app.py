@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import hmac
 import html
 import io
 import json
@@ -624,7 +625,7 @@ def _cached_rag_chunks() -> list[dict[str, str]]:
 
 
 if _CODE_RELOADED:
-    _cached_rag_chunks.clear()  # (not st.cache_resource.clear(): that would also reset _global_llm_usage)
+    _cached_rag_chunks.clear()
 
 
 # Per-session limits on LLM work so one anonymous visitor (or a stuck
@@ -650,23 +651,17 @@ def _global_llm_quota_limit() -> int:
         return 600
 
 
-@st.cache_resource(show_spinner=False)
-def _global_llm_usage() -> dict[str, Any]:
-    """Process-wide LLM use (all sessions): the per-session allowance resets on
-    a reload, this backstop does not. One per server process."""
-    import threading
-
-    return {"lock": threading.Lock(), "times": []}
+def _global_llm_quota_limit_per_day() -> int:
+    try:
+        return max(1, int(os.getenv("SUPPSWIPE_MAX_LLM_CALLS_PER_DAY_GLOBAL", "") or 3000))
+    except ValueError:
+        return 3000
 
 
 def _consume_global_llm_quota(now: float) -> bool:
-    usage = _global_llm_usage()
-    with usage["lock"]:
-        usage["times"] = [t for t in usage["times"] if now - t < _LLM_QUOTA_WINDOW_S]
-        if len(usage["times"]) >= _global_llm_quota_limit():
-            return False
-        usage["times"].append(now)
-        return True
+    """The process-wide backstop (all sessions; per hour and per day). The ledger is in llm_cache, out of reach of the
+    websocket `clear_cache` message that empties every st.cache_* store."""
+    return llm_cache.consume_global(now, _LLM_QUOTA_WINDOW_S, _global_llm_quota_limit(), _global_llm_quota_limit_per_day())
 
 
 def _consume_llm_quota(kind: str) -> bool:
@@ -790,6 +785,7 @@ def _await_background_text(cache_key: str, pending: Any, placeholder: Any = None
 
 
 _ASK_AI_HISTORY_MESSAGES = 6  # most recent chat messages sent as memory
+_ASK_AI_MAX_CHARS = 500  # one question = one quota unit, so its size is capped (the websocket would take 25 MB)
 # Under every Ask AI answer: where it came from. (The Examine knowledge-base bot is gone: every
 # model answer now comes from blockbrain_llm_client.py.)
 _SOURCE_AGENT = "\n\n_🤖 General AI answer (not medical advice)_"
@@ -845,6 +841,7 @@ def _answer_ask_ai_question(
     available (the model failed and no local index produced a response).
     """
     history = list(history or [])
+    question = str(question or "")[:_ASK_AI_MAX_CHARS]
     dose_label = str(dose_label or "").strip()
     if dose_label.lower().startswith("dose not"):
         dose_label = ""
@@ -906,7 +903,8 @@ def _local_rag_answer(scoped_question: str) -> tuple[str | None, str]:
         chunks = []
     if not chunks:
         return None, ""
-    answer, sources, _meta = bb.answer_rag_question(scoped_question, chunks)
+    # No model here: this is the fallback for an exhausted allowance or a switched-off AI (an LLM call would bypass the quota).
+    answer, sources, _meta = bb.answer_rag_question(scoped_question, chunks, use_llm=False)
     sources_line = ""
     if sources:
         sources_line = "\n\nSources: " + ", ".join(sources[:4])
@@ -4945,7 +4943,7 @@ def _restore_scan(state: Any, saved: dict[str, Any]) -> bool:
     state["swipe_edit_return"] = False
     state["swipe_diet_profile_id"] = diet
     state["swipe_diet_pills"] = diet  # keep the filter chips in step
-    pregnant = bool(saved.get("pregnant", False))
+    pregnant = saved.get("pregnant", False) is True  # strictly a JSON true: bool("false") would be True
     state["swipe_pregnant"] = pregnant
     state["swipe_pregnant_toggle"] = pregnant  # and the toggle
     state["swipe_last_auto_signature"] = sig
@@ -5735,6 +5733,7 @@ def _render_ask_ai_chat(
     question = st.chat_input(
         "Ask about this nutrient…" if component_key != "summary" else "Ask about your plan…",
         key=f"swipe_rag_chat_input_{component_key}_{index}",
+        max_chars=_ASK_AI_MAX_CHARS,
     )
     if history and st.button("Clear chat", type="tertiary", key=f"swipe_rag_clear_{component_key}_{index}"):
         chat_store[component_key] = []
@@ -5742,7 +5741,7 @@ def _render_ask_ai_chat(
         st.rerun()
 
     pending = str(st.session_state.pop(pending_key, "") or "")
-    asked = pending or str(question or "").strip()
+    asked = (pending or str(question or "").strip())[:_ASK_AI_MAX_CHARS]
     if asked:
         with st.chat_message("user"):
             st.write(asked)
@@ -5907,6 +5906,21 @@ def _render_athlete_rda_popup() -> None:
         )
 
 
+def _debug_requested() -> bool:
+    """?debug=1 opens the diagnostics; with SUPPSWIPE_DEBUG_TOKEN set it takes ?debug=<token> instead (so only the owner can)."""
+    asked = str(st.query_params.get("debug", "") or "")
+    if not asked:
+        return False
+    token = str(os.getenv("SUPPSWIPE_DEBUG_TOKEN", "") or "").strip()
+    return hmac.compare_digest(asked.encode("utf-8"), token.encode("utf-8")) if token else asked == "1"
+
+
+def _short_error(text: str) -> str:
+    """What the diagnostics may show of an error: the kind ("create conversation: HTTP 404"), never what the server said."""
+    first = re.split(r"[{\[\n]", str(text or ""), maxsplit=1)[0].strip()
+    return first[:80]
+
+
 def _render_debug_panel() -> None:
     """Shown only with ?debug=1: which endpoint/model answered the last LLM call
     and how long it took (time-to-first-token and total)."""
@@ -5921,7 +5935,7 @@ def _render_debug_panel() -> None:
                 "ocr_routes": bb._ocr_routes(),
                 # Timings are process-wide and carry no text from a server; the error is this session's own.
                 "last_call": {k: v for k, v in dict(getattr(bb, "LAST_BLOCKBRAIN_TIMING", {}) or {}).items() if k != "error"},
-                "last_error": bb.last_call_error(),
+                "last_error": _short_error(bb.last_call_error()),
             }
         )
 
@@ -5947,7 +5961,7 @@ def _build_mobile_ui() -> None:
     if st.session_state.pop("_suppswipe_scroll_top", False):
         _scroll_to_top()
     try:
-        show_debug = str(st.query_params.get("debug", "") or "") == "1"
+        show_debug = _debug_requested()
     except Exception:
         show_debug = False
     if show_debug:

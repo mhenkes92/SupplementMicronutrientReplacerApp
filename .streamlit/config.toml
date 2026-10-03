@@ -15,6 +15,11 @@ maxMessageSize = 25
 [browser]
 gatherUsageStats = false
 
+[runner]
+# The entry script has no bare expression that "magic" would draw, and the script cache is rebuilt whenever the last
+# session disconnects: without magic the 276 kB script compiles in ~0.05 s instead of ~0.2 s (0.4-0.5 s on shared CPU).
+magicEnabled = false
+
 [client]
 # Show only the error type to visitors, never stack traces with file paths.
 showErrorDetails = "type"

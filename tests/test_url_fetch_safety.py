@@ -115,6 +115,7 @@ def test_dns_rebinding_to_localhost_is_refused_on_connect(monkeypatch):
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port_))]
 
     _no_proxy(monkeypatch)
+    monkeypatch.setattr(bb, "_PUBLIC_FETCH_PORTS", {80, 443, port})  # the test server listens on a random port
     monkeypatch.setattr(bb.socket, "getaddrinfo", rebinding_getaddrinfo)
     try:
         # Sanity: the local server is reachable without the guard ...
@@ -237,3 +238,49 @@ def test_deadline_stops_a_real_slow_drip_server(monkeypatch):
         server.shutdown()
     assert result is None
     assert elapsed < 4.0, elapsed
+
+
+# --- security audit: ports, IPv4-mapped / NAT64 addresses, proxy from the environment, parse cost --------------------------
+
+@pytest.mark.parametrize("url", ["http://example.com:8080/", "https://example.com:22/", "http://example.com:6379/"])
+def test_only_the_web_ports_are_fetched(monkeypatch, url):
+    monkeypatch.setattr(bb.socket, "getaddrinfo", lambda host, port, *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.215.14", port))])
+    assert bb._is_public_http_url(url) is False
+    assert bb._is_public_http_url(url.split(":")[0] + "://example.com/") is True
+
+
+@pytest.mark.parametrize("address, public", [
+    ("93.184.215.14", True),
+    ("2606:2800:220:1:248:1893:25c8:1946", True),
+    ("::ffff:127.0.0.1", False),  # IPv4-mapped loopback
+    ("::ffff:10.0.0.5", False),
+    ("::ffff:93.184.215.14", True),  # a mapped PUBLIC address is judged as its IPv4
+    ("64:ff9b::7f00:1", False),  # NAT64 can tunnel to private IPv4 space
+    ("fec0::1", False),  # site-local
+    ("::1", False),
+    ("169.254.169.254", False),
+])
+def test_one_rule_for_public_addresses(address, public):
+    import ipaddress
+
+    assert bb._ip_is_public(ipaddress.ip_address(address)) is public
+
+
+def test_the_guarded_session_ignores_proxy_variables(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    assert bb._PUBLIC_FETCH_SESSION.trust_env is False  # a proxy would skip the check of the connected address
+
+
+def test_a_page_is_parsed_only_up_to_300_kb(monkeypatch):
+    seen = {}
+    real = bb.BeautifulSoup
+
+    def spy(markup, *a, **k):
+        seen["size"] = len(markup)
+        return real(markup, *a, **k)
+
+    monkeypatch.setattr(bb, "BeautifulSoup", spy)
+    monkeypatch.setattr(bb, "_safe_public_get", lambda *a, **k: (200, {"content-type": "text/html"}, "<p>" + "x" * 2_000_000 + "</p>"))
+    assert bb.fetch_clean_page_text("https://example.com/") != ""
+    assert seen["size"] == 300_000

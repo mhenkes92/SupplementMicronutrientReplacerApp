@@ -72,12 +72,26 @@ class NonPublicAddressError(OSError):
     """A user-supplied URL's connection reached a non-public address."""
 
 
+_NON_PUBLIC_V6 = (ipaddress.ip_network("64:ff9b::/96"), ipaddress.ip_network("fec0::/10"))  # NAT64, site-local
+
+
+def _ip_is_public(ip: Any) -> bool:
+    """A global unicast address; an IPv4-mapped IPv6 address (::ffff:a.b.c.d) counts as its IPv4, and the NAT64 prefix (which
+    can tunnel to private IPv4 space) and the old site-local range never count as public."""
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
+        elif any(ip in net for net in _NON_PUBLIC_V6):
+            return False
+    return bool(ip.is_global and not ip.is_multicast)
+
+
 def _assert_public_peer(sock: Any) -> None:
     try:
         ip = ipaddress.ip_address(str(sock.getpeername()[0]).split("%", 1)[0])
     except Exception as exc:
         raise NonPublicAddressError("could not verify the connected address") from exc
-    if not ip.is_global or ip.is_multicast:
+    if not _ip_is_public(ip):
         try:
             sock.close()
         finally:
@@ -118,6 +132,8 @@ class _PublicOnlyAdapter(requests.adapters.HTTPAdapter):
 
 
 _PUBLIC_FETCH_SESSION = requests.Session()
+# A proxy from the environment would skip the check of the connected address (the peer is the proxy): never for user URLs.
+_PUBLIC_FETCH_SESSION.trust_env = False
 _PUBLIC_FETCH_SESSION.cookies.set_policy(http.cookiejar.DefaultCookiePolicy(allowed_domains=[]))
 _PUBLIC_FETCH_SESSION.mount("http://", _PublicOnlyAdapter())
 _PUBLIC_FETCH_SESSION.mount("https://", _PublicOnlyAdapter())
@@ -822,15 +838,41 @@ def save_feedback_report(report: dict[str, Any]) -> bool:
         return False
 
 
+# True after an open of the USDA database failed, until the next one works. The memoised readers below must not keep what they
+# computed from a failed open (an empty diet-facts table would let every food through the diet filter until the next restart).
+_USDA_OPEN_FAILED = False
+
+
 def try_open_usda_db() -> sqlite3.Connection | None:
+    global _USDA_OPEN_FAILED
     if not USDA_RANK_DB_PATH.exists():
         logger.warning(f"USDA database not found at {USDA_RANK_DB_PATH}")
+        _USDA_OPEN_FAILED = True
         return None
     try:
-        return sqlite3.connect(str(USDA_RANK_DB_PATH))
+        conn = sqlite3.connect(str(USDA_RANK_DB_PATH))
     except Exception as e:
         logger.error(f"Error connecting to USDA database: {e}")
+        _USDA_OPEN_FAILED = True
         return None
+    _USDA_OPEN_FAILED = False
+    return conn
+
+
+def _forget_if_db_failed(cached_fn: Any) -> Any:
+    """`cached_fn` (an lru_cache) that drops its memo again when the USDA database could not be opened: the (empty) result is
+    returned once and recomputed on the next call, so a failed open heals itself instead of lasting until a restart."""
+
+    @functools.wraps(cached_fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        result = cached_fn(*args, **kwargs)
+        if _USDA_OPEN_FAILED:
+            cached_fn.cache_clear()
+        return result
+
+    wrapper.cache_clear = cached_fn.cache_clear  # type: ignore[attr-defined]
+    wrapper.cache_info = cached_fn.cache_info  # type: ignore[attr-defined]
+    return wrapper
 
 
 def _persisted_usda_food_allowed(food_description: str, profile: dict[str, Any] | None) -> bool | None:
@@ -5526,7 +5568,11 @@ def retrieve_rag_chunks(query: str, chunks: list[dict[str, str]], top_k: int = R
     return [item[1] for item in scored[:top_k]]
 
 
-def answer_rag_question(query: str, chunks: list[dict[str, str]]) -> tuple[str, list[str], dict[str, Any]]:
+def answer_rag_question(
+    query: str, chunks: list[dict[str, str]], use_llm: bool = True
+) -> tuple[str, list[str], dict[str, Any]]:
+    """Answer from the local reference excerpts. `use_llm=False` (the quota-exhausted / AI-off fallback) never calls the
+    model: the excerpts are shown as they are."""
     retrieved = retrieve_rag_chunks(query, chunks)
     if not retrieved:
         fallback_query = f"{query.strip()} evidence-based nutrition summary from NIH ODS, Examine, and peer-reviewed meta-analysis"
@@ -5568,7 +5614,7 @@ def answer_rag_question(query: str, chunks: list[dict[str, str]]) -> tuple[str, 
         "Do not say values are missing if numeric values are present in the excerpts."
     )
 
-    answer = call_text_llm(system_prompt, user_prompt)
+    answer = call_text_llm(system_prompt, user_prompt) if use_llm else ""
     if answer:
         return (
             answer,
@@ -8476,8 +8522,10 @@ def parse_components_rule_based(input_text: str) -> list[dict[str, Any]]:
         return []
 
     lines = [ln.strip() for ln in input_text.splitlines() if ln.strip()]
+    # The value never starts inside a run of digits and has at most 12 digits before and after the separator: without
+    # that, a pasted run of 20,000 digits cost every start position a scan to the end (quadratic: 30 s, GIL held).
     dose_pattern = re.compile(
-        r"(?P<val>(?:\d|[lI|])[0-9oO]*(?:[\.,][0-9oO]+)?)\s*(?P<unit>mg|mcg|meg|ug|µg|μg|fg|iu|ui|ie|g|kcal)\b",
+        r"(?<![0-9oO])(?P<val>(?:\d|[lI|])[0-9oO]{0,12}(?:[\.,][0-9oO]{1,12})?)\s*(?P<unit>mg|mcg|meg|ug|µg|μg|fg|iu|ui|ie|g|kcal)\b",
         re.I,
     )
     nutrient_line_pattern = re.compile(
@@ -10061,7 +10109,11 @@ def extract_image_text_with_blockbrain(image_bytes: bytes, model: str | None = N
 # (JPEG, decoded at reduced scale); PNG / WebP decode at full size, so 16 MP
 # (screenshots and exported label photos are far below it).
 VISION_MAX_INPUT_PIXELS = 60_000_000
-VISION_MAX_INPUT_PIXELS_NON_JPEG = 16_000_000
+# A 15.6 MP PNG of 152 KB peaked at 222 MB, a 15 MP WebP of 84 KB at 348 MB (measured): 8 MP bounds a single decode.
+VISION_MAX_INPUT_PIXELS_NON_JPEG = 8_000_000
+# At most two decodes at the same time, however many visitors upload: the box has 1 GB. Others wait a little, then give up.
+_DECODE_SLOTS = threading.BoundedSemaphore(2)
+_DECODE_WAIT_S = 15.0
 VISION_FAST_SIDE = 1400
 VISION_DETAIL_SIDE = BLOCKBRAIN_VISION_MAX_SIDE
 
@@ -10070,10 +10122,14 @@ def _load_upright_image(image_bytes: bytes, max_side: int) -> "Image.Image | Non
     """Decode an upload once, upright (EXIF) and no larger than max_side.
 
     JPEGs are decoded at reduced scale (draft mode), so a 50 MP photo never
-    materialises at full size. Returns None for unreadable or oversized input.
+    materialises at full size. Only JPEG, PNG and WebP are opened (no other format plugin ever sees an upload), and
+    at most two decodes run at once. Returns None for unreadable or oversized input.
     """
+    if not _DECODE_SLOTS.acquire(timeout=_DECODE_WAIT_S):
+        logger.warning("refusing an image: too many decodes already running")
+        return None
     try:
-        image = Image.open(io.BytesIO(image_bytes))
+        image = Image.open(io.BytesIO(image_bytes), formats=("JPEG", "PNG", "WEBP"))
         width, height = image.size
         is_jpeg = str(image.format or "").upper() == "JPEG"
         # Only JPEG decodes at reduced scale (draft): a PNG / WebP is decoded
@@ -10084,12 +10140,17 @@ def _load_upright_image(image_bytes: bytes, max_side: int) -> "Image.Image | Non
             logger.warning("refusing %dx%d image (over %d px)", width, height, limit)
             return None
         if is_jpeg:
-            image.draft("RGB", (max_side, max_side))
+            # Ask for the size we need, not for max_side x max_side: a 4032x3024 photo is only reduced when the request
+            # is 2016x1512 or smaller (the old square request left every 12 MP photo at full size: 184 MB, 2x slower).
+            scale = min(1.0, max_side / float(max(width, height)))
+            image.draft("RGB", (max(1, math.ceil(width * scale)), max(1, math.ceil(height * scale))))
         image = ImageOps.exif_transpose(image).convert("RGB")
         image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
         return image
     except Exception:
         return None
+    finally:
+        _DECODE_SLOTS.release()
 
 
 def _jpeg_bytes(image: "Image.Image", quality: int) -> bytes:
@@ -10348,6 +10409,9 @@ _PAGE_FETCH_MAX_REDIRECTS = 4
 _PAGE_FETCH_DEADLINE_S = 20.0
 
 
+_PUBLIC_FETCH_PORTS = {80, 443}
+
+
 def _is_public_http_url(url: str) -> bool:
     """True only for http(s) URLs whose host resolves exclusively to public IPs.
 
@@ -10362,6 +10426,8 @@ def _is_public_http_url(url: str) -> bool:
         return False
     try:
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        if port not in _PUBLIC_FETCH_PORTS:  # product pages live on the web ports; any other port is a port scan
+            return False
         infos = socket.getaddrinfo(parsed.hostname, port, proto=socket.IPPROTO_TCP)
     except Exception:
         return False
@@ -10372,7 +10438,7 @@ def _is_public_http_url(url: str) -> bool:
             ip = ipaddress.ip_address(info[4][0].split("%", 1)[0])
         except ValueError:
             return False
-        if not ip.is_global or ip.is_multicast:
+        if not _ip_is_public(ip):
             return False
     return True
 
@@ -10492,7 +10558,8 @@ def fetch_clean_page_text(url: str) -> str:
         content_type = str(resp_headers.get("content-type", "") or "").lower()
         if "html" not in content_type and "xml" not in content_type and "text" not in content_type:
             return ""
-        soup = BeautifulSoup(page_html, "html.parser")
+        # html.parser on 2 MB of junk costs seconds of CPU (GIL held for every visitor): parse the first 300 kB only.
+        soup = BeautifulSoup(page_html[:300_000], "html.parser")
         for tag in soup(["script", "style", "noscript"]):
             tag.extract()
         text = " ".join(soup.get_text(separator=" ").split())
@@ -15082,6 +15149,14 @@ The local RAG library is built from curated expert nutrition notes and evidence 
                     st.success("Feedback submitted. Thank you - this will directly support content quality improvements.")
                 else:
                     st.error("Could not save feedback locally. Please try again.")
+
+
+for _reader in (
+    "_usda_food_diet_facts", "_load_macro_table", "_usda_nutrient_rankings_counts", "_load_usda_nutrients_index",
+    "_vitamin_a_food_index", "_lexicon_food_rows", "_usda_energy_kcal_index", "_lexicon_food_amount_index",
+):
+    if hasattr(globals().get(_reader), "cache_clear"):
+        globals()[_reader] = _forget_if_db_failed(globals()[_reader])
 
 
 def is_streamlit_runtime() -> bool:

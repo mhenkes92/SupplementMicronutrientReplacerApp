@@ -41,7 +41,14 @@ _partial: dict[str, str] = _keep("_partial", dict)
 # Text that must never be served or stored as an answer (set by the app to
 # "is this a Blockbrain error?"). Also guards entries written by older code.
 _reject: Callable[[str], bool] | None = _keep("_reject", lambda: None)
-_executor = _keep("_executor", lambda: ThreadPoolExecutor(max_workers=4, thread_name_prefix="suppswipe-llm"))
+# As many workers as the app allows concurrent Blockbrain calls (BLOCKBRAIN_MAX_CONCURRENT, default 8): with fewer, the 5th
+# visitor's meal plan waits behind a whole other generation.
+_executor = _keep("_executor", lambda: ThreadPoolExecutor(max_workers=8, thread_name_prefix="suppswipe-llm"))
+
+# Process-wide ledger of LLM calls (all sessions). It lives HERE and not in an st.cache_resource: any visitor can send
+# Streamlit's `clear_cache` message over the websocket, which empties every st.cache_* store - and with it a quota kept there.
+_usage_lock = _keep("_usage_lock", threading.Lock)
+_usage_times: list[float] = _keep("_usage_times", list)
 
 
 def set_reject(fn: Callable[[str], bool] | None) -> None:
@@ -141,3 +148,21 @@ def drop(key: str) -> None:
     """Forget a cached answer (e.g. the user asked for different meal ideas)."""
     with _lock:
         _cache.pop(key, None)
+
+
+def consume_global(now: float, window_s: float, hourly_limit: int, daily_limit: int) -> bool:
+    """Record one LLM call in the process-wide ledger; False (and nothing recorded) when the hourly or the daily cap is used up."""
+    with _usage_lock:
+        day = [t for t in _usage_times if now - t < 86400.0]
+        in_window = sum(1 for t in day if now - t < window_s)
+        if in_window >= hourly_limit or len(day) >= daily_limit:
+            _usage_times[:] = day
+            return False
+        day.append(now)
+        _usage_times[:] = day
+        return True
+
+
+def reset_global_usage() -> None:
+    with _usage_lock:
+        _usage_times.clear()

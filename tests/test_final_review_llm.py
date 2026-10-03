@@ -23,9 +23,9 @@ def _fresh_cache():
 def session(sw, monkeypatch):
     state: dict = {}
     monkeypatch.setattr(sw.st, "session_state", state)
-    sw._global_llm_usage.clear()
+    sw.llm_cache.reset_global_usage()
     yield state
-    sw._global_llm_usage.clear()
+    sw.llm_cache.reset_global_usage()
 
 
 # --- F2: quotas -----------------------------------------------------------------------------
@@ -74,13 +74,13 @@ def test_url_path_passes_the_session_quota(sw, session, monkeypatch):
 
 def test_process_wide_backstop_survives_new_sessions(sw, monkeypatch):
     monkeypatch.setenv("SUPPSWIPE_MAX_LLM_CALLS_PER_HOUR_GLOBAL", "3")
-    sw._global_llm_usage.clear()
+    sw.llm_cache.reset_global_usage()
     results = []
     for _session in range(4):  # a reload = a fresh session state
         monkeypatch.setattr(sw.st, "session_state", {})
         results.append(sw._consume_llm_quota("generate"))
     assert results == [True, True, True, False]
-    sw._global_llm_usage.clear()
+    sw.llm_cache.reset_global_usage()
 
 
 # --- F3: no background meal plan with sensitive settings ------------------------------------
