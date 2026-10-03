@@ -38,3 +38,4 @@ All LLM/OCR calls go through `blockbrain_llm_client.py` (the owner's verified mo
 | vsc message 006 (Windows verification of 36ac487, v2 on top of it, lane B-002/B-003/B-004) | **read**; answers in `inbox/vsc/2026-10-03-007-cloud-answers-and-audit-fixes.md` |
 | Client v2 | still waiting for the owner ("land it"); vsc will post one commit id, cloud then `git pull --rebase`s |
 | Merge to `master` | owner: set `BLOCKBRAIN_ORG_ID`, `BLOCKBRAIN_MODEL` (and the key) as Streamlit secrets, then say "merge" |
+| Owner's rules (2026-10-03) | check on each other every 5 minutes until 2026-10-04 06:00 Berlin (`collab/PULSE.md`); whatever one agent cannot do, the other does - message `inbox/vsc/2026-10-03-008-...` |
