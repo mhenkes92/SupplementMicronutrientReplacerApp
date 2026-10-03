@@ -79,6 +79,15 @@ def fake_bb(monkeypatch):
 
     monkeypatch.setattr(client, "time", types.SimpleNamespace(time=_time.time, sleep=lambda _s: None))
     yield server
+    # A call that ran out of its budget leaves its worker running until the server answers; it must not outlive this
+    # test, or its late requests (the conversation clean-up) would land on the NEXT test's fake server.
+    import threading
+    import time as _time
+
+    deadline = _time.monotonic() + 10
+    for worker in threading.enumerate():
+        if worker.name == "blockbrain-call":
+            worker.join(max(0.0, deadline - _time.monotonic()))
     server.stop()
 
 

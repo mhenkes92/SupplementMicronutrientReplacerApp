@@ -129,6 +129,7 @@ def test_the_app_starts_when_the_running_process_holds_the_old_modules():
     assert not result.stdout.strip().endswith("ELEMENTS 0")
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="st_ctime is the creation time on Windows: no 'the ctime ticks on every write' there")
 def test_a_changed_file_is_reloaded_although_its_mtime_was_restored(sw, package):
     """`git archive | tar -x`, `cp -p` and `rsync -t` give the new file an old, even identical, mtime."""
     name, folder = package

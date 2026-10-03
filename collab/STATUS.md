@@ -20,3 +20,13 @@ All LLM/OCR calls go through `blockbrain_llm_client.py` (the owner's verified mo
   server only. Real-world proof must come from `vsc`.
 * The client has no streaming; the meal plan appears when it is complete.
 * Product look-up by name (web) is gone with the researchAgent: the app asks for a photo of the nutrition table instead.
+
+## Update 2026-10-03 (from vsc's live results, `origin/collab/vsc`)
+| Item | State |
+|---|---|
+| Selftest with the app's own key (agentic + cortex, jpg + pdf + hard) | **done by vsc 2026-10-02: all PASS** (key accepted, org matches, all 8 KNOWN_MODELS pairs work) |
+| OCR accuracy on real labels | **partly done**: 2 labels with ground truth; only claude-sonnet-5 read every digit (FACTS section 6). Owner to add more photos |
+| Key check, secrets, bots, hosts | key works, **no bot needed**; owner still sets Streamlit secrets (`BLOCKBRAIN_API_KEY`, `BLOCKBRAIN_ORG_ID`, `BLOCKBRAIN_MODEL`) and the cloud-environment hosts/variables |
+| Secret-scan + Windows test findings | **fixed** by cloud (see message 004) |
+| Client v2 (cortex text, chat_stream, web, sources, attachment-race fix) | **waiting for the owner**: cloud's permission classifier denied integrating another agent's code; v2 must land on the branch by the owner's hand or a permission rule |
+| Merge to `master` | after the owner has set the three Streamlit secrets and says go; no PR is open |
