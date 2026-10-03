@@ -90,5 +90,40 @@ kimi-k3) all read label A (17/19 keywords, 4/4 spot values): OCR 6.1-15.5 s, JSO
 
 ## 7. Not verified yet
 Handwriting, curved bottles, angled photos, German labels (only two clean English labels with ground truth); rate limits and
-concurrency of the platform; cost per call in Compute Blocks for the cortex route; `chat_stream` under real connection drops;
-quality of AI food amounts beyond the rough USDA comparison above.
+concurrency of the platform; `chat_stream` under real connection drops; quality of AI food amounts beyond the rough USDA
+comparison above. (Cost per call in Compute Blocks: measured, see section 8.)
+
+## 8. Latency and Compute Blocks (CB) per app function - B-004, measured 2026-10-03 with the app's own prompts
+Setup: cloud head `d1a05f2` (client v2), `_meal_plan_prompts` / `_benefits_prompts` / the Ask AI system prompt / `_VISION_PROMPT` as the
+app builds them (5 foods from the 22-nutrient label test), a random request id in every prompt (no platform cache), sequential calls,
+sandbox org. CB = change of the bot-scoped meter (`POST /user-activity/compute-block/statistic/bots`) over the block / n calls; EUR at the
+list rate 30 EUR per 1,000,000 CB. Text cells n=5, OCR cells n=3 per label. Tool: `collab/tools/bench_features.py`. 80 calls, 67,677 CB.
+| function | route / model | p50 s | p95 s | first text s | CB/call | EUR/call | quality check |
+|---|---|---|---|---|---|---|---|
+| OCR One A Day 50+ | agentic, sonnet-5 | 8.9 | 9.3 | - | 1,258 | 0.038 | exact (section 6) |
+| OCR One A Day 50+ | cortex, sonnet-5 | 9.7 | 10.9 | - | 832 | 0.025 | exact |
+| OCR US_PowerCocktail | agentic, sonnet-5 | 11.9 | 19.8 | - | 1,441 | 0.043 | not scored here (no ground truth) |
+| OCR US_PowerCocktail | cortex, sonnet-5 | 12.3 | 12.8 | - | 1,263 | 0.038 | not scored here |
+| meal plan | agentic default (today) | 11.3 | 13.4 | 6.2 | 802 | 0.024 | all 5 foods 5/5 runs; prescribed grams verbatim 0.92 |
+| meal plan | cortex sonnet-5 | 7.1 | 8.3 | 2.7 | 758 | 0.023 | all 5 foods; grams verbatim **1.00** |
+| meal plan | cortex haiku-4.5-fast | 4.8 | 5.8 | 2.0 | 288 | 0.009 | all 5 foods; grams verbatim 0.80 (rounds/drops) |
+| meal plan | cortex gpt-4.1-nano | 3.1 | 3.4 | 2.3 | 25 | 0.001 | all 5 foods; grams 0.96; sloppier wording, mixed languages |
+| whole-food benefits | agentic default (today) | 10.6 | 11.8 | 3.1 | 904 | 0.027 | all 5 foods |
+| whole-food benefits | cortex sonnet-5 | 9.2 | 12.3 | 3.3 | 1,136 | 0.034 | all 5 foods |
+| whole-food benefits | cortex haiku-4.5-fast | 7.0 | 7.2 | 2.0 | 491 | 0.015 | all 5 foods, longest text |
+| whole-food benefits | cortex gpt-4.1-nano | 3.9 | 4.3 | 2.8 | 30 | 0.001 | all 5 foods, shortest text, no error seen |
+| Ask AI | general model, agentic (today) | 11.1 | 13.2 | 4.0 | 706 | 0.021 | qualitative, no figures |
+| Ask AI | general model, cortex sonnet-5 | 8.2 | 8.7 | 4.1 | 682 | 0.021 | qualitative, no figures |
+| Ask AI | Examine KB bot `6ac121a32fd2234b21b93335`, cortex sonnet-5 | 9.7 | 12.6 | 5.6 | 3,383 | 0.102 | per-100-g figures from the KB, sources listed |
+| Ask AI | same bot, cortex haiku-4.5-fast | 7.1 | 9.0 | 4.1 | 1,454 | 0.044 | same figures, 150 words |
+Reading it: (1) cortex beats the agentic default on speed for the same money (meal plan 7.1 s vs 11.3 s, first text 2.7 s vs 6.2 s). (2) The
+model is the cost lever: haiku is 2-3x cheaper than sonnet-5, nano 25-40x cheaper (25-30 CB). (3) The KB bot costs 3-5x a plain call: the
+retrieved passages are billed as input; haiku halves it. topk 3 instead of 6 on the KB bot: 1,103 vs 1,441 CB/call (-23 %), 6.5 vs 7.5 s,
+numbers per answer 16 vs 19 (n=6 each) - small gain, bot left at topk 6. (4) OCR: agentic and cortex return the same text length and cost the same within noise; the agentic p95 on the dense label
+is the worst tail (19.8 s). Accuracy against ground truth is section 6 (this run only times and meters it). (5) At the app's own global cap (3,000 LLM calls/day) the
+bill is 3,000 x CB/call: 2.4M CB = 72 EUR/day at 800 CB, 304 EUR/day for the KB bot on sonnet-5, 2.7 EUR/day at nano.
+**Language:** the meal-plan prompt says "common German-supermarket ingredients" and never names an output language, so the answer comes
+back in GERMAN in an English UI: 17 of 20 runs German (agentic 4/5, sonnet 5/5, haiku 3/5, nano 5/5). The client's conversation
+`defaultLanguage: "German"` is NOT the cause (probe with "English": still German); one sentence "Write the meal plan in English." in the
+system prompt gives English. Ask AI on the KB bot answered English questions in English in 6/6 probe runs (3 with defaultLanguage German,
+3 with English) and in all 10 KB-bot benchmark runs.
