@@ -54,13 +54,16 @@ def test_pasted_label_text_is_analysed_with_or_without_the_blockbrain_settings(m
 
 def test_a_link_still_needs_the_settings_and_says_so(monkeypatch):
     at = _open_paste_dialog(monkeypatch, configured=False)
-    assert any("not configured" in e.value and "barcode still works" in e.value for e in at.error)
+    # Plain words for visitors (no variable names), and the paste way stays open.
+    assert any("switched off" in i.value and "barcode number" in i.value for i in at.info)
+    assert not any("BLOCKBRAIN" in e.value for e in at.error) and not any("BLOCKBRAIN" in i.value for i in at.info)
     at.text_area[0].set_value("https://shop.example/product")
     (button,) = [b for b in at.button if b.label == "Analyze"]
     button.click()
     at.run()
     assert not (at.session_state["swipe_cards"] or [])
     assert not at.session_state["swipe_pending_request"]
+    assert any("Product links need the AI helper" in w.value for w in at.warning)  # not a silent no-op
 
 
 # ---------------------------------------------------------------- 2. a number next to [unreadable] is not a different number
@@ -241,17 +244,19 @@ def test_stray_whitespace_in_the_settings_is_removed(fake_bb, monkeypatch):
     assert bb.call_blockbrain_text("s", "q") == "Hello from the fake."
 
 
-@pytest.mark.parametrize("error, expect", [
-    ("create conversation: HTTP 401 Unauthorized", "refused the app's login"),
-    ("stream: HTTP 403 forbidden", "refused the app's login"),
-    ("create conversation: HTTP 404 not found", "doesn't know the model or bot"),
-    ("missing configuration: BLOCKBRAIN_ORG_ID", "isn't set up yet"),
+@pytest.mark.parametrize("error", [
+    "create conversation: HTTP 401 Unauthorized",
+    "stream: HTTP 403 forbidden",
+    "create conversation: HTTP 404 not found",
+    "missing configuration: BLOCKBRAIN_ORG_ID",
 ])
-def test_a_settings_problem_is_not_called_busy_or_blurry(sw, error, expect):
+def test_a_settings_problem_is_not_called_busy_or_blurry(sw, error):
     bb._CALL_STATE.error = error
     try:
-        assert expect in sw._ai_unavailable_message("photo")
-        assert "owner" in sw._ai_retry_note("please try again")
+        message = sw._ai_unavailable_message("photo")
+        assert "AI helper is unavailable" in message and "Paste" in message
+        assert "BLOCKBRAIN" not in message and "owner" not in message and "blurry" not in message  # no jargon for visitors
+        assert sw._ai_retry_note("please try again") == "The AI helper is unavailable right now. Please try again later."
     finally:
         bb.reset_call_error()
     assert sw._ai_retry_note("please try again") == "please try again"

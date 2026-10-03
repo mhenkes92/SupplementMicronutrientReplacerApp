@@ -84,7 +84,7 @@ def test_a_failed_analysis_scrolls_to_its_error():
     at.session_state["swipe_is_analyzing"] = True
     at.session_state["swipe_analysis_kicked"] = True
     at.run()
-    assert any("No micronutrients could be parsed" in e.value for e in at.error)
+    assert any("couldn't find any vitamins or minerals" in e.value for e in at.error)
     # The scroll was rendered in that same run (the flag is consumed).
     assert "_suppswipe_scroll_top" not in at.session_state
 

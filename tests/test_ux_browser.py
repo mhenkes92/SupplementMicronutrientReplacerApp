@@ -123,6 +123,18 @@ def start_sample(page) -> None:
     settle(page)
 
 
+def start_own_label(page) -> None:
+    """A visitor's own pasted label (the sample label is a demo: it is not saved as a scan)."""
+    page.get_by_role("button", name="Analyze my supplement").click()
+    dialog = page.get_by_role("dialog")
+    dialog.locator("button", has_text="Paste").click()
+    settle(page)
+    dialog.locator("textarea").fill("Vitamin C 80 mg 100%\nVitamin D3 20 µg 400%\nZinc 10 mg 100%\nSelenium 55 µg 100%")
+    dialog.get_by_role("button", name="Analyze").click()
+    card(page).locator("#card .name").wait_for(timeout=60000)
+    settle(page)
+
+
 def mark_iframe(page) -> None:
     page.frame(url=lambda u: "tinder_swipe" in u).evaluate("window.__kept = true")
 
@@ -262,7 +274,9 @@ def test_results_tabs_show_their_content(page):
     page.get_by_text("Total per week").wait_for(timeout=5000)
     page.get_by_role("link", name="idealo.de").wait_for(timeout=5000)
     page.get_by_role("tab", name="💬 Ask AI").click()
-    page.locator('[data-testid="stButtonGroup"] button', has_text="Is my plan balanced?").wait_for(timeout=5000)
+    # This server has no Blockbrain settings: the tab explains that instead of offering a chat that can only fail.
+    page.get_by_text("AI answers are switched off right now").first.wait_for(timeout=5000)
+    assert page.get_by_test_id("stChatInput").count() == 0
     page.get_by_role("tab", name="📤 Share").click()
     page.get_by_text("SuppSwipe — my results").first.wait_for(timeout=5000)
     # The page scrolls again (no "page lock"): long tab content is reachable.
@@ -329,7 +343,7 @@ def test_resume_after_refresh_and_start_over_clears_it(page):
     card(page).locator("#card .name").wait_for(timeout=20000)
     assert card_name(page) == resume_at
     settle(page)
-    page.get_by_role("button", name="Analyze my Supplement").click()
+    page.get_by_role("button", name="Analyze my supplement").click()
     page.get_by_role("button", name="Start over").click()
     settle(page, 1.5)
     page.keyboard.press("Escape")
@@ -339,7 +353,7 @@ def test_resume_after_refresh_and_start_over_clears_it(page):
 
 
 def test_clear_history_on_the_results_forgets_the_saved_scan(page):
-    start_sample(page)
+    start_own_label(page)
     finish_all_cards(page)
     settle(page, 1.2)
     assert page.evaluate("localStorage.getItem('suppswipe_current_scan_v1')")
@@ -425,7 +439,7 @@ def test_start_over_always_opens_the_analyze_dialog(page):
         card(page).locator("#btnKeep").click()
         wait_name_change(page, name)
         settle(page)
-        page.get_by_role("button", name="Analyze my Supplement").click()
+        page.get_by_role("button", name="Analyze my supplement").click()
         page.get_by_role("button", name="Start over").click()
         page.wait_for_timeout(2000)
         settle(page)
@@ -460,7 +474,7 @@ def test_small_phone_sees_the_first_card_after_the_sample_button(browser, server
 def test_small_phone_sees_an_analysis_error(browser, server):
     ctx, pg = _small_page(browser, server)
     try:
-        button = pg.get_by_role("button", name="Analyze my Supplement")
+        button = pg.get_by_role("button", name="Analyze my supplement")
         button.scroll_into_view_if_needed()
         button.click()
         dialog = pg.get_by_role("dialog")
@@ -468,7 +482,7 @@ def test_small_phone_sees_an_analysis_error(browser, server):
         settle(pg)
         dialog.locator("textarea").fill("Hello, this text names no nutrient at all")
         dialog.get_by_role("button", name="Analyze").click()
-        alert = pg.locator('[data-testid="stAlert"]', has_text="No micronutrients")
+        alert = pg.locator('[data-testid="stAlert"]', has_text="vitamins or minerals")
         alert.first.wait_for(timeout=30000)
         settle(pg, 1.5)
         box = alert.first.bounding_box()
@@ -526,3 +540,26 @@ def test_meal_count_survives_editing_a_card(page):
     settle(page)
     page.get_by_role("tab", name="🍽️ Meals").click()
     assert page.get_by_role("radio", name="1 meal").is_checked()
+
+
+def test_keep_and_replace_stay_where_the_thumb_is(page):
+    """UX audit: the card frame fitted each card, so the buttons moved ~100 px between taps (and fell below the fold on
+    short phones). The frame now only grows during a scan, so the buttons never move UP from card to card."""
+    start_sample(page)
+    heights, button_tops = [], []
+    name = card_name(page)
+    for _ in range(5):
+        frame = page.locator(CARD).bounding_box()
+        keep = card(page).locator("#btnKeep").bounding_box()
+        assert frame is not None and keep is not None
+        heights.append(round(frame["height"]))
+        button_tops.append(round(keep["y"] - frame["y"]))
+        card(page).locator("#btnKeep").click()
+        try:
+            name = wait_name_change(page, name)
+        except AssertionError:
+            break
+        settle(page, 0.4)
+    assert len(heights) >= 3
+    assert heights == sorted(heights), heights  # never shrinks
+    assert button_tops == sorted(button_tops), button_tops  # so the buttons never jump up between cards

@@ -10,7 +10,7 @@
   #viewport { position: relative; }
   video, #preview {
     width: 100%;
-    height: 300px;
+    height: var(--cam-h, 300px);
     border-radius: 16px;
     background: #0f172a;
     display: block;
@@ -79,6 +79,13 @@
 </div>
 <script>
 (function () {
+  // A shorter picture on a short phone, so the Capture button stays on screen (the parent page's height, when readable).
+  try {
+    var parentHeight = window.parent.innerHeight || 0;
+    if (parentHeight) {
+      document.documentElement.style.setProperty("--cam-h", Math.max(170, Math.min(300, Math.round(parentHeight * 0.34))) + "px");
+    }
+  } catch (e) { /* cross-origin parent: keep 300px */ }
   var video = document.getElementById("video");
   var preview = document.getElementById("preview");
   var liveBtns = document.getElementById("liveBtns");

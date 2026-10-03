@@ -137,6 +137,7 @@
   var live = document.getElementById("live");
   var HEIGHT = 420;   // minimum frame height (from Python)
   var lastHeight = 0;
+  var maxHeight = 0;  // the tallest card of this scan so far: the frame only grows, so the buttons stay where the thumb is
   var committed = false;
   var canReplace = true;
   var canBack = false;
@@ -170,7 +171,8 @@
     var contentHeight = probe.scrollHeight;
     stage.removeChild(probe);
     var actionsHeight = document.getElementById("actions").offsetHeight + 6;
-    var h = Math.max(HEIGHT, Math.min(780, contentHeight + actionsHeight + 10));
+    var h = Math.max(HEIGHT, Math.min(780, contentHeight + actionsHeight + 10), maxHeight);
+    maxHeight = h;
     if (Math.abs(h - lastHeight) > 2) { lastHeight = h; setHeight(h); }
   }
   window.addEventListener("resize", function () { if (!committed) { fitHeight(); } });
@@ -194,6 +196,7 @@
     btnBack.setAttribute("aria-label", editing ? "Back to your results" : "Back to the previous card");
     btnBack.title = editing ? "Back to results" : "Back";
     HEIGHT = parseInt(args.height || 420, 10) || 420;
+    if (cardIndex === 0 && !editing) { maxHeight = 0; }  // a new scan (or back at the first card) starts from its own size
     card.style.setProperty("--accent", args.accent || "#64748b");
     card.style.setProperty("--ink", args.ink || "#0f172a");
     if (args.bg) { card.style.setProperty("--card-bg", args.bg); }

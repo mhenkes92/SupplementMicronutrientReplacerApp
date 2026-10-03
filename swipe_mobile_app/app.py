@@ -574,6 +574,23 @@ def _classify_image_kind(image_bytes: bytes, extracted_text: str) -> tuple[str, 
     return "supplement_product", "Detected product/front-pack style image."
 
 
+# What visitors read when the AI helper is switched off (the settings detail is for the owner: ?debug=1 -> Diagnostics).
+_AI_OFF_NOTE = (
+    "Reading photos and product links is switched off right now. "
+    "You can still paste the label text or a barcode number."
+)
+_AI_OFF_LINK = "Product links need the AI helper, which is switched off right now. Paste the label text instead."
+_AI_OFF_PHOTO = "Photo reading is switched off right now. Paste the label text or a barcode number instead."
+
+
+def _ai_is_on() -> bool:
+    """False while the app has no usable Blockbrain configuration (every AI surface is then hidden or explained)."""
+    try:
+        return not bb.blockbrain_config_error()
+    except Exception:
+        return False
+
+
 def _blockbrain_ready_error() -> str:
     missing = bb.blockbrain_config_error()
     if missing:
@@ -2994,6 +3011,8 @@ def _sync_scan_history_with_browser() -> None:
 def _record_scan_to_history(decisions: dict[str, dict[str, Any]], diet_label: str) -> None:
     if not decisions:
         return
+    if str((st.session_state.get("swipe_label_source") or {}).get("kind", "") or "") == "sample":
+        return  # the demo label is not one of the visitor's scans
     sig = str(st.session_state.get("swipe_last_auto_signature", "") or "")
     if sig and sig == str(st.session_state.get("swipe_history_recorded_sig", "") or ""):
         return
@@ -3468,7 +3487,8 @@ def _render_header() -> None:
             .block-container {
                 max-width: 440px;
                 padding-top: 0.8rem;
-                padding-bottom: 0.6rem;
+                /* Room for Streamlit Cloud's floating "Manage app" pill and the phone's home indicator. */
+                padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
             }
             /* Readability (WCAG AA 4.5:1) and comfortable touch targets. */
             [data-testid="stCaptionContainer"],
@@ -3481,8 +3501,28 @@ def _render_header() -> None:
             [data-testid="stPopover"] > div > button {
                 min-height: 44px;
             }
-            [data-testid="stButtonGroup"] button {
-                min-height: 40px;
+            [data-testid="stButtonGroup"] button,
+            [data-baseweb="tab"] {
+                min-height: 44px;
+            }
+            label[data-baseweb="checkbox"] {
+                min-height: 44px;
+                align-items: center;
+            }
+            @media (max-width: 380px) {
+                [data-baseweb="tab"] {
+                    padding-left: 0.5rem;
+                    padding-right: 0.5rem;
+                }
+                [data-baseweb="tab"] p {
+                    font-size: 0.85rem;
+                }
+            }
+            @media (prefers-reduced-motion: reduce) {
+                .analyze-loading-arrow,
+                .plan-dots i {
+                    animation: none !important;
+                }
             }
             @media (max-width: 360px) {
                 [data-testid="stButtonGroup"] button {
@@ -3995,31 +4035,27 @@ def _render_dietary_pills() -> None:
 
 
 def _ai_service_problem() -> str:
-    """A sentence for a failure that retrying cannot fix (the app's Blockbrain settings), else ""."""
+    """A sentence for a failure that retrying cannot fix (the app's connection to the AI service), else "".
+    Visitors get plain words; the details are in ?debug=1 -> Diagnostics for the owner."""
     error = bb.last_call_error()
-    if re.search(r"missing configuration|not a known model key", error, re.IGNORECASE):
-        return "The app's Blockbrain connection isn't set up yet (missing settings). "
-    if re.search(r"HTTP (?:401|403)\b|unauthori[sz]ed|forbidden", error, re.IGNORECASE):
-        return "The AI service refused the app's login (its key or organisation), so retrying won't help. "
-    if re.search(r"HTTP 404\b", error):
-        return "The AI service doesn't know the model or bot the app is set up with, so retrying won't help. "
+    if re.search(
+        r"missing configuration|not a known model key|HTTP (?:401|403|404)\b|unauthori[sz]ed|forbidden", error, re.IGNORECASE
+    ):
+        return "The AI helper is unavailable right now. "
     return ""
 
 
 def _ai_retry_note(default: str) -> str:
-    """`default` ("… — please try again."), or the settings problem when that is the reason."""
+    """`default` ("… — please try again."), or the plain note when retrying cannot help."""
     problem = _ai_service_problem()
-    return f"{problem}The app's owner needs to check its Blockbrain settings." if problem else default
+    return f"{problem}Please try again later." if problem else default
 
 
 def _ai_unavailable_message(what: str) -> str:
     """The analysis error when an AI step failed (not the user's input)."""
     problem = _ai_service_problem() if what in {"photo", "link"} else ""
     if problem:
-        return (
-            f"{problem}Paste the nutrition table as text instead (🔗 Paste — that works without AI) "
-            "and tell the app's owner."
-        )
+        return f"{problem}Paste the nutrition table as text instead (🔗 Paste — that works without AI)."
     if what == "quota":
         return (
             f"{_QUOTA_MESSAGE} Until then, paste the nutrition table as text (🔗 Paste — that "
@@ -4077,7 +4113,8 @@ def _run_pending_analysis() -> None:
         st.rerun()
 
     with st.container(border=True):
-        st.markdown("<div class='chip'>Analyzing…</div>", unsafe_allow_html=True)
+        chip = st.empty()
+        chip.markdown("<div class='chip'>Analyzing…</div>", unsafe_allow_html=True)
         loading_block = st.empty()
         progress_bar = st.progress(int(st.session_state.get("swipe_progress_pct", 0) or 0))
         progress_text = st.empty()
@@ -4105,23 +4142,30 @@ def _run_pending_analysis() -> None:
             st.session_state["swipe_progress_pct"] = 0
             # Allow retrying the exact same input (it was deduplicated by signature).
             st.session_state["swipe_last_auto_signature"] = ""
+            chip.empty()  # no "Analyzing…" pill above the error
             loading_block.empty()
             progress_bar.empty()
             progress_text.empty()
+            # What the user pasted comes back when the dialog is reopened (nobody retypes a label).
+            st.session_state["swipe_paste_draft"] = str(req.get("manual", "") or "")[:_MAX_LABEL_CHARS]
             st.error(message)
             _request_scroll_top()  # the error is at the top; the Analyze button far below
 
-        _set_progress(6, "Preparing AI analysis…")
+        _set_progress(6, "Preparing your analysis…")
         text_parts: list[str] = []
         # Where the doses came from; "ai_research" is surfaced on every card so the
         # user knows the values were looked up, not read from their own photo.
         label_source: dict[str, str] = {"kind": "input", "url": ""}
+        if str(req.get("manual", "") or "").strip() == _SAMPLE_LABEL_TEXT.strip():
+            label_source = {"kind": "sample", "url": ""}  # not the visitor's product: marked, and not saved as a scan
         # Set when an AI step (photo reading, product research, page reading)
         # failed: an empty result is then the AI's fault, not the user's input.
         ai_failed = ""
         # Why a product link gave nothing when the AI isn't to blame (shown as a
         # warning next to other input, or as the one message when it is all there is).
         url_error = ""
+        # Why a typed barcode gave nothing: the ONE message when it is all there is, else a toast next to other input.
+        barcode_note = ""
         # True once label text came from a photo (not from a barcode database, pasted text or a link).
         photo_read = False
 
@@ -4173,9 +4217,9 @@ def _run_pending_analysis() -> None:
             if manual:
                 digits = re.sub(r"\D", "", manual)
                 if re.fullmatch(r"[\d\s\-]{8,18}", manual) and 8 <= len(digits) <= 14 and not bb.gtin_is_valid(digits):
-                    st.warning(
-                        "That number isn't a valid EAN/UPC barcode (its check digit doesn't match). "
-                        "Please re-type it, or snap a photo of the label instead."
+                    barcode_note = (
+                        "That number isn't a valid barcode (its check digit doesn't match). "
+                        "Please re-type it, or paste the label text instead."
                     )
                 elif re.fullmatch(r"[\d\s\-]{8,18}", manual) and 8 <= len(digits) <= 14:
                     _set_progress(56, "Researching barcode…")
@@ -4183,8 +4227,8 @@ def _run_pending_analysis() -> None:
                     if researched:
                         text_parts.append(researched)
                     else:
-                        st.warning(
-                            "I couldn't find that barcode in the product databases. "
+                        barcode_note = (
+                            "We couldn't find that barcode in the product databases. "
                             "Snap a photo of the Supplement Facts / nutrition table instead, "
                             "or paste the table as text."
                         )
@@ -4216,10 +4260,15 @@ def _run_pending_analysis() -> None:
 
             combined = "\n\n".join([x for x in text_parts if str(x).strip()]).strip()
             if not combined:
-                _abort(_ai_unavailable_message(ai_failed or ("page" if url_error else "")) if (ai_failed or url_error) else (
-                    "No analyzable input found. Add a photo, barcode, URL, or supplement-facts text."
-                ))
+                _abort(
+                    _ai_unavailable_message(ai_failed or ("page" if url_error else ""))
+                    if (ai_failed or url_error)
+                    else barcode_note
+                    or "Nothing to analyze yet. Add a photo, a barcode, a product link or the supplement facts text."
+                )
                 return
+            if barcode_note:
+                st.toast(f"{barcode_note.split('. ')[0].rstrip('.')} — using the rest of your input.", icon="⚠️")
             if url_error:
                 # A toast: it survives the st.rerun() that opens the first card (a warning wouldn't).
                 st.toast(f"The link couldn't be read ({url_error}) — using the rest of your input.", icon="⚠️")
@@ -4231,7 +4280,8 @@ def _run_pending_analysis() -> None:
             components = bb.parse_components(combined)
             if not components:
                 _abort(_ai_unavailable_message(ai_failed) if ai_failed else (
-                    "No micronutrients could be parsed from the provided input."
+                    "We couldn't find any vitamins or minerals in that. Paste the 'Supplement Facts' lines, "
+                    "for example 'Vitamin D3 20 µg', or take a clearer photo of the table."
                 ))
                 return
 
@@ -4344,20 +4394,18 @@ def _analyze_dialog() -> None:
     nonce = int(st.session_state.get("swipe_reset_nonce", 0))
     precheck_error = _blockbrain_ready_error()
     if precheck_error:
-        st.error(f"{precheck_error} Photos and links need the AI; pasting the label text or a barcode still works.")
+        st.info(_AI_OFF_NOTE)
+    default_method = "🔗 Paste" if precheck_error else "📷 Camera"  # no point starting on a photo the AI cannot read
     method = st.segmented_control(
         "How would you like to add your supplement?",
         options=["📷 Camera", "🖼️ Upload", "🔗 Paste"],
-        default="📷 Camera",
+        default=default_method,
         required=True,
         key=f"dlg_method_{nonce}",
         label_visibility="collapsed",
         width="stretch",
-    ) or "📷 Camera"
-    st.caption(
-        "Snap or upload the nutrition table or the barcode — it's read right away. "
-        "Or paste a product link, a barcode number or the label text."
-    )
+    ) or default_method
+    st.caption("A photo of the nutrition table or barcode — or paste a link, a barcode number or the label text.")
 
     upload_bytes = b""
     camera_bytes = b""
@@ -4389,6 +4437,9 @@ def _analyze_dialog() -> None:
     else:
         # A form, so typing (or tapping Cancel, which blurs the box) never starts
         # an analysis with half-typed text; only the Analyze button does.
+        draft = str(st.session_state.pop("swipe_paste_draft", "") or "")  # what the user typed before a failed analysis
+        if draft and f"dlg_manual_{nonce}" not in st.session_state:
+            st.session_state[f"dlg_manual_{nonce}"] = draft
         with st.form(key=f"dlg_text_form_{nonce}", border=False):
             manual = st.text_area(
                 "Paste a product URL, a barcode number, or the supplement facts text",
@@ -4404,7 +4455,10 @@ def _analyze_dialog() -> None:
 
     # Photos and links are read by the AI; pasted label text and barcodes are not (they must work on a fresh deploy,
     # before the Blockbrain settings exist).
-    needs_ai = bool(upload_bytes or camera_bytes) or bool(re.match(r"https?://", manual_text, re.I))
+    is_link = bool(re.match(r"https?://", manual_text, re.I))
+    needs_ai = bool(upload_bytes or (camera_bytes and not camera_barcode)) or is_link  # a decoded barcode needs no AI
+    if precheck_error and needs_ai:
+        st.warning(_AI_OFF_LINK if is_link else _AI_OFF_PHOTO)
     if (not precheck_error or not needs_ai) and _stage_analysis_from_inputs(
         upload_bytes, camera_bytes, manual_text, camera_barcode
     ):
@@ -4454,7 +4508,7 @@ def _render_results_settings() -> None:
 
 def _render_analyze_bar(results: bool = False, button: bool = True) -> None:
     if button:
-        _render_analyze_button(results=results)
+        _render_analyze_button(results=results, primary=results)
     _render_scan_history_popover()
     _render_privacy_popover()
 
@@ -4463,7 +4517,7 @@ def _render_analyze_button(results: bool = False, primary: bool = False) -> None
     if results:
         label = "📸 Scan another supplement"
     else:
-        label = "📸 Analyze my Supplement"
+        label = "📸 Analyze my supplement"
     kind = "primary" if primary else "secondary"
     if st.button(label, type=kind, width="stretch", key="swipe_analyze_btn"):
         if results:
@@ -4511,6 +4565,9 @@ def _render_label_source_notice() -> None:
     """Warn when the doses were researched online by AI instead of read from the
     user's own photo (front-of-pack photos without a readable facts panel)."""
     source = st.session_state.get("swipe_label_source") or {}
+    if str(source.get("kind", "") or "") == "sample":
+        st.caption("🧪 Sample label — not your product. Scan your own supplement any time.")
+        return
     if str(source.get("kind", "") or "") != "ai_research":
         return
     url = str(source.get("url", "") or "")
@@ -4521,16 +4578,16 @@ def _render_label_source_notice() -> None:
     )
 
 
-# A typical German multivitamin label, for "Try it with a sample label".
-_SAMPLE_LABEL_TEXT = """Nährwertangaben pro Tagesdosis (1 Tablette) %NRV*
+# A typical EU multivitamin label (in the app's own language), for "Try it with a sample label".
+_SAMPLE_LABEL_TEXT = """Nutrition information per daily dose (1 tablet) %NRV*
 Vitamin C 80 mg 100%
-Vitamin D3 20 µg (800 I.E.) 400%
-Vitamin B12 2,5 µg 100%
-Folsäure 200 µg 100%
+Vitamin D3 20 µg (800 IU) 400%
+Vitamin B12 2.5 µg 100%
+Folic acid 200 µg 100%
 Magnesium 56 mg 15%
-Zink 10 mg 100%
-Selen 55 µg 100%
-*NRV = Nährstoffbezugswerte"""
+Zinc 10 mg 100%
+Selenium 55 µg 100%
+*NRV = Nutrient Reference Value"""
 
 
 # "🚩 Report a problem with this card": one structured warning line in the
@@ -5160,8 +5217,8 @@ def _render_card() -> None:
                 # Changes after every handled swipe, so the card always gets
                 # fresh props (and resets) even when it stays on the same card.
                 ack=str(st.session_state.get("swipe_last_swipe_id", "") or ""),
-                # Minimum frame height; the card grows to fit its content.
-                height=320,
+                # Minimum frame height; the frame grows to the tallest card of the scan and never shrinks.
+                height=440,
                 key=swipe_key,
                 default=None,
             )
@@ -5273,6 +5330,12 @@ def _format_need_share(pct: int) -> str:
         return f"{pct}%"
     times = pct / 100.0
     return f"{times:.1f}×".replace(".0×", "×") if times < 10 else f"{round(times)}×"
+
+
+def _format_need_phrase(pct: int) -> str:
+    """The share in words that read right for both forms: "45% of the daily need" / "11× the daily need"."""
+    share = _format_need_share(pct)
+    return f"{share} the daily need" if share.endswith("×") else f"{share} of the daily need"
 
 
 def _format_plan_grams(grams: float | None) -> str:
@@ -5407,8 +5470,8 @@ def _render_plan_tab(
             else:
                 amount = f"{_format_plan_grams(grams)}/day" if grams else ""
             sub = "for " + ", ".join(dict.fromkeys(n for n in row["nutrients"] if n))
-            bonus = ", ".join(f"{nutrient} {_format_need_share(pct)}" for nutrient, pct in row["bonus"])
-            bonus_html = f"<div class='plan-bonus'>+ also {html.escape(bonus)} of your daily needs</div>" if bonus else ""
+            bonus = ", ".join(f"{nutrient} ({_format_need_phrase(pct)})" for nutrient, pct in row["bonus"])
+            bonus_html = f"<div class='plan-bonus'>+ also {html.escape(bonus)}</div>" if bonus else ""
             parts.append(
                 "<div class='plan-row'>"
                 f"<div class='plan-ico' aria-hidden='true'>{html.escape(icon)}</div>"
@@ -5452,6 +5515,7 @@ def _render_plan_tab(
         st.info("Swipe through your cards to build your plan.")
 
     # Editing: one compact menu instead of a button per row.
+    st.markdown("<div style='height:0.6rem'></div>", unsafe_allow_html=True)
     with st.popover("✎ Change a choice", width="stretch"):
         st.caption("Reopen a card — after you decide, you come straight back here.")
         for d in sorted(list(replace_items) + list(keep_items), key=lambda x: int(x.get("card_index", 0))):
@@ -5477,6 +5541,8 @@ def _render_plan_tab(
             benefits_box = st.empty()
             if ready:
                 benefits_box.markdown(ready)
+            elif not _ai_is_on():
+                st.caption("The AI comparison is switched off right now.")
             elif st.button("Show the comparison", type="primary", width="stretch", key="swipe_gen_benefits"):
                 with st.spinner("Gathering whole-food benefits…"):
                     benefits = _generate_whole_food_benefits(replace_items, placeholder=benefits_box)
@@ -5537,6 +5603,8 @@ def _render_meals_tab(replace_items: list[dict[str, Any]], diet_label: str, excl
     elif llm_cache.inflight(plan_key) is not None:
         with plan_box.container():
             _live_meal_plan(plan_key)
+    elif not _ai_is_on():
+        st.caption("The AI meal plan is switched off right now — the ideas above still work.")
     elif st.button("Generate my meals", type="primary", width="stretch", key="swipe_gen_meal"):
         with st.spinner("Cooking up your meals…"):
             plan = _generate_meal_plan(replace_items, diet_label, int(num_meals), placeholder=plan_box)
@@ -5598,7 +5666,7 @@ def _render_shopping_tab(
             )
         st.markdown("<div class='shop-list'>" + "".join(parts) + "</div>", unsafe_allow_html=True)
         st.caption(
-            "Approximate 2025 German discounter prices (ALDI/Lidl/REWE)"
+            "Approximate German discounter prices (ALDI/Lidl/REWE)"
             + (f"; no price for {', '.join(unpriced)}" if unpriced else "")
             + "."
         )
@@ -5648,6 +5716,10 @@ def _render_ask_ai_chat(
         with st.chat_message(role):
             st.write(str(msg.get("content", "") or ""))
 
+    if not _ai_is_on():
+        st.caption("AI answers are switched off right now.")
+        return
+
     pending_key = f"swipe_rag_pending_{component_key}_{index}"
     if suggestions:
         pills_key = f"swipe_rag_suggest_{component_key}_{index}"
@@ -5674,18 +5746,21 @@ def _render_ask_ai_chat(
     if asked:
         with st.chat_message("user"):
             st.write(asked)
-        with st.chat_message("assistant"):
-            stream_box = st.empty()
-            with st.spinner("Asking AI research assistant..."):
-                component_name = str(card.get("display", "") or "") or _nutrient_title(card.get("component"))
-                answer, sources_line = _answer_ask_ai_question(
-                    component_name,
-                    asked,
-                    history=_ask_ai_history(component_key),
-                    placeholder=stream_box,
-                    dose_label=str(card.get("dose_label", "") or ""),
-                )
+        bubble = st.empty()  # the assistant's bubble is cleared again when there is no answer (no empty avatar)
+        with bubble.container():
+            with st.chat_message("assistant"):
+                stream_box = st.empty()
+                with st.spinner("Asking AI research assistant..."):
+                    component_name = str(card.get("display", "") or "") or _nutrient_title(card.get("component"))
+                    answer, sources_line = _answer_ask_ai_question(
+                        component_name,
+                        asked,
+                        history=_ask_ai_history(component_key),
+                        placeholder=stream_box,
+                        dose_label=str(card.get("dose_label", "") or ""),
+                    )
         if answer is None:
+            bubble.empty()
             st.error(_ai_retry_note("Ask AI is unavailable right now — please try again in a moment."))
         else:
             chat_store[component_key] = history + [
@@ -5709,6 +5784,8 @@ def _card_ask_ai_suggestions(card: dict[str, Any]) -> list[str]:
 
 
 def _render_rag_chat_popup(card: dict[str, Any], component_key: str, index: int) -> None:
+    if not _ai_is_on():
+        return  # nothing to ask: no button that only ends in an error
     with st.popover("💬 Ask AI", width="stretch"):
         st.caption("Science-based answers about this nutrient and your dose.")
         _render_ask_ai_chat(card, component_key, index, suggestions=_card_ask_ai_suggestions(card))
@@ -5740,6 +5817,7 @@ def _render_share_tab(
 
 
 def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[str, Any]]) -> None:
+    _render_label_source_notice()  # "sample label" / "looked up online" stays visible on the results too
     profile = _selected_dietary_profile()
     diet_name = _active_diet_label(profile)
     all_replace_items = [d for d in decisions.values() if d.get("decision") == "replace"]

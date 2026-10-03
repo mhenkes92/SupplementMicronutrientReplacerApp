@@ -174,7 +174,15 @@ def test_cleared_scan_is_not_saved_again_until_it_changes(sw, sample_cards):
 def test_clear_history_on_the_results_does_not_resave_the_scan():
     at = AppTest.from_file(APP, default_timeout=60)
     at.run()
-    at.button(key="swipe_try_sample").click().run()
+    # The sample label is a demo, not one of the visitor's scans: this scan is the visitor's own pasted label.
+    at.session_state["swipe_pending_request"] = {
+        "upload_bytes": b"", "camera_bytes": b"", "camera_barcode": "",
+        "manual": "Vitamin C 80 mg 100%\nZinc 10 mg 100%\nSelenium 55 µg 100%",
+    }
+    at.session_state["swipe_is_analyzing"] = True
+    at.session_state["swipe_analysis_kicked"] = True
+    at.session_state["swipe_last_auto_signature"] = "own-label"  # what _stage_analysis_from_inputs records for a real input
+    at.run()
     cards = at.session_state["swipe_cards"]
     key = "tinder_" + str(at.session_state["swipe_reset_nonce"])
     for i, card in enumerate(cards):

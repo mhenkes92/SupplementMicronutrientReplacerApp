@@ -26,7 +26,7 @@ def _run(at: AppTest) -> AppTest:
 def test_first_load_renders_welcome():
     at = _run(AppTest.from_file(APP, default_timeout=60))
     text = " ".join(m.value for m in at.markdown)
-    assert "Analyze my Supplement" in " ".join(b.label for b in at.button)
+    assert "Analyze my supplement" in " ".join(b.label for b in at.button)
     assert "swipe" in text.lower()
 
 
