@@ -49,6 +49,8 @@ _executor = _keep("_executor", lambda: ThreadPoolExecutor(max_workers=8, thread_
 # Streamlit's `clear_cache` message over the websocket, which empties every st.cache_* store - and with it a quota kept there.
 _usage_lock = _keep("_usage_lock", threading.Lock)
 _usage_times: list[float] = _keep("_usage_times", list)
+# Same idea for other metered lookups (barcode database), one list of call times per name.
+_counters: dict[str, list[float]] = _keep("_counters", dict)
 
 
 def set_reject(fn: Callable[[str], bool] | None) -> None:
@@ -163,6 +165,20 @@ def consume_global(now: float, window_s: float, hourly_limit: int, daily_limit: 
         return True
 
 
+def consume_counter(name: str, now: float, window_s: float, limit: int) -> bool:
+    """Record one use of the metered resource `name` (all sessions); False (and nothing recorded) when `limit` uses
+    already happened within `window_s` seconds. Out of reach of Streamlit's `clear_cache`, like the LLM ledger."""
+    with _usage_lock:
+        recent = [t for t in _counters.get(name, []) if now - t < window_s]
+        if len(recent) >= limit:
+            _counters[name] = recent
+            return False
+        recent.append(now)
+        _counters[name] = recent
+        return True
+
+
 def reset_global_usage() -> None:
     with _usage_lock:
         _usage_times.clear()
+        _counters.clear()

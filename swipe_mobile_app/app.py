@@ -684,6 +684,34 @@ def _consume_llm_quota(kind: str) -> bool:
     return True
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, "") or default))
+    except ValueError:
+        return default
+
+
+def _consume_barcode_quota() -> bool:
+    """One product-database look-up (OpenFoodFacts and friends): per session and per hour (SUPPSWIPE_MAX_BARCODE_LOOKUPS_PER_HOUR,
+    default 30), and for the whole app (..._GLOBAL, default 900), so a script cannot use the app as a free relay to those services."""
+    import time as _time
+
+    now = _time.time()
+    store = st.session_state.setdefault("_suppswipe_llm_usage", {})
+    recent = [t for t in store.get("barcode", []) if now - t < _LLM_QUOTA_WINDOW_S]
+    if len(recent) >= _env_int("SUPPSWIPE_MAX_BARCODE_LOOKUPS_PER_HOUR", 30):
+        store["barcode"] = recent
+        return False
+    if not llm_cache.consume_counter(
+        "barcode", now, _LLM_QUOTA_WINDOW_S, _env_int("SUPPSWIPE_MAX_BARCODE_LOOKUPS_PER_HOUR_GLOBAL", 900)
+    ):
+        store["barcode"] = recent
+        return False
+    recent.append(now)
+    store["barcode"] = recent
+    return True
+
+
 _QUOTA_MESSAGE = (
     "You've reached this session's limit for AI answers. Please try again in a "
     "little while — saved answers still work."
@@ -3009,6 +3037,10 @@ def _sync_scan_history_with_browser() -> None:
         # carry the scan the visitor just dropped: don't offer it again.
         if st.session_state.get("_suppswipe_scan_forgotten"):
             saved_scan = None
+        elif saved_scan is not None and _resumable_scan(saved_scan) is None:
+            # Older than a week, an older build's format or damaged: never offered, so don't keep the label text on the device.
+            saved_scan = None
+            st.session_state["_suppswipe_scan_clear"] = True
         st.session_state["_suppswipe_saved_scan"] = saved_scan if isinstance(saved_scan, dict) else None
         current = _load_scan_history()
         merged: list[dict[str, Any]] = []
@@ -3985,6 +4017,10 @@ def _research_barcode_label(barcode: str) -> str:
     barcode = re.sub(r"\D", "", str(barcode or ""))
     if not bb.gtin_is_valid(barcode):
         return ""
+    st.session_state["swipe_barcode_throttled"] = False
+    if not _consume_barcode_quota():
+        st.session_state["swipe_barcode_throttled"] = True
+        return ""
     try:
         text, _name, _provider, _reason = bb.extract_supplement_text_from_barcode(barcode)
         if text and text.strip():
@@ -4258,6 +4294,11 @@ def _run_pending_analysis() -> None:
                     researched = _research_barcode_label(manual)
                     if researched:
                         text_parts.append(researched)
+                    elif st.session_state.get("swipe_barcode_throttled"):
+                        barcode_note = (
+                            "That's a lot of barcode look-ups for now — please try again in a little while, "
+                            "or snap a photo of the nutrition table / paste the table as text."
+                        )
                     else:
                         barcode_note = (
                             "We couldn't find that barcode in the product databases. "

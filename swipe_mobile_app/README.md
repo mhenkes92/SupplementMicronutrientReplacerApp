@@ -50,6 +50,7 @@ secret with the same name is copied into the environment.
 | `BLOCKBRAIN_TOTAL_BUDGET_S`, `BLOCKBRAIN_VISION_BUDGET_S`, `BLOCKBRAIN_READ_TIMEOUT_S` | Optional wall-clock caps for a text call / a photo read and the longest silence on the line (defaults 150 / 120 / 240 s) |
 | `SUPPSWIPE_PREFETCH_MEALS` | `0` turns off the background meal plan |
 | `SUPPSWIPE_MAX_SCANS_PER_HOUR`, `SUPPSWIPE_MAX_GENERATIONS_PER_HOUR` | Per-visitor AI limits (15 / 40) |
+| `SUPPSWIPE_MAX_BARCODE_LOOKUPS_PER_HOUR`, `..._GLOBAL` | Product-database (barcode) look-ups per visitor / for the whole app (30 / 900 per hour) |
 
 The model is a property of the bot, not of a request: to change the model, change `BLOCKBRAIN_MODEL` / `BLOCKBRAIN_BOT_ID`.
 **Text features need an agent-bound bot:** meal plans, comparisons, Ask AI and link reading use the client's `chat()`

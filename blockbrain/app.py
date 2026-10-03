@@ -9298,6 +9298,9 @@ def _vision_jpeg_payload(data: bytes) -> bytes:
     return _jpeg_bytes(upright, 88) if upright is not None else b""
 
 
+_AUTH_HTTP_RE = re.compile(r"\bHTTP (?:401|403)\b")
+
+
 def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
     """Read a label photo with Blockbrain's vision model (blockbrain_llm_client.Blockbrain.ocr); returns the transcribed
     label text, or "" on any failure (then last_call_error() says why).
@@ -9337,6 +9340,8 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
         except Exception as exc:
             LAST_VISION_ATTEMPT_LOG.append(f"{via}:error | {_redact(exc)[:180]}")
             _note_failure("vision", exc, started, via)
+            if _AUTH_HTTP_RE.search(str(exc)):
+                break  # both routes use the same key and organisation: a second try only costs time
             continue
         out = str(getattr(reply, "text", "") or "").strip()
         snippet = out.replace("\n", " ")[:180]
