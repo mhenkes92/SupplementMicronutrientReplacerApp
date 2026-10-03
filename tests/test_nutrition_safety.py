@@ -25,18 +25,18 @@ def _offline(monkeypatch):
 @pytest.mark.parametrize(
     "name, dose, unit, form, expected",
     [
-        ("vitamin b6", 50, "mg", "", "50 mg is above the safe upper limit for vitamin B6 (12 mg/day, EFSA)"),
-        ("vitamin d3", 5000, "iu", "", "5000 IU (125 mcg) is above the safe upper limit for vitamin D (100 mcg/day"),
+        ("vitamin b6", 50, "mg", "", "50 mg is above the upper intake level for vitamin B6 (12 mg/day, EFSA)"),
+        ("vitamin d3", 5000, "iu", "", "5000 IU (125 mcg) is above the upper intake level for vitamin D (100 mcg/day"),
         ("vitamin d", 150, "mcg", "", "for vitamin D (100 mcg/day, EFSA & NIH)"),
-        ("vitamin a", 12000, "iu", "retinyl palmitate", "12000 IU (3600 mcg) is above the safe upper limit for vitamin A (3000 mcg/day"),
+        ("vitamin a", 12000, "iu", "retinyl palmitate", "12000 IU (3600 mcg) is above the upper intake level for vitamin A (3000 mcg/day"),
         ("vitamin a", 3500, "mcg", "", "for vitamin A (3000 mcg/day"),
-        ("vitamin e", 1000, "iu", "d alpha tocopherol", "1000 IU (~670 mg alpha-TE) is above the safe upper limit for vitamin E (300 mg/day, EFSA)"),
+        ("vitamin e", 1000, "iu", "d alpha tocopherol", "1000 IU (~670 mg alpha-TE) is above the upper intake level for vitamin E (300 mg/day, EFSA)"),
         ("vitamin e", 1000, "iu", "dl alpha tocopheryl acetate", "1000 IU (~670 mg alpha-TE)"),
         ("vitamin c", 2500, "mg", "", "for vitamin C (2000 mg/day, NIH)"),
         ("niacin", 50, "mg", "nicotinic acid", "for niacin as nicotinic acid (10 mg/day, EFSA — the form that causes flushing)"),
         ("niacin", 500, "mg", "niacinamide", "for niacin (35 mg/day, NIH, from supplements)"),
-        ("folic acid", 1200, "mcg", "folic acid", "1200 mcg is above the safe upper limit for folic acid (1000 mcg/day"),
-        ("folate", 2040, "mcg", "DFE; 1200 mcg folic acid", "1200 mcg folic acid is above the safe upper limit for folic acid"),
+        ("folic acid", 1200, "mcg", "folic acid", "1200 mcg is above the upper intake level for folic acid (1000 mcg/day"),
+        ("folate", 2040, "mcg", "DFE; 1200 mcg folic acid", "1200 mcg folic acid is above the upper intake level for folic acid"),
         ("calcium", 3000, "mg", "", "for calcium (2500 mg/day"),
         ("iron", 45, "mg", "", "for iron (40 mg/day, EFSA)"),
         ("zinc", 30, "mg", "", "for zinc (25 mg/day, EFSA)"),
@@ -57,7 +57,7 @@ def test_doses_above_the_upper_limit_are_flagged(sw, name, dose, unit, form, exp
     warning = sw._upper_limit_warning(name, dose, unit, form)
     assert warning.startswith("⚠️ ")
     assert expected in warning
-    assert warning.endswith("check with a doctor before taking this long-term.")
+    assert warning.endswith("ask your doctor or pharmacist whether this dose suits you.")
 
 
 @pytest.mark.parametrize(
@@ -94,9 +94,9 @@ def test_over_ul_warning_replaces_the_low_dose_flag(sw):
     assert "Low dose" in sw._card_extra_info("zinc", 3, "mg")
     assert "Low dose" not in sw._card_warning_text("zinc", 3, "mg")
     over = sw._card_warning_text("zinc", 50, "mg")
-    assert "safe upper limit" in over and "Low dose" not in over + sw._card_extra_info("zinc", 50, "mg")
+    assert "upper intake level" in over and "Low dose" not in over + sw._card_extra_info("zinc", 50, "mg")
     over_d = sw._card_warning_text("vitamin d3", 10000, "iu")
-    assert "safe upper limit" in over_d and "Low dose" not in over_d + sw._card_extra_info("vitamin d3", 10000, "iu")
+    assert "upper intake level" in over_d and "Low dose" not in over_d + sw._card_extra_info("vitamin d3", 10000, "iu")
 
 
 def test_results_screen_lists_kept_pills_above_the_limit(sw):
@@ -258,7 +258,7 @@ def test_app_renders_cards_and_results_with_ul_warnings():
     assert not at.exception, [e.value for e in at.exception]
     # Listed in the results' heads-up box.
     shown = [c.value for c in at.caption] + [m.value for m in at.markdown]
-    assert any("safe upper limit for vitamin B6" in text for text in shown)
+    assert any("upper intake level for vitamin B6" in text for text in shown)
 
 
 # --- Liver: vitamin A in the suggested portion ------------------------------------
@@ -269,7 +269,7 @@ def test_liver_portion_above_vitamin_a_limit_is_flagged(sw):
     # US label folate 680 µg DFE -> ~92 g duck liver = ~11,000 µg RAE (UL 3000 µg).
     warning = sw._selected_food_warning(duck, 680, "mcg", "folate", "DFE; 400 mcg folic acid")
     assert warning.startswith("⚠️ ~92 g of this liver also gives ~11042 mcg vitamin A")
-    assert "3000 mcg/day safe upper limit" in warning
+    assert "3000 mcg/day upper intake level" in warning
     assert sw._selected_food_warning(lamb, 6, "mcg", "vitamin b12") == ""  # ~10 g liver = ~1500 µg RAE
     assert "vitamin A" in sw._selected_food_warning(lamb, 25, "mcg", "vitamin b12")
     nuts = {"food_description": "Nuts, almonds", "amount_per_100g": 25.63, "unit": "mg"}

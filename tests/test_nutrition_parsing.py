@@ -89,7 +89,7 @@ def test_magnesium_citrate(sw):
     card = _one_card(sw, "Magnesium (as magnesium citrate) 400 mg")
     assert (card["nutrient_key"], card["dose_value"], card["dose_unit"]) == ("magnesium", 400, "mg")
     assert card["form"] == "magnesium citrate"
-    assert "safe upper limit for magnesium (250 mg/day, EFSA" in sw._upper_limit_warning(
+    assert "upper intake level for magnesium (250 mg/day, EFSA" in sw._upper_limit_warning(
         card["component_key"], card["dose_value"], card["dose_unit"], card["form"]
     )
 
@@ -98,8 +98,8 @@ def test_vitamin_b6_50_mg(sw):
     card = _one_card(sw, "Vitamin B6 50 mg")
     assert (card["nutrient_key"], card["dose_value"], card["dose_unit"]) == ("vitamin b6", 50, "mg")
     assert sw._upper_limit_warning(card["component_key"], 50, "mg") == (
-        "⚠️ 50 mg is above the safe upper limit for vitamin B6 (12 mg/day, EFSA) — "
-        "check with a doctor before taking this long-term."
+        "⚠️ 50 mg is above the upper intake level for vitamin B6 (12 mg/day, EFSA) — "
+        "ask your doctor or pharmacist whether this dose suits you."
     )
 
 

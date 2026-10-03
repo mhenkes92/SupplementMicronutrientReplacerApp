@@ -76,7 +76,7 @@ def test_athlete_remark_is_info_only_below_the_nrv(sw):
 
 def test_upper_limit_stays_red_and_wins(sw):
     warn = sw._card_warning_text("zinc", 50, "mg")
-    assert warn.startswith("⚠️") and "safe upper limit" in warn and "Low dose" not in warn
+    assert warn.startswith("⚠️") and "upper intake level" in warn and "Low dose" not in warn
     assert sw._athlete_info_note("zinc", 50, "mg") == ""
 
 

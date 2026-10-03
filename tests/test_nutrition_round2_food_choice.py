@@ -182,7 +182,7 @@ def test_brazil_nuts_on_another_card_warn_about_selenium(sw, text):
     card = _card(sw, text)
     brazil = next(f for f in card["foods"] if f["food_description"] == "Nuts, brazilnuts, raw")
     warning = sw._selected_food_warning(brazil, card["dose_value"], card["dose_unit"], card["component"], card["form"])
-    assert "selenium — above the 255 mcg/day safe upper limit" in warning
+    assert "selenium — above the 255 mcg/day upper intake level" in warning
 
 
 def test_selenium_card_itself_has_no_co_nutrient_selenium_warning(sw):
@@ -299,9 +299,9 @@ def test_dose_range_card_label_portion_and_upper_limit(sw):
     card = _card(sw, "Magnesium 200–400 mg")
     assert card["dose_label"] == "200–400 mg" and card["dose_value"] == 200.0 and card["dose_max"] == 400.0
     warn = sw._card_warning_text(card["component_key"], card["dose_value"], card["dose_unit"], card["form"], None, dose_max=card["dose_max"])
-    assert "400 mg is above the safe upper limit for magnesium" in warn
+    assert "400 mg is above the upper intake level for magnesium" in warn
     kept = [{"component": "magnesium", "dose_value": 200.0, "dose_max": 400.0, "dose_unit": "mg", "form": ""}]
-    assert "400 mg is above the safe upper limit" in sw._final_upper_limit_warnings(kept)[0]
+    assert "400 mg is above the upper intake level" in sw._final_upper_limit_warnings(kept)[0]
     card = _card(sw, "Vitamin C 100-200 mg")
     acerola = card["foods"][0]
     assert sw._portion_for_target(acerola, card["dose_value"], card["dose_unit"], card["component"]) == sw._portion_for_target(acerola, 100, "mg", "vitamin c")

@@ -60,36 +60,38 @@
   .tcard:focus-visible { box-shadow: 0 0 0 3px #2563eb inset; }
   .tcard:active { cursor: grabbing; }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .count { font-size: .74rem; font-weight: 800; color: #475569; letter-spacing: .02em; }
+  .count { font-size: .8rem; font-weight: 800; color: #475569; letter-spacing: .02em; }
   .prev { font-size: .72rem; font-weight: 700; color: #334155; background: rgba(15,23,42,0.06); border-radius: 999px; padding: 2px 8px; }
   .bar { height: 4px; border-radius: 999px; background: rgba(15,23,42,0.08); margin-top: 6px; overflow: hidden; }
   .bar > span { display: block; height: 100%; border-radius: 999px; background: var(--accent, #64748b); }
-  .head { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+  .head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; }
   .badge {
     flex: 0 0 48px; height: 48px; border-radius: 14px;
     display: flex; align-items: center; justify-content: center;
     font-size: 1.5rem; background: #ffffff; box-shadow: 0 2px 8px rgba(15,23,42,0.08);
   }
-  .name { font-size: 1.6rem; font-weight: 900; line-height: 1.05; color: var(--ink, #0f172a); letter-spacing: -0.02em; }
+  .name { overflow-wrap: anywhere; font-size: 1.6rem; font-weight: 900; line-height: 1.05; color: var(--ink, #0f172a); letter-spacing: -0.02em; }
   .dose { margin-top: 4px; color: #334155; font-size: .9rem; font-weight: 600; }
   .dose b { color: #0f172a; }
   .foodwrap {
     margin-top: 12px; padding: 12px; border-radius: 16px;
     background: rgba(255,255,255,0.82); border: 1px solid rgba(15,23,42,0.06);
   }
-  .foodlbl { font-size: .7rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: #047857; }
+  .foodlbl { font-size: .78rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: #047857; }
   .foodrow { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
   .ficon { flex: 0 0 auto; font-size: 1.7rem; line-height: 1; }
   .food { font-size: 1.05rem; font-weight: 800; color: #0f172a; line-height: 1.2; }
   .portion { margin-top: 10px; padding: 8px 10px; border-radius: 12px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #14532d; font-size: .84rem; line-height: 1.5; }
   .portion .pl { display: block; }
   .portion b { color: #0f172a; }
-  .warn { margin-top: 10px; padding: 7px 10px; border-radius: 12px; background: #fff7ed; border: 1px solid #fed7aa; color: #7c2d12; font-size: .78rem; font-weight: 600; line-height: 1.4; }
-  .bio { margin-top: 8px; padding: 7px 10px; border-radius: 12px; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a5f; font-size: .76rem; line-height: 1.4; }
-  .hint { text-align: center; margin-top: 10px; font-size: .74rem; color: #475569; }
-  #actions { display: flex; gap: 8px; padding: 8px 2px 2px 2px; flex: 0 0 auto; }
+  .warn { margin-top: 10px; padding: 7px 10px; border-radius: 12px; background: #fff7ed; border: 1px solid #fed7aa; color: #7c2d12; font-size: .82rem; font-weight: 600; line-height: 1.4; }
+  .bio { margin-top: 8px; padding: 7px 10px; border-radius: 12px; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a5f; font-size: .82rem; line-height: 1.4; }
+  .hint { text-align: center; margin-top: 10px; font-size: .8rem; color: #475569; }
+  #actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 4px 8px 4px; flex: 0 0 auto; }
   #actions button {
     flex: 1 1 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
     min-height: 46px;
     border-radius: 12px;
     font: inherit;
@@ -99,12 +101,12 @@
     border: 2px solid;
     background: #fff;
   }
-  #actions button:focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
+  #actions button:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
   #actions #btnBack { flex: 0 0 52px; border-color: #e2e8f0; color: #334155; }
   #actions #btnKeep { border-color: #fca5a5; color: #b91c1c; }
   #actions #btnRepl { border-color: #047857; color: #ffffff; background: #047857; }
   #actions button:not(:disabled):active { transform: scale(0.97); }
-  #actions button:disabled { opacity: .45; cursor: not-allowed; }
+  #actions button:disabled, #actions button[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
   @media (prefers-reduced-motion: reduce) {
     .tcard, .rail { transition: none !important; }
@@ -120,8 +122,8 @@
   </div>
   <div id="actions">
     <button type="button" id="btnBack" aria-label="Back to the previous card" title="Back">&#8617;</button>
-    <button type="button" id="btnKeep" aria-label="Keep the pill">&#9664; Keep pill</button>
-    <button type="button" id="btnRepl" aria-label="Replace with the whole food">Replace &#9654;</button>
+    <button type="button" id="btnKeep" aria-label="Keep pill">&#9664; Keep pill</button>
+    <button type="button" id="btnRepl" aria-label="Replace">Replace &#9654;</button>
   </div>
   <div id="live" class="sr-only" aria-live="polite"></div>
 </div>
@@ -135,6 +137,8 @@
   var btnKeep = document.getElementById("btnKeep");
   var btnRepl = document.getElementById("btnRepl");
   var live = document.getElementById("live");
+  var lastFocusId = "";      // the action button the user used last: focus goes back to it when the next card is drawn
+  var announce = "";         // "Kept the pill." - said together with the next card
   var HEIGHT = 420;   // minimum frame height (from Python)
   var lastHeight = 0;
   var maxHeight = 0;  // the tallest card of this scan so far: the frame only grows, so the buttons stay where the thumb is
@@ -215,13 +219,13 @@
       portionRows += '<span class="pl">💊 Match this dose &rarr; ' + portion(args.matchDose) + '</span>';
     }
     if (args.rdaAmount) {
-      portionRows += '<span class="pl">🏃 Athlete daily target' +
+      portionRows += '<span class="pl">🏃 Target for very active people' +
         (args.rdaLabel ? ' (' + esc(args.rdaLabel) + ')' : '') +
         ' &rarr; ' + portion(args.rdaAmount) + '</span>';
     }
     var portionHtml = portionRows ? '<div class="portion">' + portionRows + '</div>' : '';
     var warnHtml = args.warn ? '<div class="warn" role="note">' + esc(args.warn) + '</div>' : '';
-    var bioHtml = args.bioNote ? '<div class="bio">💡 ' + esc(args.bioNote) + '</div>' : '';
+    var bioHtml = args.bioNote ? '<div class="bio" role="note">💡 ' + esc(args.bioNote) + '</div>' : '';
     var prevHtml = args.previous ? '<span class="prev">Your choice: ' + esc(args.previous) + '</span>' : '';
     var pct = Math.max(4, Math.min(100, Math.round(100 * idx / Math.max(total, 1))));
     var foodIcon = args.foodIcon ? '<span class="ficon" aria-hidden="true">' + esc(args.foodIcon) + '</span>' : '';
@@ -243,11 +247,22 @@
       "Card " + idx + " of " + total + ": " + (args.name || "Micronutrient") + ", dose " + (args.dose || "not available") +
       (args.food ? ". Whole-food replacement: " + args.food : "") +
       (args.matchDose ? ". To match the dose: " + args.matchDose : "") +
-      (args.warn ? ". Warning: " + args.warn : ""));
+      (args.warn ? ". Warning: " + args.warn : "") +
+      (args.bioNote ? ". Notes: " + args.bioNote : ""));
 
     btnRepl.disabled = !canReplace;
     btnBack.disabled = !canBack;
     btnKeep.disabled = false;
+    btnKeep.removeAttribute("aria-disabled"); btnRepl.removeAttribute("aria-disabled"); btnBack.removeAttribute("aria-disabled");
+    // Say what was done and which card is next (cleared first, so identical texts are announced again).
+    var said = announce + "Card " + idx + " of " + total + ": " + (args.name || "Micronutrient") + ", " + (args.dose || "dose not available") + ".";
+    announce = "";
+    live.textContent = "";
+    setTimeout(function () { live.textContent = said; }, 60);
+    if (lastFocusId) {
+      var again = document.getElementById(lastFocusId);
+      if (again && !again.disabled) { again.focus({ preventScroll: true }); }
+    }
     card.style.transition = "none";
     card.style.transform = "";
     railKeep.style.opacity = 0;
@@ -267,8 +282,11 @@
     if (dir === "right" && !canReplace) return;
     if (dir === "back" && !canBack) return;
     committed = true;
-    btnKeep.disabled = btnRepl.disabled = btnBack.disabled = true;
-    live.textContent = dir === "right" ? "Replaced with the whole food" : (dir === "left" ? "Kept the pill" : "Going back");
+    var active = document.activeElement;
+    lastFocusId = (active && active.parentNode && active.parentNode.id === "actions") ? active.id : "";
+    // aria-disabled (not disabled): a disabled button drops keyboard focus, and the page loses its place after every swipe.
+    btnKeep.setAttribute("aria-disabled", "true"); btnRepl.setAttribute("aria-disabled", "true"); btnBack.setAttribute("aria-disabled", "true");
+    announce = dir === "right" ? "Replaced with the whole food. " : (dir === "left" ? "Kept the pill. " : "Going back. ");
     seq += 1;
     var value = { dir: dir, id: Date.now() + "-" + seq, card: cardId, index: cardIndex };
     if (dir === "back" || reduceMotion) {
@@ -354,6 +372,7 @@
   btnKeep.addEventListener("click", function () { commit("left"); });
   btnRepl.addEventListener("click", function () { commit("right"); });
   btnBack.addEventListener("click", function () { commit("back"); });
+  // aria-disabled buttons are still clickable: the opacity says "not now", commit() ignores a second tap.
   document.addEventListener("keydown", function (e) {
     if (e.key === "ArrowLeft") { commit("left"); e.preventDefault(); }
     else if (e.key === "ArrowRight") { commit("right"); e.preventDefault(); }

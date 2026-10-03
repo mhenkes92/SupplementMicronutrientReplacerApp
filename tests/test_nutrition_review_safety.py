@@ -36,7 +36,7 @@ def test_selenium_200_mcg_suggests_2_nuts_not_3(sw):
     assert portion == "~10 g (~2 Brazil nuts)"
     note = sw._bioavailability_note(card["component_key"], card["form"], card["dose_value"], card["dose_unit"])
     assert "~2 nuts that match this dose" in note
-    assert "3 or more nuts a day can pass the 255 µg/day safe upper limit" in note
+    assert "3 or more nuts a day can pass the 255 µg/day upper intake level" in note
     assert "one nut a day is plenty" not in note
     assert sw._upper_limit_warning(card["component_key"], card["dose_value"], card["dose_unit"]) == ""
 
@@ -92,7 +92,7 @@ def test_plain_omega_3_still_is_a_card(sw, text):
 def test_nicotinic_acid_line_keeps_the_flushing_form_limit(sw, text):
     [card] = _cards(sw, text)
     assert card["nutrient_key"] == "niacin"
-    assert "upper limit for niacin as nicotinic acid (10 mg/day" in sw._upper_limit_warning(
+    assert "upper intake level for niacin as nicotinic acid (10 mg/day" in sw._upper_limit_warning(
         card["component_key"], card["dose_value"], card["dose_unit"], card["form"]
     )
 
@@ -130,7 +130,7 @@ def test_partial_beta_carotene_share_is_weighted_in_the_iu_conversion(sw):
 def test_partial_beta_carotene_share_ul_counts_only_the_preformed_part(sw):
     assert sw._upper_limit_warning("vitamin a", 12000, "iu", "50% beta carotene") == ""  # 1800 µg preformed
     assert sw._upper_limit_warning("vitamin a", 30000, "iu", "50% beta carotene").startswith(
-        "⚠️ 30000 IU (4500 mcg preformed vitamin A) is above the safe upper limit for vitamin A (3000 mcg/day"
+        "⚠️ 30000 IU (4500 mcg preformed vitamin A) is above the upper intake level for vitamin A (3000 mcg/day"
     )
     assert sw._upper_limit_warning("vitamin a", 4000, "mcg", "25% beta carotin") == ""  # 3000 µg = UL
     assert sw._upper_limit_warning("vitamin a", 4000, "mcg", "beta carotene") == ""  # no UL for beta-carotene

@@ -51,20 +51,26 @@ def _profiles(sw):
     return by_id
 
 
-@pytest.mark.parametrize("component", ["folic acid", "Folsäure", "folate", "iodine", "Jod", "vitamin d3", "iron"])
-def test_pregnancy_note_on_the_usual_supplements(sw, component):
-    assert sw._PREGNANCY_NOTE in sw._card_extra_info(component, None, "", "", None, pregnant=True)
-    assert sw._PREGNANCY_NOTE not in sw._card_extra_info(component, None, "", "", None, pregnant=False)
+@pytest.mark.parametrize("component, note", [
+    ("folic acid", "_PREGNANCY_NOTE"), ("Folsäure", "_PREGNANCY_NOTE"), ("folate", "_PREGNANCY_NOTE"),
+    ("iodine", "_PREGNANCY_NOTE"), ("Jod", "_PREGNANCY_NOTE"),
+    ("vitamin d3", "_PREGNANCY_NOTE_IF_LOW"), ("iron", "_PREGNANCY_NOTE_IF_LOW"),  # often only on a shortfall
+])
+def test_pregnancy_note_on_the_usual_supplements(sw, component, note):
+    text = getattr(sw, note)
+    assert text in sw._card_extra_info(component, None, "", "", None, pregnant=True)
+    assert text not in sw._card_extra_info(component, None, "", "", None, pregnant=False)
 
 
 def test_pregnancy_note_for_b12_only_on_plant_based_diets(sw):
     profiles = _profiles(sw)
-    assert sw._pregnancy_note("vitamin b12", profiles["vegan"]) == sw._PREGNANCY_NOTE
-    assert sw._pregnancy_note("vitamin b12", profiles["vegetarian"]) == sw._PREGNANCY_NOTE
+    assert sw._pregnancy_note("vitamin b12", profiles["vegan"]) == sw._PREGNANCY_NOTE_PLANT_B12
+    assert sw._pregnancy_note("vitamin b12", profiles["vegetarian"]) == sw._PREGNANCY_NOTE_PLANT_B12
     assert sw._pregnancy_note("vitamin b12", profiles["none"]) == ""
     assert sw._pregnancy_note("vitamin c", profiles["vegan"]) == ""
     assert sw._pregnancy_note("magnesium") == ""
-    assert "midwife" in sw._PREGNANCY_NOTE
+    for note in (sw._PREGNANCY_NOTE, sw._PREGNANCY_NOTE_IF_LOW, sw._PREGNANCY_NOTE_PLANT_B12):
+        assert "midwife" in note and "before changing" in note  # every pregnancy line points to the professional
 
 
 def test_medication_notes_always_show_on_their_cards(sw):

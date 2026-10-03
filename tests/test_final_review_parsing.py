@@ -68,7 +68,7 @@ def test_dose_first_title_cards_warn_only_for_the_real_dose(sw):
     mg = sw._build_swipe_cards(sw._filter_to_micronutrients(bb.parse_components(
         "Magnesium + Zink: 300 mg Magnesium, 10 mg Zink")), [])
     magnesium = next(c for c in mg if c["nutrient_key"] == "magnesium")
-    assert "safe upper limit" in sw._upper_limit_warning(magnesium["component_key"], magnesium["dose_value"], magnesium["dose_unit"])
+    assert "upper intake level" in sw._upper_limit_warning(magnesium["component_key"], magnesium["dose_value"], magnesium["dose_unit"])
 
 
 def _scan(sw, text: str) -> list[dict]:
@@ -150,7 +150,7 @@ def test_intake_interval(sw, text, days):
 def test_a_daily_product_is_unchanged(sw):
     [card] = _scan(sw, "Vitamin D3 500 µg 10000%\nTäglich 1 Tablette")
     assert card["dose_value"] == 500 and card["dose_label"] == "500 mcg"
-    assert "safe upper limit" in sw._upper_limit_warning(card["component_key"], card["dose_value"], card["dose_unit"])
+    assert "upper intake level" in sw._upper_limit_warning(card["component_key"], card["dose_value"], card["dose_unit"])
 
 
 def test_resume_rebuilds_the_weekly_card(sw):

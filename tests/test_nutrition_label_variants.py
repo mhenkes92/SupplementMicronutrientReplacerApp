@@ -206,7 +206,7 @@ def test_bilingual_label_lines_do_not_double_the_dose(sw):
     # The German line (first) is kept; the UL check sees 300 mg, not 600 mg.
     magnesium = cards[1]
     warn = sw._card_warning_text(magnesium["component_key"], magnesium["dose_value"], magnesium["dose_unit"], magnesium["form"])
-    assert "300 mg is above the safe upper limit for magnesium" in warn
+    assert "300 mg is above the upper intake level for magnesium" in warn
 
 
 def test_packaging_words_are_not_a_form():

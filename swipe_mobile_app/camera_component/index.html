@@ -38,12 +38,13 @@
     font-weight: 800;
     cursor: pointer;
   }
+  button:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
   .primary { background: #047857; color: #fff; }
   .ghost { background: #e2e8f0; color: #0f172a; }
   #err { color: #b91c1c; font-size: 0.9rem; line-height: 1.4; margin-top: 8px; }
   #err:empty { display: none; }
   #err.blocked { background: #fef2f2; border: 1px solid #fecaca; border-radius: 12px; padding: 10px 12px; margin-top: 0; }
-  .hint { color: #64748b; font-size: 0.8rem; margin-top: 6px; text-align: center; }
+  .hint { color: #475569; font-size: 0.8rem; margin-top: 6px; text-align: center; }
   #processing { display: none; text-align: center; padding: 18px 0 8px 0; }
   .cam-spinner {
     width: 42px; height: 42px; margin: 0 auto 10px auto;
@@ -53,15 +54,16 @@
   }
   .cam-proc-text { color: #0f766e; font-size: 0.95rem; font-weight: 800; }
   @keyframes cam-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .cam-spinner { animation: none; } }
 </style>
 </head>
 <body>
 <div id="wrap">
   <div id="viewport">
-    <video id="video" playsinline autoplay muted></video>
+    <video id="video" playsinline autoplay muted aria-label="Live camera view. Fit the nutrition table or barcode in the frame, then press Capture."></video>
     <div id="guide" aria-hidden="true"></div>
     <div id="guideText" aria-hidden="true">Fit the nutrition table or barcode in the frame</div>
-    <img id="preview" alt="Captured photo" />
+    <img id="preview" alt="The photo you just took. Use it or retake it." />
   </div>
   <div class="btnrow" id="liveBtns">
     <button class="primary" id="snap">📸 Capture</button>
@@ -70,7 +72,7 @@
     <button class="ghost" id="retake">↺ Retake</button>
     <button class="primary" id="use">✅ Use photo</button>
   </div>
-  <div id="processing">
+  <div id="processing" role="status" aria-live="polite">
     <div class="cam-spinner"></div>
     <div class="cam-proc-text">Sending photo for analysis…</div>
   </div>
@@ -164,6 +166,7 @@
     liveBtns.style.display = "flex";
     previewBtns.style.display = "none";
     fit();
+    focusSoon("snap");
   }
   function showPreview() {
     video.style.display = "none";
@@ -172,6 +175,11 @@
     liveBtns.style.display = "none";
     previewBtns.style.display = "flex";
     fit();
+    focusSoon("use");
+  }
+  // The button that was pressed is hidden by the switch: keep keyboard focus on the one that replaces it.
+  function focusSoon(id) {
+    try { setTimeout(function () { var el = document.getElementById(id); if (el) { el.focus({ preventScroll: true }); } }, 0); } catch (e) { /* focus is a convenience */ }
   }
 
   document.getElementById("snap").addEventListener("click", function () {

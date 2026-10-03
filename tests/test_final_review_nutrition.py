@@ -295,7 +295,7 @@ def _decision(component: str, food: dict, dose: float, unit: str) -> dict:
 
 def test_matching_an_over_limit_zinc_pill_from_food_warns_and_points_to_the_target(sw):
     warning = sw._selected_food_warning(_OYSTER, 50, "mg", "zinc")
-    assert "Matching this dose from food is also above the 25 mg/day safe upper limit for zinc" in warning
+    assert "Matching this dose from food is also above the 25 mg/day upper intake level for zinc" in warning
     assert "aim for the daily target (~38 g) instead" in warning
     decision = _decision("zinc", _OYSTER, 50, "mg")
     # Still on the results after Replace (the pill is no longer "kept").
@@ -314,7 +314,7 @@ def test_a_dose_within_the_limit_has_no_own_limit_warning(sw):
 def test_iodine_over_the_limit_from_food(sw):
     haddock = _row("Fish, haddock, raw", "Finfish and Shellfish Products", 300.0, "mcg")
     warning = sw._selected_food_warning(haddock, 1000, "mcg", "iodine")
-    assert "also above the 600 mcg/day safe upper limit for iodine" in warning
+    assert "also above the 600 mcg/day upper intake level for iodine" in warning
     # A portion over 1 kg a day is not eaten, so there is nothing to warn about.
     cod = _row("Fish, cod, Atlantic, raw", "Finfish and Shellfish Products", 99.0, "mcg")
     assert "Matching this dose" not in sw._selected_food_warning(cod, 1000, "mcg", "iodine")
@@ -396,7 +396,7 @@ def test_neutral_notes_are_in_the_info_line_not_the_warning_box(sw):
     d_info = sw._card_extra_info("vitamin d3", 2, "mcg", "", None, pregnant=False, today=winter)
     assert "ℹ️" not in d_warn and "October–March" in d_info and "Low dose" in d_info
     # Real warnings stay in the red box; no low-dose note next to them.
-    assert "safe upper limit" in sw._card_warning_text("magnesium", 400, "mg")
+    assert "upper intake level" in sw._card_warning_text("magnesium", 400, "mg")
     assert "Low dose" not in sw._card_extra_info("magnesium", 400, "mg", "", None, pregnant=False)
 
 

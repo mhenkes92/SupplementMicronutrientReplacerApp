@@ -789,6 +789,10 @@ _ASK_AI_MAX_CHARS = 500  # one question = one quota unit, so its size is capped 
 # Under every Ask AI answer: where it came from. (The Examine knowledge-base bot is gone: every
 # model answer now comes from blockbrain_llm_client.py.)
 _SOURCE_AGENT = "\n\n_🤖 General AI answer (not medical advice)_"
+_RESULTS_DISCLAIMER = (
+    "General nutrition information, not medical advice. Talk to a doctor or pharmacist before stopping "
+    "a supplement you were prescribed, or if you are pregnant, ill or on medication."
+)
 
 
 _SOURCE_LABEL_RE = re.compile(r"\n\n_(?:📚|🤖)[^\n]*_\s*$")
@@ -1424,10 +1428,10 @@ def _upper_limit_dose(key: str, component: str, value: Any, unit: str, form: str
 
 
 def _upper_limit_warning(component_key: str, dose_value: Any, dose_unit: str, form: str = "") -> str:
-    """Warning text when the PILL dose is above the adult safe upper limit, else "".
+    """Warning text when the PILL dose is above the adult upper intake level, else "".
 
-    e.g. "⚠️ 50 mg is above the safe upper limit for vitamin B6 (12 mg/day,
-    EFSA) — check with a doctor before taking this long-term."
+    e.g. "⚠️ 50 mg is above the upper intake level for vitamin B6 (12 mg/day,
+    EFSA) — ask your doctor or pharmacist whether this dose suits you."
     """
     component = str(component_key or "")
     key = bb.canonical_nutrient_key(component)
@@ -1447,14 +1451,14 @@ def _upper_limit_warning(component_key: str, dose_value: Any, dose_unit: str, fo
     if amount <= float(entry["limit"]) * (1 + 1e-9):
         return ""
     return (
-        f"⚠️ {dose_txt} is above the safe upper limit for {entry['name']} "
+        f"⚠️ {dose_txt} is above the upper intake level for {entry['name']} "
         f"({bb.format_float(float(entry['limit']))} {entry['unit']}/day, {entry['source']}) — "
-        "check with a doctor before taking this long-term."
+        "ask your doctor or pharmacist whether this dose suits you."
     )
 
 
 # --- The food on the card: co-nutrient limits and the default choice ----------
-# A food that matches one nutrient can push ANOTHER past its safe upper limit:
+# A food that matches one nutrient can push ANOTHER past its upper intake level:
 # liver's preformed vitamin A (fish livers only have USDA IU rows), Brazil-nut
 # selenium, oyster zinc, liver copper, cod iodine. The check covers both
 # portions the card shows — for the pill dose and for the athlete target.
@@ -1541,7 +1545,7 @@ def _liver_vitamin_a_warning(food: dict[str, Any] | None, grams: float | None, c
     if grams is not None and grams > 0 and preformed * grams / 100.0 > limit:
         return (
             f"⚠️ ~{_format_grams(grams)} of this liver also gives ~{bb.format_float(preformed * grams / 100.0, 0)} mcg "
-            f"vitamin A — above the {bb.format_float(limit)} mcg/day safe upper limit. Pick another food or keep "
+            f"vitamin A — above the {bb.format_float(limit)} mcg/day upper intake level. Pick another food or keep "
             "liver to about once a week, and avoid liver during pregnancy."
         )
     if bb.canonical_nutrient_key(component) == "folate":
@@ -1554,7 +1558,7 @@ def _liver_vitamin_a_warning(food: dict[str, Any] | None, grams: float | None, c
 
 def _co_nutrient_excesses(food: dict[str, Any] | None, grams: float | None, component: str) -> list[tuple[str, float, dict[str, Any]]]:
     """(nutrient key, amount in the UL unit, UL entry) for every OTHER nutrient
-    the portion would push past its safe upper limit (liver vitamin A is
+    the portion would push past its upper intake level (liver vitamin A is
     covered by _liver_vitamin_a_warning)."""
     name, category = _food_name_and_category(food)
     if not name or grams is None or grams <= 0:
@@ -1616,15 +1620,15 @@ def _selected_food_warning(food: dict[str, Any] | None, dose_value: Any, dose_un
         iodine = _UPPER_LIMITS["iodine"]
         parts.append(
             f"⚠️ Seaweed can hold far more iodine than the {bb.format_float(float(iodine['limit']))} "
-            f"{iodine['unit']}/day safe upper limit, and USDA lists no iodine value for this one — keep it to "
+            f"{iodine['unit']}/day upper intake level, and USDA lists no iodine value for this one — keep it to "
             "small, occasional portions, not a daily staple."
         )
     for key, amount, entry in _co_nutrient_excesses(food, grams, component):
         what = "preformed vitamin A" if key == "vitamin a" else entry["name"]
         parts.append(
             f"⚠️ ~{_format_grams(grams or 0.0)} of this food also gives ~{bb.format_float(amount, 0 if amount >= 10 else 1)} "
-            f"{entry['unit']} {what} — above the {bb.format_float(float(entry['limit']))} {entry['unit']}/day safe upper "
-            "limit. Pick another food or a smaller portion."
+            f"{entry['unit']} {what} — above the {bb.format_float(float(entry['limit']))} {entry['unit']}/day upper intake "
+            "level. Pick another food or a smaller portion."
         )
     parts.append(_own_limit_food_warning(food, dose_value, dose_unit, component, form))
     return " ".join(p for p in parts if p)
@@ -1634,7 +1638,7 @@ def _own_limit_target_grams(
     food: dict[str, Any] | None, dose_value: Any, dose_unit: str, component: str, form: str = ""
 ) -> float | None:
     """When matching an over-the-limit pill dose from food would itself pass the
-    card nutrient's safe upper limit (zinc, iodine, copper, selenium: EFSA
+    card nutrient's upper intake level (zinc, iodine, copper, selenium: EFSA
     limits for total intake, food included), the portion for the daily target
     instead (or 0 when there is no target); None when the limit is not passed."""
     key = bb.canonical_nutrient_key(component)
@@ -1661,7 +1665,7 @@ def _own_limit_food_warning(food: dict[str, Any] | None, dose_value: Any, dose_u
     advice = f"aim for the daily target (~{_format_grams(target_grams)}) instead" if target_grams else "eat a normal portion instead"
     return (
         f"⚠️ Matching this dose from food is also above the {bb.format_float(float(entry['limit']))} "
-        f"{entry['unit']}/day safe upper limit for {entry['name']} — {advice}."
+        f"{entry['unit']}/day upper intake level for {entry['name']} — {advice}."
     )
 
 
@@ -2051,7 +2055,8 @@ def _winter_vitamin_d_note(component_key: str, today: Any = None) -> str:
         return ""
     return (
         "ℹ️ October–March the sun in Germany is too weak for your skin to make vitamin D, and food alone "
-        "rarely reaches the 20 µg/day reference — keeping the supplement over winter is sensible."
+        "rarely reaches the 20 µg/day reference. Many people in Germany take vitamin D in winter — ask your doctor "
+        "whether that suits you."
     )
 
 
@@ -2143,7 +2148,17 @@ _PLANT_CATEGORY_WORDS = ("legume", "vegetable", "fruit", "nut and seed", "cereal
 # Nutrients usually kept as a supplement in pregnancy (folic acid, iodine,
 # vitamin D, iron; B12 and DHA too on a vegan / vegetarian diet).
 _PREGNANCY_SUPPLEMENT_KEYS = {"folate", "iodine", "vitamin d", "iron"}
-_PREGNANCY_NOTE = "🤰 Usually advised to keep as a supplement in pregnancy — check with your doctor or midwife."
+_PREGNANCY_NOTE = (
+    "🤰 Folic acid and iodine are often recommended in pregnancy — ask your doctor or midwife before changing this supplement."
+)
+_PREGNANCY_NOTE_IF_LOW = (
+    "🤰 In pregnancy this is often only supplemented when a blood test shows a shortfall — ask your doctor or midwife "
+    "before changing this supplement."
+)
+_PREGNANCY_NOTE_PLANT_B12 = (
+    "🤰 On a plant-based diet vitamin B12 is usually supplemented, in pregnancy too — ask your doctor or midwife "
+    "before changing this supplement."
+)
 # German guidance (DGE / Netzwerk Gesund ins Leben): ~200 mg DHA a day in
 # pregnancy and while breastfeeding; without oily fish, from a supplement.
 _PREGNANCY_DHA_NOTE = (
@@ -2220,8 +2235,12 @@ def _card_food_options(
 
 def _pregnancy_note(component_key: str, profile: dict[str, Any] | None = None) -> str:
     key = bb.canonical_nutrient_key(component_key)
-    if key in _PREGNANCY_SUPPLEMENT_KEYS or (key == "vitamin b12" and _plant_based_diet(profile)):
+    if key in {"folate", "iodine"}:
         return _PREGNANCY_NOTE
+    if key in {"vitamin d", "iron"}:
+        return _PREGNANCY_NOTE_IF_LOW
+    if key == "vitamin b12" and _plant_based_diet(profile):
+        return _PREGNANCY_NOTE_PLANT_B12
     if key in _OMEGA3_LONG_CHAIN_KEYS and _plant_based_diet(profile):
         return _PREGNANCY_DHA_NOTE
     return ""
@@ -2356,7 +2375,7 @@ def _selenium_note(dose_value: Any = None, dose_unit: str = "") -> str:
         advice = f"matching this dose would take ~{bb.format_float(nuts, 1)} nuts, more than is safe"
     return (
         f"{head} — {advice}; {too_many} or more nuts a day can pass the "
-        f"{bb.format_float(limit)} µg/day safe upper limit."
+        f"{bb.format_float(limit)} µg/day upper intake level."
     )
 
 
@@ -2385,8 +2404,8 @@ def _bioavailability_note(
     if note:
         return note
     return (
-        "Whole foods deliver this nutrient with natural cofactors and a food matrix "
-        "that generally improve absorption versus an isolated pill."
+        "Food also brings fibre, protein and other nutrients. How well the body absorbs a nutrient can differ "
+        "between food and pills."
     )
 
 
@@ -2497,7 +2516,7 @@ def _grams_to_match_dose(decision: dict[str, Any]) -> float | None:
 def _swap_grams(decision: dict[str, Any]) -> float | None:
     """The daily amount of a swap's food the results count: the match-dose
     portion, or the daily-target portion when matching an over-the-limit pill
-    from food would pass the safe upper limit too (_own_limit_target_grams)."""
+    from food would pass the upper intake level too (_own_limit_target_grams)."""
     grams = _grams_to_match_dose(decision)
     target = _own_limit_target_grams(
         decision.get("selected_food"), decision.get("dose_value"), str(decision.get("dose_unit", "") or ""),
@@ -2684,7 +2703,7 @@ def _meal_plan_amount(decision: dict[str, Any]) -> str:
     )
     if target_grams is not None:
         if target_grams and _portion_practicality(target_grams, food) == "ok":
-            return f"eat ~{_format_grams(target_grams)} (the daily target; the full dose would pass the safe upper limit)"
+            return f"eat ~{_format_grams(target_grams)} (the daily target; the full dose would pass the upper intake level)"
         return _meal_plan_normal_portion(food)
     if _portion_practicality(_grams_to_match_dose(decision), food) in ("large", "impractical"):
         return _meal_plan_normal_portion(food)
@@ -2722,7 +2741,7 @@ def _meal_plan_prompts(
         "realistic, and give each meal a short **bold** title followed by 3-5 short bullet points "
         "(ingredients with gram amounts, then one line on preparation). Keep each meal under 80 words. "
         "Respect safe intakes: if an amount is unrealistic (more than about 500 g of one food per day) "
-        "or would exceed a safe upper limit (for example liver at most one small portion per week "
+        "or would exceed an upper intake level (for example liver at most one small portion per week "
         "because of vitamin A, at most 2 Brazil nuts per day because of selenium), use a sensible "
         "amount instead and add one short note that a supplement may be the practical choice for that "
         "nutrient. General guidance only; no medical advice."
@@ -2874,7 +2893,7 @@ def _build_share_text(
         out.append("  • (none)")
     if meal_plan.strip():
         out += ["", "🍽️ Meal plan:", meal_plan.strip()]
-    out += ["", "Made with SuppSwipe — swap pills for real food where it makes sense: https://suppswipe.streamlit.app"]
+    out += ["", "Made with SuppSwipe. General nutrition information, not medical advice: https://suppswipe.streamlit.app"]
     return "\n".join(out)
 
 
@@ -3492,6 +3511,21 @@ def _render_header() -> None:
             [data-testid="stCaptionContainer"],
             [data-testid="stCaptionContainer"] p {
                 color: #475569 !important;
+                opacity: 1 !important;
+            }
+            /* A clear keyboard focus ring on every control. */
+            button:focus-visible,
+            [data-baseweb="tab"]:focus-visible,
+            a:focus-visible,
+            summary:focus-visible,
+            [role="button"]:focus-visible {
+                outline: 3px solid #1d4ed8 !important;
+                outline-offset: 2px !important;
+            }
+            /* Tooltips never run wider than a phone screen. */
+            [data-testid="stTooltipContent"] {
+                max-width: min(320px, 88vw);
+                overflow-wrap: anywhere;
             }
             .stButton button,
             .stDownloadButton button,
@@ -3544,7 +3578,7 @@ def _render_header() -> None:
                 box-shadow: 0 10px 24px rgba(4, 120, 87, 0.22);
             }
             .plan-kicker {
-                font-size: 0.72rem;
+                font-size: 0.78rem;
                 font-weight: 800;
                 letter-spacing: 0.08em;
                 text-transform: uppercase;
@@ -3587,7 +3621,7 @@ def _render_header() -> None:
             }
             .plan-stat span {
                 display: block;
-                font-size: 0.72rem;
+                font-size: 0.78rem;
             }
             .plan-warn {
                 background: #fff7ed;
@@ -3607,7 +3641,7 @@ def _render_header() -> None:
                 margin-top: 6px;
             }
             .plan-h {
-                font-size: 0.78rem;
+                font-size: 0.8rem;
                 font-weight: 900;
                 letter-spacing: 0.05em;
                 text-transform: uppercase;
@@ -3888,7 +3922,7 @@ def _render_header() -> None:
             }
             .step small {
                 display: block;
-                font-size: 0.7rem;
+                font-size: 0.76rem;
                 color: #475569;
             }
             @keyframes suppswipe-spin {
@@ -3896,7 +3930,7 @@ def _render_header() -> None:
                 to { transform: rotate(360deg); }
             }
         </style>
-        <div class="brand"><span class="brand-mark" aria-hidden="true">S</span>SuppSwipe</div>
+        <div class="brand" role="heading" aria-level="1"><span class="brand-mark" aria-hidden="true">S</span>SuppSwipe</div>
         """,
         unsafe_allow_html=True,
     )
@@ -4999,7 +5033,7 @@ def _render_card() -> None:
         st.markdown(
             "<div class='hero'>"
             "<div class='hero-art' aria-hidden='true'>💊<span>→</span>🥦</div>"
-            "<div class='hero-title'>Ditch the pill.<br>Eat the real thing.</div>"
+            "<div class='hero-title' role='heading' aria-level='2'>Ditch the pill.<br>Eat the real thing.</div>"
             "<div class='hero-sub'>Scan your supplement and see which nutrients everyday foods can "
             "cover — with fibre, protein and co-nutrients the pill doesn't have — and which are "
             "worth keeping (e.g. vitamin D in winter, B12 on a vegan diet).</div>"
@@ -5416,7 +5450,7 @@ def _render_plan_hero(
             stats.append((f"~{_round_total(totals['kcal'])}", "kcal / day"))
     if basket["total"] > 0:
         stats.append((f"€{basket['total']:.2f}", "per day"))
-    stats.append((str(len(keep_items)), "pills kept" if len(keep_items) != 1 else "pill kept"))
+    stats.append((str(len(keep_items)), "kept as supplements" if len(keep_items) != 1 else "kept as supplement"))
     tiles = "".join(
         f"<div class='plan-stat'><b>{html.escape(value)}</b><span>{html.escape(label)}</span></div>"
         for value, label in stats[:4]
@@ -5424,7 +5458,7 @@ def _render_plan_hero(
     st.markdown(
         "<div class='plan-hero'>"
         "<div class='plan-kicker'>Your plan</div>"
-        f"<div class='plan-title'>{html.escape(title)}</div>"
+        f"<div class='plan-title' role='heading' aria-level='2'>{html.escape(title)}</div>"
         f"<div class='plan-bar' role='progressbar' aria-label='Share of nutrients from food' "
         f"aria-valuenow='{pct}' aria-valuemin='0' aria-valuemax='100'>"
         f"<span style='width:{pct}%'></span></div>"
@@ -5456,7 +5490,7 @@ def _render_plan_tab(
 ) -> None:
     rows = _plan_rows(replace_items)
     if rows:
-        st.markdown("<div class='plan-h'>🥗 Eat this</div>", unsafe_allow_html=True)
+        st.markdown("<div class='plan-h' role='heading' aria-level='3'>🥗 Eat this</div>", unsafe_allow_html=True)
         parts = []
         for row in rows:
             food = row["food"]
@@ -5483,7 +5517,7 @@ def _render_plan_tab(
         st.markdown("<div class='plan-list'>" + "".join(parts) + "</div>", unsafe_allow_html=True)
     if misfit_items:
         st.markdown(
-            f"<div class='plan-h'>⚠️ Needs a new food ({html.escape(diet_name)})</div>", unsafe_allow_html=True
+            f"<div class='plan-h' role='heading' aria-level='3'>⚠️ Needs a new food ({html.escape(diet_name)})</div>", unsafe_allow_html=True
         )
         for d in misfit_items:
             component_key = str(d.get("component_key", "") or "")
@@ -5496,7 +5530,7 @@ def _render_plan_tab(
                 args=(int(d.get("card_index", 0)), True),
             )
     if keep_items:
-        st.markdown("<div class='plan-h'>💊 Keep taking</div>", unsafe_allow_html=True)
+        st.markdown("<div class='plan-h' role='heading' aria-level='3'>💊 Kept as supplements</div>", unsafe_allow_html=True)
         parts = []
         for d in keep_items:
             dose = str(d.get("dose_label", "") or "")
@@ -5530,7 +5564,7 @@ def _render_plan_tab(
                 args=(int(d.get("card_index", 0)), True),
             )
 
-    with st.expander("🌱 Why whole food beats the pill (AI)"):
+    with st.expander("🌱 What the whole food adds (AI)"):
         if not replace_items:
             st.info("Swipe right on at least one nutrient to compare benefits.")
         else:
@@ -5556,7 +5590,7 @@ def _render_meals_tab(replace_items: list[dict[str, Any]], diet_label: str, excl
     if not replace_items:
         st.info("Swipe right on at least one nutrient to get meal ideas.")
         return plan_key
-    st.markdown("<div class='plan-h'>⚡ Quick ideas</div>", unsafe_allow_html=True)
+    st.markdown("<div class='plan-h' role='heading' aria-level='3'>⚡ Quick ideas</div>", unsafe_allow_html=True)
     lines = []
     for row in _plan_rows(replace_items):
         if row["practicality"] == "impractical":
@@ -5571,7 +5605,7 @@ def _render_meals_tab(replace_items: list[dict[str, Any]], diet_label: str, excl
     if lines:
         st.markdown("".join(lines), unsafe_allow_html=True)
 
-    st.markdown("<div class='plan-h'>✨ Your meal plan</div>", unsafe_allow_html=True)
+    st.markdown("<div class='plan-h' role='heading' aria-level='3'>✨ Your meal plan</div>", unsafe_allow_html=True)
     # Mirrored into a plain key (_on_meal_count_change): the radio isn't drawn
     # while a card is open, so Streamlit drops its state.
     chosen_meals = int(st.session_state.get("swipe_meal_count_choice", 3) or 3)
@@ -5639,7 +5673,7 @@ def _render_shopping_tab(
     rows = [row for row in _plan_rows(replace_items) if row["grams"]]
     practical = [row for row in rows if row["practicality"] != "impractical"]
     if practical:
-        st.markdown("<div class='plan-h'>🛒 Groceries for one week</div>", unsafe_allow_html=True)
+        st.markdown("<div class='plan-h' role='heading' aria-level='3'>🛒 Groceries for one week</div>", unsafe_allow_html=True)
         parts, total, unpriced = [], 0.0, []
         for row in practical:
             name = _food_name(row["food"]) or "Whole food"
@@ -5679,7 +5713,7 @@ def _render_shopping_tab(
     if not practical and not impractical:
         st.info("No whole-food swaps to shop for yet.")
     if keep_items:
-        st.markdown("<div class='plan-h'>💊 For the pills you keep</div>", unsafe_allow_html=True)
+        st.markdown("<div class='plan-h' role='heading' aria-level='3'>💊 For the pills you keep</div>", unsafe_allow_html=True)
         covers = ", ".join(dict.fromkeys(_nutrient_title(d.get("component")) for d in keep_items if d.get("component")))
         st.caption(f"One combined product covering {covers} is usually cheapest:")
         _query, links = _supplement_search_links(keep_items)
@@ -5832,10 +5866,11 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
             "↩ Back to the cards", type="tertiary", key="final_back_last", on_click=_open_card, args=(len(cards) - 1,)
         )
     _render_plan_hero(cards, replace_items, keep_items, misfit_items)
+    st.caption(_RESULTS_DISCLAIMER)
     warnings = _plan_warnings(replace_items, keep_items)
     if warnings:
         st.markdown(
-            "<div class='plan-warn'><div class='plan-warn-h'>Heads-up</div>"
+            "<div class='plan-warn'><div class='plan-warn-h' role='heading' aria-level='3'>Heads-up</div>"
             + "".join(f"<div class='plan-warn-i'>{html.escape(w)}</div>" for w in warnings)
             + "</div>",
             unsafe_allow_html=True,
