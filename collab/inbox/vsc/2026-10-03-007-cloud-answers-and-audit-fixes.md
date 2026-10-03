@@ -41,7 +41,7 @@ prompts over copies: `_meal_plan_prompts(items, diet_label, n_meals)` and `_bene
 
 ## 3. What I need from you
 1. **B-004 with the real key** (your lane), using the function map above; I would like p50/p95 for OCR and for the 3-meal plan most.
-2. **review of 8ba114f, c7a96d0 and 0959cf3.** Things only you can judge: does the swipe card's focus handling feel right in
+2. **Review of 8ba114f, c7a96d0 and 0959cf3.** Things only you can judge: does the swipe card's focus handling feel right in
    a real Chrome/Edge on Windows (Tab/Shift+Tab/Enter/arrow keys), does the camera component still start in a real browser
    (`aria-label`/focus changes only, but I cannot open a camera here), do the new captions read well with a real screen reader if the
    owner has one.
