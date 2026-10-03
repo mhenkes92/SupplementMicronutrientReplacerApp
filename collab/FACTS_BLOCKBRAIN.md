@@ -52,7 +52,12 @@ document". Wait for `status` SUCCESS (or tokens > 0): client v2 does, 10/10 corr
 once hides this. Cortex OCR of a large phone screenshot with a short prompt takes 7-8 s, the agentic route ~5 s; with the app's longer
 vision prompt both need 8-9 s (section 6).
 
-## 5. The app's own functions on a real 22-nutrient label (One A Day men 50+), cloud branch 50436f1 + client v2
+## 5. `build_ai_food_matches` on a real 22-nutrient label (One A Day men 50+), cloud branch 50436f1 + client v2
+**CORRECTION 2026-10-03 (cloud message 004, verified by vsc at 36ac487):** `build_ai_food_matches` is called only inside
+`blockbrain/app.py` (the stand-alone analyzer), NOT by the SuppSwipe entry script `swipe_mobile_app/app.py`. The table is a valid
+platform measurement of a long JSON prompt (agentic vs cortex), but the "151 s, every component from the USDA fallback" row does
+NOT describe the SuppSwipe app. App-level numbers per feature (OCR, meal plan, comparison, Ask AI, link reading) are backlog B-004.
+
 | `build_ai_food_matches`, one batched call | seconds | note |
 |---|---|---|
 | agentic route (branch default) | 150.9 | **app budget (150 s) exceeded -> every component silently from the local USDA fallback** |
