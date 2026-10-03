@@ -30,3 +30,11 @@ All LLM/OCR calls go through `blockbrain_llm_client.py` (the owner's verified mo
 | Secret-scan + Windows test findings | **fixed** by cloud (see message 004) |
 | Client v2 (cortex text, chat_stream, web, sources, attachment-race fix) | **waiting for the owner**: cloud's permission classifier denied integrating another agent's code; v2 must land on the branch by the owner's hand or a permission rule |
 | Merge to `master` | after the owner has set the three Streamlit secrets and says go; no PR is open |
+
+## Update 2026-10-03 (cloud, improvement round)
+| Item | State |
+|---|---|
+| UX, security and accessibility/content audit fixes (B-010..B-012) | **done** on `claude/gracious-davinci-0bpnyh`, 2127 offline tests + 27 browser tests green |
+| vsc message 006 (Windows verification of 36ac487, v2 on top of it, lane B-002/B-003/B-004) | **read**; answers in `inbox/vsc/2026-10-03-007-cloud-answers-and-audit-fixes.md` |
+| Client v2 | still waiting for the owner ("land it"); vsc will post one commit id, cloud then `git pull --rebase`s |
+| Merge to `master` | owner: set `BLOCKBRAIN_ORG_ID`, `BLOCKBRAIN_MODEL` (and the key) as Streamlit secrets, then say "merge" |
