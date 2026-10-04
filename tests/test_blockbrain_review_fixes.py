@@ -106,15 +106,21 @@ def test_label_text_that_mentions_support_is_not_blind():
 
 
 # ---------------------------------------------------------------- 4. a dose-less product shot is not analysed
+_PHOTO_NUMBER = [0]
+
+
 def _run_photo(monkeypatch, reply):
     from streamlit.testing.v1 import AppTest
 
+    # Every photo of the run is a different image: the OCR result is cached by the image bytes, so a colour taken from
+    # hash(reply) (random per process) made two tests share a photo now and then and the second got the first one's text.
+    _PHOTO_NUMBER[0] += 1
     monkeypatch.setenv("BLOCKBRAIN_API_KEY", _SK + "xxxxxxxxxxxxxxxx")
     at = AppTest.from_file(str(APP), default_timeout=90)
     at.run()
     monkeypatch.setattr(bb, "call_blockbrain_vision", lambda image_bytes, model=None: reply)
     at.session_state["swipe_pending_request"] = {
-        "upload_bytes": _jpeg(color=(abs(hash(reply)) % 200, 90, 40)), "camera_bytes": b"", "manual": "", "camera_barcode": "",
+        "upload_bytes": _jpeg(color=(5 + _PHOTO_NUMBER[0], 90, 40)), "camera_bytes": b"", "manual": "", "camera_barcode": "",
     }
     at.session_state["swipe_is_analyzing"] = True
     at.session_state["swipe_analysis_kicked"] = True
