@@ -10606,7 +10606,8 @@ def fetch_clean_page_text(url: str) -> str:
             tag.extract()
         text = " ".join(soup.get_text(separator=" ").split())
         return text[:18000]
-    except Exception:
+    except Exception as exc:
+        _PAGE_HTML_STATE.status = f"{type(exc).__name__}: {_redact(exc)[:160]}"
         return ""
 
 
