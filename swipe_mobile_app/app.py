@@ -6012,6 +6012,8 @@ def _render_debug_panel() -> None:
                 # Timings are process-wide and carry no text from a server; the error is this session's own.
                 "last_call": {k: v for k, v in dict(getattr(bb, "LAST_BLOCKBRAIN_TIMING", {}) or {}).items() if k != "error"},
                 "last_error": _short_error(bb.last_call_error()),
+                "last_link": {"provider": str(getattr(bb, "LAST_TEXT_PROVIDER", "") or ""),
+                              "reason": str(getattr(bb, "LAST_URL_PARSE_REASON", "") or "")},
             }
         )
 

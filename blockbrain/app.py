@@ -10563,8 +10563,20 @@ def _unwrap_shop_redirect(url: str) -> str:
 _PAGE_HTML_STATE = threading.local()
 
 
+_BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-GB,en;q=0.9,de;q=0.8",
+}
+
+
+def _looks_blocked(status_code: int, page_html: str) -> bool:
+    head = str(page_html or "")[:20000].lower()
+    return status_code != 200 or "captcha" in head or "robot check" in head or "/errors/validatecaptcha" in head
+
+
 def fetch_clean_page_text(url: str) -> str:
-    _PAGE_HTML_STATE.html, _PAGE_HTML_STATE.url = "", ""
+    _PAGE_HTML_STATE.html, _PAGE_HTML_STATE.url, _PAGE_HTML_STATE.status = "", "", ""
     try:
         url = _unwrap_shop_redirect(url)
         response = _safe_public_get(
@@ -10574,10 +10586,15 @@ def fetch_clean_page_text(url: str) -> str:
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             },
         )
+        if response is not None and _looks_blocked(response[0], response[2]):
+            # Shops (Amazon) answer data-centre addresses with 503 / a captcha for a bot User-Agent: one browser-like retry.
+            response = _safe_public_get(url, headers=_BROWSER_HEADERS) or response
         if response is None:
+            _PAGE_HTML_STATE.status = "refused or timed out"
             return ""
         status_code, resp_headers, page_html = response
-        if status_code != 200:
+        if _looks_blocked(status_code, page_html):
+            _PAGE_HTML_STATE.status = f"HTTP {status_code}" + (" (captcha)" if status_code == 200 else "")
             return ""
         content_type = str(resp_headers.get("content-type", "") or "").lower()
         if "html" not in content_type and "xml" not in content_type and "text" not in content_type:
@@ -10739,7 +10756,8 @@ def extract_supplement_text_from_url(url: str, llm_allowed: Callable[[], bool] |
 
     page_text = fetch_clean_page_text(url)
     if not page_text:
-        LAST_URL_PARSE_REASON = "Failed to download page text or blocked by target website."
+        why = str(getattr(_PAGE_HTML_STATE, "status", "") or "no readable page")
+        LAST_URL_PARSE_REASON = f"Page not downloaded ({why})."
         return ""
 
     local_fallback_text = extract_supplement_text_from_page_text_local(page_text)

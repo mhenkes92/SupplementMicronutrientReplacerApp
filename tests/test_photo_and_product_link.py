@@ -75,6 +75,19 @@ def test_link_image_step_respects_the_quota(monkeypatch):
     assert bb.extract_supplement_text_from_url("https://www.amazon.de/dp/X", llm_allowed=lambda: False) == ""
 
 
+def test_blocked_shop_page_is_retried_as_a_browser_and_the_reason_is_kept(monkeypatch):
+    calls = []
+
+    def fake_get(url, headers=None, timeout=None):
+        calls.append(headers["User-Agent"])
+        return 503, {"content-type": "text/html"}, "<html>Sorry</html>"
+
+    monkeypatch.setattr(bb, "_safe_public_get", fake_get)
+    assert bb.extract_supplement_text_from_url("https://www.amazon.de/dp/X", llm_allowed=lambda: True) == ""
+    assert len(calls) == 2 and "Chrome" in calls[1]
+    assert "HTTP 503" in bb.LAST_URL_PARSE_REASON
+
+
 def test_text_prompt_asks_for_the_product_label_only(monkeypatch):
     monkeypatch.setattr(bb, "_text_llm_available", lambda: True)
     monkeypatch.setattr(bb, "_safe_public_get", lambda url, headers=None, timeout=None: (200, {"content-type": "text/html"}, "<p>x</p>" * 30))
