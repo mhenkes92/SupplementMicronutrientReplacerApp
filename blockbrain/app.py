@@ -10598,6 +10598,7 @@ def fetch_clean_page_text(url: str) -> str:
             return ""
         content_type = str(resp_headers.get("content-type", "") or "").lower()
         if "html" not in content_type and "xml" not in content_type and "text" not in content_type:
+            _PAGE_HTML_STATE.status = f"HTTP {status_code}, content-type {content_type[:60] or 'missing'}, {len(page_html)} chars"
             return ""
         _PAGE_HTML_STATE.html, _PAGE_HTML_STATE.url = page_html, url
         # html.parser on 2 MB of junk costs seconds of CPU (GIL held for every visitor): parse the first 300 kB only.
@@ -10605,6 +10606,8 @@ def fetch_clean_page_text(url: str) -> str:
         for tag in soup(["script", "style", "noscript"]):
             tag.extract()
         text = " ".join(soup.get_text(separator=" ").split())
+        if not text:
+            _PAGE_HTML_STATE.status = f"HTTP {status_code}, {len(page_html)} chars of HTML, no visible text"
         return text[:18000]
     except Exception as exc:
         _PAGE_HTML_STATE.status = f"{type(exc).__name__}: {_redact(exc)[:160]}"
