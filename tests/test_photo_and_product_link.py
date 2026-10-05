@@ -88,6 +88,13 @@ def test_blocked_shop_page_is_retried_as_a_browser_and_the_reason_is_kept(monkey
     assert "HTTP 503" in bb.LAST_URL_PARSE_REASON
 
 
+def test_page_without_content_type_header_is_still_read(monkeypatch):
+    monkeypatch.setattr(bb, "_safe_public_get", lambda url, headers=None, timeout=None: (200, {}, "<!doctype html><html><body>Vitamin C 80 mg</body></html>"))
+    assert "Vitamin C 80 mg" in bb.fetch_clean_page_text("https://www.amazon.de/dp/X")
+    monkeypatch.setattr(bb, "_safe_public_get", lambda url, headers=None, timeout=None: (200, {}, "%PDF-1.4 binary"))
+    assert bb.fetch_clean_page_text("https://shop.test/file") == ""
+
+
 def test_text_prompt_asks_for_the_product_label_only(monkeypatch):
     monkeypatch.setattr(bb, "_text_llm_available", lambda: True)
     monkeypatch.setattr(bb, "_safe_public_get", lambda url, headers=None, timeout=None: (200, {"content-type": "text/html"}, "<p>x</p>" * 30))

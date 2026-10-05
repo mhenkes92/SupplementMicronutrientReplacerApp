@@ -10597,7 +10597,9 @@ def fetch_clean_page_text(url: str) -> str:
             _PAGE_HTML_STATE.status = f"HTTP {status_code}" + (" (captcha)" if status_code == 200 else "")
             return ""
         content_type = str(resp_headers.get("content-type", "") or "").lower()
-        if "html" not in content_type and "xml" not in content_type and "text" not in content_type:
+        # Behind Streamlit Cloud's network Amazon's answer arrives without a content-type header: judge by the body then.
+        looks_html = not content_type and "<html" in str(page_html or "")[:5000].lower()
+        if "html" not in content_type and "xml" not in content_type and "text" not in content_type and not looks_html:
             _PAGE_HTML_STATE.status = f"HTTP {status_code}, content-type {content_type[:60] or 'missing'}, {len(page_html)} chars"
             return ""
         _PAGE_HTML_STATE.html, _PAGE_HTML_STATE.url = page_html, url
