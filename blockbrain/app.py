@@ -19,6 +19,7 @@ import sys
 import subprocess
 import threading
 import time
+import types
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -186,6 +187,11 @@ _BLOCKBRAIN_ENV_NAMES = (
     "BLOCKBRAIN_MODEL",
     "BLOCKBRAIN_BOT_ID",
     "BLOCKBRAIN_OCR_ROUTE",
+    "BLOCKBRAIN_TEXT_ROUTE",
+    "BLOCKBRAIN_KB_BOT_ID",
+    "BLOCKBRAIN_MODEL_MEAL",
+    "BLOCKBRAIN_MODEL_BENEFITS",
+    "BLOCKBRAIN_MODEL_ASK",
 )
 
 
@@ -9180,9 +9186,9 @@ def call_blockbrain_text(
     (then last_call_error() says why).
 
     `history` is an optional list of prior {"role", "content"} turns (chat memory). `budget_s` caps the wall-clock time.
-    `on_text(answer)` is called once with the complete answer: the client does not stream. `model` and `allow_tools` are
-    accepted for the older call sites and ignored: the model is the one of the configured bot (BLOCKBRAIN_MODEL /
-    BLOCKBRAIN_BOT_ID) and the client's conversations have no web or tools.
+    `on_text(text_so_far)` is called while the answer is written (at most every ~150 ms) and once with the complete answer.
+    `model` (a Blockbrain model id) is used on the cortex route only (BLOCKBRAIN_TEXT_ROUTE=cortex); `allow_tools` is
+    accepted for older call sites and ignored.
     """
     started = time.monotonic()
     reset_call_error()
@@ -9190,31 +9196,107 @@ def call_blockbrain_text(
     if not prompt:
         return ""
     system = str(system_prompt or "").strip() or None
+    turns = _clean_turns(history)
+    try:
+        client = _client()
+        kwargs = _route_kwargs(client, model)
+
+        def _call() -> Any:
+            if on_text is None:
+                return client.chat(prompt, system=system, history=turns, **kwargs)
+            return _streamed_reply(client.chat_stream(prompt, system=system, history=turns, **kwargs), on_text, client, kwargs)
+
+        reply = _run_with_budget(_call, float(budget_s or BLOCKBRAIN_TOTAL_BUDGET_S))
+    except Exception as exc:
+        _note_failure("text", exc, started)
+        return ""
+    text = str(getattr(reply, "text", "") or "").strip()
+    if not text or looks_like_agent_error(text) or text.startswith("### ERROR"):  # a platform error is never an answer
+        _note_failure("text", text or "Blockbrain returned no text", started, str(getattr(reply, "via", "") or ""))
+        return ""
+    _note_success("text", reply, started)
+    if on_text is not None and getattr(reply, "pushed", None) != text:
+        try:
+            on_text(text)
+        except Exception:
+            pass
+    return text
+
+
+def _clean_turns(history: list[dict[str, str]] | None) -> list[dict[str, str]]:
     turns: list[dict[str, str]] = []
     for turn in history or []:
         role = str((turn or {}).get("role", "") or "").strip().lower()
         content = str((turn or {}).get("content", "") or "").strip()
         if role in {"user", "assistant"} and content:
             turns.append({"role": role, "content": content})
+    return turns
+
+
+def _route_kwargs(client: Any, model: str | None) -> dict[str, Any]:
+    """`model=` for the client only on the cortex route (the agentic stream has no model field and would fail)."""
+    model = str(model or "").strip()
+    route = str(getattr(client, "text_route", "") or "agentic").strip().lower()
+    return {"model": model} if model and route == "cortex" else {}
+
+
+_STREAM_PUSH_S = 0.15
+
+
+def _streamed_reply(pieces: Any, on_text: Any, client: Any, kwargs: dict[str, Any]) -> Any:
+    """Collect a chat_stream into a reply-like object, pushing the growing text to `on_text`."""
+    started, parts, last_push, pushed = time.monotonic(), [], 0.0, ""
+    for piece in pieces:
+        parts.append(piece)
+        now = time.monotonic()
+        if now - last_push >= _STREAM_PUSH_S:
+            last_push, pushed = now, "".join(parts)
+            try:
+                on_text(pushed)
+            except Exception:
+                pass
+    route = str(getattr(client, "text_route", "") or "agentic")
+    model = kwargs.get("model") or getattr(client, "text_model", "") or blockbrain_model_label()
+    return types.SimpleNamespace(text="".join(parts), via=route, model=model, usage={}, seconds=time.monotonic() - started,
+                                 pushed=pushed.strip())
+
+
+def call_blockbrain_ask(
+    system_prompt: str,
+    question: str,
+    history: list[dict[str, str]] | None = None,
+    model: str | None = None,
+    budget_s: float | None = None,
+) -> tuple[str, list[str]]:
+    """Ask the knowledge-base bot (BLOCKBRAIN_KB_BOT_ID) on the cortex route -> (answer, knowledge-base documents used).
+    ("", []) on any failure or when no KB bot is configured."""
+    started = time.monotonic()
+    reset_call_error()
+    _sync_blockbrain_env_from_secrets()
+    bot_id = str(os.environ.get("BLOCKBRAIN_KB_BOT_ID", "") or "").strip()
+    prompt = str(question or "").strip()
+    if not bot_id or not prompt:
+        return "", []
     try:
-        client = _client()
+        module = _bbc_now()
+        module.READ_TIMEOUT = max(5.0, float(BLOCKBRAIN_READ_TIMEOUT_S))
+        client = module.Blockbrain(bot_id=bot_id)
+        kwargs: dict[str, Any] = {"via": "cortex"}
+        if str(model or "").strip():
+            kwargs["model"] = str(model).strip()
         reply = _run_with_budget(
-            lambda: client.chat(prompt, system=system, history=turns), float(budget_s or BLOCKBRAIN_TOTAL_BUDGET_S)
+            lambda: client.chat(prompt, system=str(system_prompt or "").strip() or None, history=_clean_turns(history), **kwargs),
+            float(budget_s or BLOCKBRAIN_TOTAL_BUDGET_S),
         )
     except Exception as exc:
-        _note_failure("text", exc, started)
-        return ""
+        _note_failure("ask", exc, started, "cortex")
+        return "", []
     text = str(getattr(reply, "text", "") or "").strip()
-    if not text or looks_like_agent_error(text):  # a platform error written as the answer is never an answer
-        _note_failure("text", text or "Blockbrain returned no text", started, str(getattr(reply, "via", "") or ""))
-        return ""
-    _note_success("text", reply, started)
-    if on_text is not None:
-        try:
-            on_text(text)
-        except Exception:
-            pass
-    return text
+    if not text or looks_like_agent_error(text) or text.startswith("### ERROR"):
+        _note_failure("ask", text or "Blockbrain returned no text", started, "cortex")
+        return "", []
+    _note_success("ask", reply, started)
+    return text, [str(s) for s in (getattr(reply, "sources", None) or []) if str(s).strip()]
 
 
 # What the vision model is asked: the nutrient table only (the biggest speed-up for a read is fewer output tokens), but

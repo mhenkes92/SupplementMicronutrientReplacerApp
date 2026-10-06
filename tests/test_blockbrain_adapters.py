@@ -50,9 +50,10 @@ def test_text_call_returns_the_answer_and_records_diagnostics(fake_bb):
     out = bb.call_blockbrain_text(
         " Be brief. ", " What does zinc do? ", model="gpt-4.1-nano", allow_tools=True, on_text=seen.append, history=history
     )
-    assert out == "Hello from the fake." and seen == [out]
+    assert out == "Hello from the fake." and seen[-1] == out and all(out.startswith(s) for s in seen)
     assert bb.last_call_error() == "" and bb.LAST_BLOCKBRAIN_ERROR == ""
-    assert bb.LAST_BLOCKBRAIN_MODEL == "fake-model-1"
+    # A streamed answer (on_text) names the configured model: the client's stream does not report the resolved one.
+    assert bb.LAST_BLOCKBRAIN_MODEL == bb.blockbrain_model_label()
     assert bb.LAST_BLOCKBRAIN_TIMING["route"] == "agentic" and bb.LAST_BLOCKBRAIN_TIMING["kind"] == "text"
     body = fake_bb.json_bodies("/v2/api/agents")[0]
     assert body["instructions"] == "Be brief."

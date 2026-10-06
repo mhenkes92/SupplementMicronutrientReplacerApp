@@ -729,6 +729,15 @@ def _generation_model() -> str:
         return ""
 
 
+def _feature_model(feature: str) -> str:
+    """Optional per-feature Blockbrain model id (BLOCKBRAIN_MODEL_MEAL / _BENEFITS / _ASK); used on the cortex route only."""
+    try:
+        bb._sync_blockbrain_env_from_secrets()
+    except Exception:
+        pass
+    return str(os.environ.get(f"BLOCKBRAIN_MODEL_{feature.upper()}", "") or "").strip()
+
+
 def _stream_llm_text(
     cache_key: str,
     system_prompt: str,
@@ -737,6 +746,7 @@ def _stream_llm_text(
     history: list[dict[str, str]] | None = None,
     budget_s: float | None = None,
     consume_quota: bool = True,
+    model: str = "",
 ) -> str:
     """Generate text, streaming partial output into `placeholder` (an st.empty()).
 
@@ -776,6 +786,7 @@ def _stream_llm_text(
             bb.call_blockbrain_text(
                 system_prompt,
                 user_prompt,
+                model=model or None,
                 on_text=_show,
                 history=history,
                 budget_s=budget_s,
@@ -817,6 +828,7 @@ _ASK_AI_MAX_CHARS = 500  # one question = one quota unit, so its size is capped 
 # Under every Ask AI answer: where it came from. (The Examine knowledge-base bot is gone: every
 # model answer now comes from blockbrain_llm_client.py.)
 _SOURCE_AGENT = "\n\n_🤖 General AI answer (not medical advice)_"
+_SOURCE_KB = "\n\n_📚 From the Examine knowledge base (not medical advice)_"
 _RESULTS_DISCLAIMER = (
     "General nutrition information, not medical advice. Talk to a doctor or pharmacist before stopping "
     "a supplement you were prescribed, or if you are pregnant, ill or on medication."
@@ -911,6 +923,22 @@ def _answer_ask_ai_question(
         f"{dose_line}"
         f"Question: {question}"
     )
+    # 1) The Examine knowledge-base bot (BLOCKBRAIN_KB_BOT_ID), when configured: answers with figures and sources.
+    ask_model = _feature_model("ask")  # also syncs the Streamlit secrets into the environment
+    if str(os.environ.get("BLOCKBRAIN_KB_BOT_ID", "") or "").strip():
+        if placeholder is not None:
+            placeholder.markdown("_Looking it up in the knowledge base…_")
+        kb_answer, kb_sources = bb.call_blockbrain_ask(
+            system_prompt + " Reply in the language of the question.", user_prompt, history=history,
+            model=ask_model or None, budget_s=90,
+        )
+        if kb_answer and not bb.looks_like_agent_error(kb_answer):
+            if cache_key:
+                llm_cache.put(cache_key, kb_answer)
+            if placeholder is not None:
+                placeholder.markdown(kb_answer)
+            return kb_answer, (_SOURCE_KB if kb_sources else _SOURCE_AGENT)
+    # 2) The general model.
     answer = _stream_llm_text(
         cache_key or llm_cache.make_key("ask_ai_followup", component_name, question, history),
         system_prompt,
@@ -919,6 +947,7 @@ def _answer_ask_ai_question(
         history=history,
         budget_s=90,
         consume_quota=False,  # already counted for this question
+        model=ask_model,
     )
     if answer:
         return answer, _SOURCE_AGENT
@@ -2766,7 +2795,7 @@ def _meal_plan_prompts(
         f"Design exactly {n} {meal_word} that TOGETHER incorporate ALL of the given whole foods "
         "at roughly the daily amounts provided (spread the foods across the meals so every food is "
         "used at least once). Use common German-supermarket ingredients, keep it budget-friendly and "
-        "realistic, and give each meal a short **bold** title followed by 3-5 short bullet points "
+        "realistic, and write the meal plan in English. Give each meal a short **bold** title followed by 3-5 short bullet points "
         "(ingredients with gram amounts, then one line on preparation). Keep each meal under 80 words. "
         "Respect safe intakes: if an amount is unrealistic (more than about 500 g of one food per day) "
         "or would exceed an upper intake level (for example liver at most one small portion per week "
@@ -2782,7 +2811,7 @@ def _meal_plan_prompts(
         + diet_clause
         + f"\n\nWrite exactly {n} {meal_word} now."
     )
-    return system_prompt, user_prompt, llm_cache.make_key("meal_plan", system_prompt, user_prompt, _generation_model())
+    return system_prompt, user_prompt, llm_cache.make_key("meal_plan", system_prompt, user_prompt, _generation_model(), _feature_model("meal"))
 
 
 def _generate_meal_plan(
@@ -2794,7 +2823,7 @@ def _generate_meal_plan(
     if not replace_items:
         return ""
     system_prompt, user_prompt, key = _meal_plan_prompts(replace_items, diet_label, num_meals)
-    return _stream_llm_text(key, system_prompt, user_prompt, placeholder=placeholder)
+    return _stream_llm_text(key, system_prompt, user_prompt, placeholder=placeholder, model=_feature_model("meal"))
 
 
 # Diets whose meal-plan prompt may be prepared in the background. A religious
@@ -2837,7 +2866,9 @@ def _prefetch_meal_plan(replace_items: list[dict[str, Any]], diet_label: str, nu
         return
     llm_cache.submit(
         key,
-        lambda: bb.call_blockbrain_text(system_prompt, user_prompt, on_text=lambda t: llm_cache.set_partial(key, t)),
+        lambda: bb.call_blockbrain_text(
+            system_prompt, user_prompt, model=_feature_model("meal") or None, on_text=lambda t: llm_cache.set_partial(key, t)
+        ),
     )
 
 
@@ -2867,7 +2898,7 @@ def _benefits_prompts(replace_items: list[dict[str, Any]]) -> tuple[str, str, st
         + _MARKDOWN_STYLE
     )
     user_prompt = "Pairings:\n" + "\n".join(lines) + "\n\nWrite the comparison now."
-    return system_prompt, user_prompt, llm_cache.make_key("benefits", system_prompt, user_prompt, _generation_model())
+    return system_prompt, user_prompt, llm_cache.make_key("benefits", system_prompt, user_prompt, _generation_model(), _feature_model("benefits"))
 
 
 def _generate_whole_food_benefits(replace_items: list[dict[str, Any]], placeholder: Any = None) -> str:
@@ -2878,7 +2909,7 @@ def _generate_whole_food_benefits(replace_items: list[dict[str, Any]], placehold
     if prompts is None:
         return ""
     system_prompt, user_prompt, key = prompts
-    return _stream_llm_text(key, system_prompt, user_prompt, placeholder=placeholder)
+    return _stream_llm_text(key, system_prompt, user_prompt, placeholder=placeholder, model=_feature_model("benefits"))
 
 
 def _supplement_search_links(keep_items: list[dict[str, Any]]) -> tuple[str, dict[str, str]]:
