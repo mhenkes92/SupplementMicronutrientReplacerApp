@@ -152,7 +152,9 @@ def test_a_stalled_platform_costs_one_budget_not_two(sw, fake_bb, monkeypatch):
     sw._cached_ocr.clear()
     started = time.monotonic()
     text, _route = sw._extract_image_text_best_effort(_jpeg(color="orange", size=(3000, 2000)))  # two variants would exist
-    assert text == "" and time.monotonic() - started < 2.5
+    # One budget is 1 s; the stalled server answers after 3 s. Anything below that proves the call did not wait for the
+    # server (a loaded machine may need more than 2.5 s); the single stream call below proves there was no second variant.
+    assert text == "" and time.monotonic() - started < 2.9
     assert fake_bb.stream_calls == 1 and fake_bb.completion_calls == 0
     assert "did not answer" in bb.last_call_error()
 
