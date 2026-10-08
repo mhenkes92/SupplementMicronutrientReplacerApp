@@ -71,7 +71,9 @@ def test_the_results_offer_no_ai_button_while_the_ai_is_off(monkeypatch):
     assert not at.chat_input  # no chat box that can only end in an error
     captions = " ".join(c.value for c in at.caption)
     assert "AI meal plan is switched off" in captions and "AI answers are switched off" in captions
-    assert "AI comparison is switched off" in captions
+    at.button(key="planbtn_food_0").click().run()  # the comparison lives in the food's options window
+    assert "Show the comparison" not in [b.label for b in at.button]
+    assert "AI comparison is switched off" in " ".join(c.value for c in at.caption)
 
 
 def test_the_ai_buttons_are_there_when_the_ai_is_on(monkeypatch):
@@ -81,8 +83,10 @@ def test_the_ai_buttons_are_there_when_the_ai_is_on(monkeypatch):
     _analyse(at, "Vitamin C 80 mg 100%\nZinc 10 mg 100%\nSelenium 55 µg 100%")
     _finish_swipes(at, "right")
     labels = [b.label for b in at.button]
-    assert "Generate my meals" in labels and "Show the comparison" in labels
+    assert "Generate my meals" in labels and "Show the comparison" not in labels  # that one is in the food's window
     assert at.chat_input
+    at.button(key="planbtn_food_0").click().run()
+    assert "Show the comparison" in [b.label for b in at.button]
 
 
 def test_the_card_popover_is_not_drawn_while_the_ai_is_off(sw, monkeypatch):

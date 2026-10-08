@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+import time
 from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable
@@ -38,6 +39,11 @@ _lock = _keep("_lock", threading.Lock)
 _cache: "OrderedDict[str, str]" = _keep("_cache", OrderedDict)
 _inflight: dict[str, Future] = _keep("_inflight", dict)
 _partial: dict[str, str] = _keep("_partial", dict)
+# Why the last generation of a key produced nothing, as (time, text): the failure is noted on the worker thread, where the
+# adapter's thread-local last_call_error() lives, and read later on the UI's thread.
+_failure: dict[str, tuple[float, str]] = _keep("_failure", dict)
+_FAILURE_TTL_S = 300.0
+_MAX_FAILURES = 64
 # Text that must never be served or stored as an answer (set by the app to
 # "is this a Blockbrain error?"). Also guards entries written by older code.
 _reject: Callable[[str], bool] | None = _keep("_reject", lambda: None)
@@ -109,6 +115,7 @@ def submit(key: str, fn: Callable[[], str]) -> Future | None:
         existing = _inflight.get(key)
         if existing is not None and not existing.done():
             return existing
+        _failure.pop(key, None)
 
         def _job() -> str:
             try:
@@ -139,11 +146,30 @@ def partial(key: str) -> str:
         return _partial.get(key, "")
 
 
+def set_failure(key: str, reason: str) -> None:
+    """Record why a generation produced nothing (the adapter's error text, "" when it has none). Call from the worker."""
+    with _lock:
+        _failure[key] = (time.monotonic(), str(reason or ""))
+        while len(_failure) > _MAX_FAILURES:
+            _failure.pop(next(iter(_failure)))
+
+
+def failure(key: str) -> str | None:
+    """The reason the last generation of `key` failed (possibly ""), or None if it did not fail lately or has been retried."""
+    with _lock:
+        entry = _failure.get(key)
+        if entry is not None and time.monotonic() - entry[0] > _FAILURE_TTL_S:
+            _failure.pop(key, None)
+            return None
+        return entry[1] if entry is not None else None
+
+
 def clear() -> None:
     with _lock:
         _cache.clear()
         _inflight.clear()
         _partial.clear()
+        _failure.clear()
 
 
 def drop(key: str) -> None:

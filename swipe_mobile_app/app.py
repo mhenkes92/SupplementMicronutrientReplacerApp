@@ -2322,7 +2322,7 @@ def _pregnancy_food_warnings(items: list[dict[str, Any]], pregnant: bool | None 
         food = d.get("selected_food")
         title = _nutrient_title(d.get("component"))
         if _not_advised_in_pregnancy(food):
-            out.append(f"🤰 {title}: {_food_name(food)} isn't advised in pregnancy — pick another food under ✎ Change a choice.")
+            out.append(f"🤰 {title}: {_food_name(food)} isn't advised in pregnancy — tap it in your plan to choose another food.")
         elif _pregnancy_food_note(food):
             out.append(f"{title}: {_pregnancy_food_note(food)}")
     return out
@@ -2901,15 +2901,25 @@ def _benefits_prompts(replace_items: list[dict[str, Any]]) -> tuple[str, str, st
     return system_prompt, user_prompt, llm_cache.make_key("benefits", system_prompt, user_prompt, _generation_model(), _feature_model("benefits"))
 
 
-def _generate_whole_food_benefits(replace_items: list[dict[str, Any]], placeholder: Any = None) -> str:
-    """Contrast the isolated pill nutrient vs. the fuller benefits of the chosen whole food."""
-    if not replace_items:
-        return ""
+def _start_whole_food_benefits(replace_items: list[dict[str, Any]]) -> Any:
+    """Start writing the pill-vs-whole-food comparison for these swaps in the background, as the default meal plan is
+    (llm_cache.submit: one job per prompt, its answer lands in the cache even if nobody waits for it any more).
+    The Future, or None when it is already cached or there is nothing to compare. The caller counts the quota unit."""
     prompts = _benefits_prompts(replace_items)
     if prompts is None:
-        return ""
+        return None
     system_prompt, user_prompt, key = prompts
-    return _stream_llm_text(key, system_prompt, user_prompt, placeholder=placeholder, model=_feature_model("benefits"))
+    model = _feature_model("benefits") or None
+
+    def generate() -> str:
+        text = bb.call_blockbrain_text(
+            system_prompt, user_prompt, model=model, on_text=lambda text: llm_cache.set_partial(key, text)
+        )
+        if not str(text or "").strip() or bb.looks_like_agent_error(str(text)):
+            llm_cache.set_failure(key, bb.last_call_error())  # on this worker thread, where the adapter noted it
+        return text
+
+    return llm_cache.submit(key, generate)
 
 
 def _supplement_search_links(keep_items: list[dict[str, Any]]) -> tuple[str, dict[str, str]]:
@@ -3674,7 +3684,7 @@ def _render_header() -> None:
             .plan-stat {
                 background: rgba(255, 255, 255, 0.16);
                 border-radius: 12px;
-                padding: 8px 8px 7px 8px;
+                padding: 8px 3px 7px 3px;
                 text-align: center;
             }
             .plan-stat b {
@@ -3711,27 +3721,100 @@ def _render_header() -> None:
                 color: #334155;
                 margin: 0.9rem 0 0.4rem 0;
             }
-            .plan-list {
+            /* The plan lists: each row is a keyed container holding the .plan-row HTML and a transparent
+               button of the same size, so the whole row is the tap target. Without these rules the button
+               would just show as an ordinary one under its row. */
+            [class*="st-key-planlist_"] {
                 background: #ffffff;
                 border: 1px solid #e2e8f0;
                 border-radius: 16px;
                 overflow: hidden;
+                gap: 0;
+            }
+            [class*="st-key-planrow_"] {
+                position: relative;
+                gap: 0;
+            }
+            /* Streamlit pulls every markdown block up by 1rem (it cancels a paragraph's margin); a .plan-row has none. */
+            [class*="st-key-planrow_"] [data-testid="stMarkdownContainer"] {
+                margin-bottom: 0;
+            }
+            [class*="st-key-planbtn_"] {
+                position: absolute !important;
+                inset: 0;
+                z-index: 2;
+                width: 100% !important;
+                height: 100% !important;
+                margin: 0;
+            }
+            [class*="st-key-planbtn_"] [data-testid="stButton"] {
+                width: 100%;
+                height: 100%;
+            }
+            [class*="st-key-planbtn_"] button {
+                width: 100%;
+                height: 100%;
+                min-height: 44px;
+                padding: 0;
+                border: 0;
+                border-radius: 0;
+                background: transparent;
+            }
+            /* The label stays for screen readers; the row itself is what is seen. */
+            [class*="st-key-planbtn_"] button p {
+                position: absolute;
+                width: 1px;
+                height: 1px;
+                margin: -1px;
+                overflow: hidden;
+                clip: rect(0, 0, 0, 0);
+                white-space: nowrap;
+            }
+            [class*="st-key-planbtn_"] button:hover {
+                background: transparent;
+            }
+            @media (hover: hover) {
+                [class*="st-key-planbtn_"] button:hover {
+                    background: rgba(16, 185, 129, 0.07);
+                }
+            }
+            [class*="st-key-planbtn_"] button:active {
+                background: rgba(16, 185, 129, 0.16);
+            }
+            [class*="st-key-planbtn_"] button:focus-visible {
+                outline-offset: -3px !important;
+            }
+            .plan-sep {
+                border-top: 1px solid #f1f5f9;
+            }
+            /* The options window's close X is a 44 px touch target (Streamlit draws it 18 px). Where :has() is not
+               supported the X simply keeps its size. */
+            [data-testid="stDialog"]:has([class*="st-key-plandlg"]) [role="dialog"] button[aria-label="Close"] {
+                min-width: 44px;
+                min-height: 44px;
             }
             .plan-row {
                 display: flex;
                 gap: 12px;
                 align-items: flex-start;
                 padding: 11px 12px;
+                min-height: 44px;
+                box-sizing: border-box;
             }
-            .plan-row + .plan-row {
-                border-top: 1px solid #f1f5f9;
+            .plan-chev {
+                flex: 0 0 auto;
+                align-self: center;
+                color: #475569;
+                font-size: 1.5rem;
+                font-weight: 800;
+                line-height: 1;
             }
             .plan-ico {
                 font-size: 1.5rem;
                 line-height: 1;
-                width: 34px;
+                min-width: 34px;
                 text-align: center;
-                flex: 0 0 34px;
+                flex: 0 0 auto;
             }
             .plan-main {
                 flex: 1 1 auto;
@@ -3744,6 +3827,7 @@ def _render_header() -> None:
                 flex-wrap: wrap;
                 gap: 6px;
                 align-items: center;
+                overflow-wrap: anywhere;
             }
             .plan-amt {
                 font-size: 0.75rem;
@@ -3776,6 +3860,14 @@ def _render_header() -> None:
                 color: #1e293b;
                 padding: 8px 0;
                 border-bottom: 1px solid #f1f5f9;
+            }
+            .plan-sr {
+                position: absolute;
+                width: 1px;
+                height: 1px;
+                overflow: hidden;
+                clip: rect(0 0 0 0);
+                white-space: nowrap;
             }
             .plan-writing {
                 display: flex;
@@ -4133,10 +4225,12 @@ def _render_dietary_pills() -> None:
     )
 
 
-def _ai_service_problem() -> str:
+def _ai_service_problem(error: str | None = None) -> str:
     """A sentence for a failure that retrying cannot fix (the app's connection to the AI service), else "".
-    Visitors get plain words; the details are in ?debug=1 -> Diagnostics for the owner."""
-    error = bb.last_call_error()
+    Visitors get plain words; the details are in ?debug=1 -> Diagnostics for the owner.
+    `error`: the failure text noted by a background job (last_call_error() is per thread); default: this thread's."""
+    if error is None:
+        error = bb.last_call_error()
     if re.search(
         r"missing configuration|not a known model key|HTTP (?:401|403|404)\b|unauthori[sz]ed|forbidden", error, re.IGNORECASE
     ):
@@ -4144,9 +4238,9 @@ def _ai_service_problem() -> str:
     return ""
 
 
-def _ai_retry_note(default: str) -> str:
+def _ai_retry_note(default: str, error: str | None = None) -> str:
     """`default` ("… — please try again."), or the plain note when retrying cannot help."""
-    problem = _ai_service_problem()
+    problem = _ai_service_problem(error)
     return f"{problem}Please try again later." if problem else default
 
 
@@ -5553,6 +5647,276 @@ def _plan_warnings(
     return list(dict.fromkeys(w for w in warnings if w))
 
 
+# --- Plan items: tap a food or a kept pill, get its options window -------------
+# Every food row and kept-pill row of the Plan tab is HTML (.plan-row) with a transparent button over it
+# (CSS: planrow_ / planbtn_). A tap opens a dialog for THAT item with the options that used to sit at the
+# bottom of the page: change the choice, what the whole food adds (AI), the Athlete RDA guide.
+# Misfit rows ("doesn't fit <diet>") keep their own button: their one action is to choose another food.
+
+
+_TAP_HINT = "Tap a food or a supplement for options."
+
+
+def _md_escape(text: Any) -> str:
+    """Backslash-escape what Streamlit's markdown (button labels, dialog titles) would turn into formatting."""
+    return re.sub(r"([\\`*_\[\]~$:])", r"\\\1", str(text or ""))
+
+
+def _plan_row_amount(row: dict[str, Any]) -> str:
+    if row["practicality"] == "impractical":
+        return "not practical from food"
+    return f"{_format_plan_grams(row['grams'])}/day" if row["grams"] else ""
+
+
+def _plan_row_key(row: dict[str, Any]) -> str:
+    """The identity of a food row: the same normalised name _plan_rows groups by."""
+    return bb.normalize_lookup_key(_food_name(row["food"]))
+
+
+def _open_plan_item(kind: str, key: str) -> None:
+    """Row button callback: request the options window of a food ("food", normalised food name) or of a kept pill
+    ("keep", component_key). The dialog is drawn at the end of the same run by _build_mobile_ui."""
+    st.session_state["swipe_plan_item"] = {"kind": kind, "key": key}
+
+
+def _close_plan_item_dialog() -> None:
+    """Also the dialog's on_dismiss (X, Esc, tap outside): the request stays until one of them clears it."""
+    st.session_state["swipe_plan_item"] = None
+
+
+def _plan_item_row(kind: str, index: int, key: str, row_html: str, label: str) -> None:
+    """One tappable row. Keys are numbered, never built from food names, so they cannot collide."""
+    with st.container(key=f"planrow_{kind}_{index}"):
+        st.markdown(row_html, unsafe_allow_html=True)
+        st.button(_md_escape(label), key=f"planbtn_{kind}_{index}", on_click=_open_plan_item, args=(kind, key))
+
+
+def _resolve_plan_item(request: Any) -> dict[str, Any] | None:
+    """The requested item, read again from the CURRENT decisions: {"kind", "items", "row"}. `items` are decision
+    dicts in card order; `row` is the food's plan row (None for a pill). None once it is gone: a decision was
+    changed, or the diet filter now makes the food a misfit."""
+    if not isinstance(request, dict):
+        return None
+    kind, key = request.get("kind"), str(request.get("key", "") or "")
+    decisions = st.session_state.get("swipe_decisions") or {}
+    if kind == "keep":
+        d = decisions.get(key)
+        return {"kind": "keep", "items": [d], "row": None} if isinstance(d, dict) and d.get("decision") == "keep" else None
+    if kind == "food":
+        replace_items, _misfits = _split_replacements_by_diet(
+            [d for d in decisions.values() if d.get("decision") == "replace"], _selected_dietary_profile()
+        )
+        row = next((r for r in _plan_rows(replace_items) if _plan_row_key(r) == key), None)
+        if row:
+            return {"kind": "food", "items": sorted(row["items"], key=lambda d: int(d.get("card_index", 0))), "row": row}
+    return None
+
+
+def _plan_item_title(item: dict[str, Any]) -> str:
+    """Plain text (a screen reader announces it as the dialog's name), markdown-escaped. _food_name is already short."""
+    title = (
+        _nutrient_title(item["items"][0].get("component")) or "Supplement"
+        if item["kind"] == "keep"
+        else _food_name(item["row"]["food"]) or "Whole food"
+    )
+    return _md_escape(title if len(title) <= 60 else title[:59].rstrip() + "…")
+
+
+def _plan_item_dialog_requested() -> bool:
+    request = st.session_state.get("swipe_plan_item")
+    if request is None:
+        return False
+    if not isinstance(request, dict) or not _on_results_screen():  # a stale request must not pop up when the results come back
+        _close_plan_item_dialog()
+        return False
+    return True
+
+
+def _show_plan_item_dialog() -> None:
+    item = _resolve_plan_item(st.session_state.get("swipe_plan_item"))
+    if item is None:
+        _close_plan_item_dialog()
+        return
+    # st.dialog fixes its title when it is decorated, so the decorator is applied per run.
+    st.dialog(_plan_item_title(item), on_dismiss=_close_plan_item_dialog)(_plan_item_dialog_body)()
+
+
+def _plan_item_dialog_body() -> None:
+    # A button in a dialog reruns only this function (with the arguments of the last full run): read the request fresh.
+    item = _resolve_plan_item(st.session_state.get("swipe_plan_item"))
+    if item is None:
+        _close_plan_item_dialog()
+        st.rerun(scope="app")
+        return
+    with st.container(key="plandlg"):
+        _render_plan_item_summary(item)
+        _render_plan_item_change(item)
+        if item["kind"] == "food":
+            with st.expander("\U0001F331 What the whole food adds (AI)"):
+                _render_plan_item_adds(item)
+        with st.expander("\U0001F3C3 Athlete RDA guide"):
+            _render_plan_item_athlete(item)
+        if st.button("Done", width="stretch", key="plandlg_close"):
+            _close_plan_item_dialog()
+            st.rerun(scope="app")
+
+
+def _render_plan_item_summary(item: dict[str, Any]) -> None:
+    """What was tapped, in the chips of its row, then the safety notes that belong to this item alone."""
+    if item["kind"] == "keep":
+        dose = str(item["items"][0].get("dose_label", "") or "")
+        st.markdown(
+            (f"<span class='plan-dose'>{html.escape(dose)}</span> " if dose else "") + "kept as a supplement",
+            unsafe_allow_html=True,
+        )
+        _render_heads_up(_final_upper_limit_warnings(item["items"]))
+        return
+    row = item["row"]
+    sub = "for " + ", ".join(dict.fromkeys(n for n in row["nutrients"] if n))
+    amount = _plan_row_amount(row)
+    st.markdown(
+        (f"<span class='plan-amt'>{html.escape(amount)}</span> " if amount else "") + html.escape(sub), unsafe_allow_html=True
+    )
+    full_name = str(row["food"].get("food_description", "") or "").strip()
+    if full_name and full_name != _food_name(row["food"]):
+        st.caption(f"USDA: {_md_escape(full_name)}")
+    _render_heads_up(_final_food_warnings(item["items"]) + _pregnancy_food_warnings(item["items"]))
+
+
+def _change_choice_from_dialog(card_index: int) -> None:
+    """Leave the options window for card `card_index`; deciding it again takes the user straight back to the results.
+    Always from the dialog body: a widget in a dialog reruns the dialog alone, so the page needs the app-wide rerun."""
+    _close_plan_item_dialog()
+    _open_card(card_index, True)
+    _request_scroll_top()
+    st.rerun(scope="app")
+
+
+def _render_plan_item_change(item: dict[str, Any]) -> None:
+    st.markdown("<div class='plan-h' role='heading' aria-level='3'>✎ Change a choice</div>", unsafe_allow_html=True)
+    for index, d in enumerate(item["items"]):  # a food chosen for two nutrients: one card, so one button, per nutrient
+        nutrient = _md_escape(_nutrient_title(d.get("component")) or "Unknown")
+        if d.get("decision") == "keep":
+            label = f"💊 {nutrient} → kept as a supplement"
+        else:
+            label = f"🥗 {nutrient} → {_md_escape(_food_name(d.get('selected_food')))}"
+        if st.button(label, width="stretch", key=f"plandlg_change_{index}"):
+            _change_choice_from_dialog(int(d.get("card_index", 0)))
+    st.caption("Reopens the card — after you decide, you come straight back to your plan.")
+
+
+def _benefits_box(key: str) -> None:
+    """The comparison for cache key `key` as far as it is: the finished text, the text so far (or dots), or why it failed.
+    Drawn as a fragment (see _render_plan_item_adds): while the job runs it polls by itself, and no script run ever sleeps
+    waiting for the model, so Done, Change a choice and every other tap in the window answer at once.
+    The status line is a live region that a screen reader announces; the visible dots are hidden from it."""
+    ready = llm_cache.get(key)
+    pending = None if ready else llm_cache.inflight(key)
+    failed = None if ready or pending is not None else llm_cache.failure(key)
+    status = "Comparison ready" if ready else "Gathering whole-food benefits…" if pending is not None else ""
+    if failed is not None:
+        status = "Couldn't fetch the comparison"
+    st.markdown(f"<div class='plan-sr' role='status' aria-live='polite'>{status}</div>", unsafe_allow_html=True)
+    if ready:
+        st.markdown(ready)
+    elif pending is not None:
+        partial = llm_cache.partial(key)
+        if partial:
+            st.markdown(partial + " ▌")
+        else:
+            st.markdown(
+                "<div class='plan-writing' aria-hidden='true'><span class='plan-dots'><i></i><i></i><i></i></span>"
+                "Gathering whole-food benefits…</div>",
+                unsafe_allow_html=True,
+            )
+    elif failed is not None:
+        st.warning(_ai_retry_note("Couldn't fetch the comparison right now — please try again.", failed))
+
+
+def _ask_whole_food_benefits(items: list[dict[str, Any]], key: str) -> None:
+    """The comparison button's callback (it runs before the window is drawn again)."""
+    if llm_cache.get(key) is not None or llm_cache.inflight(key) is not None:
+        return
+    if _consume_llm_quota("generate"):  # counted here, so a spent allowance is not reported as a failure
+        st.session_state["swipe_plan_asked"] = key
+        _start_whole_food_benefits(items)
+    else:
+        st.session_state["swipe_plan_quota"] = key
+
+
+def _render_plan_item_adds(item: dict[str, Any]) -> None:
+    """What this one whole food adds compared with the pill: instant facts from the bundled data, then the AI comparison
+    for this food only (one background job and one cache entry per food)."""
+    row, items = item["row"], item["items"]
+    if _pregnancy_mode() and _not_advised_in_pregnancy(row["food"]):  # never promote a food the app advises against
+        st.caption("This food isn't advised in pregnancy, so no comparison is shown.")
+        return
+    bonus = ", ".join(f"{nutrient} ({_format_need_phrase(pct)})" for nutrient, pct in row["bonus"])
+    if bonus:
+        st.caption("Also in this portion: " + _md_escape(bonus))
+    profile = _selected_dietary_profile()
+    for d in items:
+        note = _bioavailability_note(
+            str(d.get("component_key", "") or ""), str(d.get("form", "") or ""),
+            d.get("dose_value"), str(d.get("dose_unit", "") or ""), profile,
+        )
+        if note:
+            st.caption(f"{_md_escape(_nutrient_title(d.get('component')))}: {_md_escape(note)}")
+    prompts = _benefits_prompts(items)
+    if prompts is None:
+        return
+    key = prompts[2]
+    box = st.container()  # above the button, filled below once it is known whether a job is running
+    ready = llm_cache.get(key)  # also with the AI off or the allowance spent: a cached answer costs nothing
+    pending = None if ready else llm_cache.inflight(key)  # started before (this window was closed meanwhile) or by another visitor
+    if not ready and pending is None and not _ai_is_on():
+        box.caption("The AI comparison is switched off right now.")
+        return
+    # The button stays once this visitor has asked (a tap on it again does nothing), and is never disabled: removing or
+    # disabling the focused control would throw a keyboard user's focus out of the window when the text arrives.
+    # Its callback starts the job, so the run it triggers already shows the progress.
+    if st.session_state.pop("swipe_plan_quota", None) == key:
+        box.info(_QUOTA_MESSAGE)
+    if (not ready and pending is None) or st.session_state.get("swipe_plan_asked") == key:
+        st.button(
+            "Show the comparison", type="primary", width="stretch", key="plandlg_benefits",
+            on_click=_ask_whole_food_benefits, args=(items, key),
+        )
+    with box:
+        # run_every is chosen per call: polling only while a job runs. It stops with the next run of the window (any
+        # tap in it, or closing it); until then the finished text is simply drawn again once a second.
+        st.fragment(_benefits_box, run_every=1.0 if pending is not None else None)(key)
+
+
+def _render_plan_item_athlete(item: dict[str, Any]) -> None:
+    """The targets of this item's nutrients, then the table of all of them."""
+    food = (item["row"] or {}).get("food")
+    for d in item["items"]:
+        title = _md_escape(_nutrient_title(d.get("component")) or "This nutrient")
+        entry = _rda_for_component(str(d.get("component_key", "") or d.get("component", "") or ""))
+        if entry is None:
+            st.caption(f"{title}: no athlete target is tracked for this nutrient.")
+            continue
+        unit = str(entry["unit"])
+        facts = [f"athlete target **{_md_escape(_format_rda_target(entry))}**", f"adult RDA {bb.format_float(float(entry['rda']))} {unit}"]
+        nrv = _format_eu_nrv(entry)
+        if nrv != "–":
+            facts.append(f"EU label (100% NRV) {nrv} {unit}")
+        lines = [f"**{_md_escape(entry['display'])}** — " + ", ".join(facts)]
+        if food:
+            reach = _portion_for_target(food, entry["athlete"], unit, str(entry["display"]), note=False)
+            if reach:
+                lines.append(f"To reach the athlete target: {_md_escape(reach)}")
+        else:
+            ratio = _dose_vs_athlete_ratio(
+                str(d.get("component_key", "") or ""), d.get("dose_value"), str(d.get("dose_unit", "") or ""), str(d.get("form", "") or "")
+            )
+            if ratio is not None:
+                lines.append(f"Your pill: {_format_need_share(int(round(ratio * 100)))} of the athlete target")
+        st.markdown("  \n".join(lines))
+    _render_athlete_rda_table()
+
+
 def _render_plan_tab(
     cards: list[dict[str, Any]],
     replace_items: list[dict[str, Any]],
@@ -5561,32 +5925,33 @@ def _render_plan_tab(
     diet_name: str,
 ) -> None:
     rows = _plan_rows(replace_items)
+    hinted = False
     if rows:
         st.markdown("<div class='plan-h' role='heading' aria-level='3'>🥗 Eat this</div>", unsafe_allow_html=True)
-        parts = []
-        for row in rows:
-            food = row["food"]
-            name = _food_name(food) or "Whole food"
-            icon = _whole_food_icon_from_food(food, "")
-            grams = row["grams"]
-            if row["practicality"] == "impractical":
-                amount = "not practical from food"
-            else:
-                amount = f"{_format_plan_grams(grams)}/day" if grams else ""
-            sub = "for " + ", ".join(dict.fromkeys(n for n in row["nutrients"] if n))
-            bonus = ", ".join(f"{nutrient} ({_format_need_phrase(pct)})" for nutrient, pct in row["bonus"])
-            bonus_html = f"<div class='plan-bonus'>+ also {html.escape(bonus)}</div>" if bonus else ""
-            parts.append(
-                "<div class='plan-row'>"
-                f"<div class='plan-ico' aria-hidden='true'>{html.escape(icon)}</div>"
-                "<div class='plan-main'>"
-                f"<div class='plan-name'>{html.escape(name)}"
-                + (f"<span class='plan-amt'>{html.escape(amount)}</span>" if amount else "")
-                + "</div>"
-                f"<div class='plan-sub'>{html.escape(sub)}</div>{bonus_html}"
-                "</div></div>"
-            )
-        st.markdown("<div class='plan-list'>" + "".join(parts) + "</div>", unsafe_allow_html=True)
+        st.caption(_TAP_HINT)
+        hinted = True
+        with st.container(key="planlist_food"):
+            for index, row in enumerate(rows):
+                food = row["food"]
+                name = _food_name(food) or "Whole food"
+                icon = _whole_food_icon_from_food(food, "")
+                amount = _plan_row_amount(row)
+                sub = "for " + ", ".join(dict.fromkeys(n for n in row["nutrients"] if n))
+                bonus = ", ".join(f"{nutrient} ({_format_need_phrase(pct)})" for nutrient, pct in row["bonus"])
+                bonus_html = f"<div class='plan-bonus'>+ also {html.escape(bonus)}</div>" if bonus else ""
+                _plan_item_row(
+                    "food", index, _plan_row_key(row),
+                    ("<div class='plan-sep'></div>" if index else "")
+                    + "<div class='plan-row' aria-hidden='true'>"
+                    f"<div class='plan-ico' aria-hidden='true'>{html.escape(icon)}</div>"
+                    "<div class='plan-main'>"
+                    f"<div class='plan-name'>{html.escape(name)}"
+                    + (f"<span class='plan-amt'>{html.escape(amount)}</span>" if amount else "")
+                    + "</div>"
+                    f"<div class='plan-sub'>{html.escape(sub)}</div>{bonus_html}"
+                    "</div><div class='plan-chev' aria-hidden='true'>›</div></div>",
+                    f"{name}" + (f", {amount}" if amount else "") + f", {sub}. Opens options.",
+                )
     if misfit_items:
         st.markdown(
             f"<div class='plan-h' role='heading' aria-level='3'>⚠️ Needs a new food ({html.escape(diet_name)})</div>", unsafe_allow_html=True
@@ -5603,55 +5968,29 @@ def _render_plan_tab(
             )
     if keep_items:
         st.markdown("<div class='plan-h' role='heading' aria-level='3'>💊 Kept as supplements</div>", unsafe_allow_html=True)
-        parts = []
-        for d in keep_items:
-            dose = str(d.get("dose_label", "") or "")
-            parts.append(
-                "<div class='plan-row'>"
-                "<div class='plan-ico' aria-hidden='true'>💊</div>"
-                "<div class='plan-main'>"
-                f"<div class='plan-name'>{html.escape(_nutrient_title(d.get('component')) or 'Supplement')}"
-                + (f"<span class='plan-dose'>{html.escape(dose)}</span>" if dose else "")
-                + "</div></div></div>"
-            )
-        st.markdown("<div class='plan-list'>" + "".join(parts) + "</div>", unsafe_allow_html=True)
+        if not hinted:
+            st.caption(_TAP_HINT)
+        with st.container(key="planlist_keep"):
+            for index, d in enumerate(keep_items):
+                title = _nutrient_title(d.get("component")) or "Supplement"
+                dose = str(d.get("dose_label", "") or "")
+                _plan_item_row(
+                    "keep", index, str(d.get("component_key", "") or ""),
+                    ("<div class='plan-sep'></div>" if index else "")
+                    + "<div class='plan-row' aria-hidden='true'>"
+                    "<div class='plan-ico' aria-hidden='true'>💊</div>"
+                    "<div class='plan-main'>"
+                    f"<div class='plan-name'>{html.escape(title)}"
+                    + (f"<span class='plan-dose'>{html.escape(dose)}</span>" if dose else "")
+                    + "</div></div><div class='plan-chev' aria-hidden='true'>›</div></div>",
+                    f"{title}" + (f", {dose}" if dose else "") + ", kept as a supplement. Opens options.",
+                )
     if not rows and not keep_items and not misfit_items:
         st.info("Swipe through your cards to build your plan.")
 
-    # Editing: one compact menu instead of a button per row.
+    # The three options that used to sit down here (change a choice, what the whole food adds, the Athlete RDA
+    # guide) open from a tap on a row. The reference table stays one tap away, for plans without a tappable row.
     st.markdown("<div style='height:0.6rem'></div>", unsafe_allow_html=True)
-    with st.popover("✎ Change a choice", width="stretch"):
-        st.caption("Reopen a card — after you decide, you come straight back here.")
-        for d in sorted(list(replace_items) + list(keep_items), key=lambda x: int(x.get("card_index", 0))):
-            component_key = str(d.get("component_key", "") or "")
-            kept = d.get("decision") == "keep"
-            label = f"{'💊' if kept else '🥗'} {_nutrient_title(d.get('component')) or 'Unknown'}"
-            if not kept:
-                label += f" → {_food_name(d.get('selected_food'))}"
-            st.button(
-                label,
-                width="stretch",
-                key=f"final_{'keep' if kept else 'repl'}_{component_key}",
-                on_click=_open_card,
-                args=(int(d.get("card_index", 0)), True),
-            )
-
-    with st.expander("🌱 What the whole food adds (AI)"):
-        if not replace_items:
-            st.info("Swipe right on at least one nutrient to compare benefits.")
-        else:
-            prompts = _benefits_prompts(replace_items)
-            ready = llm_cache.get(prompts[2]) if prompts else None
-            benefits_box = st.empty()
-            if ready:
-                benefits_box.markdown(ready)
-            elif not _ai_is_on():
-                st.caption("The AI comparison is switched off right now.")
-            elif st.button("Show the comparison", type="primary", width="stretch", key="swipe_gen_benefits"):
-                with st.spinner("Gathering whole-food benefits…"):
-                    benefits = _generate_whole_food_benefits(replace_items, placeholder=benefits_box)
-                if not benefits:
-                    st.warning(_ai_retry_note("Couldn't fetch the comparison right now — please try again."))
     _render_athlete_rda_popup()
 
 
@@ -5726,6 +6065,8 @@ def _live_meal_plan(plan_key: str) -> None:
     Only this fragment re-runs while it streams; one full re-run when it is done
     shows the finished plan with its buttons (and stops the polling)."""
     if llm_cache.inflight(plan_key) is None:
+        if st.session_state.get("swipe_plan_item"):
+            return  # a plan item window is open: redrawing the page would make it blink; closing it redraws the page anyway
         st.rerun()
     partial = llm_cache.partial(plan_key)
     if partial:
@@ -5921,6 +6262,17 @@ def _render_share_tab(
     )
 
 
+def _render_heads_up(warnings: list[str]) -> None:
+    """The orange Heads-up box (nothing when there is no warning)."""
+    if warnings:
+        st.markdown(
+            "<div class='plan-warn'><div class='plan-warn-h' role='heading' aria-level='3'>Heads-up</div>"
+            + "".join(f"<div class='plan-warn-i'>{html.escape(w)}</div>" for w in warnings)
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+
+
 def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[str, Any]]) -> None:
     _render_label_source_notice()  # "sample label" / "looked up online" stays visible on the results too
     profile = _selected_dietary_profile()
@@ -5939,14 +6291,7 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
         )
     _render_plan_hero(cards, replace_items, keep_items, misfit_items)
     st.caption(_RESULTS_DISCLAIMER)
-    warnings = _plan_warnings(replace_items, keep_items)
-    if warnings:
-        st.markdown(
-            "<div class='plan-warn'><div class='plan-warn-h' role='heading' aria-level='3'>Heads-up</div>"
-            + "".join(f"<div class='plan-warn-i'>{html.escape(w)}</div>" for w in warnings)
-            + "</div>",
-            unsafe_allow_html=True,
-        )
+    _render_heads_up(_plan_warnings(replace_items, keep_items))
 
     # Record this completed scan to the on-device history (once per analysis).
     _record_scan_to_history(decisions, diet_label)
@@ -5977,40 +6322,46 @@ def _format_eu_nrv(entry: dict[str, Any]) -> str:
     return bb.format_float(value) if value is not None else "–"
 
 
+def _render_athlete_rda_table() -> None:
+    """The Athlete RDA guide's body: caption, table of every tracked micronutrient, risk note. The unit sits in the
+    nutrient column, so the table has four columns and fits a phone."""
+    st.caption(
+        "Approximate daily targets for every micronutrient the app tracks. "
+        "EU NRV = the reference intake behind the %NRV on EU labels; adult "
+        "RDA/AI from NIH ODS; athlete targets raised per ISSN and "
+        "ACSM/AND/DC where training increases needs or sweat losses. General "
+        "guidance only — consult a sports dietitian for personalised advice."
+    )
+    st.table(
+        [
+            {
+                "Nutrient (per day)": f"{entry['display']} ({entry['unit']})",
+                "EU NRV": _format_eu_nrv(entry),
+                "Adult RDA": bb.format_float(float(entry["rda"])),
+                "Athlete": bb.format_float(float(entry["athlete"])),
+            }
+            for entry in _MICRONUTRIENT_RDA
+        ]
+    )
+    st.caption(
+        "\U0001F4A1 Athletes training >10 h/week, in low-sunlight regions, or on "
+        "plant-based diets are most at risk of Vitamin D, Iron, B12, Zinc and "
+        "Omega-3 deficiencies. Iron RDA shown is the general adult value "
+        "(menstruating women need ~18 mg; men ~8 mg)."
+    )
+
+
 def _render_athlete_rda_popup() -> None:
     """Static reference: approximate daily micronutrient targets for athletes.
 
     Values are approximate consensus figures from ISSN (Nutrient Timing, 2017),
     ACSM/AND/DC Nutrition and Athletic Performance (2016/2021), and NIH Office
     of Dietary Supplements RDA fact sheets. General guidance only — kept in a
-    popover so the long table doesn't push the results down.
+    popover so the long table doesn't push the results down. The same table
+    sits in every plan item's options window (_render_plan_item_athlete).
     """
     with st.popover("\U0001F3C3 Athlete RDA guide", width="stretch"):
-        st.caption(
-            "Approximate daily targets for every micronutrient the app tracks. "
-            "EU NRV = the reference intake behind the %NRV on EU labels; adult "
-            "RDA/AI from NIH ODS; athlete targets raised per ISSN and "
-            "ACSM/AND/DC where training increases needs or sweat losses. General "
-            "guidance only — consult a sports dietitian for personalised advice."
-        )
-        st.table(
-            [
-                {
-                    "Nutrient": str(entry["display"]),
-                    "Unit": str(entry["unit"]),
-                    "EU NRV": _format_eu_nrv(entry),
-                    "Adult RDA": bb.format_float(float(entry["rda"])),
-                    "Athlete": bb.format_float(float(entry["athlete"])),
-                }
-                for entry in _MICRONUTRIENT_RDA
-            ]
-        )
-        st.caption(
-            "\U0001F4A1 Athletes training >10 h/week, in low-sunlight regions, or on "
-            "plant-based diets are most at risk of Vitamin D, Iron, B12, Zinc and "
-            "Omega-3 deficiencies. Iron RDA shown is the general adult value "
-            "(menstruating women need ~18 mg; men ~8 mg)."
-        )
+        _render_athlete_rda_table()
 
 
 def _debug_requested() -> bool:
@@ -6067,6 +6418,8 @@ def _build_mobile_ui() -> None:
         _confirm_restart_dialog()
     elif st.session_state.get("swipe_open_analyze"):
         _analyze_dialog()
+    elif _plan_item_dialog_requested():
+        _show_plan_item_dialog()
     if st.session_state.pop("_suppswipe_scroll_top", False):
         _scroll_to_top()
     try:
