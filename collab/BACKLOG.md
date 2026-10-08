@@ -12,11 +12,11 @@ How we work (owner's request: "work together to improve the program from all ang
 
 | Id | Lane | Item | Impact | Who | Status |
 |---|---|---|---|---|---|
-| B-001 | speed | Client v2: cortex text route, `chat_stream`, attachment-race fix (vsc payload `collab/payload/`) | text 15-40 s -> 3-7 s, streamed meal plan, race fix for cortex OCR | owner decides, then cloud | **blocked**: classifier denied integrating another agent's code |
-| B-002 | ux | Real-browser pass over the LIVE app on 390x844 / 360x640 after the merge (screenshots, first-swipe time) | finds what the sandbox cannot see (real fonts, real Streamlit Cloud chrome) | vsc | open |
+| B-001 | speed | Client v2: cortex text route, `chat_stream`, attachment-race fix (vsc payload `collab/payload/`) | text 15-40 s -> 3-7 s, streamed meal plan, race fix for cortex OCR | owner decides, then cloud | **done**: landed by vsc (`d1a05f2`) on the owner's order, on master since 2026-10-05 |
+| B-002 | ux | Real-browser pass over the LIVE app on 390x844 / 360x640 after the merge (screenshots, first-swipe time) | finds what the sandbox cannot see (real fonts, real Streamlit Cloud chrome) | vsc | **done once** (messages 015/016: photos, product links, streaming checked live); repeat after UI changes |
 | B-003 | quality | More OCR ground truth: German labels, angled, curved bottles, dense two-column panels | which photos fail, which model/route | vsc + owner photos | open |
 | B-004 | speed/cost | Latency and Compute-Block cost per feature with the real key: OCR, meal plan, comparison, Ask AI, link reading | picks models/budgets by data | vsc | open |
-| B-005 | feature | Ask AI from the Examine KB bot (`BLOCKBRAIN_KB_BOT_ID`), label only when `reply.sources` is non-empty | restores the KB answers | cloud after B-001 | waiting |
+| B-005 | feature | Ask AI from the Examine KB bot (`BLOCKBRAIN_KB_BOT_ID`), label only when `reply.sources` is non-empty | restores the KB answers | vsc | **done** (`d466b7f`, live with `BLOCKBRAIN_KB_BOT_ID`) |
 | B-006 | feature | Product look-up by name with web search (`web=True`), shown as unconfirmed, behind the dose gates | front-of-pack photos work again | cloud after B-001 | waiting |
 | B-003/B-004 | quality, speed | taken by vsc (message 006): more real labels (needs the owner's photos), latency and cost per feature | see above | vsc | taken |
 | B-010 | ux | Stable card buttons (no layout jump), plain AI-off states, one clear error, no lost paste, sample label marked as such and not saved, 44 px touch targets, bottom padding for the Streamlit Cloud pill | fewer dead ends on a phone | cloud | **done** (commit 8ba114f) |
@@ -26,3 +26,5 @@ How we work (owner's request: "work together to improve the program from all ang
 | B-014 | security | Barcode look-up rate limit (**done**), stale/damaged saved scan removed from the device (**done**), no second OCR route after a 401/403 (**done**); open: history merge, privacy-notice wording, `pip-audit` in CI (the test workflow already has `contents: read`) | hardening | cloud | partly done |
 | B-015 | security | **Git history contains key-shaped secrets** (Blockbrain `sk-kb-`, OpenRouter, a GitHub token): rotate/revoke them, then rewrite history or make the repo private. The repo/org ids in `blockbrain_llm_client.py` are not credentials but are public if the repo is | the only real exposure left | **owner** | open |
 | B-016 | ux | Sticky action bar on the results, collapsed hero, dark theme | polish | cloud | idea |
+| B-017 | quality | **Lesson, my fault:** `c7a96d0` lowered the non-JPEG pixel limit to 8 MP while phone JPEGs are `MPO` in Pillow, so ordinary 12 MP photos were refused before any AI call ("photo couldn't be read"). Fixed by vsc in `2c75047`; guard test `tests/test_photo_and_product_link.py` | every phone photo | cloud (lesson), vsc (fix) | **done**; rule in CLAUDE.md |
+| B-018 | ux | Results page: tap a food or kept-pill row -> dialog with "Change a choice", "What the whole food adds (AI)", "Athlete RDA guide" in context (owner's idea 2026-10-08) | fewer hidden controls at the bottom of the Plan tab | cloud (workflow `plan-item-dialog`) | in progress |
