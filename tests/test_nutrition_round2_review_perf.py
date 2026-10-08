@@ -24,26 +24,30 @@ def _offline(monkeypatch):
 def _best_time(text: str) -> float:
     bb.parse_components(text)  # warm caches
     best = float("inf")
-    for _ in range(2):
+    for _ in range(3):
         start = time.perf_counter()
         bb.parse_components(text)
         best = min(best, time.perf_counter() - start)
     return best
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        " + ".join(["Zink", "Selen"] * 800) + " " + " + ".join(["10 mg", "55 µg"] * 800),
-        " / ".join(["Vitamin D3", "K2", "Calcium", "Magnesium"] * 800) + " 1000 IE",
-        "Vitamin D3 + K2 + " * 1600 + "1000 IE",
-    ],
-    ids=["1600-names-with-doses", "slash-joined", "plus-joined"],
-)
-def test_long_joined_title_groups_parse_quickly(text):
-    # ~25-30 KB on one line: 1.6-2.9 s with the old per-member re-scans.
-    assert len(text) > 24_000
-    assert _best_time(text) < 1.0
+_BUILDERS = {
+    "1600-names-with-doses": lambda n: " + ".join(["Zink", "Selen"] * n) + " " + " + ".join(["10 mg", "55 µg"] * n),
+    "slash-joined": lambda n: " / ".join(["Vitamin D3", "K2", "Calcium", "Magnesium"] * n) + " 1000 IE",
+    "plus-joined": lambda n: "Vitamin D3 + K2 + " * (2 * n) + "1000 IE",
+}
+
+
+@pytest.mark.parametrize("kind", sorted(_BUILDERS))
+def test_long_joined_title_groups_parse_quickly(kind):
+    # ~25-30 KB on one line took 1.6-2.9 s with the old per-member re-scans (quadratic). The check compares the run with
+    # itself (double the input must cost about double the time, quadratic would cost four times) instead of a wall-clock
+    # limit, so a loaded machine cannot fail it.
+    small, big = _BUILDERS[kind](800), _BUILDERS[kind](1600)
+    assert len(small) > 24_000
+    t_small, t_big = _best_time(small), _best_time(big)
+    assert t_big < 3.2 * t_small + 0.05, f"not linear: {t_small:.3f}s for {len(small)} chars, {t_big:.3f}s for {len(big)} chars"
+    assert t_big < 20.0  # a sanity ceiling, far above any healthy machine
 
 
 def test_joined_group_with_doses_still_reads_each_dose():

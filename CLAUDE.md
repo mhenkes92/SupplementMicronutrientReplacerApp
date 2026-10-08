@@ -18,12 +18,18 @@ Live app = branch `master` (Streamlit Cloud, entry `swipe_mobile_app/app.py`); o
   cortex fallback for photos, errors reported through `last_call_error()`.
 * Configuration **only through environment variables** (a Streamlit secret of the same name is copied into the environment):
   `BLOCKBRAIN_API_KEY` (secret), `BLOCKBRAIN_ORG_ID`, `BLOCKBRAIN_MODEL` (or `BLOCKBRAIN_BOT_ID`), optional
-  `BLOCKBRAIN_OCR_ROUTE`. Never hard-code, print, log or commit the key (`tests/test_no_secrets_in_tree.py`).
+  `BLOCKBRAIN_OCR_ROUTE`, `BLOCKBRAIN_TEXT_ROUTE` (`cortex` = text in 3-7 s instead of 15-40 s), `BLOCKBRAIN_KB_BOT_ID` (Ask AI on the
+  knowledge-base bot) and the per-feature models `BLOCKBRAIN_MODEL_MEAL` / `_BENEFITS` / `_ASK` (cortex only).
+  Never hard-code, print, log or commit the key (`tests/test_no_secrets_in_tree.py`).
 * Do not use the VS Code proxy (127.0.0.1:4891: it exists only on the owner's PC) and not the researchAgent. Keep
-  `blockbrain_llm_client.py` byte-identical to the owner's version; ask for changes (e.g. streaming) instead of editing it.
-* Text features need a bot bound to a custom agent (`chat()` = the `customAgent` stream route); only photo reading also has the
-  `cortex` route (any ordinary bot). The model has no web access: never ask it for facts it can only know from a lookup.
+  `blockbrain_llm_client.py` byte-identical to the owner's version; ask for changes instead of editing it. The owner approved
+  client v2 (cortex text route, `chat_stream`, `web=`, KB sources, attachment-race fix) on 2026-10-03 ("land it"); it is opt-in.
+* On the default (agentic) route text features need a bot bound to a custom agent; the `cortex` route (photos always, text with
+  `BLOCKBRAIN_TEXT_ROUTE=cortex`) works with any ordinary bot. The model has no web access in a plain chat: never ask it for
+  facts it can only know from a lookup (`web=True` on the cortex route is the one exception and its answer is unconfirmed).
 * LLM OCR can misread digits: the app validates what it reads (dose vs. printed %NRV, units, magnitudes, upper limits) in code.
+  Phone JPEGs are reported by Pillow as `MPO`, not `JPEG`: image-size limits must treat both as JPEG (a 12 MP phone photo was
+  once refused before any AI call because of that; test with real phone files, not only synthetic JPEGs).
 * Tests never reach Blockbrain: `tests/fake_blockbrain.py` is a local fake of the routes, `tests/conftest.py` forces a fake key.
   Real proof (`python blockbrain_llm_client.py selftest`, real labels) needs the real key and runs on the owner's machine.
 

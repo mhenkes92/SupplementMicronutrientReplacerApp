@@ -147,10 +147,22 @@ def results_heading(page):
     return page.locator(".plan-kicker", has_text="Your plan")
 
 
-def change_choice(page, text: str) -> None:
-    """Reopen a decided card from the results' "Change a choice" menu."""
-    page.get_by_role("button", name="✎ Change a choice").click()
-    page.locator('[data-testid="stPopoverBody"] button', has_text=text).first.click()
+DIALOG = '[data-testid="stDialog"]'
+
+
+def open_plan_item(page, kind: str, text: str):
+    """Tap the food ("food") or kept-pill ("keep") row of the Plan tab that mentions `text`; returns its options window."""
+    page.locator(f'[class*="st-key-planbtn_{kind}_"] button', has_text=text).first.click()
+    dialog = page.locator(DIALOG)
+    dialog.wait_for(timeout=10000)
+    settle(page)
+    return dialog
+
+
+def change_choice(page, kind: str, text: str) -> None:
+    """Reopen a decided card: tap its row, then "Change a choice" in the options window."""
+    dialog = open_plan_item(page, kind, text)
+    dialog.locator('[class*="st-key-plandlg_change_"] button').first.click()
 
 
 def finish_all_cards(page, replace: bool = False) -> None:
@@ -232,22 +244,24 @@ def test_edit_from_results_returns_to_results(page):
     start_sample(page)
     finish_all_cards(page)
     shot(page, "ux_results_tabs")
-    change_choice(page, "Vitamin B12")
+    change_choice(page, "keep", "Vitamin B12")
     card(page).locator("#card .name").wait_for(timeout=20000)
     settle(page)
+    assert page.locator(DIALOG).count() == 0  # the window closed with the tap
     assert "Editing from your results" in card(page).locator("#card").inner_text()
     assert card(page).locator("#btnBack").get_attribute("aria-label") == "Back to your results"
     shot(page, "ux_edit_mode_card")
     card(page).locator("#btnRepl").click()
     results_heading(page).wait_for(timeout=20000)
     settle(page)
-    page.get_by_role("button", name="✎ Change a choice").click()
-    b12 = page.locator('[data-testid="stPopoverBody"] button', has_text="Vitamin B12").first
-    assert b12.inner_text().count("→") == 1
+    assert page.locator(DIALOG).count() == 0  # and it does not come back after the decision
+    dialog = open_plan_item(page, "food", "Vitamin B12")  # B12 is a swapped food now
+    assert dialog.locator('[class*="st-key-plandlg_change_"] button').first.inner_text().count("→") == 1
     page.keyboard.press("Escape")
     settle(page)
+    assert page.locator(DIALOG).count() == 0
     # Back in edit mode also returns to the results, unchanged.
-    change_choice(page, "Zinc")
+    change_choice(page, "keep", "Zinc")
     card(page).locator("#card .name").wait_for(timeout=20000)
     settle(page)
     card(page).locator("#btnBack").click()
@@ -265,9 +279,13 @@ def test_results_tabs_show_their_content(page):
     tabs = page.get_by_role("tab")
     assert [t.strip() for t in tabs.all_inner_texts()] == ["🥗 Plan", "🍽️ Meals", "🛒 Shopping", "💬 Ask AI", "📤 Share"]
     page.locator(".plan-hero").wait_for(timeout=5000)
-    for name in ("Athlete RDA guide", "✎ Change a choice"):
-        page.get_by_role("button", name=name).wait_for(timeout=5000)
-        assert page.get_by_role("button", name=name).count() == 1
+    # The options live in each row's window now; the reference table stays as one compact menu.
+    page.get_by_role("button", name="Athlete RDA guide").wait_for(timeout=5000)
+    assert page.get_by_role("button", name="Athlete RDA guide").count() == 1
+    assert page.get_by_role("button", name="✎ Change a choice").count() == 0
+    page.locator('[class*="st-key-planbtn_food_"] button').first.wait_for(state="attached", timeout=5000)
+    page.locator('[class*="st-key-planbtn_keep_"] button').first.wait_for(state="attached", timeout=5000)
+    assert page.locator('[class*="st-key-planbtn_keep_"] button').count() == 1
     page.get_by_role("tab", name="🍽️ Meals").click()
     page.get_by_text("Quick ideas").wait_for(timeout=5000)
     page.get_by_role("tab", name="🛒 Shopping").click()
@@ -532,7 +550,7 @@ def test_meal_count_survives_editing_a_card(page):
     page.get_by_text("1 meal", exact=True).click()
     settle(page)
     page.get_by_role("tab", name="🥗 Plan").click()
-    change_choice(page, "Selenium")
+    change_choice(page, "keep", "Selenium")
     card(page).locator("#card .name").wait_for(timeout=20000)
     settle(page)
     card(page).locator("#btnBack").click()
@@ -563,3 +581,235 @@ def test_keep_and_replace_stay_where_the_thumb_is(page):
     assert len(heights) >= 3
     assert heights == sorted(heights), heights  # never shrinks
     assert button_tops == sorted(button_tops), button_tops  # so the buttons never jump up between cards
+
+
+def _mixed_results(page) -> None:
+    """The sample label with the first card replaced and the rest kept: one food row, several kept pills."""
+    start_sample(page)
+    name = card_name(page)
+    card(page).locator("#btnRepl").click()
+    wait_name_change(page, name)
+    finish_all_cards(page)
+    page.locator('[class*="st-key-planbtn_food_"] button').first.wait_for(state="attached", timeout=5000)
+
+
+def _window_box(page) -> dict:
+    return page.evaluate(
+        "() => { const r = document.querySelector('[data-testid=stDialog] [role=dialog]').getBoundingClientRect();"
+        " return {x: r.x, right: r.right, bottom: r.bottom, vw: innerWidth, vh: innerHeight, page: document.scrollingElement.scrollWidth}; }"
+    )
+
+
+@pytest.mark.parametrize("size", [(390, 844), (320, 640)])
+def test_tapping_a_row_opens_its_options_window(browser, server, size):
+    ctx = browser.new_context(viewport={"width": size[0], "height": size[1]}, is_mobile=True, has_touch=True)
+    page = ctx.new_page()
+    page.goto(server, wait_until="networkidle")
+    _mixed_results(page)
+    row = page.locator('[class*="st-key-planbtn_food_"] button').first
+    dialog = open_plan_item(page, "food", "")
+    box = _window_box(page)
+    assert box["x"] >= 0 and box["right"] <= box["vw"] and box["page"] <= box["vw"]  # inside the phone, no sideways scroll
+    text = dialog.inner_text()
+    for heading in ("CHANGE A CHOICE", "What the whole food adds (AI)", "Athlete RDA guide"):  # the last two are expanders
+        assert heading in text
+    assert not dialog.locator("table").first.is_visible()  # both expanders start closed: a short window
+    dialog.get_by_text("What the whole food adds (AI)").click()
+    dialog.get_by_text("The AI comparison is switched off right now.").wait_for(timeout=5000)  # this server has no Blockbrain settings
+    assert dialog.get_by_role("button", name="Show the comparison").count() == 0
+    dialog.get_by_text("Athlete RDA guide").click()
+    dialog.locator("table").wait_for(timeout=5000)
+    assert dialog.locator("table tr").count() > 25
+    assert _window_box(page)["page"] <= size[0]  # still no sideways page scroll with both expanders open
+    shot(page, f"ux_plan_item_window_{size[0]}")
+    # X, Esc and the Close button all leave the window, and the page behind keeps its tab.
+    assert dialog.get_by_role("button", name="Done").count() == 1
+    dialog.get_by_role("button", name="Close", exact=True).click()  # the X, 44 px wide
+    settle(page)
+    assert page.locator(DIALOG).count() == 0
+    assert page.get_by_role("tab", name="🥗 Plan").get_attribute("aria-selected") == "true"
+    row.click()
+    page.locator(DIALOG).wait_for(timeout=10000)
+    settle(page)
+    page.keyboard.press("Escape")
+    settle(page)
+    assert page.locator(DIALOG).count() == 0
+    row.click()
+    page.locator(DIALOG).wait_for(timeout=10000)
+    settle(page)
+    page.locator(".st-key-plandlg_close button").click()
+    settle(page)
+    assert page.locator(DIALOG).count() == 0
+    ctx.close()
+
+
+def test_a_kept_pill_window_has_no_comparison_and_changes_the_choice(page):
+    _mixed_results(page)
+    dialog = open_plan_item(page, "keep", "")
+    text = dialog.inner_text()
+    assert "CHANGE A CHOICE" in text and "Athlete RDA guide" in text and "What the whole food adds" not in text
+    assert "kept as a supplement" in text
+    dialog.locator(".st-key-plandlg_change_0 button").click()
+    card(page).locator("#card .name").wait_for(timeout=20000)
+    settle(page)
+    assert page.locator(DIALOG).count() == 0 and "Editing from your results" in card(page).locator("#card").inner_text()
+    card(page).locator("#btnBack").click()
+    results_heading(page).wait_for(timeout=20000)
+    settle(page)
+    assert page.locator(DIALOG).count() == 0
+
+
+def test_scanning_another_supplement_after_a_row_window_opens_the_analyze_dialog(page):
+    _mixed_results(page)
+    open_plan_item(page, "keep", "")
+    page.keyboard.press("Escape")
+    settle(page)
+    page.get_by_role("button", name="📸 Scan another supplement").click()
+    page.get_by_role("dialog").wait_for(timeout=10000)
+    assert page.get_by_role("dialog").get_by_text("Analyze my supplement").count() >= 1
+    assert page.locator(DIALOG).count() == 1  # only the Analyze dialog
+
+
+def test_each_row_button_covers_its_whole_row(page):
+    """The tap target is a transparent button over the .plan-row. If a Streamlit change breaks the overlay CSS the buttons
+    would show as ordinary ones under their rows: this fails first."""
+    _mixed_results(page)
+    boxes = page.evaluate(
+        "() => [...document.querySelectorAll('[class*=\"st-key-planrow_\"]')].map(row => {"
+        " const r = row.getBoundingClientRect(), b = row.querySelector('button').getBoundingClientRect();"
+        " return {row: [r.x, r.y, r.width, r.height], button: [b.x, b.y, b.width, b.height]}; })"
+    )
+    assert len(boxes) >= 2
+    for box in boxes:
+        assert all(abs(a - b) <= 1 for a, b in zip(box["row"], box["button"])), box
+        assert box["button"][3] >= 44  # a finger-sized target
+
+
+# ---------------------------------------------------------------- the AI comparison in the options window
+# The default server above has no Blockbrain settings. This one talks to tests/fake_blockbrain.py only: a sitecustomize in
+# its PYTHONPATH sends every request for a *.theblockbrain.ai host to the fake and refuses any other non-local host.
+_FAKE_ROUTING = '''
+import os
+_fake = os.environ.get("SUPPSWIPE_TEST_FAKE_BB", "").rstrip("/")
+if _fake:
+    import requests.adapters
+    from urllib.parse import urlparse
+    _send = requests.adapters.HTTPAdapter.send
+    def _to_fake(self, request, *args, **kwargs):
+        host = urlparse(request.url).hostname or ""
+        if host.endswith("theblockbrain.ai"):
+            request.url = _fake + request.url.split(urlparse(request.url).netloc, 1)[1]
+        elif host not in ("127.0.0.1", "localhost"):
+            raise RuntimeError("only the local fake may be contacted: " + host)
+        return _send(self, request, *args, **kwargs)
+    requests.adapters.HTTPAdapter.send = _to_fake
+'''
+
+
+@pytest.fixture
+def ai_server(tmp_path_factory):
+    """One server per test: a finished or running comparison is cached in the server process, per food."""
+    import fake_blockbrain as fb
+
+    fake = fb.FakeBlockbrain().start()
+    routing = tmp_path_factory.mktemp("fake_routing")
+    (routing / "sitecustomize.py").write_text(_FAKE_ROUTING)
+    port = _free_port()
+    env = dict(
+        os.environ,
+        PYTHONPATH=os.pathsep.join([str(routing), os.environ.get("PYTHONPATH", "")]).rstrip(os.pathsep),
+        SUPPSWIPE_TEST_FAKE_BB=fake.url,
+        NO_PROXY="127.0.0.1,localhost",
+        no_proxy="127.0.0.1,localhost",
+        BLOCKBRAIN_API_KEY=fb.API_KEY,
+        BLOCKBRAIN_ORG_ID=fb.ORG_ID,
+        BLOCKBRAIN_BOT_ID=fb.BOT_ID,
+        SUPPSWIPE_PREFETCH_MEALS="0",
+    )
+    for name in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"):
+        env.pop(name, None)
+    env.pop("BLOCKBRAIN_MODEL", None)
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "streamlit", "run", str(ROOT / "swipe_mobile_app" / "app.py"),
+         "--server.port", str(port), "--server.headless", "true", "--browser.gatherUsageStats", "false"],
+        cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    url = f"http://localhost:{port}/"
+    for _ in range(120):
+        try:
+            urllib.request.urlopen(url + "_stcore/health", timeout=1)
+            break
+        except Exception:
+            time.sleep(0.5)
+    yield url, fake
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except Exception:
+        proc.kill()
+    fake.stop()
+
+
+_ANSWER = "**Vitamin C → Guavas**\n\n- 💊 Pill alone: one nutrient\n- 🥗 Whole food also gives: fibre and more"
+
+
+def _slow_comparison(ai_server, page, seconds: float):
+    """A results page whose first food window has its comparison being written (the fake model needs `seconds`)."""
+    url, fake = ai_server
+    fake.stream_script = [{"delay": seconds, "text": _ANSWER}]
+    page.goto(url, wait_until="networkidle")
+    _mixed_results(page)
+    dialog = open_plan_item(page, "food", "")
+    dialog.get_by_text("What the whole food adds (AI)").click()
+    dialog.get_by_role("button", name="Show the comparison").click()
+    dialog.locator(".plan-writing").wait_for(timeout=10000)
+    return dialog
+
+
+def _closed_within(page, seconds: float) -> bool:
+    end = time.time() + seconds
+    while time.time() < end:
+        if page.locator(DIALOG).count() == 0:
+            return True
+        page.wait_for_timeout(50)
+    return False
+
+
+def test_done_answers_at_once_while_the_comparison_is_being_written(ai_server, page):
+    """A tap inside the window is queued behind a running script: no run may wait for the model (it takes 15-40 s live)."""
+    dialog = _slow_comparison(ai_server, page, 12)
+    page.wait_for_timeout(1000)
+    started = time.time()
+    dialog.locator(".st-key-plandlg_close button").click()
+    assert _closed_within(page, 3), "Done waited for the AI comparison"
+    assert time.time() - started < 3
+
+
+def test_change_a_choice_answers_at_once_while_the_comparison_is_being_written(ai_server, page):
+    dialog = _slow_comparison(ai_server, page, 12)
+    page.wait_for_timeout(1000)
+    dialog.locator(".st-key-plandlg_change_0 button").click()
+    assert _closed_within(page, 3), "Change a choice waited for the AI comparison"
+    card(page).locator("#card .name").wait_for(timeout=10000)
+    assert "Editing from your results" in card(page).locator("#card").inner_text()
+
+
+def test_reopening_a_food_that_is_still_being_written_does_not_block_the_page(ai_server, page):
+    dialog = _slow_comparison(ai_server, page, 12)
+    page.keyboard.press("Escape")
+    assert _closed_within(page, 3)
+    page.wait_for_timeout(500)
+    dialog = open_plan_item(page, "food", "")  # waits for the dialog only: the page run must not sit in a wait loop
+    dialog.locator(".st-key-plandlg_change_0 button").click()
+    assert _closed_within(page, 3), "reopening an in-flight food held back the window's buttons"
+
+
+def test_the_comparison_appears_by_itself_and_keeps_the_focus_and_announces_itself(ai_server, page):
+    dialog = _slow_comparison(ai_server, page, 2)
+    button = dialog.get_by_role("button", name="Show the comparison")
+    assert dialog.locator("[role=status]").count() == 1
+    dialog.get_by_text("fibre and more").wait_for(timeout=15000)  # drawn by the polling fragment: nothing was tapped
+    assert dialog.locator("[role=status]").inner_text() == "Comparison ready"
+    assert button.count() == 1 and button.is_enabled()  # not removed (focus would jump to the window's X)
+    assert page.evaluate("document.activeElement && document.activeElement.getAttribute('aria-label')") != "Close"
+    shot(page, "ux_plan_item_comparison")

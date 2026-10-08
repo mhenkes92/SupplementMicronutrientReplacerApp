@@ -88,7 +88,7 @@ def test_results_screen_shows_the_daily_totals(monkeypatch):
     # The results hero shows the daily food amount and energy as stat tiles.
     assert "food / day" in text and "kcal / day" in text
     labels = " ".join(b.label for b in at.button)
-    assert "Vitamin B12 →" in labels and "Folic acid →" in labels
+    assert "for Vitamin B12" in labels and "for Folic acid" in labels  # the plan's food rows
 
 
 @pytest.mark.parametrize("pregnant", [False, True])

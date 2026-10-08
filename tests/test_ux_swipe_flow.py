@@ -186,7 +186,8 @@ def test_results_tap_opens_card_in_edit_mode_and_returns():
         _swipe(at, "left", f"k{i}")
     assert at.session_state["swipe_index"] == n
     first_key = at.session_state["swipe_cards"][0]["component_key"]
-    at.button(key=f"final_keep_{first_key}").click().run()
+    at.button(key="planbtn_keep_0").click().run()  # the first kept pill's row opens its options window ...
+    at.button(key="plandlg_change_0").click().run()  # ... and "Change a choice" reopens its card
     assert at.session_state["swipe_index"] == 0
     assert at.session_state["swipe_edit_return"] is True
     _swipe(at, "right", "edit1")

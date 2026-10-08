@@ -1,6 +1,7 @@
 """Results screen layout: a plan dashboard with tabs (plan, meals, shopping,
-Ask AI, share) instead of a stack of action popovers; edit and back buttons
-and the Athlete RDA guide stay reachable."""
+Ask AI, share) instead of a stack of action popovers; the back button, one
+tappable row per food and kept pill (see test_ux_plan_item_dialog.py) and the
+Athlete RDA guide stay reachable."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -54,8 +55,9 @@ def test_results_use_tabs_not_popovers(results_app):
     assert [t.label for t in at.tabs] == TABS
     popovers = _labels(at.main, "popover")
     assert not set(OLD_POPOVERS) & set(popovers), popovers
-    # Editing and the Athlete RDA guide are compact menus inside the plan tab.
-    assert "✎ Change a choice" in popovers and "\U0001F3C3 Athlete RDA guide" in popovers
+    # Editing moved into the dialog of each row; the Athlete RDA guide stays as one compact menu in the plan tab.
+    assert "\U0001F3C3 Athlete RDA guide" in popovers and "✎ Change a choice" not in popovers
+    assert not at.get("dialog")  # nothing is open until a row is tapped
     text = " ".join(m.value for m in at.markdown)
     assert "plan-hero" in text and "nutrients now come from food" in text
 
@@ -65,7 +67,9 @@ def test_results_keep_back_and_per_item_buttons():
     keys = {b.key for b in at.button}
     assert "final_back_last" in keys
     cards = at.session_state["swipe_cards"]
-    assert all(f"final_keep_{c['component_key']}" in keys or f"final_repl_{c['component_key']}" in keys for c in cards)
+    kept = [d for d in at.session_state["swipe_decisions"].values() if d["decision"] == "keep"]
+    assert len([k for k in keys if str(k).startswith("planbtn_keep_")]) == len(kept) > 0
+    assert any(str(k).startswith("planbtn_food_") for k in keys)
     at.button(key="final_back_last").click().run()
     assert at.session_state["swipe_index"] == len(cards) - 1
     assert not at.session_state["swipe_edit_return"]

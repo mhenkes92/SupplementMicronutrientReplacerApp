@@ -21,7 +21,7 @@ def test_removed_selectors_stay_gone(sw, monkeypatch):
     for dead in (
         ".swipe-progress", ".swipe-dot", ".swipe-title", ".filter-shell", ".filter-chip", ".tinder-stage",
         ".stack-under", ".decision-badge", ".micro-name", ".portion-hint", ".card-hero", ".swipe-final-card",
-        ".analyze-loading-spinner", "section.main", "stVerticalBlockBorderWrapper",
+        ".analyze-loading-spinner", "section.main", "stVerticalBlockBorderWrapper", ".plan-list", ".plan-row + .plan-row",
     ):
         assert dead not in css, dead
 

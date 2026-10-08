@@ -47,15 +47,19 @@ secret with the same name is copied into the environment.
 | `BLOCKBRAIN_MODEL` | Model key of the owner's sandbox org (`claude-sonnet-5`, `gemini-3.8-flash`, `gpt-5.5`, `kimi-k3`, …; see `KNOWN_MODELS` in the client) — **or** |
 | `BLOCKBRAIN_BOT_ID` | …a bot of your own organisation (its model answers; wins over `BLOCKBRAIN_MODEL`) |
 | `BLOCKBRAIN_OCR_ROUTE` | Optional: `agentic` (default) or `cortex` — the route that reads photos. The other one is the fallback. `agentic` needs a bot bound to a custom agent; `cortex` works with any ordinary bot. |
+| `BLOCKBRAIN_TEXT_ROUTE` | Optional: `cortex` sends meal plans, comparisons and Ask AI over the cortex route (about 3-7 s instead of 15-40 s, works with any ordinary bot, answers stream onto the screen). Default `agentic`. |
+| `BLOCKBRAIN_MODEL_MEAL`, `BLOCKBRAIN_MODEL_BENEFITS`, `BLOCKBRAIN_MODEL_ASK` | Optional, **cortex route only**: a Blockbrain model id per feature (for example a cheaper model for the comparison). Unset = the global model. Measured by the VS Code agent: `claude-sonnet-5` is the only one that reproduces every gram amount of the meal plan; see `collab/FACTS_BLOCKBRAIN.md` (section 8) on the `collab/vsc` branch. |
+| `BLOCKBRAIN_KB_BOT_ID` | Optional: id of a knowledge-base bot (the "SuppSwipe Ask AI" bot). Ask AI asks it first; the "From the Examine knowledge base" label appears only when the answer came with sources, otherwise it falls back to the general model and then to the local index. |
 | `BLOCKBRAIN_TOTAL_BUDGET_S`, `BLOCKBRAIN_VISION_BUDGET_S`, `BLOCKBRAIN_READ_TIMEOUT_S` | Optional wall-clock caps for a text call / a photo read and the longest silence on the line (defaults 150 / 120 / 240 s) |
 | `SUPPSWIPE_PREFETCH_MEALS` | `0` turns off the background meal plan |
 | `SUPPSWIPE_MAX_SCANS_PER_HOUR`, `SUPPSWIPE_MAX_GENERATIONS_PER_HOUR` | Per-visitor AI limits (15 / 40) |
 | `SUPPSWIPE_MAX_BARCODE_LOOKUPS_PER_HOUR`, `..._GLOBAL` | Product-database (barcode) look-ups per visitor / for the whole app (30 / 900 per hour) |
 
 The model is a property of the bot, not of a request: to change the model, change `BLOCKBRAIN_MODEL` / `BLOCKBRAIN_BOT_ID`.
-**Text features need an agent-bound bot:** meal plans, comparisons, Ask AI and link reading use the client's `chat()`
-(the `customAgent` stream route), so the bot must be bound to a custom agent (the 8 sandbox bots are). Only photo reading
-has the second route (`cortex`, any ordinary bot); the app remembers which photo route worked last for 15 minutes.
+**On the default route text features need an agent-bound bot:** meal plans, comparisons, Ask AI and link reading use the
+client's `chat()` (the `customAgent` stream route), so the bot must be bound to a custom agent (the 8 sandbox bots are).
+Photo reading always has the second route (`cortex`, any ordinary bot) and the app remembers which photo route worked last
+for 15 minutes; with `BLOCKBRAIN_TEXT_ROUTE=cortex` the text features use it too.
 The key and the org must belong together: a `KNOWN_MODELS` key only works with a key of the owner's sandbox org; in
 any other organisation create a bot and set `BLOCKBRAIN_BOT_ID`. Do not use the VS Code proxy (127.0.0.1:4891): it
 exists only on the owner's PC. The researchAgent is not used.
