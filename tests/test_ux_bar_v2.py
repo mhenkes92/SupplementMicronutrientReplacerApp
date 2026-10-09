@@ -99,6 +99,11 @@ def _screen(name: str, **state) -> AppTest:
     return at
 
 
+def _flag(at: AppTest, key: str):
+    """A session value, or None when it was never set (AppTest's state raises KeyError for a missing key, even for .get)."""
+    return at.session_state[key] if key in at.session_state else None
+
+
 def _saved(sw, cards, **extra):
     """A saved scan as the browser would hand it back (two decisions, on the third card)."""
     food = cards[0]["foods"][1]
@@ -190,6 +195,8 @@ def test_scan_sheet_has_analyze_and_sample_and_resume_only_with_a_saved_scan_tha
     assert _titles(at) == ["Scan a supplement"]
     assert _page_buttons(at) == ["swipe_scan_analyze", "swipe_try_sample"]
     assert [b.label for b in at.button if b.key in ("swipe_scan_analyze", "swipe_try_sample")] == ["Analyze my supplement", "Try with a sample label"]
+    captions = [c.value for c in at.caption]
+    assert "Photo, upload, barcode, link or pasted text." in captions and "A demo label, not your product. It is not saved." in captions
     assert at.button(key="swipe_scan_analyze").proto.type == "primary"  # the main way in
     # A saved scan adds the Resume row between the two, and says what it brings back.
     at = AppTest.from_file(APP, default_timeout=60)
@@ -201,7 +208,9 @@ def test_scan_sheet_has_analyze_and_sample_and_resume_only_with_a_saved_scan_tha
     captions = [c.value for c in at.caption]
     assert f"2 of {len(sample_cards)} cards done · saved today" in captions
     assert "That scan used: Vegan · Pregnancy" in captions  # what it will run with is said before the tap
-    assert "Starting a new scan replaces the one you can resume." in captions
+    assert "Photo, upload, barcode, link or pasted text. It replaces the scan you can resume." in captions  # said where it applies
+    assert "A demo label, not your product. It is not saved. Your saved scan stays." in captions  # the sample never touches it
+    assert "Starting a new scan replaces the one you can resume." not in captions  # one line that read as if it were about the sample
     # Too old: not offered.
     old = _saved(sw, sample_cards)
     old["ts"] = time.time() - 8 * 24 * 3600
@@ -220,14 +229,18 @@ def test_a_saved_scan_without_a_filter_says_nothing_about_one(sw, sample_cards):
     assert not [c for c in at.caption if c.value.startswith("That scan used")]
 
 
-def test_a_saved_sample_scan_says_so(sw, sample_cards):
+def test_a_saved_sample_scan_from_an_earlier_build_is_not_offered_and_is_removed_from_the_device(sw, sample_cards):
+    """The demo label is not a scan to resume (the sheet says "It is not saved"). An earlier build saved it: it must not be offered,
+    and must not push the visitor's own scan out either."""
     saved = _saved(sw, sample_cards)
     saved["label_source"] = {"kind": "sample", "url": ""}
+    assert sw._resumable_scan(saved) is None
     at = AppTest.from_file(APP, default_timeout=60)
     at.session_state["_suppswipe_saved_scan"] = saved
     at.run()
+    assert "or resume" not in " ".join(m.value for m in at.markdown)
     at.button(key="appbar_scan").click().run()
-    assert f"Sample label · 2 of {len(sample_cards)} cards done · saved today" in [c.value for c in at.caption]
+    assert _page_buttons(at) == ["swipe_scan_analyze", "swipe_try_sample"]
 
 
 def test_analyze_closes_the_sheet_and_opens_the_analyze_window():
@@ -250,11 +263,141 @@ def test_the_sample_on_cards_nobody_decided_on_replaces_them_instead_of_doing_no
     first = [c["component_key"] for c in at.session_state["swipe_cards"]]
     at.button(key="appbar_scan").click().run()
     assert _titles(at) == ["Scan a supplement"]  # nothing to lose: the sheet, not a question
-    assert "swipe_resume_scan" not in _page_buttons(at)  # the cards on screen are the saved scan
+    assert "swipe_resume_scan" not in _page_buttons(at)  # no saved scan to resume
     assert any("It replaces the cards on screen." in c.value for c in at.caption)
+    nonce = at.session_state["swipe_reset_nonce"]
     at.button(key="swipe_try_sample").click().run()
     assert not at.exception and _titles(at) == [] and at.session_state["swipe_sheet"] is None
     assert [c["component_key"] for c in at.session_state["swipe_cards"]] == first and at.session_state["swipe_index"] == 0
+    assert at.session_state["swipe_reset_nonce"] == nonce + 1  # the cards were replaced (the swipe component starts clean), not left alone
+
+
+# ------------------------------------------------------------------ the sample is never saved: it never takes the place of a scan
+def test_the_sample_is_never_snapshotted_and_so_never_mirrored_into_the_browser(sw, sample_cards):
+    state = {"swipe_cards": sample_cards, "swipe_analysis_text": sw._SAMPLE_LABEL_TEXT, "swipe_index": 0,
+             "swipe_label_source": {"kind": "sample", "url": ""}, "swipe_decisions": {}}
+    assert sw._scan_snapshot(state) is None and sw._saved_scan_args(state) is None
+    state["swipe_label_source"] = {"kind": "input", "url": ""}
+    assert sw._scan_snapshot(state) is not None  # the same cards from a real input are
+    # pasting the sample text yourself is the sample too (that is how the label source is decided)
+    assert sw._resumable_scan(dict(sw._scan_snapshot(state), label_source={"kind": "sample", "url": ""})) is None
+
+
+def test_the_sample_from_the_welcome_screen_leaves_the_saved_scan_alone(sw, sample_cards):
+    saved = _saved(sw, sample_cards)
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["_suppswipe_saved_scan"] = saved
+    at.run()
+    at.button(key="appbar_scan").click().run()
+    at.button(key="swipe_try_sample").click().run()
+    assert at.session_state["swipe_label_source"]["kind"] == "sample" and at.session_state["swipe_cards"]
+    assert at.session_state["_suppswipe_saved_scan"] == saved  # still the visitor's scan
+    # (`_suppswipe_scan_clear`, what asks the device to drop the scan, is consumed in the run that sets it: `_forgotten` is what stays)
+    assert "_suppswipe_scan_forgotten" not in at.session_state
+    assert "_suppswipe_scan_snapshot" not in at.session_state  # and nothing of the sample was written next to it
+    # Swiping the sample does not change that either
+    _swipe(at, 0)
+    assert at.session_state["_suppswipe_saved_scan"] == saved and "_suppswipe_scan_snapshot" not in at.session_state
+
+
+def test_the_sample_over_the_visitors_own_undecided_cards_keeps_that_scan_resumable(sw):
+    at = _screen("welcome")
+    _analyse(at)
+    own = [c["component_key"] for c in at.session_state["swipe_cards"]]
+    at.button(key="appbar_scan").click().run()
+    assert _titles(at) == ["Scan a supplement"] and "swipe_resume_scan" not in _page_buttons(at)  # these cards ARE the saved scan
+    assert any("your scan stays saved" in c.value for c in at.caption)
+    at.button(key="swipe_try_sample").click().run()
+    assert at.session_state["swipe_label_source"]["kind"] == "sample"
+    kept = at.session_state["_suppswipe_saved_scan"]
+    assert kept is not None and kept["label_source"]["kind"] == "input" and kept["total"] == len(own)  # her scan, as it was
+    assert _flag(at, "_suppswipe_scan_forgotten") is None  # and nothing asked the device to drop it
+    # With the sample on screen the sheet offers it back, and Resume swaps the sample for it
+    at.button(key="appbar_scan").click().run()
+    assert _titles(at) == ["Scan a supplement"] and "swipe_resume_scan" in _page_buttons(at)
+    assert f"0 of {len(own)} cards done · saved today" in [c.value for c in at.caption]
+    at.button(key="swipe_resume_scan").click().run()
+    assert not at.exception and _titles(at) == []
+    assert [c["component_key"] for c in at.session_state["swipe_cards"]] == own and at.session_state["swipe_label_source"]["kind"] == "input"
+
+
+def test_resume_is_not_offered_over_the_visitors_own_cards_only_over_the_sample_or_the_welcome_screen(sw, sample_cards):
+    """Her cards on screen are the saved scan: a second copy of it to "resume" would only confuse. Over the sample (or nothing) it is offered."""
+    for screen, expected in (("welcome", True), ("cards", True), ("own", False), ("own_midscan", None)):
+        at = AppTest.from_file(APP, default_timeout=60)
+        at.session_state["_suppswipe_saved_scan"] = _saved(sw, sample_cards)
+        at.run()
+        if screen == "cards":
+            at.button(key="appbar_scan").click().run()
+            at.button(key="swipe_try_sample").click().run()
+        elif screen.startswith("own"):
+            _analyse(at)
+            if screen == "own_midscan":
+                _swipe(at, 0)
+        at.button(key="appbar_scan").click().run()
+        if expected is None:
+            assert _titles(at) == ["Start over?"]  # a question first, as before
+        else:
+            assert ("swipe_resume_scan" in _page_buttons(at)) is expected, screen
+
+
+def test_start_over_and_scan_another_forget_the_saved_scan_but_never_over_the_sample(sw, sample_cards):
+    saved = _saved(sw, sample_cards)
+
+    def run(screen):
+        at = AppTest.from_file(APP, default_timeout=60)
+        at.session_state["_suppswipe_saved_scan"] = saved
+        at.run()
+        if screen.startswith("sample"):
+            at.button(key="appbar_scan").click().run()
+            at.button(key="swipe_try_sample").click().run()
+            _swipe(at, 0)  # half-way through the sample
+        else:
+            _analyse(at)
+            _swipe(at, 0)
+        at.button(key="appbar_scan").click().run()
+        assert _titles(at) == ["Start over?"]
+        at.button(key="swipe_restart_confirm").click().run()
+        return at
+
+    mine = run("own")
+    assert mine.session_state["_suppswipe_saved_scan"] is None and _flag(mine, "_suppswipe_scan_forgotten") is True
+    demo = run("sample")
+    assert demo.session_state["_suppswipe_saved_scan"] == saved  # the sample was never saved: starting over from it forgets nothing
+    assert "_suppswipe_scan_forgotten" not in demo.session_state
+    # and the same at the end of a sample plan
+    at = _screen("sample_results")
+    at.session_state["_suppswipe_saved_scan"] = saved
+    at.run()
+    at.button(key="appbar_scan").click().run()
+    at.button(key="swipe_scan_another_confirm").click().run()
+    assert at.session_state["_suppswipe_saved_scan"] == saved and _flag(at, "_suppswipe_scan_forgotten") is None
+
+
+def test_the_sheet_buttons_have_no_icon_whose_ligature_name_would_be_read_out_with_the_label():
+    """A Material icon is drawn as a text span ("photo_camera") that screen readers and voice control take for part of the name."""
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["_suppswipe_saved_scan"] = None
+    at.run()
+    at.button(key="appbar_scan").click().run()
+    assert [b.proto.icon for b in at.button if not str(b.key).startswith("appbar")] == [""] * 2
+    src = Path(APP).read_text(encoding="utf-8")
+    assert ":material/" not in src
+
+
+def test_the_welcome_hint_says_resume_only_when_there_is_a_scan_to_resume(sw, sample_cards):
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    assert "Tap <b>Scan</b> below to start <span" in " ".join(m.value for m in at.markdown)
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["_suppswipe_saved_scan"] = _saved(sw, sample_cards)
+    at.run()
+    assert "Tap <b>Scan</b> below to start or resume <span" in " ".join(m.value for m in at.markdown)
+    old = _saved(sw, sample_cards)
+    old["ts"] = time.time() - 8 * 24 * 3600  # too old to be offered: not promised either
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["_suppswipe_saved_scan"] = old
+    at.run()
+    assert "or resume" not in " ".join(m.value for m in at.markdown)
 
 
 # ------------------------------------------------------------------ Resume
@@ -283,6 +426,29 @@ def test_resume_never_switches_a_filter_off_and_says_when_the_scan_was_saved_wit
     at.button(key="swipe_resume_scan").click().run()
     assert at.session_state["swipe_diet_profile_id"] == "nut free" and _chip(at) == "Diet: Nut-free"
     assert ["Resumed with your filter: Nut-free. That scan was saved with: no filter."] == [t.value for t in at.toast]
+
+
+def test_the_resume_note_is_toasted_by_the_next_full_run_never_from_inside_the_sheet(sw, sample_cards, monkeypatch):
+    """A toast sent from inside a sheet (a fragment) that is followed by an app-wide rerun was dropped 4 times in 6 in the browser, which a
+    browser test sees only when the race fires. What can be checked every time: who calls st.toast."""
+    import streamlit as st
+
+    callers: list[str] = []
+    real = st.toast
+
+    def recorder(*args, **kwargs):
+        callers.append(sys._getframe(1).f_code.co_name)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(st, "toast", recorder)
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["_suppswipe_saved_scan"] = _saved(sw, sample_cards, swipe_diet_profile_id="vegan")
+    at.run()
+    at.button(key="appbar_scan").click().run()
+    at.button(key="swipe_resume_scan").click().run()
+    assert callers == ["_build_mobile_ui"], callers
+    assert [t.value for t in at.toast] == ["Resumed with the filter from that scan: Vegan."]
+    assert "_suppswipe_resume_note" not in at.session_state  # shown once
 
 
 def test_restore_scan_merges_the_filter_instead_of_overwriting_it(sw, sample_cards):
@@ -517,6 +683,79 @@ def test_the_no_alternatives_note_points_to_the_diet_item():
     captions = [c.value for c in at.caption]
     assert any("No whole-food alternatives fit the “Vegan” filter. Tap Diet in the bottom bar to change the filter." in c for c in captions), captions
     assert not any("Switch the dietary filter below" in c for c in captions)
+
+
+# ------------------------------------------------------------------ the keyboard focus after a window closes
+def _focus_scripts(at: AppTest) -> list[str]:
+    return [str(e.proto.srcdoc) for e in at.get("iframe") if "/* focus " in str(e.proto.srcdoc)]
+
+
+def test_closing_a_scan_question_or_the_analyze_window_without_acting_hands_the_focus_to_the_scan_item():
+    at = _screen("midscan")
+    assert not _focus_scripts(at)  # nothing asked for it: no script on a page at rest
+    at.button(key="appbar_scan").click().run()
+    at.button(key="swipe_restart_cancel").click().run()
+    scripts = _focus_scripts(at)
+    assert len(scripts) == 1 and "st-key-appbar_scan" in scripts[0]
+    at.run()  # one run only: the request was used up
+    assert not _focus_scripts(at) and "_suppswipe_focus_bar" not in at.session_state
+    # Start over opens the Analyze window next: no focus request until that window is closed ...
+    at.button(key="appbar_scan").click().run()
+    at.button(key="swipe_restart_confirm").click().run()
+    assert _titles(at) == ["Analyze my supplement"] and not _focus_scripts(at)
+    at.button(key="dlg_cancel_" + str(at.session_state["swipe_reset_nonce"])).click().run()  # ... and its Cancel asks for the Scan item
+    assert _titles(at) == [] and len(_focus_scripts(at)) == 1 and "st-key-appbar_scan" in _focus_scripts(at)[0]
+
+
+def test_the_dismissal_of_a_question_or_the_analyze_window_asks_for_the_focus_too(sw, monkeypatch):
+    """X, Esc and a tap outside call on_dismiss: the same request as Cancel."""
+    state: dict = {"swipe_confirm_restart": True, "swipe_open_analyze": True}
+    monkeypatch.setattr(sw.st, "session_state", state)
+    sw._cancel_restart_dialog()
+    assert state["swipe_confirm_restart"] is False and state["_suppswipe_focus_bar"] == "scan"
+    state.pop("_suppswipe_focus_bar")
+    sw._cancel_analyze_dialog()
+    assert state["swipe_open_analyze"] is False and state["_suppswipe_focus_bar"] == "scan"
+    import inspect
+
+    src = inspect.getsource(sw)
+    assert 'on_dismiss=_cancel_analyze_dialog' in src and src.count("on_dismiss=_cancel_restart_dialog") == 2
+
+
+def test_an_analysis_that_starts_does_not_pull_the_focus_to_the_scan_item(sw, monkeypatch):
+    state: dict = {"swipe_open_analyze": True}
+    monkeypatch.setattr(sw.st, "session_state", state)
+    sw._close_analyze_dialog()  # what a staged analysis does: the Analyze window is not "cancelled"
+    assert "_suppswipe_focus_bar" not in state
+
+
+def test_done_on_the_diet_sheet_asks_for_the_focus_on_the_diet_item():
+    at = _screen("midscan")
+    at.button(key="appbar_diet").click().run()
+    assert not _focus_scripts(at)
+    at.button(key="swipe_diet_done").click().run()
+    scripts = _focus_scripts(at)
+    assert len(scripts) == 1 and "st-key-appbar_diet" in scripts[0] and _titles(at) == []
+
+
+def test_a_window_that_is_asked_for_again_drops_the_pending_focus_request(sw, monkeypatch):
+    state = {"_suppswipe_focus_bar": "scan"}
+    monkeypatch.setattr(sw.st, "session_state", state)
+    sw._open_sheet("guide")
+    assert "_suppswipe_focus_bar" not in state
+
+
+def test_the_focus_script_names_only_a_bar_item_and_moves_the_focus_only_from_body(sw, monkeypatch):
+    for name in ("<script>", "scan'];alert(1);//", ""):
+        state = {"_suppswipe_focus_bar": name}
+        monkeypatch.setattr(sw.st, "session_state", state)
+        calls: list = []
+        monkeypatch.setattr(sw.components, "html", lambda *a, **k: calls.append(a))
+        sw._focus_bar_item()
+        assert not calls, name  # whatever is in the state, nothing but the five names reaches the script
+    src = Path(APP).read_text(encoding="utf-8")
+    assert "a===d.body" in src and "root.hasAttribute('inert')" in src  # only from <body>, and only once the page is no longer inert
+    assert '[data-testid="stLayoutWrapper"]:has(> [class~="st-key-focus_shim"]) { display: none; }' in src  # no gap in the page
 
 
 # ------------------------------------------------------------------ one dialog at a time
