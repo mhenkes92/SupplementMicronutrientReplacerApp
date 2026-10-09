@@ -12,8 +12,10 @@ meal plan, a weekly shopping list with prices, Ask AI and a shareable summary.
 
 The page is the card and a fixed bottom bar of five items: **Guide** (athlete RDA table), **Diet** (dietary filter and the
 pregnancy setting), **Scan** (the filled one: analyze a supplement, resume the last scan, or try a sample label; half-way
-through a scan or on a finished plan it asks first), **Recent** (the scans kept in this browser) and **About**. Nothing sits
-below the welcome card, so there is nothing to scroll to. While a diet filter or pregnancy mode is on, the page shows it in a
+through a scan or on a finished plan it asks first), **Recent** (the scans kept in this browser) and **About**. The sample label is
+never saved: it is not in Recent and it never takes the place of the scan you can resume (when one is saved, the welcome card says
+"Tap Scan below to start or resume"). Nothing sits below the welcome card, so there is nothing to scroll to (at any phone size from
+320 x 568 up; the long text in the card goes where it would not fit). While a diet filter or pregnancy mode is on, the page shows it in a
 one-line chip under the brand and the Diet item carries a dot. On phones the bar starts at the page gutter and leaves the
 bottom-right corner free for the Streamlit Cloud badge.
 

@@ -82,7 +82,7 @@ def test_resume_detail_says_what_comes_back_and_when(sw, sample_cards):
     assert sw._resume_detail(snap, now=1_000_000.0 + 30 * 3600) == f"2 of {n} cards done · saved yesterday"
     assert sw._resume_detail(snap, now=1_000_000.0 + 3 * DAY) == f"2 of {n} cards done · saved 3 days ago"
     assert sw._resume_detail(dict(snap, decisions={f"k{i}": {} for i in range(n)}), now=1_000_000.0) == f"All {n} cards done · saved today"
-    assert sw._resume_detail(dict(snap, label_source={"kind": "sample"}), now=1_000_000.0).startswith("Sample label · 2 of")
+    assert sw._resume_detail(dict(snap, label_source={"kind": "sample"}), now=1_000_000.0).startswith("2 of")  # a sample is never saved: no special case
     assert sw._resume_detail(dict(snap, ts="junk"), now=1_000_000.0).endswith("saved today")  # a damaged stamp never raises
 
 

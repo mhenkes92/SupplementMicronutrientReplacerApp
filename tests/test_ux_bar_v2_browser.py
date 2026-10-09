@@ -5,6 +5,8 @@ simulated Cloud badge, labels on one line, the welcome screen that must not scro
 regression (Resume must never switch a filter off, and the Diet sheet must show the filter that is really on)."""
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from test_ux_browser import (  # noqa: F401  (fixtures are used by name)
@@ -234,7 +236,7 @@ def test_the_diet_item_has_a_dot_and_the_page_a_one_line_chip_exactly_while_a_fi
 def test_resume_never_switches_a_filter_off_and_the_diet_sheet_shows_what_is_really_on(page):
     """The safety regression of bar v2: after Resume the Diet sheet showed "No restriction" and the toggle off while the filter was on
     (Streamlit ignores a value written into the key of a widget that is not on screen), and a filter set before Resume was overwritten."""
-    start_sample(page)
+    start_own_label(page)  # a real scan: the demo label is never saved
     choose_diet(page, "Vegan")
     open_diet_sheet(page)
     page.get_by_text("Pregnant or breastfeeding").click()
@@ -269,7 +271,7 @@ def test_resume_never_switches_a_filter_off_and_the_diet_sheet_shows_what_is_rea
 
 
 def test_resume_keeps_a_filter_set_before_it_and_says_what_the_scan_was_saved_with(page):
-    start_sample(page)  # saved with no filter
+    start_own_label(page)  # saved with no filter (a real scan: the demo label is never saved)
     name = card_name(page)
     card(page).locator("#btnKeep").click()
     wait_name_change(page, name)
@@ -309,7 +311,8 @@ def test_the_diet_sheet_changes_the_cards_and_the_food_guard_when_it_closes(page
     page.locator('[data-testid="stSelectbox"]').first.click()
     after = [o.inner_text() for o in page.locator('[role="option"]').all()]
     page.keyboard.press("Escape")
-    assert after and len(after) < len(before) and not any("salmon" in o.lower() or "trout" in o.lower() for o in after), (before, after)
+    # The dropdown is virtualised (about 11 rows whatever the list length): compare what is in it, not how many rows it shows.
+    assert after and after != before and not any(w in o.lower() for o in after for w in ("salmon", "trout", "fish", "mackerel", "sardine", "tuna")), (before, after)
 
 
 def test_a_filter_chosen_on_the_results_flags_the_swap_that_no_longer_fits_and_leaves_it_out_of_the_plan(page):
@@ -432,24 +435,359 @@ def test_the_diet_sheet_can_be_scrolled_to_its_last_line_on_the_smallest_phone(b
         ctx.close()
 
 
-def test_a_second_tap_on_the_diet_tab_never_flips_the_pregnancy_toggle(browser, server):
-    """The Diet sheet covers the tab that opened it. On a short phone the pregnancy toggle sits right under that tab, so a double tap (or
-    an impatient re-tap while the page is slow) used to land on it and switch pregnancy OFF, hiding its warnings. The sheet's body ignores
-    taps while it slides in."""
-    ctx, pg = new_page(browser, server, (320, 568))
+# ================================================================== fixes after the independent review
+# ------------------------------------------------------------------ nothing tappable under the bar item that opened a sheet
+CONTROL = "button, a[href], input, select, textarea, label, summary, [role=button], [role=switch], [role=checkbox], [role=tab], [role=option]"
+UNDER = (
+    "([x, y]) => { const e = document.elementFromPoint(x, y); if (!e) return 'nothing'; const c = e.closest('%s');"
+    " return c ? c.tagName + ':' + (c.innerText || c.getAttribute('aria-label') || '').trim().slice(0, 40) : ''; }" % CONTROL
+)
+
+
+def tab_centres(pg) -> list[tuple[float, float]]:
+    boxes = [rect(pg, BAR_BUTTON, i) for i in range(5)]
+    return [(b["cx"], b["cy"]) for b in boxes]
+
+
+def controls_under_the_tabs(pg, centres) -> list[str]:
+    return [f"{i}:{found}" for i, (x, y) in enumerate(centres) if (found := pg.evaluate(UNDER, [x, y])) != ""]
+
+
+@pytest.mark.parametrize("size", [(320, 568), (320, 640), (360, 640), (390, 844)])
+def test_no_control_of_the_diet_sheet_is_under_any_bar_tab_whatever_filter_and_pregnancy_setting_is_on(browser, server, size):
+    """A sheet covers the bar. A second tap on the item that opened it (a double tap, an impatient re-tap, at any delay) lands on the
+    sheet at the same point: there must be nothing there to change. Where the content sits moves with the chosen filter and with the
+    toggle, so every state is checked, in one open sheet."""
+    ctx, pg = new_page(browser, server, size)
+    try:
+        centres = tab_centres(pg)
+        open_diet_sheet(pg)
+        chips = pg.locator('[data-testid="stDialog"] [data-testid="stButtonGroup"] button')
+        names = [chips.nth(i).inner_text().strip() for i in range(chips.count())]
+        assert len(names) >= 8, names
+        for pregnant in (False, True):
+            if pregnant:
+                pg.get_by_text("Pregnant or breastfeeding").click()
+                settle(pg, 0.6)
+            for name in names:
+                pg.locator('[data-testid="stDialog"] [data-testid="stButtonGroup"] button', has_text=name).first.click()
+                settle(pg, 0.5)
+                assert controls_under_the_tabs(pg, centres) == [], (size, name, pregnant)
+                pg.evaluate("() => { const b = document.querySelector('[role=dialog]').lastElementChild; b.scrollTop = 0; }")
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("size", [(320, 568), (360, 640)])
+@pytest.mark.parametrize("name", ["guide", "scan", "scans", "about"])
+def test_no_control_of_the_other_sheets_is_under_any_bar_tab_either(browser, server, size, name):
+    ctx, pg = new_page(browser, server, size)
+    try:
+        centres = tab_centres(pg)
+        item(pg, name).tap()
+        pg.locator(DIALOG).wait_for(timeout=10000)
+        settle(pg)
+        assert controls_under_the_tabs(pg, centres) == []
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("gap", [0.0, 0.3, 0.9])
+@pytest.mark.parametrize("size, filter_name, pregnant", [((320, 568), "No restriction", True), ((320, 640), "Nut-free", False), ((320, 640), "Gluten-free", True)])
+def test_a_second_tap_on_the_diet_tab_never_flips_the_pregnancy_toggle(browser, server, size, filter_name, pregnant, gap):
+    """The review's reproduction: on a 320 px phone the toggle sat exactly under the Diet tab (320x568 with no filter, 320x640 with
+    Kosher, Gluten-free or Nut-free), a re-tap flipped it, ON as well as OFF, for delays up to 900 ms. A short pointer-events delay on
+    the sheet would not cover that: the strip under the bar is simply not tappable."""
+    ctx, pg = new_page(browser, server, size)
     try:
         open_diet_sheet(pg)
-        pg.get_by_text("Pregnant or breastfeeding").click()
-        settle(pg)
+        if filter_name != "No restriction":
+            pg.locator('[data-testid="stDialog"] [data-testid="stButtonGroup"] button', has_text=filter_name).first.click()
+            settle(pg, 0.6)
+        if pregnant:
+            pg.get_by_text("Pregnant or breastfeeding").click()
+            settle(pg, 0.6)
         close_sheet(pg)
         box = item(pg, "diet").bounding_box()
         x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
         pg.touchscreen.tap(x, y)
         pg.locator(DIALOG).wait_for(timeout=10000)
-        pg.touchscreen.tap(x, y)  # the second tap of a double tap, at once
+        pg.wait_for_timeout(int(gap * 1000))
+        pg.touchscreen.tap(x, y)  # the second tap of a double tap, or of an impatient visitor
         settle(pg, 1.0)
         toggle = pg.locator("label", has_text="Pregnant or breastfeeding").locator("input")
-        assert toggle.is_checked(), "pregnancy was switched off by a second tap on the Diet tab"
+        assert toggle.is_checked() is pregnant, f"the pregnancy setting was changed by a second tap on the Diet tab (was {pregnant})"
         assert pg.locator(DIALOG).count() == 1  # still one sheet, never two
+        close_sheet(pg)
+        chip = pg.locator(".diet-note")
+        assert (("Pregnan" in chip.inner_text()) if chip.count() else False) is pregnant
+    finally:
+        ctx.close()
+
+
+def test_a_drag_that_starts_under_the_bar_still_scrolls_the_sheet(browser, server):
+    """The strip that keeps taps off is part of the scroller: a thumb that starts a drag there (the natural place) still scrolls it."""
+    ctx, pg = new_page(browser, server, (320, 568))
+    try:
+        open_diet_sheet(pg)
+        box = rect(pg, BAR_BUTTON, 1)
+        cdp = ctx.new_cdp_session(pg)
+        x, y = box["cx"], box["cy"]
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y}]})
+        for i in range(1, 13):
+            cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [{"x": x, "y": y - 16 * i}]})
+            pg.wait_for_timeout(16)
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+        pg.wait_for_timeout(600)
+        top = pg.evaluate("() => document.querySelector('[role=dialog]').lastElementChild.scrollTop")
+        assert top > 100, top
+        pg.evaluate("() => { const b = document.querySelector('[role=dialog]').lastElementChild; b.scrollTop = b.scrollHeight; }")
+        done = pg.locator(DIALOG).get_by_role("button", name="Done").bounding_box()
+        assert done["y"] + done["height"] <= rect(pg, BAR_BUTTON, 1)["y"] + 1, done  # at the end of the content the last row is above the strip
+    finally:
+        ctx.close()
+
+
+# ------------------------------------------------------------------ the welcome screen at every phone size, not only five
+def _welcome_fit(pg) -> dict:
+    return pg.evaluate(
+        "() => { const m = document.querySelector('[data-testid=stMain]'); const cap = [...document.querySelectorAll('[data-testid=stCaptionContainer]')].pop().getBoundingClientRect();"
+        " const bar = document.querySelector('[class~=\"st-key-appbar\"]').getBoundingClientRect();"
+        " return {scroll: m.scrollHeight - m.clientHeight, doc: document.scrollingElement.scrollHeight - innerHeight, gap: bar.top - cap.bottom}; }"
+    )
+
+
+IN_BETWEEN_HEIGHTS = [568, 601, 620, 640, 660, 680, 701, 720, 740, 760, 800, 844, 915]
+
+
+@pytest.mark.parametrize("width", [320, 341, 350, 360, 375, 393, 412])
+def test_the_welcome_screen_needs_no_scrolling_at_in_between_phone_sizes_too(browser, server, width):
+    """The long hero text goes at a height that depends on the width (and on the chip). Between the five measured phones the page used
+    to scroll and the disclaimer hid under the bar (341x601 by 84 px, 350x620, 360x610, 320x701). Every width x height point is checked."""
+    ctx, pg = new_page(browser, server, (width, 800))
+    try:
+        for height in IN_BETWEEN_HEIGHTS:
+            pg.set_viewport_size({"width": width, "height": height})
+            pg.wait_for_timeout(250)
+            fit = _welcome_fit(pg)
+            assert fit["scroll"] <= 1 and fit["doc"] <= 1 and fit["gap"] >= 6, (width, height, fit)
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("width", [320, 341, 350, 360, 393, 412])
+def test_the_welcome_screen_needs_no_scrolling_at_in_between_phone_sizes_with_the_longest_chip(browser, server, width):
+    ctx, pg = new_page(browser, server, (width, 800))
+    try:
+        open_diet_sheet(pg)
+        pg.locator('[data-testid="stDialog"] [data-testid="stButtonGroup"] button', has_text="Low-sodium").click()
+        pg.get_by_text("Pregnant or breastfeeding").click()
+        settle(pg)
+        close_sheet(pg)
+        pg.locator(".diet-note").wait_for(timeout=10000)
+        for height in IN_BETWEEN_HEIGHTS:
+            pg.set_viewport_size({"width": width, "height": height})
+            pg.wait_for_timeout(250)
+            fit = _welcome_fit(pg)
+            assert fit["scroll"] <= 1 and fit["doc"] <= 1 and fit["gap"] >= 6, (width, height, fit)
+    finally:
+        ctx.close()
+
+
+# ------------------------------------------------------------------ the demo label is never saved and never replaces a scan
+def test_the_sample_never_replaces_the_saved_scan_and_is_not_offered_as_one(page):
+    start_own_label(page)
+    name = card_name(page)
+    card(page).locator("#btnKeep").click()
+    wait_name_change(page, name)
+    settle(page, 1.5)
+    reload_and_wait_for_the_stored_scan(page)
+    open_scan_sheet(page)
+    page.get_by_text("1 of 4 cards done · saved today").wait_for(timeout=20000)
+    text = page.locator(DIALOG).inner_text()
+    assert "It is not saved." in text and "Your saved scan stays." in text and "Starting a new scan replaces" not in text, text
+    assert "It replaces the scan you can resume." in text  # said under Analyze, where it is true
+    page.get_by_role("button", name="Try with a sample label").click()
+    card(page).locator("#card .name").wait_for(timeout=60000)
+    settle(page)
+    # The sample is on screen, nothing decided: her scan is still offered, over it ...
+    open_scan_sheet(page)
+    page.get_by_role("button", name="Resume last scan").wait_for(timeout=10000)
+    assert "Sample label" not in page.locator(DIALOG).inner_text()
+    close_sheet(page)
+    first = card_name(page)
+    card(page).locator("#btnKeep").click()
+    wait_name_change(page, first)
+    settle(page, 1.5)
+    # ... and after a swipe on the sample and a reload nothing but her scan is there to resume.
+    reload_and_wait_for_the_stored_scan(page)
+    open_scan_sheet(page)
+    page.get_by_text("1 of 4 cards done · saved today").wait_for(timeout=20000)
+    assert "Sample label" not in page.locator(DIALOG).inner_text()
+    page.get_by_role("button", name="Resume last scan").click()
+    card(page).locator("#card .name").wait_for(timeout=20000)
+    assert "Card 2 of 4" in card(page).locator("#card .count").inner_text()  # her scan, where she left it
+
+
+def test_the_sample_over_the_visitors_own_undecided_cards_does_not_cost_her_the_scan(page):
+    start_own_label(page)
+    own = card_name(page)
+    settle(page, 1.5)  # saved with no decision yet
+    open_scan_sheet(page)
+    assert page.get_by_role("button", name="Resume last scan").count() == 0  # these cards are the saved scan
+    assert "your scan stays saved" in page.locator(DIALOG).inner_text()
+    page.get_by_role("button", name="Try with a sample label").click()
+    card(page).locator("#card .name").wait_for(timeout=60000)
+    settle(page)
+    page.get_by_text("Sample label, not your product").wait_for(timeout=10000)  # the demo is on screen now
+    open_scan_sheet(page)
+    page.get_by_role("button", name="Resume last scan").click(timeout=10000)  # offered over the sample, in the same session
+    card(page).locator("#card .name").wait_for(timeout=20000)
+    settle(page)
+    assert card_name(page) == own
+    assert page.get_by_text("Sample label, not your product").count() == 0
+
+
+# ------------------------------------------------------------------ the welcome hint, the names of the buttons
+def test_the_welcome_hint_says_resume_when_there_is_a_scan_to_resume_and_stays_on_one_line(browser, server):
+    ctx, pg = new_page(browser, server, (320, 568))
+    try:
+        assert pg.locator(".hero-hint").inner_text().strip() == "Tap Scan below to start ↓"
+        start_own_label(pg)
+        name = card_name(pg)
+        card(pg).locator("#btnKeep").click()
+        wait_name_change(pg, name)
+        settle(pg, 1.5)
+        reload_and_wait_for_the_stored_scan(pg)
+        pg.get_by_text("Tap Scan below to start or resume").wait_for(timeout=20000)
+        info = pg.evaluate("() => { const e = document.querySelector('.hero-hint'); const r = document.createRange(); r.selectNodeContents(e); return {h: e.getBoundingClientRect().height, font: parseFloat(getComputedStyle(e).fontSize)}; }")
+        assert info["h"] < info["font"] * 2, info  # one line (two would be about twice the font size): the page does not move when the saved scan arrives
+        state = scroll_state(pg)
+        assert state["main"] <= 1 and state["doc"] <= 1, state
+    finally:
+        ctx.close()
+
+
+def test_the_sheet_buttons_are_named_by_their_label_alone(page):
+    """A Material icon is a text span ("photo_camera"): screen readers read it out and voice control has to match it."""
+    start_own_label(page)
+    settle(page, 1.5)
+    reload_and_wait_for_the_stored_scan(page)
+    open_scan_sheet(page)
+    page.get_by_role("button", name="Resume last scan").wait_for(timeout=20000)
+    for label in ("Analyze my supplement", "Resume last scan", "Try with a sample label"):
+        assert page.locator(DIALOG).get_by_role("button", name=label, exact=True).count() == 1, label
+    assert page.locator(f'{DIALOG} [data-testid="stIconMaterial"]').count() == 0
+
+
+# ------------------------------------------------------------------ the keyboard focus after a window closes
+def keyboard_page(browser, server, size=(390, 844)):
+    ctx = browser.new_context(viewport={"width": size[0], "height": size[1]})
+    pg = ctx.new_page()
+    pg.goto(server, wait_until="networkidle")
+    pg.locator(BAR_BUTTON).nth(4).wait_for(timeout=15000)
+    return ctx, pg
+
+
+def focused_item(pg) -> str:
+    return pg.evaluate(
+        "() => { const a = document.activeElement; const k = a && a.closest ? a.closest('[class*=\"st-key-appbar_\"]') : null;"
+        " return k ? [...k.classList].find(c => c.startsWith('st-key-appbar_')).slice(14) : (a ? a.tagName : 'none'); }"
+    )
+
+
+def wait_for_focus(pg, name: str, timeout: float = 5.0) -> str:
+    end = time.time() + timeout
+    got = ""
+    while time.time() < end:
+        got = focused_item(pg)
+        if got == name:
+            return got
+        pg.wait_for_timeout(100)
+    return got
+
+
+@pytest.mark.parametrize("how", ["cancel", "escape", "x"])
+def test_the_scan_item_gets_the_focus_back_when_the_analyze_window_is_closed_without_analysing(browser, server, how):
+    ctx, pg = keyboard_page(browser, server)
+    try:
+        item(pg, "scan").focus()
+        pg.keyboard.press("Enter")
+        pg.get_by_role("dialog").wait_for(timeout=10000)
+        settle(pg, 0.5)
+        pg.get_by_role("button", name="Analyze my supplement").click()
+        pg.get_by_role("dialog").get_by_role("button", name="Cancel").wait_for(timeout=10000)  # the Analyze window, not the sheet
+        if how == "cancel":
+            pg.get_by_role("dialog").get_by_role("button", name="Cancel").click()
+        elif how == "escape":
+            pg.keyboard.press("Escape")
+        else:
+            pg.get_by_role("dialog").get_by_role("button", name="Close").click()
+        pg.get_by_role("dialog").wait_for(state="detached", timeout=10000)
+        assert wait_for_focus(pg, "scan") == "scan", focused_item(pg)
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("screen", ["midscan", "results"])
+def test_the_scan_item_gets_the_focus_back_after_cancel_on_its_questions(browser, server, screen):
+    ctx, pg = keyboard_page(browser, server)
+    try:
+        start_sample(pg)
+        if screen == "midscan":
+            name = card_name(pg)
+            card(pg).locator("#btnKeep").click()
+            wait_name_change(pg, name)
+            settle(pg)
+        else:
+            finish_all_cards(pg)
+            results_heading(pg).wait_for(timeout=10000)
+        item(pg, "scan").focus()
+        pg.keyboard.press("Enter")
+        pg.get_by_role("dialog").wait_for(timeout=10000)
+        settle(pg, 0.5)
+        pg.get_by_role("dialog").get_by_role("button", name="Cancel").click()
+        pg.get_by_role("dialog").wait_for(state="detached", timeout=10000)
+        assert wait_for_focus(pg, "scan") == "scan", focused_item(pg)
+    finally:
+        ctx.close()
+
+
+def test_the_diet_item_gets_the_focus_back_every_time_after_done(browser, server):
+    """Done is closed by the server: Streamlit asked for the focus back while the page was still inert in about 1 of 3 runs, and the
+    focus was left on <body>."""
+    ctx, pg = keyboard_page(browser, server)
+    try:
+        wrong = []
+        for i in range(12):
+            item(pg, "diet").focus()
+            pg.keyboard.press("Enter")
+            pg.get_by_role("dialog").wait_for(timeout=10000)
+            settle(pg, 0.4)
+            pg.locator(DIALOG).get_by_role("button", name="Done").focus()
+            pg.keyboard.press("Enter")
+            pg.get_by_role("dialog").wait_for(state="detached", timeout=10000)
+            if wait_for_focus(pg, "diet") != "diet":
+                wrong.append((i, focused_item(pg)))
+        assert not wrong, wrong
+    finally:
+        ctx.close()
+
+
+def test_a_focus_that_is_somewhere_already_is_not_taken_away(browser, server):
+    """The script moves the focus only when it was left on <body>."""
+    ctx, pg = keyboard_page(browser, server)
+    try:
+        item(pg, "scan").focus()
+        pg.keyboard.press("Enter")
+        pg.get_by_role("dialog").wait_for(timeout=10000)
+        settle(pg, 0.5)
+        pg.get_by_role("button", name="Analyze my supplement").click()
+        pg.wait_for_timeout(800)
+        pg.get_by_role("dialog").get_by_role("button", name="Cancel").click()
+        pg.get_by_role("dialog").wait_for(state="detached", timeout=10000)
+        item(pg, "about").focus()  # she moves on at once
+        pg.wait_for_timeout(1500)
+        assert focused_item(pg) == "about"
     finally:
         ctx.close()

@@ -3189,6 +3189,7 @@ def _open_sheet(name: str) -> None:
     st.session_state["swipe_open_analyze"] = False
     st.session_state["swipe_plan_item"] = None
     st.session_state.pop("swipe_guide_focus", None)
+    st.session_state.pop("_suppswipe_focus_bar", None)  # a window is asked for again: the focus is its business now
     if name == "diet":
         # The Diet sheet is the only place the two widgets are drawn. Streamlit applies a value written into a widget's key only in
         # the run right after the write, so one that Resume wrote while the widgets were not on screen would be ignored when they
@@ -4327,6 +4328,8 @@ def _render_header() -> None:
             [data-testid="stLayoutWrapper"]:has(> [class~="st-key-appbar_busy"]) {
                 margin-bottom: -1rem;
             }
+            /* The one-shot focus script (_focus_bar_item) is not part of the page: no space, no gap (a hidden frame still runs its script). */
+            [data-testid="stLayoutWrapper"]:has(> [class~="st-key-focus_shim"]) { display: none; }
             [class~="st-key-appbar"] > [data-testid="stElementContainer"],
             [class~="st-key-appbar_busy"] > [data-testid="stElementContainer"] {
                 flex: 1 1 0 !important;
@@ -4468,12 +4471,15 @@ def _render_header() -> None:
                 .steps { margin-top: 12px; }
                 .hero-hint { margin-top: 10px; }
             }
-            @media (max-height: 700px) and (max-width: 340px) {
-                .hero-sub { display: none; }  /* 320 px wide: the three steps wrap to two lines, so the long text goes one phone height earlier */
-            }
-            @media (max-height: 660px) {
-                .block-container:has(.diet-note) .hero-sub { display: none; }  /* the chip takes a line: the long text goes, the screen still does not scroll */
-            }
+            /* The long hero text is shown only where the whole welcome screen still fits without scrolling. How much room it needs depends
+               on the width (the narrower the phone, the more lines the text and the three steps take) and on the filter chip (one more
+               line, two on a narrow phone). Measured with the text forced on, the screen overflows up to these heights (no chip / the
+               longest chip): up to 341 px wide 710 / 740, 350 px 640 / 670, 360 to 393 px 620 / 640, from 400 px 560 / 640 (a sweep
+               of ten widths x every 10 px of height). Each band below hides the text a little above the worst of its two numbers. */
+            @media (max-width: 349px) and (max-height: 760px) { .hero-sub { display: none; } }
+            @media (min-width: 350px) and (max-width: 359px) and (max-height: 690px) { .hero-sub { display: none; } }
+            @media (min-width: 360px) and (max-width: 399px) and (max-height: 660px) { .hero-sub { display: none; } }
+            @media (min-width: 400px) and (max-height: 660px) { .hero-sub { display: none; } }
             /* Nothing below the hero on the welcome screen: the page reserves only the bar (its footprint plus the badge corner), so
                it does not scroll by an empty strip. */
             .block-container:has(.hero-hint) {
@@ -4544,11 +4550,29 @@ def _render_header() -> None:
                     border-radius: 999px;
                     background: #cbd5e1;
                 }
-                /* the one scroller; the last 72 px stay empty so the last row can leave the Cloud badge's corner */
+                /* the one scroller. A sheet covers the bar item that opened it, so a second tap on that item (a double tap, or an
+                   impatient re-tap while the page is slow, at any delay) lands on the sheet at the same spot. Nothing may be tappable
+                   there: the scroller ends in a sticky strip, as high as the bar (and never less than the 72 px that leave the Cloud badge's
+                   corner free), pinned to the bottom of the sheet while the content scrolls under it. A tap on it does nothing, a drag on
+                   it still scrolls, at the end of the content it is the empty space under the last row, and a control that is tabbed to is
+                   scrolled clear of it (scroll-padding). */
                 [data-testid="stDialog"]:has([class*="st-key-sheet_"]) [role="dialog"] > div:last-child {
                     overflow-y: auto;
                     min-height: 0;
-                    padding: 4px 16px calc(72px + env(safe-area-inset-bottom, 0px)) 16px;
+                    padding: 4px 16px 0 16px;
+                    scroll-padding-bottom: calc(max(72px, 4.5rem) + env(safe-area-inset-bottom, 0px));
+                }
+                [data-testid="stDialog"]:has([class*="st-key-sheet_"]) [role="dialog"] > div:last-child::after {
+                    content: "";
+                    display: block;
+                    position: sticky;
+                    bottom: 0;
+                    margin: 0 -16px;
+                    height: calc(max(72px, 4.5rem) + env(safe-area-inset-bottom, 0px));
+                    background: linear-gradient(rgba(255, 255, 255, 0), #ffffff 30%);
+                }
+                @media (forced-colors: active) {
+                    [data-testid="stDialog"]:has([class*="st-key-sheet_"]) [role="dialog"] > div:last-child::after { background: Canvas; }
                 }
                 [data-testid="stDialog"]:has([class*="st-key-sheet_"]) [role="dialog"] h2 {
                     padding: 24px 56px 8px 16px;
@@ -5166,6 +5190,34 @@ def _scroll_to_top() -> None:
     )
 
 
+def _request_bar_focus(name: str) -> None:
+    """Ask the next full run to give the keyboard focus to the bar item `name` once the window that just closed is gone. Streamlit
+    returns the focus to the element that opened a window, but not when that element no longer exists (the Scan sheet's Analyze
+    button opened the Analyze window), and not always after an app-wide rerun (it can ask for it while the page is still inert): the
+    focus then sits on <body> and a keyboard or screen-reader user starts again from the top of the page."""
+    st.session_state["_suppswipe_focus_bar"] = name
+
+
+def _focus_bar_item() -> None:
+    """The one-shot script behind _request_bar_focus (in the style of _scroll_to_top). It waits until no window is open and the page is no
+    longer inert, and moves the focus only if it was left on <body>: a focus that is already somewhere is never taken away."""
+    name = st.session_state.pop("_suppswipe_focus_bar", None)
+    if name not in {key for key, _label in _BAR_ITEMS}:
+        return
+    nonce = int(st.session_state.get("_suppswipe_focus_nonce", 0) or 0) + 1
+    st.session_state["_suppswipe_focus_nonce"] = nonce
+    script = (
+        "<script>/* focus %d */(function(){try{var d=window.parent.document,n=0;var t=setInterval(function(){n++;"
+        "var root=d.getElementById('root');"
+        "if(!d.querySelector('[data-testid=stDialog]')&&!(root&&root.hasAttribute('inert'))){clearInterval(t);"
+        "var a=d.activeElement;if(!a||a===d.body||a===d.documentElement){"
+        "var b=d.querySelector('[class~=st-key-appbar_%s] button');if(b&&!b.disabled){b.focus();}}}"
+        "else if(n>60){clearInterval(t);}},50);}catch(e){}})();</script>" % (nonce, name)
+    )
+    with st.container(key="focus_shim"):  # drawn as nothing (CSS): a bare zero-height component still adds a flex gap to the page
+        components.html(script, height=0)
+
+
 def _stage_analysis_from_inputs(
     upload_bytes: bytes, camera_bytes: bytes, manual_text: str, camera_barcode: str = ""
 ) -> bool:
@@ -5202,7 +5254,20 @@ def _close_restart_dialog() -> None:
     st.session_state["swipe_confirm_restart"] = False
 
 
-@st.dialog("Analyze my supplement", on_dismiss=_close_analyze_dialog)
+def _cancel_analyze_dialog() -> None:
+    """Cancel, X, Esc or a tap outside the Analyze window: nothing starts, the focus goes back to the Scan item (the Scan sheet's button
+    that opened the window is gone)."""
+    _close_analyze_dialog()
+    _request_bar_focus("scan")
+
+
+def _cancel_restart_dialog() -> None:
+    """The same for the two questions the Scan item asks (Start over? and Scan another supplement?)."""
+    _close_restart_dialog()
+    _request_bar_focus("scan")
+
+
+@st.dialog("Analyze my supplement", on_dismiss=_cancel_analyze_dialog)
 def _analyze_dialog() -> None:
     nonce = int(st.session_state.get("swipe_reset_nonce", 0))
     precheck_error = _blockbrain_ready_error()
@@ -5280,11 +5345,11 @@ def _analyze_dialog() -> None:
         st.rerun(scope="app")
 
     if st.button("Cancel", width="stretch", key=f"dlg_cancel_{nonce}"):
-        _close_analyze_dialog()
+        _cancel_analyze_dialog()
         st.rerun(scope="app")
 
 
-@st.dialog("Start over?", on_dismiss=_close_restart_dialog)
+@st.dialog("Start over?", on_dismiss=_cancel_restart_dialog)
 def _confirm_restart_dialog() -> None:
     st.write(
         "You've already started swiping. Analyzing a new supplement will clear your "
@@ -5293,17 +5358,16 @@ def _confirm_restart_dialog() -> None:
     col_cancel, col_ok = st.columns(2)
     with col_cancel:
         if st.button("Cancel", width="stretch", key="swipe_restart_cancel"):
-            _close_restart_dialog()
+            _cancel_restart_dialog()
             st.rerun(scope="app")
     with col_ok:
         if st.button("Start over", type="primary", width="stretch", key="swipe_restart_confirm"):
-            _reset_swipe_state()  # also closes this dialog (its flag is a swipe_ key)
-            _forget_saved_scan()
+            _reset_scan_and_forget_it()  # also closes this dialog (its flag is a swipe_ key)
             st.session_state["swipe_open_analyze"] = True
             st.rerun(scope="app")
 
 
-@st.dialog("Scan another supplement?", on_dismiss=_close_restart_dialog)
+@st.dialog("Scan another supplement?", on_dismiss=_cancel_restart_dialog)
 def _confirm_scan_another_dialog() -> None:
     """The bar's Scan item on the results: the page's own "Scan another supplement" button at the end of the plan starts at
     once, but the bar is always within reach of a thumb, so it asks first (the plan on screen cannot be rebuilt from Recent scans)."""
@@ -5315,7 +5379,7 @@ def _confirm_scan_another_dialog() -> None:
     col_cancel, col_ok = st.columns(2)
     with col_cancel:
         if st.button("Cancel", width="stretch", key="swipe_scan_another_cancel"):
-            _close_restart_dialog()
+            _cancel_restart_dialog()
             st.rerun(scope="app")
     with col_ok:
         if st.button("Scan another", type="primary", width="stretch", key="swipe_scan_another_confirm"):
@@ -5339,8 +5403,7 @@ def _request_analyze(results: bool = False) -> None:
     """What the page's Scan button asks for: the Analyze window, or the Start over question while a scan is half
     done. A finished plan is already in Recent scans, so on the results there is nothing to lose."""
     if results:
-        _reset_swipe_state()
-        _forget_saved_scan()
+        _reset_scan_and_forget_it()
         st.session_state["swipe_open_analyze"] = True
     elif _selected_session_in_progress():
         st.session_state["swipe_confirm_restart"] = True
@@ -5441,8 +5504,8 @@ def _diet_summary(diet_id: Any, pregnant: bool) -> str:
 
 
 def _resume_detail(saved: dict[str, Any], now: float | None = None) -> str:
-    """What "Resume last scan" brings back: "5 of 7 cards done · saved yesterday" (a sample says so). Elapsed days, not a date or a
-    time of day: the stamp is the server's clock."""
+    """What "Resume last scan" brings back: "5 of 7 cards done · saved yesterday". Elapsed days, not a date or a time of day: the
+    stamp is the server's clock."""
     total = int(saved.get("total") or 0)
     done = min(total, len(saved.get("decisions") or {}))
     head = f"All {total} cards done" if total and done >= total else f"{done} of {total} cards done"
@@ -5451,16 +5514,32 @@ def _resume_detail(saved: dict[str, Any], now: float | None = None) -> str:
     except (TypeError, ValueError):
         days = 0
     when = "today" if days < 1 else "yesterday" if days == 1 else f"{days} days ago"
-    sample = str((saved.get("label_source") or {}).get("kind", "") or "") == "sample"
-    return f"{'Sample label · ' if sample else ''}{head} · saved {when}"
+    return f"{head} · saved {when}"
+
+
+def _sample_on_screen() -> bool:
+    """True while the cards (or the plan) on screen are the demo label: it is never saved as a scan, so it is never the scan to resume."""
+    return str((st.session_state.get("swipe_label_source") or {}).get("kind", "") or "") == "sample"
+
+
+def _reset_scan_and_forget_it() -> None:
+    """Start over / Scan another: drop the cards and the decisions, and the saved copy of that scan. The sample is the exception:
+    it was never saved, and the scan that is saved is a real one the visitor may still want (Scan > Resume)."""
+    was_sample = _sample_on_screen()
+    _reset_swipe_state()
+    if not was_sample:
+        _forget_saved_scan()
 
 
 def _start_sample_from_sheet() -> None:
     """The sample button of the Scan sheet. The sheet opens only on the welcome screen or on cards nobody has decided on yet (a scan
-    half-way through or a plan on screen is asked about first, see _tap_scan), so replacing those cards loses nothing."""
-    if st.session_state.get("swipe_cards"):
+    half-way through or a plan on screen is asked about first, see _tap_scan). The sample is never saved, so a scan that is saved
+    stays saved; cards of the visitor's own that it replaces become that saved scan (offered by Resume while the sample is on screen)."""
+    cards = st.session_state.get("swipe_cards")
+    if cards:
+        if not _sample_on_screen():
+            st.session_state["_suppswipe_saved_scan"] = _scan_snapshot(st.session_state)
         _reset_swipe_state()
-        _forget_saved_scan()
     st.session_state["swipe_last_auto_signature"] = ""  # the sample may have been the last input: its signature must not turn this into a no-op
     if _stage_analysis_from_inputs(b"", b"", _SAMPLE_LABEL_TEXT):
         _close_sheet()
@@ -5470,17 +5549,22 @@ def _start_sample_from_sheet() -> None:
 @st.dialog("Scan a supplement", on_dismiss=_close_sheet)
 def _scan_sheet() -> None:
     cards = st.session_state.get("swipe_cards") or []
+    sample_cards = bool(cards) and _sample_on_screen()
+    own_cards = bool(cards) and not sample_cards
+    # Resume is offered on the welcome screen, and over a sample (its cards are not the saved scan). Cards of the visitor's own that
+    # nothing was decided on yet are the saved scan: there is nothing to resume.
+    saved = None if own_cards else _resumable_scan(st.session_state.get("_suppswipe_saved_scan"))
     with st.container(key="sheet_scan"):
         st.markdown(f"<div class='sc-sub' {_sheet_anchor('scan')}>Choose how to start.</div>", unsafe_allow_html=True)
-        if st.button(
-            "Analyze my supplement", icon=":material/photo_camera:", type="primary", width="stretch", key="swipe_scan_analyze"
-        ):
+        if st.button("Analyze my supplement", type="primary", width="stretch", key="swipe_scan_analyze"):
             _scan_from_sheet()
-        st.caption("Photo, upload, barcode, link or pasted text.")
-        # Resume only on the welcome screen: once cards are on screen they are the saved scan.
-        saved = None if cards else _resumable_scan(st.session_state.get("_suppswipe_saved_scan"))
+        st.caption(
+            "Photo, upload, barcode, link or pasted text." + (" It replaces the scan you can resume." if saved is not None else "")
+        )
         if saved is not None:
-            if st.button("Resume last scan", icon=":material/history:", width="stretch", key="swipe_resume_scan"):
+            if st.button("Resume last scan", width="stretch", key="swipe_resume_scan"):
+                if cards:
+                    _reset_swipe_state()  # the sample's cards go; the swipe component starts clean
                 _resume_saved_scan()
                 if st.session_state.pop("swipe_resume_failed", False):
                     _forget_saved_scan()  # an unreadable scan is not offered again
@@ -5496,13 +5580,15 @@ def _scan_sheet() -> None:
             kept = _diet_summary(saved.get("diet"), saved.get("pregnant") is True)
             if kept:
                 st.caption(f"That scan used: {kept}")
-        if st.button("Try with a sample label", icon=":material/auto_awesome:", width="stretch", key="swipe_try_sample"):
+        if st.button("Try with a sample label", width="stretch", key="swipe_try_sample"):
             _start_sample_from_sheet()
-        st.caption(
-            "A demo label, not your product. It is not saved." + (" It replaces the cards on screen." if cards else "")
-        )
-        if saved is not None:
-            st.caption("Starting a new scan replaces the one you can resume.")
+        note = "A demo label, not your product. It is not saved."
+        if own_cards:
+            note += " It replaces the cards on screen; your scan stays saved (Scan, then Resume, brings it back)."
+        else:
+            note += " It replaces the cards on screen." if sample_cards else ""
+            note += " Your saved scan stays." if saved is not None else ""
+        st.caption(note)
 
 
 # --- Diet sheet (the bar's Diet item): the dietary filter and the pregnancy toggle, formerly chips on the page ----------
@@ -5557,6 +5643,7 @@ def _diet_sheet() -> None:
         # rebuild the dialog under the finger (measured: the dialog node is replaced, focus and animation restart).
         if st.button("Done", type="primary", width="stretch", key="swipe_diet_done"):
             _close_sheet()
+            _request_bar_focus("diet")  # Esc and X are closed by the browser and give the focus back; this one is closed by the server
             st.rerun(scope="app")
 
 
@@ -5868,6 +5955,8 @@ def _scan_snapshot(state: Any, now: float | None = None) -> dict[str, Any] | Non
     text = str(state.get("swipe_analysis_text", "") or "")
     if not cards or not text.strip():
         return None
+    if str((state.get("swipe_label_source") or {}).get("kind", "") or "") == "sample":
+        return None  # the demo label is not a scan to resume: it must never replace (or be offered instead of) the visitor's own
     decisions: dict[str, dict[str, str]] = {}
     for key, d in dict(state.get("swipe_decisions") or {}).items():
         if isinstance(d, dict) and d.get("decision") in ("keep", "replace"):
@@ -5909,6 +5998,8 @@ def _resumable_scan(saved: Any, now: float | None = None) -> dict[str, Any] | No
         return None
     if total <= 0 or age > _SAVED_SCAN_MAX_AGE_S or age < -300:
         return None
+    if isinstance(saved.get("label_source"), dict) and str(saved["label_source"].get("kind", "") or "") == "sample":
+        return None  # an earlier build saved the demo label too: it is no longer offered (and is removed from the device)
     if isinstance(saved.get("decisions"), dict) and isinstance(saved.get("label_source"), dict):
         return saved
     # The fields the restore indexes, in the shape it expects (a damaged value would raise on every run).
@@ -6040,6 +6131,9 @@ def _render_card() -> None:
     decisions: dict[str, dict[str, Any]] = st.session_state.get("swipe_decisions", {})
 
     if not cards:
+        # A scan that can be resumed is offered only inside the Scan sheet: the hint says so, or a returning visitor would take this
+        # for a first visit (the line is as long as before: no height changes when the saved scan arrives from the browser).
+        resumable = _resumable_scan(st.session_state.get("_suppswipe_saved_scan")) is not None
         st.markdown(
             "<div class='hero'>"
             "<div class='hero-art' aria-hidden='true'>💊<span>→</span>🥦</div>"
@@ -6052,7 +6146,7 @@ def _render_card() -> None:
             "<div class='step' role='listitem'><span aria-hidden='true'>👆</span><b>Swipe</b><small>keep or replace</small></div>"
             "<div class='step' role='listitem'><span aria-hidden='true'>🥗</span><b>Eat</b><small>your food plan</small></div>"
             "</div>"
-            "<div class='hero-hint'>Tap <b>Scan</b> below to start <span aria-hidden='true'>↓</span></div></div>",
+            f"<div class='hero-hint'>Tap <b>Scan</b> below to start{' or resume' if resumable else ''} <span aria-hidden='true'>↓</span></div></div>",
             unsafe_allow_html=True,
         )
         # No button on this screen: the ways to start (Analyze, Resume, Sample) are in the Scan sheet of the bottom bar (_scan_sheet).
@@ -7399,6 +7493,7 @@ def _build_mobile_ui() -> None:
         _show_sheet()
     if st.session_state.pop("_suppswipe_scroll_top", False):
         _scroll_to_top()
+    _focus_bar_item()
     try:
         show_debug = _debug_requested()
     except Exception:

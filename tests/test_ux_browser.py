@@ -376,7 +376,7 @@ def test_filter_line_and_misfit_flag(page):
 
 
 def test_resume_after_refresh_and_start_over_clears_it(page):
-    start_sample(page)
+    start_own_label(page)  # a real scan: the sample label is never saved, so it cannot be resumed
     for _ in range(2):
         name = card_name(page)
         card(page).locator("#btnKeep").click()
@@ -446,7 +446,7 @@ def _active_chips(page) -> list[str]:
 
 
 def test_resume_keeps_the_diet_filter_chip(page):
-    start_sample(page)
+    start_own_label(page)  # a real scan: the sample label is never saved, so it cannot be resumed
     choose_diet(page, "Vegan")
     name = card_name(page)
     card(page).locator("#btnKeep").click()
@@ -551,7 +551,7 @@ def test_small_phone_sees_an_analysis_error(browser, server):
 
 def test_resume_keeps_the_pregnancy_toggle(page):
     # UXJ-F4
-    start_sample(page)
+    start_own_label(page)  # a real scan: the sample label is never saved, so it cannot be resumed
     open_diet_sheet(page)
     page.get_by_text("Pregnant or breastfeeding").click()
     settle(page)
