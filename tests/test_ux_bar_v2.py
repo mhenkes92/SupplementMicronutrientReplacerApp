@@ -123,10 +123,13 @@ def _saved(sw, cards, **extra):
 def test_the_bar_has_five_items_in_this_order_and_the_history_item_is_called_recent(sw):
     assert [(name, label) for name, label in sw._BAR_ITEMS] == [
         ("guide", "Guide"), ("diet", "Diet"), ("scan", "Scan"), ("scans", "Recent"), ("about", "About")]
-    assert set(sw._SHEET_TITLES) == {name for name, _ in sw._BAR_ITEMS}
+    assert sw._CARD_SHEETS == ("swap", "ask", "report")  # the card's own tools open three more sheets (tests/test_ux_fixed_screen.py)
+    assert set(sw._SHEET_TITLES) == {name for name, _ in sw._BAR_ITEMS} | set(sw._CARD_SHEETS)
     assert sw._SHEET_TITLES["scans"] == "Recent scans"  # the item is "Recent", its window keeps the title
     at = AppTest.from_file(APP, default_timeout=60).run()
-    assert [b.key for b in at.button] == BAR_KEYS and [b.label for b in at.button] == ["Guide", "Diet", "Scan", "Recent", "About"]
+    bar = [b for b in at.button if str(b.key).startswith("appbar")]
+    assert [b.key for b in bar] == BAR_KEYS and [b.label for b in bar] == ["Guide", "Diet", "Scan", "Recent", "About"]
+    assert [b.key for b in at.button if b not in bar] == ["hero_scan"]  # and the welcome card's own Scan button, nothing else
 
 
 def test_scan_is_the_primary_item_in_the_css_and_every_item_has_an_icon_for_the_live_and_the_dead_bar(sw):
@@ -160,12 +163,13 @@ def test_the_dead_twin_has_five_disabled_buttons_with_their_own_keys_and_the_liv
 
 
 # ------------------------------------------------------------------ the welcome screen: hero, one hint, the disclaimer, the bar
-def test_the_welcome_screen_has_no_button_chip_toggle_or_footer_of_its_own():
+def test_the_welcome_screen_has_one_button_inside_the_hero_card_and_no_chip_toggle_or_footer_of_its_own():
     at = AppTest.from_file(APP, default_timeout=60).run()
-    assert _page_buttons(at) == []
+    assert _page_buttons(at) == ["hero_scan"]  # the big Scan button of the card (it opens the Scan sheet)
+    assert at.button(key="hero_scan").label == "Scan a supplement" and at.button(key="hero_scan").proto.type == "primary"
     assert not at.get("button_group") and not at.toggle and not at.expander
     text = " ".join(m.value for m in at.markdown)
-    assert "class='hero'" in text and "Tap <b>Scan</b> below to start" in text  # the one hint, inside the card
+    assert "class='hero'" in text and "Tap <b>Scan</b> below to start" not in text  # the button replaced the hint line
     assert any("not medical advice" in c.value for c in at.caption)  # and the disclaimer
     assert not _has_footer(at)  # the © line is in About
 
@@ -180,10 +184,10 @@ def test_no_filter_chips_toggle_settings_or_old_buttons_on_any_page(screen):
     assert ("swipe_analyze_btn" in _page_buttons(at)) == (screen == "results")  # the primary Scan button ends a finished plan, only there
 
 
-def test_the_footer_stays_on_the_card_and_results_screens_and_the_about_sheet_carries_it_too(sw):
-    for screen in ("midscan", "results"):
-        at = _screen(screen)
-        assert _has_footer(at), screen
+def test_the_footer_is_only_on_the_results_screen_and_the_about_sheet_carries_it_too(sw):
+    assert not _has_footer(_screen("midscan"))  # the cards are one fixed screen: nothing below the card, not even the © line
+    at = _screen("results")
+    assert _has_footer(at)
     at.button(key="appbar_about").click().run()
     assert f"© mfitness92 · Build {sw.BUILD_TAG}" in " ".join(m.value for m in at.markdown)
 
@@ -193,7 +197,7 @@ def test_scan_sheet_has_analyze_and_sample_and_resume_only_with_a_saved_scan_tha
     at = AppTest.from_file(APP, default_timeout=60).run()
     at.button(key="appbar_scan").click().run()
     assert _titles(at) == ["Scan a supplement"]
-    assert _page_buttons(at) == ["swipe_scan_analyze", "swipe_try_sample"]
+    assert _page_buttons(at) == ["hero_scan", "swipe_scan_analyze", "swipe_try_sample"]  # the hero card's button is behind the sheet
     assert [b.label for b in at.button if b.key in ("swipe_scan_analyze", "swipe_try_sample")] == ["Analyze my supplement", "Try with a sample label"]
     captions = [c.value for c in at.caption]
     assert "Photo, upload, barcode, link or pasted text." in captions and "A demo label, not your product. It is not saved." in captions
@@ -203,7 +207,7 @@ def test_scan_sheet_has_analyze_and_sample_and_resume_only_with_a_saved_scan_tha
     at.session_state["_suppswipe_saved_scan"] = _saved(sw, sample_cards, swipe_diet_profile_id="vegan", swipe_pregnant=True)
     at.run()
     at.button(key="appbar_scan").click().run()
-    assert _page_buttons(at) == ["swipe_scan_analyze", "swipe_resume_scan", "swipe_try_sample"]
+    assert _page_buttons(at) == ["hero_scan", "swipe_scan_analyze", "swipe_resume_scan", "swipe_try_sample"]
     assert at.button(key="swipe_resume_scan").label == "Resume last scan"
     captions = [c.value for c in at.caption]
     assert f"2 of {len(sample_cards)} cards done · saved today" in captions
@@ -218,7 +222,7 @@ def test_scan_sheet_has_analyze_and_sample_and_resume_only_with_a_saved_scan_tha
     at.session_state["_suppswipe_saved_scan"] = old
     at.run()
     at.button(key="appbar_scan").click().run()
-    assert _page_buttons(at) == ["swipe_scan_analyze", "swipe_try_sample"]
+    assert _page_buttons(at) == ["hero_scan", "swipe_scan_analyze", "swipe_try_sample"]
 
 
 def test_a_saved_scan_without_a_filter_says_nothing_about_one(sw, sample_cards):
@@ -238,9 +242,9 @@ def test_a_saved_sample_scan_from_an_earlier_build_is_not_offered_and_is_removed
     at = AppTest.from_file(APP, default_timeout=60)
     at.session_state["_suppswipe_saved_scan"] = saved
     at.run()
-    assert "or resume" not in " ".join(m.value for m in at.markdown)
+    assert at.button(key="hero_scan").label == "Scan a supplement"  # a saved sample is not a scan to resume, so none is promised
     at.button(key="appbar_scan").click().run()
-    assert _page_buttons(at) == ["swipe_scan_analyze", "swipe_try_sample"]
+    assert _page_buttons(at) == ["hero_scan", "swipe_scan_analyze", "swipe_try_sample"]  # the hero button is on the page too
 
 
 def test_analyze_closes_the_sheet_and_opens_the_analyze_window():
@@ -380,24 +384,24 @@ def test_the_sheet_buttons_have_no_icon_whose_ligature_name_would_be_read_out_wi
     at.session_state["_suppswipe_saved_scan"] = None
     at.run()
     at.button(key="appbar_scan").click().run()
-    assert [b.proto.icon for b in at.button if not str(b.key).startswith("appbar")] == [""] * 2
+    assert [b.proto.icon for b in at.button if not str(b.key).startswith("appbar")] == [""] * 3  # the hero button and the two sheet buttons
     src = Path(APP).read_text(encoding="utf-8")
     assert ":material/" not in src
 
 
-def test_the_welcome_hint_says_resume_only_when_there_is_a_scan_to_resume(sw, sample_cards):
+def test_the_welcome_button_says_resume_only_when_there_is_a_scan_to_resume(sw, sample_cards):
     at = AppTest.from_file(APP, default_timeout=60).run()
-    assert "Tap <b>Scan</b> below to start <span" in " ".join(m.value for m in at.markdown)
+    assert at.button(key="hero_scan").label == "Scan a supplement"
     at = AppTest.from_file(APP, default_timeout=60)
     at.session_state["_suppswipe_saved_scan"] = _saved(sw, sample_cards)
     at.run()
-    assert "Tap <b>Scan</b> below to start or resume <span" in " ".join(m.value for m in at.markdown)
+    assert at.button(key="hero_scan").label == "Scan or resume"
     old = _saved(sw, sample_cards)
     old["ts"] = time.time() - 8 * 24 * 3600  # too old to be offered: not promised either
     at = AppTest.from_file(APP, default_timeout=60)
     at.session_state["_suppswipe_saved_scan"] = old
     at.run()
-    assert "or resume" not in " ".join(m.value for m in at.markdown)
+    assert at.button(key="hero_scan").label == "Scan a supplement"
 
 
 # ------------------------------------------------------------------ Resume
@@ -587,6 +591,7 @@ def test_the_diet_sheet_says_what_the_chosen_filter_does_in_the_profiles_own_wor
 
 def test_a_chip_and_the_toggle_in_the_sheet_reach_the_cards_and_the_mirrors_like_the_page_chips_did():
     at = _screen("midscan")
+    before = list(at.session_state["swipe_card_view"]["labels"])
     at.button(key="appbar_diet").click().run()
     _diet_chips(at)[0].set_value("vegan")
     at.run()
@@ -596,7 +601,8 @@ def test_a_chip_and_the_toggle_in_the_sheet_reach_the_cards_and_the_mirrors_like
     assert at.session_state["swipe_pregnant"] is True
     at.button(key="swipe_diet_done").click().run()  # Done closes the sheet and the page follows
     assert _titles(at) == [] and at.session_state["swipe_sheet"] is None
-    assert "Filter: Vegan" in [c.value for c in at.caption]  # the card behind (its food list is filtered)
+    assert not [c.value for c in at.caption if c.value.startswith("Filter:")]  # nothing under the card: the chip says it
+    assert at.session_state["swipe_card_view"]["labels"] != before  # the card behind: its food list is filtered
     assert _chip(at) == "Diet: Vegan · Pregnancy"
 
 
@@ -680,9 +686,14 @@ def test_the_no_alternatives_note_points_to_the_diet_item():
     at.session_state["swipe_index"] = 0
     at.session_state["swipe_diet_profile_id"] = "vegan"
     at.run()
-    captions = [c.value for c in at.caption]
-    assert any("No whole-food alternatives fit the “Vegan” filter. Tap Diet in the bottom bar to change the filter." in c for c in captions), captions
-    assert not any("Switch the dietary filter below" in c for c in captions)
+    # Said INSIDE the card (its food block), where the disabled Replace button is; nothing is drawn below the card.
+    from card_tools import card_args
+
+    note = card_args(at)["foodNote"]
+    assert "No whole-food alternatives fit the “Vegan” filter. Tap Diet in the bottom bar to change the filter." in note, note
+    assert "Switch the dietary filter below" not in note
+    assert not [c for c in at.caption if "No whole-food alternatives" in c.value]
+    assert card_args(at)["canReplace"] is False and card_args(at)["canSwap"] is False
 
 
 # ------------------------------------------------------------------ the keyboard focus after a window closes

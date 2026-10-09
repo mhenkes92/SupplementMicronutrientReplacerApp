@@ -87,12 +87,13 @@ def test_every_screen_has_the_bar_with_all_five_buttons_and_no_popover_left(scre
     assert not any(b.disabled for b in _bar(at))
     assert at.get("dialog") == []  # nothing is open until a button is tapped
     popovers = [p.proto.popover.label for p in at.get("popover")]
-    assert not [p for p in popovers if p.startswith(REMOVED_POPOVERS)], popovers  # the card's "💬 Ask AI" popover may stay
+    assert popovers == [], popovers  # the card's Ask AI is a sheet now (tests/test_ux_fixed_screen.py): no popover on any screen
 
 
 def test_the_primary_scan_button_is_only_on_the_results_page_and_the_welcome_page_has_only_the_bar():
     at = _screen("welcome")
-    assert [b.key for b in at.button if not str(b.key).startswith("appbar")] == []  # hero card + bar, nothing to scroll to
+    # The hero card has ONE button, inside the card (it opens the same Scan sheet as the bar's Scan item); nothing else on the page.
+    assert [b.key for b in at.button if not str(b.key).startswith("appbar")] == ["hero_scan"]
     at = _screen("results")
     assert [b.label for b in at.button if b.key == "swipe_analyze_btn"] == ["📸 Scan another supplement"]
 

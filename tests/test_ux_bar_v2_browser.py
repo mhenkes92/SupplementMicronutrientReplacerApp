@@ -10,8 +10,8 @@ import time
 import pytest
 
 from test_ux_browser import (  # noqa: F401  (fixtures are used by name)
-    DIALOG, _active_chips, _mixed_results, ai_server, browser, card, card_name, choose_diet, close_sheet, finish_all_cards, open_diet_sheet,
-    open_scan_sheet, page, results_heading, server, settle, shot, start_own_label, start_sample, wait_name_change,
+    CARD, DIALOG, _active_chips, _mixed_results, ai_server, browser, card, card_name, choose_diet, close_sheet, finish_all_cards, food_options,
+    open_diet_sheet, open_scan_sheet, page, results_heading, server, settle, shot, start_own_label, start_sample, wait_filter_chip, wait_name_change,
 )
 
 BAR = '[class~="st-key-appbar"]'
@@ -126,12 +126,13 @@ def test_the_welcome_screen_needs_no_scrolling_and_nothing_is_under_the_bar(brow
         state = scroll_state(pg)
         assert state["main"] <= 1 and state["doc"] <= 1 and state["width"] <= 0, state  # not even an empty strip to scroll
         bar = rect(pg, BAR)
-        hero = rect(pg, ".hero")
-        hint = rect(pg, ".hero-hint")
+        hero = rect(pg, '[class~="st-key-hero_card"]')
+        button = rect(pg, '[class~="st-key-hero_card"] button')
         caption = pg.evaluate("() => { const c = [...document.querySelectorAll('[data-testid=stCaptionContainer]')].pop().getBoundingClientRect(); return c.bottom; }")
-        assert hint and hint["bottom"] <= hero["bottom"]  # the hint is in the card
-        assert caption <= bar["y"] - 6, (caption, bar)  # the medical disclaimer ends clear above the bar
-        assert pg.locator(".brand-foot").count() == 0 and pg.locator('[data-testid="stButton"]:not([class*="st-key-appbar"] *)').count() == 0
+        assert button and hero["y"] <= button["y"] and button["bottom"] <= hero["bottom"]  # the Scan button is in the card (the hint line is gone)
+        assert button["bottom"] <= bar["y"] - 6 and caption <= bar["y"] - 6, (button, caption, bar)  # the button and the disclaimer end clear above the bar
+        assert pg.locator(".brand-foot, .hero-hint").count() == 0
+        assert pg.locator('[data-testid="stButton"]:not([class*="st-key-appbar"] *)').count() == 1  # the one button of the page is the card's
         shot(pg, f"bar_v2_welcome_{size[0]}x{size[1]}")
     finally:
         ctx.close()
@@ -254,8 +255,7 @@ def test_resume_never_switches_a_filter_off_and_the_diet_sheet_shows_what_is_rea
     page.get_by_role("button", name="Resume last scan").click()
     card(page).locator("#card .name").wait_for(timeout=20000)
     settle(page, 1.0)
-    assert page.locator(".diet-note").inner_text().strip() == "🥗 Diet: Vegan · Pregnancy"
-    page.get_by_text("Filter: Vegan").wait_for(timeout=5000)
+    assert page.locator(".diet-note").inner_text().strip() == "🥗 Diet: Vegan · Pregnancy"  # the chip: nothing is drawn under the card
     open_diet_sheet(page)
     assert _active_chips(page) == ["Vegan"], _active_chips(page)  # not "No restriction"
     assert page.locator("label", has_text="Pregnant or breastfeeding").locator("input").is_checked()
@@ -296,21 +296,15 @@ def test_the_diet_sheet_changes_the_cards_and_the_food_guard_when_it_closes(page
     card(page).locator("#btnKeep").click()
     assert "vitamin d" in wait_name_change(page, name).lower()  # card 2: vitamin D has fish and mushrooms
     settle(page)
-    page.locator('[data-testid="stSelectbox"]').first.evaluate("e => e.scrollIntoView({block: 'center'})")
-    page.locator('[data-testid="stSelectbox"]').first.click()
-    before = [o.inner_text() for o in page.locator('[role="option"]').all()]
-    page.keyboard.press("Escape")
+    before = food_options(page)  # the card's food list is in its Swap food sheet
     assert any("salmon" in o.lower() or "fish" in o.lower() or "trout" in o.lower() for o in before), before
     open_diet_sheet(page)
     page.locator('[data-testid="stDialog"] [data-testid="stButtonGroup"] button', has_text="Vegan").click()
     settle(page)
-    assert page.get_by_text("Filter: Vegan").count() == 0  # the page follows when the sheet closes
+    assert page.locator(".diet-note").count() == 0  # the page follows when the sheet closes
     close_sheet(page)
-    page.get_by_text("Filter: Vegan").wait_for(timeout=10000)
-    page.locator('[data-testid="stSelectbox"]').first.evaluate("e => e.scrollIntoView({block: 'center'})")
-    page.locator('[data-testid="stSelectbox"]').first.click()
-    after = [o.inner_text() for o in page.locator('[role="option"]').all()]
-    page.keyboard.press("Escape")
+    wait_filter_chip(page, "Diet: Vegan")
+    after = food_options(page)
     # The dropdown is virtualised (about 11 rows whatever the list length): compare what is in it, not how many rows it shows.
     assert after and after != before and not any(w in o.lower() for o in after for w in ("salmon", "trout", "fish", "mackerel", "sardine", "tuna")), (before, after)
 
@@ -372,14 +366,16 @@ def test_the_dead_twin_has_five_dead_tabs_of_the_same_size_and_keeps_the_chip(ai
 # ------------------------------------------------------------------ the bar never covers content
 @pytest.mark.parametrize("size", [(320, 568), (360, 640), (390, 844), (412, 915)])
 def test_the_bar_never_covers_the_keep_replace_row_or_the_end_of_the_page(browser, server, size):
+    """The cards screen is one fixed screen: its frame ends where the bar begins, so the row is clear of the bar at first sight and the
+    end of the page is the frame (the © line closes the results screen only: tests/test_ux_fixed_screen_browser.py)."""
     ctx, pg = new_page(browser, server, size)
     try:
         start_sample(pg)
         for selector in ("#btnKeep", "#btnRepl", "#btnBack"):
             bar = rect(pg, BAR)
             inner = card(pg).locator(selector).bounding_box()
-            need = inner["y"] + inner["height"] + 8 - bar["y"]
-            if need > 0:  # a short phone: the page leaves room to scroll the row clear of the bar
+            need = inner["y"] + inner["height"] - bar["y"]  # how far the button reaches into the bar (0 or less: clear)
+            if need > 0:  # the page must then leave room to scroll the row clear of the bar
                 room = pg.evaluate(f"{MAIN}.scrollHeight - {MAIN}.clientHeight - {MAIN}.scrollTop")
                 assert room >= need, (selector, need, room)
                 pg.evaluate(f"{MAIN}.scrollBy(0, {need})")
@@ -388,8 +384,8 @@ def test_the_bar_never_covers_the_keep_replace_row_or_the_end_of_the_page(browse
             assert inner["y"] + inner["height"] <= rect(pg, BAR)["y"] + 1, (selector, inner)
         pg.evaluate(f"{MAIN}.scrollTo(0, 100000)")
         pg.wait_for_timeout(300)
-        foot = rect(pg, ".brand-foot")
-        assert foot["bottom"] <= rect(pg, BAR)["y"] + 1, (foot, rect(pg, BAR))
+        assert pg.locator(".brand-foot").count() == 0  # nothing under the card, not even the © line
+        assert rect(pg, CARD)["bottom"] <= rect(pg, BAR)["y"] + 6, (rect(pg, CARD), rect(pg, BAR))  # the page ends with the frame, at the bar
         pg.evaluate(f"{MAIN}.scrollTo(0, 0)")
         name = card_name(pg)
         card(pg).locator("#btnKeep").click(timeout=5000)  # a real tap: Playwright refuses a covered target

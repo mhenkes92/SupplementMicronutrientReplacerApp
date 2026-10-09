@@ -89,10 +89,21 @@ def test_the_ai_buttons_are_there_when_the_ai_is_on(monkeypatch):
     assert "Show the comparison" in [b.label for b in at.button]
 
 
-def test_the_card_popover_is_not_drawn_while_the_ai_is_off(sw, monkeypatch):
+def test_the_cards_ask_ai_tool_is_not_offered_while_the_ai_is_off_and_a_forged_tap_opens_nothing(monkeypatch):
+    """The card's Ask AI button exists only with a configured AI (a button that only ends in an error is no button); a forged
+    "ask" event opens no sheet either. With the AI on, the same tap opens the Ask AI sheet."""
+    from card_tools import card_args, sheet_titles, tap_tool
+
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.run()
+    _analyse(at, "Vitamin C 80 mg 100%\nZinc 10 mg 100%\nSelenium 55 µg 100%")
+    assert card_args(at)["canAsk"] is True  # configured (the tests' fake key): the button is there
     _unconfigured(monkeypatch)
-    monkeypatch.setattr(sw.st, "popover", lambda *a, **k: pytest.fail("a button that only ends in an error"))
-    sw._render_rag_chat_popup({"component": "zinc"}, "zinc", 0)
+    at.run()
+    assert card_args(at)["canAsk"] is False and card_args(at)["canSwap"] is True  # only Ask AI goes
+    tap_tool(at, "ask")
+    assert not at.exception and sheet_titles(at) == [] and at.session_state["swipe_sheet"] is None
+    assert not at.chat_input
 
 
 def test_no_empty_assistant_bubble_when_asking_fails(sw, monkeypatch):

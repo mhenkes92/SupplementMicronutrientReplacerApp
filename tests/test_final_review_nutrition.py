@@ -470,7 +470,11 @@ def test_vegan_epa_dha_card_says_why_no_food_is_listed(sw):
     at.session_state["swipe_diet_profile_id"] = "vegan"
     at.run()
     assert not at.exception, [e.value for e in at.exception]
+    # The reason is said INSIDE the card, in its food block (nothing is drawn below the card any more).
+    from card_tools import card_args
+
+    note = card_args(at)["foodNote"]
+    assert "only algal oil supplies EPA+DHA" in note and "Keeping the supplement is recommended." in note
+    assert "Switch the dietary filter" not in note
     captions = " ".join(c.value for c in at.caption)
-    assert "only algal oil supplies EPA+DHA" in captions and "Keeping the supplement is recommended." in captions
-    assert "Switch the dietary filter" not in captions
-    assert len(at.selectbox) == 0
+    assert "algal oil" not in captions and len(at.selectbox) == 0 and card_args(at)["canSwap"] is False  # no food, nothing to swap

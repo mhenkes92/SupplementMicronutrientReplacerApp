@@ -332,16 +332,27 @@ def _run_app(manual: str, diet: str):
     return at
 
 
+def _shown_food_label(at) -> str:
+    """The food the card shows, as the Swap food list names it (that sheet's selected value, read there)."""
+    from card_tools import dismiss_sheet, tap_tool
+
+    shown = at.session_state["swipe_card_view"]["shown"]
+    tap_tool(at, "swap")
+    assert at.selectbox[0].value == shown  # the sheet opens on the food the card shows
+    dismiss_sheet(at)
+    return str(shown)
+
+
 def test_live_card_preselects_the_everyday_food():
     at = _run_app("Vitamin D3 25 µg", "none")
-    assert "mackerel" in str(at.selectbox[0].value).lower()
+    assert "mackerel" in _shown_food_label(at).lower()
     at = _run_app("Folsäure 200 µg", "none")
-    assert "liver" not in str(at.selectbox[0].value).lower()
+    assert "liver" not in _shown_food_label(at).lower()
 
 
 def test_live_vegan_b12_card_preselects_a_fortified_food():
     at = _run_app("Vitamin B12 25 µg", "vegan")
-    assert "fortified" in str(at.selectbox[0].value).lower()
+    assert "fortified" in _shown_food_label(at).lower()
 
 
 def test_default_choice_is_fast(sw):

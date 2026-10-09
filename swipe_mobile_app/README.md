@@ -10,12 +10,17 @@ meal plan, a weekly shopping list with prices, Ask AI and a shareable summary.
 
 ## The screen
 
-The page is the card and a fixed bottom bar of five items: **Guide** (athlete RDA table), **Diet** (dietary filter and the
-pregnancy setting), **Scan** (the filled one: analyze a supplement, resume the last scan, or try a sample label; half-way
-through a scan or on a finished plan it asks first), **Recent** (the scans kept in this browser) and **About**. The sample label is
-never saved: it is not in Recent and it never takes the place of the scan you can resume (when one is saved, the welcome card says
-"Tap Scan below to start or resume"). Nothing sits below the welcome card, so there is nothing to scroll to (at any phone size from
-320 x 568 up; the long text in the card goes where it would not fit). While a diet filter or pregnancy mode is on, the page shows it in a
+The welcome screen is one card with a big **Scan a supplement** button inside it. The cards screen is one fixed screen too: the swipe
+card fills the room between the brand and a fixed bottom bar of five items, and nothing is drawn below it, so the page does not
+scroll (a card that is taller than its frame, on a small phone or at large text, scrolls inside itself with a fade and a "scroll for
+more" pill). Above **Keep / Replace** the card has three tools: **Swap food** (pick another whole food; only when the card has one),
+**Ask AI** (only when the AI is configured) and **More** (report a problem with the card). Each opens a sheet over the card and
+returns to the same card. Only the results (the long plan) scroll like a normal page.
+
+The bottom bar: **Guide** (athlete RDA table), **Diet** (dietary filter and the pregnancy setting), **Scan** (the filled one:
+analyze a supplement, resume the last scan, or try a sample label; half-way through a scan or on a finished plan it asks first; the sample is
+never saved, so it never takes the place of the scan you can resume),
+**Recent** (the scans kept in this browser) and **About**. While a diet filter or pregnancy mode is on, the page shows it in a
 one-line chip under the brand and the Diet item carries a dot. On phones the bar starts at the page gutter and leaves the
 bottom-right corner free for the Streamlit Cloud badge.
 
