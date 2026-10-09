@@ -645,19 +645,25 @@ def test_the_sample_over_the_visitors_own_undecided_cards_does_not_cost_her_the_
 
 
 # ------------------------------------------------------------------ the welcome hint, the names of the buttons
-def test_the_welcome_hint_says_resume_when_there_is_a_scan_to_resume_and_stays_on_one_line(browser, server):
+def test_the_welcome_button_says_resume_when_there_is_a_scan_to_resume_and_stays_on_one_line(browser, server):
+    """The card's own button is the way in for a returning visitor: it promises the resume ("Scan or resume") only when one can be offered,
+    and its label stays on one line so the page does not move when the saved scan arrives from the browser."""
     ctx, pg = new_page(browser, server, (320, 568))
     try:
-        assert pg.locator(".hero-hint").inner_text().strip() == "Tap Scan below to start ↓"
+        button = pg.locator('[class~="st-key-hero_scan"] button')
+        assert button.inner_text().strip() == "Scan a supplement"
         start_own_label(pg)
         name = card_name(pg)
         card(pg).locator("#btnKeep").click()
         wait_name_change(pg, name)
         settle(pg, 1.5)
         reload_and_wait_for_the_stored_scan(pg)
-        pg.get_by_text("Tap Scan below to start or resume").wait_for(timeout=20000)
-        info = pg.evaluate("() => { const e = document.querySelector('.hero-hint'); const r = document.createRange(); r.selectNodeContents(e); return {h: e.getBoundingClientRect().height, font: parseFloat(getComputedStyle(e).fontSize)}; }")
-        assert info["h"] < info["font"] * 2, info  # one line (two would be about twice the font size): the page does not move when the saved scan arrives
+        pg.locator('[class~="st-key-hero_scan"] button', has_text="Scan or resume").wait_for(timeout=20000)
+        info = pg.evaluate(
+            "() => { const p = document.querySelector('[class~=\"st-key-hero_scan\"] button p'); const r = p.getBoundingClientRect();"
+            " return {h: r.height, font: parseFloat(getComputedStyle(p).fontSize)}; }"
+        )
+        assert info["h"] < info["font"] * 2, info  # one line (two would be about twice the font size)
         state = scroll_state(pg)
         assert state["main"] <= 1 and state["doc"] <= 1, state
     finally:

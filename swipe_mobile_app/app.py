@@ -4511,11 +4511,13 @@ def _render_header() -> None:
                on the width (the narrower the phone, the more lines the text and the three steps take) and on the filter chip (one more
                line, two on a narrow phone). Measured with the text forced on, the screen overflows up to these heights (no chip / the
                longest chip): up to 341 px wide 710 / 740, 350 px 640 / 670, 360 to 393 px 620 / 640, from 400 px 560 / 640 (a sweep
-               of ten widths x every 10 px of height). Each band below hides the text a little above the worst of its two numbers. */
+               of ten widths x every 10 px of height). Each band below hides the text a little above the worst of its two numbers; the
+               card's Scan button made the welcome card about 36 px taller than when this was measured, so the bands sit 10-60 px higher
+               (checked by the in-between-sizes tests). */
             @media (max-width: 349px) and (max-height: 760px) { .hero-sub { display: none; } }
-            @media (min-width: 350px) and (max-width: 359px) and (max-height: 690px) { .hero-sub { display: none; } }
-            @media (min-width: 360px) and (max-width: 399px) and (max-height: 660px) { .hero-sub { display: none; } }
-            @media (min-width: 400px) and (max-height: 660px) { .hero-sub { display: none; } }
+            @media (min-width: 350px) and (max-width: 359px) and (max-height: 720px) { .hero-sub { display: none; } }
+            @media (min-width: 360px) and (max-width: 399px) and (max-height: 710px) { .hero-sub { display: none; } }
+            @media (min-width: 400px) and (max-height: 710px) { .hero-sub { display: none; } }
             /* Nothing below the hero on the welcome screen: the page reserves only the bar (its footprint plus the badge corner), so
                it does not scroll by an empty strip. */
             .block-container:has([class~="st-key-hero_card"]) {
