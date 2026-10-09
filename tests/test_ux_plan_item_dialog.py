@@ -92,10 +92,9 @@ def test_row_buttons_have_a_name_a_screen_reader_can_use():
     assert any("kept as a supplement" in b.label for b in _row_buttons(at, "keep"))
 
 
-def test_only_the_athlete_guide_is_left_at_the_bottom():
+def test_no_popover_is_left_at_the_bottom():
     at = _results_app()
-    popovers = [p.proto.popover.label for p in at.get("popover")]
-    assert "\U0001F3C3 Athlete RDA guide" in popovers and "✎ Change a choice" not in popovers
+    assert [p.proto.popover.label for p in at.get("popover")] == []  # the guide moved into the bottom bar
 
 
 # ---------------------------------------------------------------- the food dialog
@@ -111,17 +110,24 @@ def test_a_food_row_opens_its_dialog_with_the_three_options():
     assert len(titles) == 1 and titles[0]
     assert "✎ Change a choice" in _text(at)  # a heading; the other two options are expanders, as the owner drew them
     labels = [e.label for e in at.expander]
-    assert "🌱 What the whole food adds (AI)" in labels and "🏃 Athlete RDA guide" in labels
+    assert "🌱 What the whole food adds (AI)" in labels and "🏃 Athlete targets" in labels
     keys = [b.key for b in at.button]
     assert "plandlg_change_0" in keys and "plandlg_benefits" in keys and "plandlg_close" in keys
     assert any("athlete target" in m.value and "adult RDA" in m.value for m in at.markdown)
 
 
-def test_the_full_table_is_in_the_dialog_and_has_every_nutrient(sw):
+def test_the_dialog_has_no_table_and_opens_the_guide_at_its_nutrient():
     at = _results_app()
     _row_buttons(at, "food")[0].click().run()
-    assert len(at.table) >= 1
-    assert max(len(t.value) for t in at.table) == len(sw._MICRONUTRIENT_RDA)
+    assert len(at.table) == 0  # the item's own targets only; the 31 nutrients are in the guide
+    assert any("guide" in c.value.lower() for c in at.caption)
+    focus = at.session_state["swipe_decisions"][next(k for k, d in at.session_state["swipe_decisions"].items() if d["decision"] == "replace")]["component_key"]
+    at.button(key="plandlg_guide").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.session_state["swipe_plan_item"] is None and at.session_state["swipe_sheet"] == "guide"
+    assert at.session_state["swipe_guide_focus"] == focus
+    assert _dialogs(at) == ["Athlete RDA guide"]  # the window is gone, the guide took its place
+    assert any("data-focus='1'" in m.value for m in at.markdown)  # and its row is marked
 
 
 def test_a_kept_pill_dialog_has_no_comparison():
@@ -134,7 +140,7 @@ def test_a_kept_pill_dialog_has_no_comparison():
     text = _text(at)
     assert "kept as a supplement" in text and "✎ Change a choice" in text
     labels = [e.label for e in at.expander]
-    assert labels == ["🏃 Athlete RDA guide"]  # no food was chosen, so no comparison
+    assert labels == ["🏃 Athlete targets"]  # no food was chosen, so no comparison
 
 
 def test_one_food_for_two_nutrients_is_one_row_with_a_change_button_per_nutrient():
@@ -466,7 +472,7 @@ def test_a_nutrient_without_a_guide_row_says_so_and_does_not_break():
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     assert any("no athlete target is tracked" in c.value for c in at.caption)
-    assert len(at.table) == 2  # the page's Athlete RDA popover and the window's copy of the table
+    assert len(at.table) == 0
 
 
 def test_pregnancy_mode_offers_no_comparison_for_a_food_it_advises_against(monkeypatch):

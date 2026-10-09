@@ -156,7 +156,10 @@ def test_clear_history_also_forgets_the_saved_scan(sw, sample_cards):
     at.session_state["suppswipe_scan_history"] = [{"ts": "2026-10-01 10:00", "diet": "", "kept": [], "replaced": []}]
     at.run()
     assert [b for b in at.button if b.key == "swipe_resume_scan"]
-    at.button(key="swipe_clear_history").click().run()
+    at.button(key="appbar_scans").click().run()
+    at.button(key="swipe_clear_history").click().run()  # asks first
+    assert at.session_state["_suppswipe_saved_scan"] is not None
+    at.button(key="swipe_clear_history_confirm").click().run()
     assert at.session_state["_suppswipe_saved_scan"] is None
     assert not [b for b in at.button if b.key == "swipe_resume_scan"]
 
@@ -191,7 +194,9 @@ def test_clear_history_on_the_results_does_not_resave_the_scan():
     assert at.session_state["swipe_index"] == len(cards)
     assert at.session_state["suppswipe_scan_history"]  # the finished scan was recorded
     assert at.session_state["_suppswipe_scan_snapshot"]["index"] == len(cards)  # and saved for resuming
+    at.button(key="appbar_scans").click().run()
     at.button(key="swipe_clear_history").click().run()
+    at.button(key="swipe_clear_history_confirm").click().run()
     assert not at.exception, [e.value for e in at.exception]
     assert at.session_state["suppswipe_scan_history"] == []
     # The cards are still on screen, but nothing is handed to the browser again.

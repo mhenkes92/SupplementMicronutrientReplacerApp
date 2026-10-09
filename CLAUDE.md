@@ -1,7 +1,7 @@
 # SuppSwipe (SupplementMicronutrientReplacerApp)
 
 Streamlit app: photo/text of a supplement label -> nutrients -> swipe cards -> whole-food replacements, meal plan, Ask AI.
-Live app = branch `master` (Streamlit Cloud, entry `swipe_mobile_app/app.py`); only the owner merges to it.
+Live app = branch `master` (Streamlit Cloud, entry `swipe_mobile_app/app.py`). **Standing order from the owner (2026-10-09): never ask him to merge; the cloud agent merges to `master` itself, from now on, whenever work is done** (own branch -> pull request -> merge commit, not a squash), once the offline tests are green, the PR's CI is green and there is no conflict. Say in the reply what was merged, the merge commit and the rollback (`git revert -m 1 <merge commit>`). Other agents still do not push to `master` unless the owner says so.
 
 * Run: `streamlit run swipe_mobile_app/app.py`. Tests: `python -m pytest tests -q` (offline; must be green before a push).
   Browser tests: `SUPPSWIPE_BROWSER_TESTS=1 python -m pytest tests/test_ux_browser.py tests/test_final_review_ux.py`.

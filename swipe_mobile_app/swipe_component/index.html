@@ -83,6 +83,10 @@
   .food { font-size: 1.05rem; font-weight: 800; color: #0f172a; line-height: 1.2; }
   .portion { margin-top: 10px; padding: 8px 10px; border-radius: 12px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #14532d; font-size: .84rem; line-height: 1.5; }
   .portion .pl { display: block; }
+  .portion button.pl { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0; padding: 4px 0; margin: 0; cursor: pointer; min-height: 32px; }
+  .portion button.pl .pl-text { flex: 1 1 auto; min-width: 0; }
+  .portion button.pl:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; border-radius: 8px; }
+  .portion button.pl .chev { flex: 0 0 auto; font-weight: 800; color: #047857; }
   .portion b { color: #0f172a; }
   .warn { margin-top: 10px; padding: 7px 10px; border-radius: 12px; background: #fff7ed; border: 1px solid #fed7aa; color: #7c2d12; font-size: .82rem; font-weight: 600; line-height: 1.4; }
   .bio { margin-top: 8px; padding: 7px 10px; border-radius: 12px; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a5f; font-size: .82rem; line-height: 1.4; }
@@ -219,9 +223,10 @@
       portionRows += '<span class="pl">💊 Match this dose &rarr; ' + portion(args.matchDose) + '</span>';
     }
     if (args.rdaAmount) {
-      portionRows += '<span class="pl">🏃 Target for very active people' +
+      // A button: a tap opens the Athlete RDA guide at this nutrient (see "guide" in the app). The visible text is its name.
+      portionRows += '<button type="button" class="pl pl-guide" data-guide="1"><span class="pl-text">🏃 Target for very active people' +
         (args.rdaLabel ? ' (' + esc(args.rdaLabel) + ')' : '') +
-        ' &rarr; ' + portion(args.rdaAmount) + '</span>';
+        ' &rarr; ' + portion(args.rdaAmount) + '<span class="sr-only">. Opens the athlete guide.</span></span><span class="chev" aria-hidden="true">&rsaquo;</span></button>';
     }
     var portionHtml = portionRows ? '<div class="portion">' + portionRows + '</div>' : '';
     var warnHtml = args.warn ? '<div class="warn" role="note">' + esc(args.warn) + '</div>' : '';
@@ -317,11 +322,12 @@
   // Drag-to-swipe. Pointer Events cover mouse, pen and touch; the legacy touch
   // listeners are only used on browsers without Pointer Events, so a single
   // touch never triggers both paths.
-  var dragging = false, sx = 0, sy = 0, dx = 0, dy = 0, horizontal = null;
+  var dragging = false, sx = 0, sy = 0, dx = 0, dy = 0, horizontal = null, movedBeyondTap = false;
   var THRESH = 80;
 
   function down(x, y) {
     if (committed) return;
+    movedBeyondTap = false;
     dragging = true; horizontal = null;
     sx = x; sy = y; dx = 0; dy = 0;
     card.style.transition = "none";
@@ -329,6 +335,7 @@
   function move(x, y, ev) {
     if (!dragging) return;
     dx = x - sx; dy = y - sy;
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) { movedBeyondTap = true; }
     if (horizontal === null && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
       horizontal = Math.abs(dx) > Math.abs(dy);
     }
@@ -352,12 +359,20 @@
   }
 
   if (window.PointerEvent) {
+    var downOnGuide = false;
     card.addEventListener("pointerdown", function (e) {
       if (e.button != null && e.button !== 0) return;
+      downOnGuide = !!(e.target.closest && e.target.closest("[data-guide]"));
       down(e.clientX, e.clientY);
-      try { card.setPointerCapture(e.pointerId); } catch (err) {}
+      // On the guide link the capture waits until the finger really moves (see move()), so a tap still reaches the button.
+      if (!downOnGuide) { try { card.setPointerCapture(e.pointerId); } catch (err) {} }
     });
-    card.addEventListener("pointermove", function (e) { move(e.clientX, e.clientY, e); });
+    card.addEventListener("pointermove", function (e) {
+      if (downOnGuide && dragging && !card.hasPointerCapture(e.pointerId) && (Math.abs(e.clientX - sx) > 6 || Math.abs(e.clientY - sy) > 6)) {
+        try { card.setPointerCapture(e.pointerId); } catch (err) {}
+      }
+      move(e.clientX, e.clientY, e);
+    });
     card.addEventListener("pointerup", up);
     card.addEventListener("pointercancel", up);
   } else {
@@ -369,6 +384,16 @@
     window.addEventListener("mouseup", up);
   }
 
+  function guideEvent() {
+    if (committed) return;   // a swipe is already on its way
+    seq += 1;
+    setValue({ kind: "guide", id: "g" + Date.now() + "-" + seq, card: cardId, index: cardIndex, nutrient: cardId });
+  }
+  card.addEventListener("click", function (e) {
+    if (!(e.target.closest && e.target.closest("[data-guide]"))) { return; }
+    if (e.detail > 0 && movedBeyondTap) { movedBeyondTap = false; return; }   // a pointer click after a drag was a swipe, not a tap (keyboard clicks have detail 0)
+    guideEvent();
+  });
   btnKeep.addEventListener("click", function () { commit("left"); });
   btnRepl.addEventListener("click", function () { commit("right"); });
   btnBack.addEventListener("click", function () { commit("back"); });

@@ -186,6 +186,8 @@ def finish_all_cards(page, replace: bool = False) -> None:
 
 
 def choose_option(page, index: int) -> str:
+    # Mid-page, not under the bottom bar: Playwright would scroll the page to reach a covered select, and that closes the menu.
+    page.locator('[data-testid="stSelectbox"]').first.evaluate("e => e.scrollIntoView({block: 'center'})")
     page.locator('[data-testid="stSelectbox"]').first.click()
     options = page.locator('[role="option"]')
     options.first.wait_for(timeout=5000)
@@ -279,9 +281,10 @@ def test_results_tabs_show_their_content(page):
     tabs = page.get_by_role("tab")
     assert [t.strip() for t in tabs.all_inner_texts()] == ["🥗 Plan", "🍽️ Meals", "🛒 Shopping", "💬 Ask AI", "📤 Share"]
     page.locator(".plan-hero").wait_for(timeout=5000)
-    # The options live in each row's window now; the reference table stays as one compact menu.
-    page.get_by_role("button", name="Athlete RDA guide").wait_for(timeout=5000)
-    assert page.get_by_role("button", name="Athlete RDA guide").count() == 1
+    # The options live in each row's window now, the guide in the bottom bar: no popover is left on the page.
+    page.locator('[class~="st-key-appbar_guide"] button').wait_for(timeout=5000)
+    assert page.locator('[class~="st-key-appbar_guide"] button').count() == 1
+    assert page.get_by_role("button", name="Athlete RDA guide").count() == 0
     assert page.get_by_role("button", name="✎ Change a choice").count() == 0
     page.locator('[class*="st-key-planbtn_food_"] button').first.wait_for(state="attached", timeout=5000)
     page.locator('[class*="st-key-planbtn_keep_"] button').first.wait_for(state="attached", timeout=5000)
@@ -375,8 +378,9 @@ def test_clear_history_on_the_results_forgets_the_saved_scan(page):
     finish_all_cards(page)
     settle(page, 1.2)
     assert page.evaluate("localStorage.getItem('suppswipe_current_scan_v1')")
-    page.get_by_role("button", name="🕘 Recent scans").click()
+    page.locator('[class~="st-key-appbar_scans"] button').click()
     page.get_by_role("button", name="Clear history").click()
+    page.get_by_role("button", name="Delete", exact=True).click()  # asks first
     settle(page, 1.5)
     assert page.evaluate("localStorage.getItem('suppswipe_scan_history_v1')") is None
     assert page.evaluate("localStorage.getItem('suppswipe_current_scan_v1')") is None
@@ -429,8 +433,8 @@ def test_resume_keeps_the_diet_filter_chip(page):
     page.get_by_text("Filter: Vegan").wait_for(timeout=5000)
 
 
-def test_build_tag_in_about_popover(page):
-    page.get_by_role("button", name="🔒 About & privacy").click()
+def test_build_tag_in_the_about_sheet(page):
+    page.locator('[class~="st-key-appbar_about"] button').click()
     page.get_by_text("Build ", exact=False).first.wait_for(timeout=5000)
 
 
@@ -611,15 +615,16 @@ def test_tapping_a_row_opens_its_options_window(browser, server, size):
     box = _window_box(page)
     assert box["x"] >= 0 and box["right"] <= box["vw"] and box["page"] <= box["vw"]  # inside the phone, no sideways scroll
     text = dialog.inner_text()
-    for heading in ("CHANGE A CHOICE", "What the whole food adds (AI)", "Athlete RDA guide"):  # the last two are expanders
+    for heading in ("CHANGE A CHOICE", "What the whole food adds (AI)", "Athlete targets"):  # the last two are expanders
         assert heading in text
     assert not dialog.locator("table").first.is_visible()  # both expanders start closed: a short window
     dialog.get_by_text("What the whole food adds (AI)").click()
     dialog.get_by_text("The AI comparison is switched off right now.").wait_for(timeout=5000)  # this server has no Blockbrain settings
     assert dialog.get_by_role("button", name="Show the comparison").count() == 0
-    dialog.get_by_text("Athlete RDA guide").click()
-    dialog.locator("table").wait_for(timeout=5000)
-    assert dialog.locator("table tr").count() > 25
+    dialog.get_by_text("Athlete targets").click()
+    dialog.locator(".gd-list").wait_for(timeout=5000)
+    assert dialog.locator("table").count() == 0  # the item's own targets; all nutrients are in the guide
+    assert dialog.get_by_role("button", name="Open the Athlete guide").count() == 1
     assert _window_box(page)["page"] <= size[0]  # still no sideways page scroll with both expanders open
     shot(page, f"ux_plan_item_window_{size[0]}")
     # X, Esc and the Close button all leave the window, and the page behind keeps its tab.
@@ -647,7 +652,7 @@ def test_a_kept_pill_window_has_no_comparison_and_changes_the_choice(page):
     _mixed_results(page)
     dialog = open_plan_item(page, "keep", "")
     text = dialog.inner_text()
-    assert "CHANGE A CHOICE" in text and "Athlete RDA guide" in text and "What the whole food adds" not in text
+    assert "CHANGE A CHOICE" in text and "Athlete targets" in text and "What the whole food adds" not in text
     assert "kept as a supplement" in text
     dialog.locator(".st-key-plandlg_change_0 button").click()
     card(page).locator("#card .name").wait_for(timeout=20000)

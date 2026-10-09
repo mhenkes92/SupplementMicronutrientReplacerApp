@@ -34,7 +34,7 @@ def test_no_page_lock_rules(sw, monkeypatch):
 
 
 def test_every_custom_class_in_the_css_is_rendered_somewhere(sw, monkeypatch):
-    css = _header_css(sw, monkeypatch)
+    css = re.sub(r"url\([^)]*\)", "url()", _header_css(sw, monkeypatch))  # the icons are data URIs: their text is no selector
     classes = set(re.findall(r"\.([A-Za-z][A-Za-z0-9_-]*)", css)) - {"block-container", "stButton", "stDownloadButton", "stFormSubmitButton"}
     for cls in sorted(classes):
         assert re.search(rf"class=['\"]{re.escape(cls)}['\"]", APP_SRC), f".{cls} styles nothing"

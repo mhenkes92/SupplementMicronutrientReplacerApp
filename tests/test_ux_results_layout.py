@@ -55,8 +55,9 @@ def test_results_use_tabs_not_popovers(results_app):
     assert [t.label for t in at.tabs] == TABS
     popovers = _labels(at.main, "popover")
     assert not set(OLD_POPOVERS) & set(popovers), popovers
-    # Editing moved into the dialog of each row; the Athlete RDA guide stays as one compact menu in the plan tab.
-    assert "\U0001F3C3 Athlete RDA guide" in popovers and "✎ Change a choice" not in popovers
+    # Editing moved into the dialog of each row, the guide and the rest into the bottom bar: no popover is left.
+    assert popovers == [] and "✎ Change a choice" not in popovers
+    assert [b.key for b in at.button if str(b.key).startswith("appbar_")] == ["appbar_guide", "appbar_scans", "appbar_about"]
     assert not at.get("dialog")  # nothing is open until a row is tapped
     text = " ".join(m.value for m in at.markdown)
     assert "plan-hero" in text and "nutrients now come from food" in text
@@ -81,7 +82,9 @@ def test_share_tab_lists_the_swaps(results_app):
     assert "SuppSwipe — my results" in share and "Replaced with whole foods" in share
 
 
-def test_build_tag_in_about_popover(sw):
+def test_build_tag_in_the_about_sheet(sw):
     at = AppTest.from_file(APP, default_timeout=60)
     at.run()
-    assert f"Build {sw.BUILD_TAG}" in [c.value for c in at.caption]
+    assert f"Build {sw.BUILD_TAG}" not in " ".join(m.value for m in at.markdown)  # nothing is open yet
+    at.button(key="appbar_about").click().run()
+    assert f"Build {sw.BUILD_TAG}" in " ".join(m.value for m in at.markdown)
