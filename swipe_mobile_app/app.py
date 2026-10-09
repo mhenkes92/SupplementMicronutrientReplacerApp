@@ -738,6 +738,18 @@ def _feature_model(feature: str) -> str:
     return str(os.environ.get(f"BLOCKBRAIN_MODEL_{feature.upper()}", "") or "").strip()
 
 
+def _adopt_call_error(reason: str) -> None:
+    """Make `reason` this thread's last_call_error().
+
+    A call that ran on a worker thread noted its failure there (the adapter's error state is per thread); the messages built on
+    the script thread (_ai_service_problem, _ai_retry_note, Diagnostics) read it here. "" after a success, as a call on this
+    thread would have left it."""
+    try:
+        bb._CALL_STATE.error = str(reason or "")
+    except Exception:
+        pass
+
+
 def _stream_llm_text(
     cache_key: str,
     system_prompt: str,
@@ -753,6 +765,10 @@ def _stream_llm_text(
     Reuses a cached answer or a background prefetch for the same prompt when one
     exists; only non-empty answers are cached. `consume_quota=False` when the
     caller already counted this request against the session's allowance.
+
+    A new generation is a background job (llm_cache.submit, like the prefetch of the default plan) that this thread waits for:
+    the job writes the text so far with set_partial, this thread paints it (Streamlit drops a paint made from any other
+    thread), and the job caches its own result, so a rerun in the middle of the answer does not lose it.
     """
     cached = llm_cache.get(cache_key)
     if cached:
@@ -777,45 +793,61 @@ def _stream_llm_text(
             placeholder.info(_QUOTA_MESSAGE)
         return ""
 
-    def _show(partial: str) -> None:
-        if placeholder is not None and partial:
-            placeholder.markdown(partial + " \u258c")
+    call_model = model or None  # the callers read the per-feature model (environment, secrets) on this thread: never on the worker
+    ran: dict[str, Any] = {"error": ""}
 
-    try:
-        text = str(
-            bb.call_blockbrain_text(
-                system_prompt,
-                user_prompt,
-                model=model or None,
-                on_text=_show,
-                history=history,
-                budget_s=budget_s,
-            )
-            or ""
-        ).strip()
-    except Exception:
-        text = ""
-    if bb.looks_like_agent_error(text):  # a Blockbrain error is never an answer
-        text = ""
+    def _generate() -> str:
+        ran["started"] = True
+        bb.reset_call_error()
+        try:
+            text = str(
+                bb.call_blockbrain_text(
+                    system_prompt,
+                    user_prompt,
+                    model=call_model,
+                    on_text=lambda partial: llm_cache.set_partial(cache_key, partial),
+                    history=history,
+                    budget_s=budget_s,
+                )
+                or ""
+            ).strip()
+        except Exception:
+            text = ""
+        if not text or bb.looks_like_agent_error(text):  # a Blockbrain error is never an answer
+            ran["error"] = bb.last_call_error()
+            llm_cache.set_failure(cache_key, ran["error"])  # on this worker thread, where the adapter noted it
+            return ""
+        return text
+
+    job = llm_cache.submit(cache_key, _generate)
+    if job is None:  # the same answer was cached since the check above
+        text = str(llm_cache.get(cache_key) or "")
+    else:
+        # At least as long as the call itself may take (Ask AI: 90 s), plus a few seconds for the job to report back.
+        text = _await_background_text(cache_key, job, placeholder, wait_s=float(budget_s or bb.BLOCKBRAIN_TOTAL_BUDGET_S) + 5.0)
     if text:
-        llm_cache.put(cache_key, text)
-        if placeholder is not None:
+        _adopt_call_error("")
+    else:  # what a call on this thread would have noted; a job started by somebody else reports through the cache
+        _adopt_call_error(ran["error"] if ran.get("started") else (llm_cache.failure(cache_key) or ""))
+    if placeholder is not None:
+        if text:
             placeholder.markdown(text)
-    elif placeholder is not None:
-        placeholder.empty()
+        else:
+            placeholder.empty()
     return text
 
 
-def _await_background_text(cache_key: str, pending: Any, placeholder: Any = None) -> str:
-    """Wait for a background generation, showing its partial text meanwhile."""
-    deadline = time.monotonic() + float(bb.BLOCKBRAIN_TOTAL_BUDGET_S)
+def _await_background_text(cache_key: str, pending: Any, placeholder: Any = None, wait_s: float | None = None) -> str:
+    """Wait for a background generation, showing its partial text meanwhile.
+    `wait_s`: how long at most (default: the Blockbrain total budget)."""
+    deadline = time.monotonic() + float(bb.BLOCKBRAIN_TOTAL_BUDGET_S if wait_s is None else wait_s)
     shown = ""
     while not pending.done() and time.monotonic() < deadline:
         partial = llm_cache.partial(cache_key)
         if placeholder is not None and partial and partial != shown:
             placeholder.markdown(partial + " \u258c")
             shown = partial
-        time.sleep(0.25)
+        time.sleep(0.1)
     try:
         text = str(pending.result(timeout=0) or "").strip()
     except Exception:
@@ -6391,8 +6423,8 @@ def _render_plan_item_adds(item: dict[str, Any]) -> None:
         )
     with box:
         # run_every is chosen per call: polling only while a job runs. It stops with the next run of the window (any
-        # tap in it, or closing it); until then the finished text is simply drawn again once a second.
-        st.fragment(_benefits_box, run_every=1.0 if pending is not None else None)(key)
+        # tap in it, or closing it); until then the finished text is simply drawn again twice a second.
+        st.fragment(_benefits_box, run_every=0.5 if pending is not None else None)(key)
 
 
 def _open_guide_from_dialog(component_key: str) -> None:
@@ -6571,9 +6603,9 @@ def _render_meals_tab(replace_items: list[dict[str, Any]], diet_label: str, excl
     return plan_key
 
 
-@st.fragment(run_every=1.0)
+@st.fragment(run_every=0.5)
 def _live_meal_plan(plan_key: str) -> None:
-    """The meal plan being written in the background, refreshed every second.
+    """The meal plan being written in the background, refreshed twice a second.
 
     Only this fragment re-runs while it streams; one full re-run when it is done
     shows the finished plan with its buttons (and stops the polling)."""

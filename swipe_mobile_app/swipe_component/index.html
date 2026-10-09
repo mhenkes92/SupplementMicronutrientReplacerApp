@@ -56,9 +56,12 @@
     will-change: transform;
     outline: none;
     overflow-y: auto;
+    scroll-padding-bottom: 44px; /* a focused control (the athlete-guide button) is scrolled clear of the fade and the pill at the foot */
   }
   .tcard:focus-visible { box-shadow: 0 0 0 3px #2563eb inset; }
   .tcard:active { cursor: grabbing; }
+  /* A card taller than its frame scrolls inside it; its rows must keep their size (the 4 px progress bar used to be squashed to 0). */
+  .tcard > * { flex-shrink: 0; }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .count { font-size: .8rem; font-weight: 800; color: #475569; letter-spacing: .02em; }
   .prev { font-size: .72rem; font-weight: 700; color: #334155; background: rgba(15,23,42,0.06); border-radius: 999px; padding: 2px 8px; }
@@ -112,6 +115,29 @@
   #actions button:not(:disabled):active { transform: scale(0.97); }
   #actions button:disabled, #actions button[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+  /* Tight card: fitHeight() switches it on when the room above the page's fixed bottom bar is short (small phones, large text),
+     so the Keep / Replace row stays clear of the bar. Same texts, same font sizes for the body copy; only the spacing, the
+     badge and the name shrink, and on a touch screen the swipe hint is dropped after the first card the visit has drawn (a mouse
+     and keyboard user keeps it: it is the only place the arrow keys are named). */
+  #wrap.tight .tcard { padding: 10px 12px 8px 12px; }
+  #wrap.tight .head { margin-top: 8px; gap: 10px; }
+  #wrap.tight .badge { flex-basis: 40px; height: 40px; font-size: 1.3rem; border-radius: 12px; }
+  #wrap.tight .name { font-size: 1.4rem; }
+  #wrap.tight .dose { margin-top: 2px; }
+  #wrap.tight .foodwrap { margin-top: 8px; padding: 8px 10px; }
+  #wrap.tight .foodrow { margin-top: 4px; }
+  #wrap.tight .portion { margin-top: 6px; padding: 4px 8px; }
+  #wrap.tight .warn { margin-top: 6px; padding: 5px 8px; }
+  #wrap.tight .bio { margin-top: 6px; padding: 5px 8px; }
+  #wrap.tight .hint { margin-top: 6px; }
+  #wrap.tight:not(.first):not(.fine) .hint:not(.hint-keep) { display: none; }
+  #wrap.tight #actions { padding: 6px 4px; }
+  /* A card taller than its frame scrolls inside it: a fade (and, when a lot is hidden, a small pill) says there is more. */
+  #stage.cue::after { content: ""; position: absolute; left: 0; right: 0; bottom: 6px; height: 30px; z-index: 4; pointer-events: none;
+                      border-radius: 0 0 20px 20px; background: linear-gradient(to bottom, rgba(248,251,255,0), rgba(248,251,255,.96) 85%); }
+  #cue { display: none; position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 5; pointer-events: none; white-space: nowrap;
+         font-size: .72rem; font-weight: 800; color: #334155; background: #fff; border: 1px solid rgba(15,23,42,.12); border-radius: 999px; padding: 1px 9px; }
+  #stage.cue-strong #cue { display: block; }
   @media (prefers-reduced-motion: reduce) {
     .tcard, .rail { transition: none !important; }
   }
@@ -123,6 +149,7 @@
     <div class="rail keep" id="railKeep" aria-hidden="true">KEEP</div>
     <div class="rail repl" id="railRepl" aria-hidden="true">REPLACE</div>
     <div class="tcard" id="card" tabindex="0" role="group" aria-roledescription="swipe card"></div>
+    <div id="cue" aria-hidden="true">&#9662; scroll for more</div>
   </div>
   <div id="actions">
     <button type="button" id="btnBack" aria-label="Back to the previous card" title="Back">&#8617;</button>
@@ -145,6 +172,11 @@
   var announce = "";         // "Kept the pill." - said together with the next card
   var HEIGHT = 420;   // minimum frame height (from Python)
   var lastHeight = 0;
+  var tight = false;  // the compact card (see "#wrap.tight"); once on it stays on for the scan
+  var drawnBefore = false;  // a card was drawn in this page load already (a resumed scan opens on a later card: its hint is still new)
+  var firstCard = true;     // the card on screen is the first of the scan or the first this page load drew: it keeps the swipe hint
+  var wrap = document.getElementById("wrap");
+  var lastArgsKey = "";
   var maxHeight = 0;  // the tallest card of this scan so far: the frame only grows, so the buttons stay where the thumb is
   var committed = false;
   var canReplace = true;
@@ -168,9 +200,30 @@
   }
   function setHeight(h) { send("streamlit:setFrameHeight", { height: h }); }
 
-  // Size the frame to the card's content (narrow phones need more height,
-  // wide screens less), never below the minimum Python asked for.
-  function fitHeight() {
+  var ROW_GAP = 6;          // air between the Keep / Replace row and the bar
+  var ROW_PAD = 8;          // #actions' bottom padding on a normal card (6 px on a tight one, so the row ends ~4 px above the bar there)
+  var BAR_FALLBACK = 66;    // the bar's height + offset when it cannot be measured (e.g. hidden while a field has focus)
+  var TIGHT_BELOW = 610;    // below this much room (px) the card starts tight and the frame fills the room
+  var ROOM_FLOOR = 320;     // never a frame shorter than this (landscape phones scroll the page as before)
+  // The tallest frame that still leaves the Keep / Replace row above the page's fixed bottom bar (page scrolled to the top).
+  // The host page is the same origin as this frame; Infinity (= nothing changes) when it cannot be read.
+  function hostRoom() {
+    try {
+      var pw = window.parent, pd = pw.document;
+      var main = pd.querySelector('[data-testid="stMain"]');
+      var bar = pd.querySelector('[class~="st-key-appbar"]');
+      var br = bar ? bar.getBoundingClientRect() : null;
+      var barTop = (br && br.height > 0) ? br.top : pw.innerHeight - BAR_FALLBACK;
+      var frameTop = window.frameElement.getBoundingClientRect().top + (main ? main.scrollTop : 0);
+      var room = Math.floor(barTop - frameTop + ROW_PAD - ROW_GAP);
+      return room > 0 ? room : Infinity;
+    } catch (e) { return Infinity; }
+  }
+  function setTight(on) {
+    tight = on;
+    wrap.className = (on ? "tight" : "") + (firstCard ? " first" : "") + (finePointer ? " fine" : "");
+  }
+  function measureContent() {
     var probe = card.cloneNode(true);
     probe.removeAttribute("id");
     probe.style.cssText = "position:absolute;visibility:hidden;left:0;top:0;right:auto;bottom:auto;" +
@@ -178,12 +231,46 @@
     stage.appendChild(probe);
     var contentHeight = probe.scrollHeight;
     stage.removeChild(probe);
-    var actionsHeight = document.getElementById("actions").offsetHeight + 6;
+    return contentHeight;
+  }
+  // A card taller than its frame scrolls inside it; the fade at its foot says so, and a small pill ("scroll for more") as soon as
+  // text itself is cut, not only a lot of it. What is hidden is counted without the card's bottom padding: a card that is only
+  // short of its padding shows all its text and gets no fade (the fade would wash out the last line for nothing).
+  var CUE_FADE = 2;   // px of text cut off: the fade at the card's foot
+  var CUE_PILL = 8;   // px of text cut off (about half a line): the "scroll for more" pill
+  function updateCue() {
+    var pad = parseFloat(window.getComputedStyle(card).paddingBottom) || 0;
+    var cut = card.scrollHeight - card.clientHeight - card.scrollTop - pad;
+    stage.classList.toggle("cue", cut > CUE_FADE);
+    stage.classList.toggle("cue-strong", cut > CUE_PILL);
+  }
+  card.addEventListener("scroll", updateCue, { passive: true });
+  // Size the frame to the card's content (narrow phones need more height,
+  // wide screens less), never below the minimum Python asked for, and never so tall
+  // that the Keep / Replace row reaches under the page's bottom bar.
+  function fitHeight() {
+    var room = hostRoom();
+    var contentHeight, actionsHeight;
+    for (var on = tight ? 1 : 0; on <= 1; on++) {
+      setTight(on === 1);
+      actionsHeight = document.getElementById("actions").offsetHeight + 6;
+      contentHeight = measureContent();
+      if (Math.max(HEIGHT, Math.min(780, contentHeight + actionsHeight + 10)) <= room) { break; }  // fits: no need to tighten
+    }
     var h = Math.max(HEIGHT, Math.min(780, contentHeight + actionsHeight + 10), maxHeight);
     maxHeight = h;
+    if (isFinite(room)) {
+      if (tight) { h = Math.max(h, Math.min(room, 780)); }  // a short phone: the frame fills the room, so the row sits just above the bar on every card
+      h = Math.min(h, Math.max(room, ROOM_FLOOR));
+    }
     if (Math.abs(h - lastHeight) > 2) { lastHeight = h; setHeight(h); }
+    setTimeout(updateCue, 80);
   }
-  window.addEventListener("resize", function () { if (!committed) { fitHeight(); } });
+  var lastW = window.innerWidth;
+  window.addEventListener("resize", function () {
+    if (window.innerWidth !== lastW) { lastW = window.innerWidth; tight = hostRoom() < TIGHT_BELOW; }  // a turned phone starts over
+    if (!committed) { fitHeight(); }
+  });
   function setValue(v) { send("streamlit:setComponentValue", { value: v, dataType: "json" }); }
 
   function esc(s) {
@@ -194,17 +281,25 @@
 
   function render(args) {
     args = args || {};
+    // Streamlit re-sends the very same props whenever the frame height changes: that must not redraw the card (it would also
+    // swallow the "Kept the pill." announcement, which the second draw replaces).
+    var argsKey = JSON.stringify(args);
+    if (!committed && argsKey === lastArgsKey) { fitHeight(); return; }
+    lastArgsKey = argsKey;
     committed = false;
     canReplace = (args.canReplace !== false);
     cardId = String(args.cardId || "");
     cardIndex = parseInt(args.index || 0, 10) || 0;
+    firstCard = cardIndex === 0 || !drawnBefore;
+    drawnBefore = true;
     // Opened from the results ("edit mode"): Back returns to the results.
     var editing = !!args.editing;
     canBack = editing || cardIndex > 0;
     btnBack.setAttribute("aria-label", editing ? "Back to your results" : "Back to the previous card");
     btnBack.title = editing ? "Back to results" : "Back";
     HEIGHT = parseInt(args.height || 420, 10) || 420;
-    if (cardIndex === 0 && !editing) { maxHeight = 0; }  // a new scan (or back at the first card) starts from its own size
+    if (cardIndex === 0 && !editing) { maxHeight = 0; tight = hostRoom() < TIGHT_BELOW; }  // a new scan (or back at the first card) starts from its own size
+    setTight(tight);
     card.style.setProperty("--accent", args.accent || "#64748b");
     card.style.setProperty("--ink", args.ink || "#0f172a");
     if (args.bg) { card.style.setProperty("--card-bg", args.bg); }
@@ -244,7 +339,7 @@
       '<div class="foodwrap"><div class="foodlbl">Eat instead</div>' +
       '<div class="foodrow">' + foodIcon + '<div class="food">' + foodTxt + '</div></div>' + portionHtml + '</div>' +
       bioHtml +
-      '<div class="hint">' + (canReplace
+      '<div class="hint' + ((!canReplace || editing) ? ' hint-keep' : '') + '">' + (canReplace
         ? 'Swipe <b>◀ keep the pill</b> · <b>eat the food ▶</b>' + (finePointer ? ' (or ← →)' : '')
         : 'No whole-food match for this one — keep the pill or go back') +
         (editing ? '<br>Editing from your results — your choice takes you straight back.' : '') + '</div>';
@@ -274,6 +369,7 @@
     railRepl.style.opacity = 0;
     if (!lastHeight) { lastHeight = HEIGHT; setHeight(HEIGHT); }
     requestAnimationFrame(fitHeight);
+    card.scrollTop = 0;
   }
 
   function rails(dx) {

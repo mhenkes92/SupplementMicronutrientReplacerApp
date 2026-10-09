@@ -165,8 +165,10 @@ def test_the_bar_hides_for_the_chat_box_of_the_cards_popover_and_is_dead_while_i
 # ------------------------------------------------------------------ never over the swipe buttons
 @pytest.mark.parametrize("size", [(390, 844), (360, 640), (320, 640)])
 def test_the_swipe_buttons_can_always_be_scrolled_clear_of_the_bar_and_tapped(browser, server, size):
-    """A phone browser's visible height is ~100-180 px less than the screen, so on short viewports the Keep / Replace row
-    may start under any bar: the contract is that the page leaves room to scroll it clear and that a tap works."""
+    """Safety net under tests/test_ux_row_clear_browser.py, which pins that the row of every card is clear of the bar at first
+    sight: a phone browser's own toolbars take ~100-180 px of the screen and can come back after a card was drawn (the frame
+    measured its room earlier), so whatever the visible height the contract is that the page leaves room to scroll the row clear
+    and that a tap works."""
     ctx, pg = new_page(browser, server, size)
     try:
         start_sample(pg)
@@ -205,10 +207,12 @@ def test_the_swipe_buttons_are_uncovered_at_the_start_on_a_typical_phone(browser
         ctx.close()
 
 
-@pytest.mark.parametrize("size, most", [((390, 664), 50), ((360, 640), 90)])
+@pytest.mark.parametrize("size, most", [((390, 664), 0), ((360, 640), 0)])
 def test_a_taller_card_loses_less_of_its_button_row_to_the_bar_on_a_short_screen(browser, server, size, most):
-    """Cards 2-7 carry a long note, so their row starts lower than the first card's (below the fold on the smallest phones
-    whatever the bar does): the tightened page keeps what the bar covers of it at first sight to these measured bounds."""
+    """Cards 2-7 carry a long note, so their row used to start lower than the first card's: the bar covered 44 px of it at
+    390x664 and 86 px at 360x640 (163 px at 320x640) until the page was scrolled. The card now measures the room above the bar,
+    fills it and scrolls its note inside the frame, so nothing of the row is covered at first sight (all 7 cards at 11 phone sizes:
+    tests/test_ux_row_clear_browser.py)."""
     ctx, pg = new_page(browser, server, size)
     try:
         start_sample(pg)
@@ -533,6 +537,13 @@ def test_the_ask_ai_chat_box_is_not_under_the_bar(ai_server, page):
 def test_the_bar_is_a_centred_pill_with_room_for_the_badge_corner_on_both_sides(browser, server, size):
     ctx, pg = new_page(browser, server, size)
     try:
+        pg.locator(BAR_BUTTON).nth(2).wait_for(timeout=10000)
+        # The bar's styling arrives with the header's style block: measure only once it is the fixed pill (on a loaded machine
+        # the first paint was a plain strip at the top of the page).
+        pg.wait_for_function(
+            "() => { const e = document.querySelector('.st-key-appbar'); return !!e && getComputedStyle(e).position === 'fixed'; }",
+            timeout=10000,
+        )
         bar = rect(pg, BAR)
         assert abs(bar["x"] - (bar["vw"] - bar["right"])) <= 1, bar  # centred
         assert bar["x"] >= 0.15 * bar["vw"] + 11, bar  # 15 % badge width + 12 px, on both sides

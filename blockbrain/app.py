@@ -561,11 +561,31 @@ FITNESS_REFERENCE_DIR_CANDIDATES = [
 ]
 
 
-def normalize_lookup_key(value: str) -> str:
+def _normalize_lookup_key(value: str) -> str:
     text = (value or "").strip().lower()
     text = re.sub(r"[^a-z0-9\s\-\+\(\)]", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+# A pure function of its text and called tens of thousands of times when the food pools are built (once per USDA description and
+# nutrient): bounded memo, for real str input only. Anything else (None, numbers, str subclasses, unhashable values) takes the
+# original code path, so it behaves - and fails - exactly as before.
+# The bound is on the entry count AND on the key length: a visitor's pasted label (up to 20,000 characters) reaches this function
+# as one key, and 16,384 of those would pin 0.6-1.3 GB in the shared process. Pool keys (USDA descriptions, nutrient names, diet
+# words) are far shorter than _LOOKUP_KEY_MEMO_MAX_CHARS; a longer text is computed each time, as before the memo existed.
+_LOOKUP_KEY_MEMO_MAX_CHARS = 256
+_normalize_lookup_key_memo = functools.lru_cache(maxsize=16384)(_normalize_lookup_key)
+
+
+def normalize_lookup_key(value: str) -> str:
+    if type(value) is str and len(value) <= _LOOKUP_KEY_MEMO_MAX_CHARS:
+        return _normalize_lookup_key_memo(value)
+    return _normalize_lookup_key(value)
+
+
+normalize_lookup_key.cache_info = _normalize_lookup_key_memo.cache_info  # type: ignore[attr-defined]
+normalize_lookup_key.cache_clear = _normalize_lookup_key_memo.cache_clear  # type: ignore[attr-defined]
 
 
 def _file_mtime_or_minus_one(path: Path) -> float:
@@ -5840,14 +5860,7 @@ def _commonness_matchers() -> dict[str, Any]:
     }
 
 
-def classify_food_commonness(food_description: str, food_category: str = "") -> dict[str, Any]:
-    """Return guardrail tier for a food.
-
-    tier  1 = allowed (not on the blocklist)
-    tier -1 = blocked (exotic / non-retail / heavily processed / empty)
-    `food_category` (USDA) is optional; when given, whole categories such as
-    "American Indian/Alaska Native Foods" are blocked.
-    """
+def _classify_food_commonness(food_description: str, food_category: str = "") -> dict[str, Any]:
     raw = str(food_description or "")
     # Branded products (e.g. "Vitasoy USA, Nasoya Lite Firm Tofu") are not the
     # generic single-ingredient whole foods we want, even though USDA flags them
@@ -5888,6 +5901,32 @@ def classify_food_commonness(food_description: str, food_category: str = "") -> 
         return {"tier": -1, "reason": f"processed: {hit.group(0)}"}
 
     return {"tier": 1, "reason": "allowed"}
+
+
+@functools.lru_cache(maxsize=16384)
+def _classify_food_commonness_memo(food_description: str, food_category: str) -> tuple[tuple[str, Any], ...]:
+    """The verdict as an immutable tuple of (key, value) pairs: a cached dict could be changed by a caller for every later one."""
+    return tuple(_classify_food_commonness(food_description, food_category).items())
+
+
+def classify_food_commonness(food_description: str, food_category: str = "") -> dict[str, Any]:
+    """Return guardrail tier for a food.
+
+    tier  1 = allowed (not on the blocklist)
+    tier -1 = blocked (exotic / non-retail / heavily processed / empty)
+    `food_category` (USDA) is optional; when given, whole categories such as
+    "American Indian/Alaska Native Foods" are blocked.
+
+    Memoised per (description, category) - a pure function that the food pools call for every USDA row of every nutrient. The
+    result is a new dict on every call; anything but two real strings is classified afresh, as before.
+    """
+    if type(food_description) is str and type(food_category) is str:
+        return dict(_classify_food_commonness_memo(food_description, food_category))
+    return _classify_food_commonness(food_description, food_category)
+
+
+classify_food_commonness.cache_info = _classify_food_commonness_memo.cache_info  # type: ignore[attr-defined]
+classify_food_commonness.cache_clear = _classify_food_commonness_memo.cache_clear  # type: ignore[attr-defined]
 
 
 def filter_and_rank_common_foods(
