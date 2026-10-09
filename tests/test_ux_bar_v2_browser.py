@@ -430,3 +430,26 @@ def test_the_diet_sheet_can_be_scrolled_to_its_last_line_on_the_smallest_phone(b
         assert close["width"] >= 44 and close["height"] >= 44 and close["y"] >= 0
     finally:
         ctx.close()
+
+
+def test_a_second_tap_on_the_diet_tab_never_flips_the_pregnancy_toggle(browser, server):
+    """The Diet sheet covers the tab that opened it. On a short phone the pregnancy toggle sits right under that tab, so a double tap (or
+    an impatient re-tap while the page is slow) used to land on it and switch pregnancy OFF, hiding its warnings. The sheet's body ignores
+    taps while it slides in."""
+    ctx, pg = new_page(browser, server, (320, 568))
+    try:
+        open_diet_sheet(pg)
+        pg.get_by_text("Pregnant or breastfeeding").click()
+        settle(pg)
+        close_sheet(pg)
+        box = item(pg, "diet").bounding_box()
+        x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        pg.touchscreen.tap(x, y)
+        pg.locator(DIALOG).wait_for(timeout=10000)
+        pg.touchscreen.tap(x, y)  # the second tap of a double tap, at once
+        settle(pg, 1.0)
+        toggle = pg.locator("label", has_text="Pregnant or breastfeeding").locator("input")
+        assert toggle.is_checked(), "pregnancy was switched off by a second tap on the Diet tab"
+        assert pg.locator(DIALOG).count() == 1  # still one sheet, never two
+    finally:
+        ctx.close()
