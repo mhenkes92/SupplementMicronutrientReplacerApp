@@ -22,6 +22,7 @@ except ModuleNotFoundError:  # pragma: no cover - older runtimes
 
 import streamlit as st
 import streamlit.components.v1 as components
+from streamlit.errors import StreamlitAPIException
 from PIL import Image, ImageOps
 
 # Make sibling package imports work when running this app directly.
@@ -3172,8 +3173,11 @@ def _record_scan_to_history(decisions: dict[str, dict[str, Any]], diet_label: st
 _SHEET_TITLES = {
     "guide": "Athlete RDA guide", "diet": "Diet & pregnancy", "scan": "Scan a supplement", "scans": "Recent scans",
     "about": "About & privacy",
+    # The card's own tools (Swap food / Ask AI / More on the swipe card), opened by an event of the card, not by the bar.
+    "swap": "Swap the food", "ask": "Ask AI", "report": "Report a problem",
 }
 _BAR_ITEMS = (("guide", "Guide"), ("diet", "Diet"), ("scan", "Scan"), ("scans", "Recent"), ("about", "About"))
+_CARD_SHEETS = ("swap", "ask", "report")  # opened by the swipe card's tools (see _apply_card_tool_tap), not by the bar
 
 
 def _analysis_in_flight() -> bool:
@@ -3215,8 +3219,23 @@ def _tap_scan() -> None:
 def _close_sheet() -> None:
     """Also the sheets' on_dismiss (X, Esc, tap outside): the request stays until one of them clears it."""
     st.session_state["swipe_sheet"] = None
-    for key in ("swipe_guide_focus", "swipe_scans_confirm", "swipe_scans_more"):
+    for key in ("swipe_guide_focus", "swipe_scans_confirm", "swipe_scans_more", "swipe_sheet_card"):
         st.session_state.pop(key, None)
+
+
+def _card_sheet_view() -> dict[str, Any] | None:
+    """What the card sheets (swap / ask / report) are about: the card on screen, as the last full run drew it
+    (`swipe_card_view`), or None when that is not the card the sheet was opened for (another card, the results, no cards)."""
+    state = st.session_state
+    cards = state.get("swipe_cards") or []
+    index = int(state.get("swipe_index", 0) or 0)
+    view = state.get("swipe_card_view") or {}
+    if not 0 <= index < len(cards) or view.get("index") != index:
+        return None
+    component_key = str(cards[index].get("component_key", "") or "")
+    if view.get("component_key") != component_key or list(state.get("swipe_sheet_card") or []) != [component_key, index]:
+        return None
+    return view
 
 
 def _sheet_requested() -> bool:
@@ -3226,12 +3245,20 @@ def _sheet_requested() -> bool:
     if name not in _SHEET_TITLES:  # a stale or damaged flag opens nothing
         _close_sheet()
         return False
+    if name in _CARD_SHEETS:
+        # A card tool's sheet is only for the card it was opened on, and only for what that card offers (a second food to swap to,
+        # a configured AI): anything else (a stale flag, a forged event) opens nothing.
+        view = _card_sheet_view()
+        if view is None or (name == "swap" and len(view.get("labels") or []) < 2) or (name == "ask" and not _ai_is_on()):
+            _close_sheet()
+            return False
     return True
 
 
 def _show_sheet() -> None:
     {
         "guide": _guide_sheet, "diet": _diet_sheet, "scan": _scan_sheet, "scans": _scans_sheet, "about": _about_sheet,
+        "swap": _swap_sheet, "ask": _ask_sheet, "report": _report_sheet,
     }[st.session_state["swipe_sheet"]]()
 
 
@@ -4217,15 +4244,21 @@ def _render_header() -> None:
                 color: #ffffff;
                 font-size: 0.9rem;
             }
-            .hero {
+            /* The welcome card is the keyed container (the Scan button is inside it); .hero is its text. */
+            [class~="st-key-hero_card"] {
                 background: #ffffff;
                 border: 1px solid #e2e8f0;
                 border-radius: 22px;
                 padding: 22px 18px 18px 18px;
-                text-align: center;
                 box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
                 margin-bottom: 0.6rem;
+                gap: 14px;
             }
+            [class~="st-key-hero_card"] [data-testid="stMarkdownContainer"] { margin-bottom: 0; }
+            .hero {
+                text-align: center;
+            }
+            [class~="st-key-hero_card"] button { min-height: 52px; font-size: 1.05rem; font-weight: 800; }
             .hero-art {
                 font-size: 2.4rem;
                 line-height: 1.1;
@@ -4243,12 +4276,6 @@ def _render_header() -> None:
                 letter-spacing: -0.02em;
                 color: #0f172a;
                 margin-top: 10px;
-            }
-            .hero-hint {
-                margin-top: 14px;
-                font-size: 0.9rem;
-                font-weight: 700;
-                color: #047857;
             }
             .hero-sub {
                 font-size: 0.92rem;
@@ -4443,7 +4470,7 @@ def _render_header() -> None:
             [data-testid="stMain"] { scroll-padding-bottom: 5rem; }
             body:has(textarea:focus, input:is(:not([type]), [type="text"], [type="search"], [type="number"], [type="email"], [type="url"], [type="tel"], [type="password"]):not([role="combobox"]):focus) [class~="st-key-appbar"] { display: none; }
             /* A long run (an Ask AI answer, a meal plan being cooked) blocks the script: a tap on the bar would rerun it and throw the work away.
-               The spinner can sit in the page or in the card's Ask AI popover (a portal on the body). */
+               The spinner can sit in the page or in the card's Ask AI sheet (a dialog, a portal on the body). */
             body:has([data-testid="stSpinner"]) [class~="st-key-appbar"] { pointer-events: none; }
             body:has([data-testid="stSpinner"]) [class~="st-key-appbar"] button { opacity: 0.6; }
             @media (max-height: 700px) {
@@ -4459,31 +4486,61 @@ def _render_header() -> None:
                 [data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] { gap: 0.5rem; }
                 [data-testid="stLayoutWrapper"]:has(> [class~="st-key-appbar"]),
                 [data-testid="stLayoutWrapper"]:has(> [class~="st-key-appbar_busy"]) { margin-bottom: -0.5rem; }
-                [class~="st-key-swipe_card"] { padding: 0.375rem; }
+                /* The cards screen has the least room and no gap to spare: the gaps between the brand, the caption and the card are 4 px. */
+                [data-testid="stMainBlockContainer"]:has([class~="st-key-swipe_card"]) > [data-testid="stVerticalBlock"] { gap: 0.25rem; }
+                [data-testid="stMainBlockContainer"]:has([class~="st-key-swipe_card"]) [data-testid="stLayoutWrapper"]:has(> [class~="st-key-appbar"]) { margin-bottom: -0.25rem; }
             }
-            /* Short phones: the welcome screen is the hero, one line of advice and the bar, and it must not scroll. */
+            /* Short phones: the welcome screen is the hero card (its Scan button inside), one line of advice and the bar, and it must
+               not scroll. */
             @media (max-height: 600px) {
                 .hero-sub { display: none; }
                 /* 568 px tall (an iPhone SE): the card gives back ~35 px so that a filter chip fits above the bar too */
-                .hero { padding: 16px 16px 14px 16px; }
+                [class~="st-key-hero_card"] { padding: 16px 16px 14px 16px; gap: 10px; }
                 .hero-art { font-size: 2rem; }
                 .hero-title { font-size: 1.4rem; margin-top: 6px; }
                 .steps { margin-top: 12px; }
-                .hero-hint { margin-top: 10px; }
+            }
+            @media (max-height: 660px) {
+                /* 640 px tall: the Scan button took the line the old hint had, and then some */
+                [class~="st-key-hero_card"] { padding: 16px 16px 14px 16px; gap: 10px; }
+                .hero-art { font-size: 2.1rem; }
+                .hero-title { margin-top: 6px; }
+                .steps { margin-top: 12px; }
             }
             /* The long hero text is shown only where the whole welcome screen still fits without scrolling. How much room it needs depends
                on the width (the narrower the phone, the more lines the text and the three steps take) and on the filter chip (one more
                line, two on a narrow phone). Measured with the text forced on, the screen overflows up to these heights (no chip / the
                longest chip): up to 341 px wide 710 / 740, 350 px 640 / 670, 360 to 393 px 620 / 640, from 400 px 560 / 640 (a sweep
-               of ten widths x every 10 px of height). Each band below hides the text a little above the worst of its two numbers. */
+               of ten widths x every 10 px of height). Each band below hides the text a little above the worst of its two numbers; the
+               card's Scan button made the welcome card about 36 px taller than when this was measured, so the bands sit 10-60 px higher
+               (checked by the in-between-sizes tests). */
             @media (max-width: 349px) and (max-height: 760px) { .hero-sub { display: none; } }
-            @media (min-width: 350px) and (max-width: 359px) and (max-height: 690px) { .hero-sub { display: none; } }
-            @media (min-width: 360px) and (max-width: 399px) and (max-height: 660px) { .hero-sub { display: none; } }
-            @media (min-width: 400px) and (max-height: 660px) { .hero-sub { display: none; } }
+            @media (min-width: 350px) and (max-width: 359px) and (max-height: 720px) { .hero-sub { display: none; } }
+            @media (min-width: 360px) and (max-width: 399px) and (max-height: 710px) { .hero-sub { display: none; } }
+            @media (min-width: 400px) and (max-height: 710px) { .hero-sub { display: none; } }
             /* Nothing below the hero on the welcome screen: the page reserves only the bar (its footprint plus the badge corner), so
                it does not scroll by an empty strip. */
-            .block-container:has(.hero-hint) {
+            .block-container:has([class~="st-key-hero_card"]) {
                 padding-bottom: calc(4.25rem + env(safe-area-inset-bottom, 0px));
+            }
+            /* The cards screen is one fixed screen: the swipe card's frame (swipe_component) fills the room down to the bar and nothing
+               follows it, so the page reserves nothing below (the component keeps its own blank strip where its frame cannot fill the
+               room: landscape, an unreadable page). The card's container has no box of its own: the card is the box. */
+            .block-container:has([class~="st-key-swipe_card"]) {
+                padding-bottom: 0;
+            }
+            [class~="st-key-swipe_card"] { padding: 0; gap: 0; }
+            /* An inline frame sits on a text baseline and leaves a strip under itself: the card's frame is a block. */
+            iframe[src*="tinder_swipe"] { display: block; }
+            /* The two helper frames (the history store, the scroll-to-top frame) are 0 px high, but their wrappers still take a text line
+               and a flex gap (~57 px after the last element of a page): out of the flow, so a fixed screen ends where its content ends. */
+            [class~="st-key-suppswipe_history_store"],
+            [data-testid="stElementContainer"][height="0px"]:has(> iframe[data-testid="stIFrame"]) {
+                position: absolute;
+                width: 0;
+                height: 0;
+                margin: 0;
+                overflow: hidden;
             }
             @media (forced-colors: active) {
                 [class~="st-key-appbar"], [class~="st-key-appbar_busy"] { border: 1px solid CanvasText; }
@@ -5647,6 +5704,113 @@ def _diet_sheet() -> None:
             st.rerun(scope="app")
 
 
+# --- The swipe card's tools: the sheets behind Swap food / Ask AI / More ----------------------------------------------
+# The cards screen is one fixed screen (nothing below the card), so what used to sit under it lives in sheets that the card's
+# tools open (_apply_card_tool_tap): the food list, the chat about the nutrient and the report. A sheet is for the card it was
+# opened on (`swipe_sheet_card`); it never changes a decision. These are st.dialog functions, so a widget inside one reruns only
+# the sheet; the page behind follows when the sheet is dismissed (X, Esc, tap outside) or on Done: both rerun the app.
+def _food_select_key(component_key: str, index: int) -> str:
+    return f"swipe_food_select_{component_key}_{index}"
+
+
+def _pick_food(widget_key: str, pick_key: str) -> None:
+    """on_change of the Swap food list: keep the label where the card, the plan and the saved scan read it (`pick_key` is a plain
+    key; the list's own widget key is dropped by Streamlit as soon as the sheet is closed)."""
+    label = st.session_state.get(widget_key)
+    if isinstance(label, str):
+        st.session_state[pick_key] = label
+
+
+def _card_sheet_context() -> tuple[dict[str, Any], dict[str, Any], str, int] | None:
+    """(card, view, component_key, index) for a card sheet, or None after closing it when it is not for the card on screen.
+    Inside a sheet's own rerun (a fragment) nothing else has checked this."""
+    view = _card_sheet_view()
+    if view is None:
+        _close_sheet()
+        st.rerun(scope="app")
+        return None
+    index = int(view["index"])
+    return st.session_state["swipe_cards"][index], view, str(view["component_key"]), index
+
+
+@st.dialog("Swap the food", on_dismiss=_close_sheet)
+def _swap_sheet() -> None:
+    context = _card_sheet_context()
+    if context is None:
+        return
+    card, view, component_key, index = context
+    labels = list(view.get("labels") or [])
+    options = dict(view.get("options") or {})
+    pick_key = str(view["select_key"])
+    widget_key = _food_select_key(component_key, index)
+    current = st.session_state.get(pick_key)
+    if current not in labels:
+        current = view.get("shown") if view.get("shown") in labels else labels[0]
+    with st.container(key="sheet_swap"):
+        st.markdown(
+            f"<div class='sc-sub' {_sheet_anchor('swap')}>Another whole food for "
+            f"{html.escape(_nutrient_title(card.get('component')) or 'this nutrient')}. "
+            "Your card shows it when you close this window.</div>",
+            unsafe_allow_html=True,
+        )
+        label = st.selectbox(
+            "Prefer another food?",
+            options=labels,
+            index=labels.index(current),
+            key=widget_key,
+            on_change=_pick_food,
+            args=(widget_key, pick_key),
+        )
+        food = options.get(label) or {}
+        full_name = str(food.get("food_description", "") or "").strip()
+        if full_name and full_name != _food_name(food):
+            st.caption(f"USDA: {full_name}")
+        if st.button("Done", type="primary", width="stretch", key="swipe_swap_done"):
+            _close_sheet()
+            st.rerun(scope="app")
+
+
+@st.dialog("Ask AI", on_dismiss=_close_sheet)
+def _ask_sheet() -> None:
+    context = _card_sheet_context()
+    if context is None:
+        return
+    card, _view, component_key, index = context
+    with st.container(key="sheet_ask"):
+        st.markdown(
+            f"<div class='sc-sub' {_sheet_anchor('ask')}>Science-based answers about this nutrient and your dose.</div>",
+            unsafe_allow_html=True,
+        )
+        _render_ask_ai_chat(card, component_key, index, suggestions=_card_ask_ai_suggestions(card), rerun_scope="fragment")
+
+
+@st.dialog("Report a problem", on_dismiss=_close_sheet)
+def _report_sheet() -> None:
+    context = _card_sheet_context()
+    if context is None:
+        return
+    card, view, component_key, index = context
+    with st.container(key="sheet_report"):
+        st.markdown(
+            f"<div class='sc-sub' {_sheet_anchor('report')}>Is something on this card wrong or missing: a dose, a food, an amount? "
+            "Report it and it is logged for review.</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button(
+            "🚩 Report a problem with this card", type="primary", width="stretch",
+            key=f"swipe_report_{component_key}_{index}_{int(st.session_state.get('swipe_reset_nonce', 0))}",
+        ):
+            _report_card_problem(card, _shown_food(st.session_state, index, component_key), _selected_dietary_profile())
+            # Said by the next full run: a toast sent from inside a sheet that then asks for an app-wide rerun is dropped (see _resume_saved_scan).
+            st.session_state["_suppswipe_report_note"] = "Thanks — logged for review"
+            _close_sheet()
+            st.rerun(scope="app")
+        st.caption(
+            "Only what this card shows is logged: the nutrient, its dose, the part of your label with that nutrient and dose, "
+            "the food and your diet filter. No text from you, nothing personal."
+        )
+
+
 def _render_label_source_notice() -> None:
     """Warn when the doses were researched online by AI instead of read from the
     user's own photo (front-of-pack photos without a readable facts panel)."""
@@ -5878,6 +6042,43 @@ def _apply_card_guide_tap(state: Any, value: Any) -> bool:
     state["swipe_sheet"] = "guide"
     state["swipe_guide_focus"] = component_key
     return True
+
+
+_CARD_TOOLS = ("swap", "ask", "report")  # the card's tools (Swap food / Ask AI / More): each opens the sheet of the same name
+
+
+def _apply_card_tool_tap(state: Any, value: Any) -> bool:
+    """A tap on one of the card's tools (the component sends {"kind": "swap" | "ask" | "report", id, card, index}): open the sheet of
+    that name for this card. True for every tool value, handled or ignored, so it never reaches _apply_card_swipe; it never
+    changes the card, the food or a decision. A tap made on another card (stale), one already handled, one made while an analysis
+    runs, and one for a card that is not on screen (the results) does nothing."""
+    if not isinstance(value, dict) or value.get("kind") not in _CARD_TOOLS:
+        return False
+    tap_id = str(value.get("id", "") or "")
+    if not tap_id or tap_id == str(state.get("swipe_last_tool_id", "") or ""):
+        return True
+    state["swipe_last_tool_id"] = tap_id
+    if state.get("swipe_is_analyzing") and isinstance(state.get("swipe_pending_request"), dict):
+        return True  # everything stays dead while an analysis runs
+    cards = list(state.get("swipe_cards") or [])
+    index = int(state.get("swipe_index", 0) or 0)
+    if not 0 <= index < len(cards):
+        return True
+    component_key = str(cards[index].get("component_key", "") or "")
+    if str(value.get("card") or "") != component_key or str(value.get("index")) != str(index):
+        return True
+    state["swipe_confirm_restart"] = False
+    state["swipe_open_analyze"] = False
+    state["swipe_plan_item"] = None
+    state.pop("swipe_guide_focus", None)
+    state["swipe_sheet"] = str(value["kind"])
+    state["swipe_sheet_card"] = [component_key, index]  # which card the sheet is for (_card_sheet_view checks it)
+    return True
+
+
+def _food_pick_key(component_key: str, index: int) -> str:
+    """Where the food picked for a card is kept: a plain session key (the Swap food sheet's own widget is gone with the sheet)."""
+    return f"swipe_food_pick_{component_key}_{index}"
 
 
 def _open_card(index: int, edit: bool = False) -> None:
@@ -6125,31 +6326,37 @@ def _render_card() -> None:
     # card renders in this same run (see "Swipe handling" above).
     if cards:
         card_value = st.session_state.get(swipe_key)
-        if not _apply_card_guide_tap(st.session_state, card_value):
+        if not _apply_card_guide_tap(st.session_state, card_value) and not _apply_card_tool_tap(st.session_state, card_value):
             _apply_card_swipe(st.session_state, card_value)
     index = int(st.session_state.get("swipe_index", 0))
     decisions: dict[str, dict[str, Any]] = st.session_state.get("swipe_decisions", {})
 
     if not cards:
-        # A scan that can be resumed is offered only inside the Scan sheet: the hint says so, or a returning visitor would take this
-        # for a first visit (the line is as long as before: no height changes when the saved scan arrives from the browser).
-        resumable = _resumable_scan(st.session_state.get("_suppswipe_saved_scan")) is not None
-        st.markdown(
-            "<div class='hero'>"
-            "<div class='hero-art' aria-hidden='true'>💊<span>→</span>🥦</div>"
-            "<div class='hero-title' role='heading' aria-level='2'>Ditch the pill.<br>Eat the real thing.</div>"
-            "<div class='hero-sub'>Scan your supplement and see which nutrients everyday foods can "
-            "cover — with fibre, protein and co-nutrients the pill doesn't have — and which are "
-            "worth keeping (e.g. vitamin D in winter, B12 on a vegan diet).</div>"
-            "<div class='steps' role='list'>"
-            "<div class='step' role='listitem'><span aria-hidden='true'>📸</span><b>Scan</b><small>your label</small></div>"
-            "<div class='step' role='listitem'><span aria-hidden='true'>👆</span><b>Swipe</b><small>keep or replace</small></div>"
-            "<div class='step' role='listitem'><span aria-hidden='true'>🥗</span><b>Eat</b><small>your food plan</small></div>"
-            "</div>"
-            f"<div class='hero-hint'>Tap <b>Scan</b> below to start{' or resume' if resumable else ''} <span aria-hidden='true'>↓</span></div></div>",
-            unsafe_allow_html=True,
-        )
-        # No button on this screen: the ways to start (Analyze, Resume, Sample) are in the Scan sheet of the bottom bar (_scan_sheet).
+        # The hero card: the pitch, the three steps and the one button that starts everything. The card itself is the keyed container
+        # (the CSS draws its box), so the button sits inside it.
+        with st.container(key="hero_card"):
+            st.markdown(
+                "<div class='hero'>"
+                "<div class='hero-art' aria-hidden='true'>💊<span>→</span>🥦</div>"
+                "<div class='hero-title' role='heading' aria-level='2'>Ditch the pill.<br>Eat the real thing.</div>"
+                "<div class='hero-sub'>Scan your supplement and see which nutrients everyday foods can "
+                "cover — with fibre, protein and co-nutrients the pill doesn't have — and which are "
+                "worth keeping (e.g. vitamin D in winter, B12 on a vegan diet).</div>"
+                "<div class='steps' role='list'>"
+                "<div class='step' role='listitem'><span aria-hidden='true'>📸</span><b>Scan</b><small>your label</small></div>"
+                "<div class='step' role='listitem'><span aria-hidden='true'>👆</span><b>Swipe</b><small>keep or replace</small></div>"
+                "<div class='step' role='listitem'><span aria-hidden='true'>🥗</span><b>Eat</b><small>your food plan</small></div>"
+                "</div></div>",
+                unsafe_allow_html=True,
+            )
+            # The same sheet as the bar's Scan item: Analyze / Resume / Sample (_scan_sheet). No icon: a Material icon is drawn as a text
+            # span ("photo_camera") that screen readers read out as part of the name. A scan that can be resumed is promised in the label
+            # (a returning visitor would take the card for a first visit); both labels fit one line at 320 px.
+            resumable = _resumable_scan(st.session_state.get("_suppswipe_saved_scan")) is not None
+            st.button(
+                "Scan or resume" if resumable else "Scan a supplement", type="primary", width="stretch", key="hero_scan",
+                on_click=_tap_scan,
+            )
         st.caption(
             "General information, not medical advice. Talk to a doctor before stopping a supplement "
             "you were prescribed, or if you are pregnant, ill or on medication."
@@ -6184,48 +6391,41 @@ def _render_card() -> None:
     # No colour-only progress dots: the card itself says "Card i of N".
     _render_label_source_notice()
 
-    # The swipe card and its controls (whole-food dropdown + Ask AI) share one
-    # bordered container so they read as a single card.
+    # The cards screen is ONE fixed screen: the card (its tools and the Keep / Replace row are inside the component's frame) and
+    # nothing below it. The food list, Ask AI and the report are sheets that the card's tools open (see _apply_card_tool_tap).
     theme = _component_card_theme(str(card.get("component", "") or ""))
     selected_food = None
     replace_block = ""
     option_labels: list[str] = []
-    select_key = f"swipe_food_select_{component_key}_{index}"
+    pick_key = _food_pick_key(component_key, index)
     match_dose_txt = ""
     rda_amount_txt = ""
     rda_label_txt = ""
-    with st.container(border=True, key="swipe_card"):
-        # Computed here but shown INSIDE the swipe card (passed as `warn` below),
-        # so only the dropdown / Ask AI / dietary filter sit below the card.
+    source_txt = ""
+    food_note = ""
+    picked = ""
+    with st.container(key="swipe_card"):
+        # Computed here and shown INSIDE the swipe card (passed as `warn` below).
         card_form = str(card.get("form", "") or "")
         warn_text = _card_warning_text(
             component_key, card.get("dose_value"), str(card.get("dose_unit", "") or ""), card_form, selected_profile,
             dose_max=card.get("dose_max"),
         )
-        stage = st.container()  # draggable swipe card sits at the top of this card
 
-        # --- On-card controls ---
         if foods:
             option_labels = [_food_label(food) for food in foods]
             # Reopened card (Back / edit from the results): keep the earlier food.
-            _restore_previous_food(st.session_state, select_key, option_labels, foods, decisions.get(component_key))
-            selected_label = st.selectbox(
-                "Prefer another food?",
-                options=option_labels,
-                # An everyday choice, not simply the richest food (no liver when
-                # another food works, D3 fish before UV mushrooms, ...). A reopened
-                # card already has its earlier food in session state, which wins;
-                # index 0 then avoids Streamlit's default-vs-state warning.
-                index=0 if select_key in st.session_state else _default_food_index(foods, card, selected_profile),
-                key=f"swipe_food_select_{component_key}_{index}",
-            )
-            selected_food = foods[option_labels.index(selected_label)]
+            _restore_previous_food(st.session_state, pick_key, option_labels, foods, decisions.get(component_key))
+            # The food on the card: the one picked in the Swap food sheet (kept in `pick_key`, a plain key: the sheet's own widget is
+            # gone as soon as the sheet is). An everyday choice, not simply the richest food (no liver when another food works,
+            # D3 fish before UV mushrooms, ...) until the visitor picks one.
+            picked = st.session_state.get(pick_key)
+            if picked not in option_labels:
+                picked = option_labels[_default_food_index(foods, card, selected_profile)]
+            selected_food = foods[option_labels.index(picked)]
             full_name = str(selected_food.get("food_description", "") or "").strip()
             if full_name and full_name != _food_name(selected_food):
-                st.caption(f"USDA: {full_name}")
-            diet_name = _active_diet_label(selected_profile)
-            if diet_name:
-                st.caption(f"Filter: {diet_name}")
+                source_txt = f"USDA: {full_name}"
 
             # For the selected whole food, compute how much to eat to (a) match
             # the supplement dose and (b) reach the athlete daily target. These
@@ -6253,26 +6453,25 @@ def _render_card() -> None:
                 if rda_amount_txt:
                     rda_label_txt = _format_rda_target(rda_entry)
         else:
+            # Why there is no food to swap to: said INSIDE the card (in the food block), where the Replace button's state is.
             diet_block = _replace_block_reason(card, None, selected_profile)
             if diet_block:
                 # Vegan EPA/DHA: no whole food exists, so another filter is no answer.
-                st.caption(f"{diet_block} Keeping the supplement is recommended.")
+                food_note = f"{diet_block} Keeping the supplement is recommended."
             elif foods_raw:
                 prof = selected_profile or {}
                 prof_label = str(prof.get("label", "") or "").strip()
                 if prof_label and prof_label.lower() not in ("no restriction", "none"):
-                    st.caption(
+                    food_note = (
                         f"No whole-food alternatives fit the “{prof_label}” filter. "
                         "Tap Diet in the bottom bar to change the filter."
                     )
                 else:
-                    st.caption("No whole-food alternatives available for this card.")
+                    food_note = "No whole-food alternatives available for this card."
             else:
-                st.caption("No whole-food alternatives found for this card.")
+                food_note = "No whole-food alternatives found for this card."
 
-        # Portion guidance, the bioavailability tip and the deficiency warning all
-        # render INSIDE the swipe card (passed as props below). Only the dropdown,
-        # Ask AI and dietary filter stay below the card.
+        # Portion guidance, the bioavailability tip and the deficiency warning all render INSIDE the swipe card (passed as props below).
         bio_note = (
             _bioavailability_note(
                 component_key, card_form, card.get("dose_value"), str(card.get("dose_unit", "") or ""), selected_profile
@@ -6295,22 +6494,15 @@ def _render_card() -> None:
         if extra_info:
             bio_note = f"{bio_note} {extra_info}".strip()
 
-        _render_rag_chat_popup(card, component_key, index)
-        if st.button(
-            "🚩 Report a problem with this card",
-            type="tertiary",
-            key=f"swipe_report_{component_key}_{index}_{nonce}",
-        ):
-            _report_card_problem(card, selected_food, selected_profile)
-            st.toast("Thanks — logged for review")
-
         food_label = _food_name(selected_food)
         # What this card offers, so the swipe (applied at the start of the next
-        # run) records the food the user actually had selected.
+        # run) records the food the user actually had selected, and the sheets the card's tools open know the card.
         st.session_state["swipe_card_view"] = {
             "index": index,
             "component_key": component_key,
-            "select_key": select_key,
+            "select_key": pick_key,
+            "labels": list(option_labels),
+            "shown": picked,  # the label on the card (the visitor's pick, else the default)
             # reversed(): of two equal labels the first wins, as with option_labels.index().
             "options": dict(reversed(list(zip(option_labels, foods)))),
             "selected": selected_food,
@@ -6318,34 +6510,38 @@ def _render_card() -> None:
             # must not be applied even if a stale "right" value arrives.
             "replace_block": replace_block,
         }
-        with stage:
-            tinder_swipe(
-                name=_nutrient_title(card.get("component")) or "Unknown micronutrient",
-                dose=str(card.get("dose_label", "Not available")),
-                food=food_label,
-                foodIcon=_whole_food_icon_from_food(selected_food) if selected_food is not None else "",
-                matchDose=match_dose_txt,
-                rdaAmount=rda_amount_txt,
-                rdaLabel=rda_label_txt,
-                warn=warn_text,
-                bioNote=bio_note,
-                index=index,
-                total=len(cards),
-                accent=theme["accent"],
-                ink=theme["accent2"],
-                bg=theme["bg"],
-                canReplace=selected_food is not None and not replace_block,
-                previous=_previous_choice_label(decisions.get(component_key)),
-                editing=bool(st.session_state.get("swipe_edit_return", False)),
-                cardId=component_key,
-                # Changes after every handled swipe, so the card always gets
-                # fresh props (and resets) even when it stays on the same card.
-                ack=str(st.session_state.get("swipe_last_swipe_id", "") or ""),
-                # Minimum frame height; the frame grows to the tallest card of the scan and never shrinks.
-                height=440,
-                key=swipe_key,
-                default=None,
-            )
+        tinder_swipe(
+            name=_nutrient_title(card.get("component")) or "Unknown micronutrient",
+            dose=str(card.get("dose_label", "Not available")),
+            food=food_label,
+            foodIcon=_whole_food_icon_from_food(selected_food) if selected_food is not None else "",
+            foodNote=food_note,
+            source=source_txt,
+            matchDose=match_dose_txt,
+            rdaAmount=rda_amount_txt,
+            rdaLabel=rda_label_txt,
+            warn=warn_text,
+            bioNote=bio_note,
+            index=index,
+            total=len(cards),
+            accent=theme["accent"],
+            ink=theme["accent2"],
+            bg=theme["bg"],
+            canReplace=selected_food is not None and not replace_block,
+            # The tools of the card: Swap food needs a second food to swap to, Ask AI a configured AI.
+            canSwap=len(option_labels) > 1,
+            canAsk=_ai_is_on(),
+            previous=_previous_choice_label(decisions.get(component_key)),
+            editing=bool(st.session_state.get("swipe_edit_return", False)),
+            cardId=component_key,
+            # Changes after every handled swipe, so the card always gets
+            # fresh props (and resets) even when it stays on the same card.
+            ack=str(st.session_state.get("swipe_last_swipe_id", "") or ""),
+            # Minimum frame height; where the page can be read the frame fills the room above the bottom bar.
+            height=440,
+            key=swipe_key,
+            default=None,
+        )
 
 
 # --- Results dashboard ---------------------------------------------------------
@@ -7082,10 +7278,22 @@ def _queue_ask_ai_suggestion(pills_key: str, pending_key: str) -> None:
     st.session_state[pills_key] = None
 
 
+def _rerun_chat(scope: str) -> None:
+    """Redraw after the chat changed: only the sheet it is in ("fragment"), else the whole page. A full run that reaches the chat of
+    a sheet (not the sheet's own rerun) cannot rerun a fragment: Streamlit says so, and the page is redrawn instead."""
+    if scope == "fragment":
+        try:
+            st.rerun(scope="fragment")
+        except StreamlitAPIException:
+            pass
+    st.rerun()
+
+
 def _render_ask_ai_chat(
-    card: dict[str, Any], component_key: str, index: int, suggestions: list[str] | None = None
+    card: dict[str, Any], component_key: str, index: int, suggestions: list[str] | None = None, rerun_scope: str = "app"
 ) -> None:
-    """Chat about a card (or the whole plan): history, one-tap suggestions, input."""
+    """Chat about a card (or the whole plan): history, one-tap suggestions, input. `rerun_scope`: "fragment" inside a sheet (an
+    answer then redraws only the sheet, not the page behind it), "app" elsewhere."""
     chat_store: dict[str, list[dict[str, str]]] = st.session_state.get("swipe_rag_chats", {})
     history = _chat_without_error_turns(list(chat_store.get(component_key, [])))
     for msg in history[-12:]:
@@ -7117,7 +7325,7 @@ def _render_ask_ai_chat(
     if history and st.button("Clear chat", type="tertiary", key=f"swipe_rag_clear_{component_key}_{index}"):
         chat_store[component_key] = []
         st.session_state["swipe_rag_chats"] = chat_store
-        st.rerun()
+        _rerun_chat(rerun_scope)
 
     pending = str(st.session_state.pop(pending_key, "") or "")
     asked = (pending or str(question or "").strip())[:_ASK_AI_MAX_CHARS]
@@ -7146,7 +7354,7 @@ def _render_ask_ai_chat(
                 {"role": "assistant", "content": (answer or "No answer available.") + sources_line},
             ]
             st.session_state["swipe_rag_chats"] = chat_store
-            st.rerun()
+            _rerun_chat(rerun_scope)
 
 
 def _card_ask_ai_suggestions(card: dict[str, Any]) -> list[str]:
@@ -7159,14 +7367,6 @@ def _card_ask_ai_suggestions(card: dict[str, Any]) -> list[str]:
         "Which everyday foods have the most?",
         "Who should keep the supplement?",
     ]
-
-
-def _render_rag_chat_popup(card: dict[str, Any], component_key: str, index: int) -> None:
-    if not _ai_is_on():
-        return  # nothing to ask: no button that only ends in an error
-    with st.popover("💬 Ask AI", width="stretch"):
-        st.caption("Science-based answers about this nutrient and your dose.")
-        _render_ask_ai_chat(card, component_key, index, suggestions=_card_ask_ai_suggestions(card))
 
 
 def _render_share_tab(
@@ -7479,9 +7679,10 @@ def _build_mobile_ui() -> None:
     _render_card()
     if _on_results_screen():
         _render_analyze_bar(results=True)  # the Scan button at the end of a finished plan; elsewhere the bar's Scan item does it
-    resume_note = st.session_state.pop("_suppswipe_resume_note", "")
-    if resume_note:
-        st.toast(resume_note)  # from this full run, not from the sheet: see _resume_saved_scan
+    for note_key in ("_suppswipe_resume_note", "_suppswipe_report_note"):
+        note = st.session_state.pop(note_key, "")
+        if note:
+            st.toast(note)  # from this full run, not from the sheet: see _resume_saved_scan
     # A dialog stays requested until it is closed (Cancel, X, or its action).
     if st.session_state.get("swipe_confirm_restart"):
         (_confirm_scan_another_dialog if _on_results_screen() else _confirm_restart_dialog)()
@@ -7500,7 +7701,7 @@ def _build_mobile_ui() -> None:
         show_debug = False
     if show_debug:
         _render_debug_panel()
-    if st.session_state.get("swipe_cards"):  # the welcome screen is the hero and the bar; its © line is in About
+    if _on_results_screen():  # the welcome screen and the cards are fixed screens with nothing below them; the © line is in About
         st.markdown("<div class='brand-foot'>© mfitness92</div>", unsafe_allow_html=True)
     _sync_scan_history_with_browser()
 

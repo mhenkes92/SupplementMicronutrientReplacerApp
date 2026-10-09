@@ -199,14 +199,25 @@ def test_results_tap_opens_card_in_edit_mode_and_returns():
 
 
 def test_reopened_card_keeps_the_earlier_food():
+    from card_tools import card_args, dismiss_sheet, tap_tool
+
     at = _sample_app()
     cards = at.session_state["swipe_cards"]
     key0 = cards[0]["component_key"]
+    tap_tool(at, "swap")  # the food list is in the Swap food sheet of the card
     select = at.selectbox(key=f"swipe_food_select_{key0}_0")
     second = select.options[1]
     select.set_value(second).run()
+    dismiss_sheet(at)  # the page behind follows when the sheet is closed
+    assert at.session_state[f"swipe_food_pick_{key0}_0"] == second
+    chosen = card_args(at)["food"]
+    assert chosen and chosen != "Guavas"  # the card shows the food that was picked
+    picked_food = dict(at.session_state["swipe_card_view"]["options"])[second]
     _swipe(at, "right", "r1")
     assert at.session_state["swipe_index"] == 1
+    assert at.session_state["swipe_decisions"][key0]["selected_food"]["food_description"] == picked_food["food_description"]
     _swipe(at, "back", "b1")
     assert at.session_state["swipe_index"] == 0
-    assert at.selectbox(key=f"swipe_food_select_{key0}_0").value == second
+    assert card_args(at)["food"] == chosen  # the earlier food is still on the card ...
+    tap_tool(at, "swap")
+    assert at.selectbox(key=f"swipe_food_select_{key0}_0").value == second  # ... and still selected in the list

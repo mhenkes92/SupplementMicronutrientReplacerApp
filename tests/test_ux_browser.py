@@ -26,6 +26,17 @@ CARD = 'iframe[src*="tinder_swipe"]'
 
 
 def _free_port() -> int:
+    """An unused local port: the first free one of SUPPSWIPE_TEST_PORT_RANGE ("9001-9009", for a shared machine), else any."""
+    spec = os.getenv("SUPPSWIPE_TEST_PORT_RANGE", "")
+    if spec:
+        low, _, high = spec.partition("-")
+        for port in range(int(low), int(high or low) + 1):
+            with socket.socket() as s:
+                try:
+                    s.bind(("127.0.0.1", port))
+                except OSError:
+                    continue
+                return port
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
@@ -214,20 +225,49 @@ def finish_all_cards(page, replace: bool = False) -> None:
     assert results_heading(page).count()
 
 
-def choose_option(page, index: int) -> str:
-    # Mid-page, not under the bottom bar: Playwright would scroll the page to reach a covered select, and that closes the menu.
-    page.locator('[data-testid="stSelectbox"]').first.evaluate("e => e.scrollIntoView({block: 'center'})")
-    page.locator('[data-testid="stSelectbox"]').first.click()
+def open_swap_sheet(page) -> None:
+    """The card's Swap food button: the food list is in its sheet (nothing is drawn below the card any more)."""
+    card(page).locator("#btnSwap").click(timeout=10000)
+    page.get_by_role("dialog").wait_for(timeout=10000)
+    settle(page, 0.7)  # a sheet ignores taps for its first 450 ms
+
+
+def choose_option(page, index: int, close: bool = True) -> str:
+    """Pick the `index`-th food in the Swap food sheet and close it (the card behind then shows it); `close=False` leaves it open."""
+    open_swap_sheet(page)
+    page.locator('[data-testid="stDialog"] [data-testid="stSelectbox"]').first.click()
     options = page.locator('[role="option"]')
     options.first.wait_for(timeout=5000)
     label = options.nth(index).inner_text()
     options.nth(index).click()
     settle(page)
+    if close:
+        close_sheet(page)
     return label
 
 
+def food_options(page) -> list[str]:
+    """Every food the Swap food sheet offers for the card on screen (the sheet is closed again)."""
+    open_swap_sheet(page)
+    page.locator('[data-testid="stDialog"] [data-testid="stSelectbox"]').first.click()
+    page.locator('[role="option"]').first.wait_for(timeout=5000)
+    labels = [o.inner_text() for o in page.locator('[role="option"]').all()]
+    page.keyboard.press("Escape")  # the list first ...
+    close_sheet(page)  # ... then the sheet
+    return labels
+
+
 def selected_option(page) -> str:
-    return page.locator('[data-testid="stSelectbox"] input').first.input_value()
+    """The food the Swap food sheet opens on (it is closed again with Esc)."""
+    open_swap_sheet(page)
+    value = page.locator('[data-testid="stDialog"] [data-testid="stSelectbox"] input').first.input_value()
+    close_sheet(page)
+    return value
+
+
+def wait_filter_chip(page, text: str) -> None:
+    """The page says an active filter with the chip under the brand ("Diet: Vegan"): the cards screen has no line of its own."""
+    page.locator(".diet-note", has_text=text).wait_for(timeout=10000)
 
 
 def test_swipes_buttons_keyboard_drag_back_reuse_one_iframe(page):
@@ -350,13 +390,13 @@ def test_filter_line_and_misfit_flag(page):
         wait_name_change(page, name)
     settle(page)
     assert "b12" in card_name(page).lower()
-    assert page.get_by_text("Filter:", exact=False).count() == 0
+    assert page.get_by_text("Filter:", exact=False).count() == 0 and page.locator(".diet-note").count() == 0
     name = card_name(page)
     card(page).locator("#btnRepl").click()
     wait_name_change(page, name)
     settle(page)
     choose_diet(page, "Vegan")
-    page.get_by_text("Filter: Vegan").wait_for(timeout=5000)
+    wait_filter_chip(page, "Diet: Vegan")
     shot(page, "ux_card_filter_line")
     finish_all_cards(page)
     flag = page.locator('[data-testid="stButton"] button', has_text="doesn't fit Vegan — tap to choose another")
@@ -434,7 +474,7 @@ def test_filter_change_keeps_the_chosen_food_while_offered(page):
     chosen = choose_option(page, 2)
     assert "mushroom" in chosen.lower()
     choose_diet(page, "Vegan")
-    page.get_by_text("Filter: Vegan").wait_for(timeout=5000)
+    wait_filter_chip(page, "Diet: Vegan")
     assert selected_option(page) == chosen
 
 
@@ -457,7 +497,7 @@ def test_resume_keeps_the_diet_filter_chip(page):
     page.get_by_role("button", name="Resume last scan").click(timeout=20000)
     card(page).locator("#card .name").wait_for(timeout=20000)
     settle(page)
-    page.get_by_text("Filter: Vegan").wait_for(timeout=5000)  # said on the page at once ...
+    wait_filter_chip(page, "Diet: Vegan")  # said on the page at once (the chip under the brand) ...
     open_diet_sheet(page)
     assert _active_chips(page) == ["Vegan"]  # ... and the sheet opens on it (a value written while the chips were not on screen is not applied by Streamlit)
     close_sheet(page)
@@ -468,7 +508,7 @@ def test_resume_keeps_the_diet_filter_chip(page):
     open_diet_sheet(page)
     assert _active_chips(page) == ["Vegan"]
     close_sheet(page)
-    page.get_by_text("Filter: Vegan").wait_for(timeout=5000)
+    wait_filter_chip(page, "Diet: Vegan")
 
 
 def test_build_tag_in_the_about_sheet(page):

@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from card_tools import dismiss_sheet, swap_options, tap_tool
+
 APP = str(Path(__file__).resolve().parent.parent / "swipe_mobile_app" / "app.py")
 SAMPLE = "Vitamin B12 2,5 µg 100%\nFolsäure 200 µg 100%\nMagnesium 56 mg 15%"
 ORGAN_WORDS = ("liver", "kidney", "heart", "gizzard", "sweetbread", "tongue")
@@ -29,7 +31,7 @@ def _scanned(pregnant: bool = False) -> AppTest:
 
 
 def _food_options(at: AppTest) -> list[str]:
-    return list(at.selectbox[0].options)
+    return swap_options(at)  # the food list lives in the Swap food sheet of the card
 
 
 def _toggle(at: AppTest):
@@ -58,6 +60,8 @@ def test_pregnancy_toggle_hides_organ_meats_and_persists():
 
 def test_report_button_logs_and_thanks(caplog):
     at = _scanned()
+    assert not [b for b in at.button if "Report a problem" in b.label]  # nothing below the card: the report is in the More sheet
+    tap_tool(at, "report")
     report = next(b for b in at.button if b.label == "🚩 Report a problem with this card")
     with caplog.at_level(logging.WARNING, logger="blockbrain.app"):
         report.click()
@@ -65,6 +69,7 @@ def test_report_button_logs_and_thanks(caplog):
     lines = [r.getMessage() for r in caplog.records if "SuppSwipe card report" in r.getMessage()]
     assert len(lines) == 1 and '"nutrient": "Vitamin B12"' in lines[0]
     assert [t.value for t in at.toast] == ["Thanks — logged for review"]
+    assert at.session_state["swipe_sheet"] is None and not at.get("dialog")  # the sheet closes with the report; the card is back
 
 
 def test_results_screen_shows_the_daily_totals(monkeypatch):

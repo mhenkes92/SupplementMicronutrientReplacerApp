@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from test_ux_browser import (  # noqa: F401  (fixtures are used by name)
-    CARD, DIALOG, _mixed_results, open_scan_sheet, ai_server, browser, card, card_name, choose_option, finish_all_cards, page, results_heading,
+    CARD, DIALOG, _mixed_results, open_scan_sheet, ai_server, browser, card, card_name, choose_option, close_sheet, finish_all_cards, page, results_heading,
     server, settle, shot, start_own_label, start_sample, wait_name_change,
 )
 
@@ -139,9 +139,10 @@ def test_the_bar_stays_after_a_toggle_a_dropdown_and_a_radio_took_the_focus(page
     page.keyboard.press("Escape")
     page.locator(DIALOG).wait_for(state="detached", timeout=10000)
     start_sample(page)
-    choose_option(page, 1)
+    choose_option(page, 1, close=False)  # the food list is in the card's Swap food sheet
     assert active_kind(page) == "INPUT:combobox", active_kind(page)
     assert page.locator(BAR).is_visible()
+    close_sheet(page)
     name = card_name(page)
     card(page).locator("#btnRepl").click()  # one food swapped, so the Meals tab has its radio
     wait_name_change(page, name)
@@ -154,15 +155,16 @@ def test_the_bar_stays_after_a_toggle_a_dropdown_and_a_radio_took_the_focus(page
     assert page.locator(BAR).is_visible()
 
 
-def test_the_bar_hides_for_the_chat_box_of_the_cards_popover_and_is_dead_while_it_answers(ai_server, page):
-    """The popover's body is mounted outside the app root: the field and the answer's spinner are there, not in the page."""
+def test_the_bar_hides_for_the_chat_box_of_the_cards_ask_ai_sheet_and_is_dead_while_it_answers(ai_server, page):
+    """The sheet is a dialog, mounted outside the app root: the field and the answer's spinner are there, not in the page."""
     url, fake = ai_server
     fake.stream_script = [{"delay": 5, "text": "Zinc supports immune function."}]
     page.goto(url, wait_until="networkidle")
     start_sample(page)
-    page.get_by_role("button", name="Ask AI").first.click()
-    body = page.locator('[data-testid="stPopoverBody"]')
+    card(page).locator("#btnAsk").click(timeout=10000)  # the card's own Ask AI button (nothing is drawn below the card)
+    body = page.locator(DIALOG)
     body.wait_for(timeout=10000)
+    settle(page, 0.7)
     chat = body.get_by_test_id("stChatInput").locator("textarea")
     chat.fill("What does zinc do?")
     page.wait_for_timeout(200)
@@ -189,10 +191,10 @@ def test_the_swipe_buttons_can_always_be_scrolled_clear_of_the_bar_and_tapped(br
         for selector in ("#btnKeep", "#btnRepl", "#btnBack"):
             bar = rect(pg, BAR)
             inner = card(pg).locator(selector).bounding_box()  # page coordinates (Playwright adds the frame offset)
-            need = inner["y"] + inner["height"] + 8 - bar["y"]  # how far the button reaches into the bar
+            need = inner["y"] + inner["height"] - bar["y"]  # how far the button reaches into the bar (the fixed screen leaves it clear: 4-6 px above)
             if need > 0:
                 room = pg.evaluate(f"{MAIN}.scrollHeight - {MAIN}.clientHeight - {MAIN}.scrollTop")
-                assert room >= need, (selector, need, room)  # no bottom padding, no way to reach it
+                assert room >= need, (selector, need, room)  # no blank strip under the frame, no way to reach it
                 pg.evaluate(f"{MAIN}.scrollBy(0, {need})")
                 pg.wait_for_timeout(300)
             inner = card(pg).locator(selector).bounding_box()
@@ -588,7 +590,7 @@ def test_the_bar_adds_no_gap_above_the_page(page):
     """The bar is drawn right after the header and its layout wrapper takes back the 1rem gap a hidden element would add:
     without that rule the whole page sits 16 px lower on every screen."""
     brand = rect(page, ".brand")
-    hero = rect(page, ".hero")
+    hero = rect(page, '[class~="st-key-hero_card"]')  # the welcome card's box (the .hero text sits inside it, below its padding)
     assert brand["y"] < 30, brand
     assert hero["y"] - (brand["y"] + brand["h"]) <= 12, (brand, hero)
 

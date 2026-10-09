@@ -91,7 +91,8 @@ def test_no_flags_without_a_restriction():
     assert "salmon" in share.lower()
 
 
-def test_card_shows_the_active_filter_line():
+def test_the_active_filter_is_the_chip_under_the_brand_and_no_caption_under_the_card():
+    """The cards screen draws nothing below the card: the filter is said by the Diet chip (and the dot on the bar's Diet item)."""
     at = AppTest.from_file(APP, default_timeout=60)
     at.session_state["swipe_cards"] = [
         {"component": "Vitamin D", "component_key": "vitamin d", "dose_label": "20 mcg", "dose_value": 20,
@@ -99,10 +100,13 @@ def test_card_shows_the_active_filter_line():
     ]
     at.session_state["swipe_diet_profile_id"] = "vegan"
     at.run()
-    assert "Filter: Vegan" in [c.value for c in at.caption]
+    header = " ".join(m.value for m in at.markdown if 'class="brand"' in m.value)
+    assert "<div class='diet-note'>" in header and "Diet: Vegan" in header
+    assert not [c.value for c in at.caption if c.value.startswith("Filter:")]
     at.session_state["swipe_diet_profile_id"] = "none"
     at.session_state["swipe_diet_pills"] = "none"
     at.run()
+    assert "<div class='diet-note'>" not in " ".join(m.value for m in at.markdown if 'class="brand"' in m.value)
     assert not [c.value for c in at.caption if c.value.startswith("Filter:")]
 
 

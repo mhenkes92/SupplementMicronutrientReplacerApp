@@ -10,7 +10,11 @@ a long note, so their row started lower than the first card's. Now the component
 page load draws) in a frame that fills the room, so the row sits ~4 px above the bar on every card, and a card taller than its frame scrolls
 inside it with a fade and, as soon as text is cut off (about half a line), a "scroll for more" pill; a focused control is scrolled clear of
 both, and neither catches a touch. Roomy phones keep today's frame sizes. Where the page cannot be read
-the card behaves exactly as before (no tight class, the old frame sizes)."""
+the card behaves as before (no tight class, frames sized to the card's content) plus a blank strip under its buttons.
+
+Fixed screens (tests/test_ux_fixed_screen_browser.py): the frame now FILLS the room on every phone, whatever the card, so the numbers
+of "roomy phones keep today's frames" (475 / 603 px at 390x844) are gone; the row sits ~4-6 px above the bar on every card, and the
+page does not scroll. The frame also holds the card's tools row (Swap food / Ask AI / More): about 50 px more than before."""
 from __future__ import annotations
 
 import os
@@ -51,7 +55,9 @@ def test_every_access_to_the_host_page_is_inside_a_try_that_falls_back_to_the_ol
     assert "frameElement" not in rest and ".document" not in rest and "parent.innerHeight" not in rest
     # Everything else that mentions the host only posts a message to it or compares the message source.
     others = [m.group(0) for m in re.finditer(r"window\.parent[.\w]*", rest)]
-    assert set(others) <= {"window.parent.postMessage", "window.parent"}, others
+    assert set(others) <= {"window.parent.postMessage", "window.parent", "window.parent.addEventListener"}, others
+    # The one other thing the frame does to the host: listen for its resize (the bar moves with the phone's toolbars), best effort.
+    assert re.search(r"try \{\s+window\.parent\.addEventListener\(\"resize\".*?\}\);\s+\} catch \(e\) \{\}", rest, re.S)
     assert "return Infinity" in body and "isFinite(room)" in SCRIPT  # an unmeasurable room changes nothing downstream
 
 
@@ -200,7 +206,7 @@ BUTTONS = [["btnBack", "Back to the previous card", "↩"], ["btnKeep", "Keep pi
 
 SIZES = [(320, 568), (320, 640), (360, 640), (360, 670), (360, 740), (375, 667), (390, 664), (390, 844), (393, 700), (412, 780), (412, 915)]
 SHORT = [(320, 568), (320, 640), (360, 640), (390, 664)]
-TODAY = {(390, 844): (475, 603), (412, 780): (456, 585), (412, 915): (456, 585)}  # frame heights of card 1, then card 2+, unchanged
+ROOMY = [(390, 844), (412, 915)]  # phones whose room is larger than the tallest card needs: the normal (not tight) card from the first card on
 OWN_LABEL = "Vitamin C 80 mg 100%\nVitamin D3 20 µg 400%\nZinc 10 mg 100%\nSelenium 55 µg 100%"
 WARN_LABEL = "Vitamin A 3000 µg 375%\nVitamin D3 100 µg 2000%\nIron 45 mg 321%\nZinc 40 mg 400%\nSelenium 300 µg 545%"
 TEXT_200 = ("document.addEventListener('DOMContentLoaded', () => { const s = document.createElement('style');"
@@ -319,20 +325,21 @@ def test_on_a_short_phone_the_row_sits_in_the_same_place_on_every_card_just_abov
 
 
 @needs_browser
-@pytest.mark.parametrize("size", list(TODAY))
-def test_a_roomy_phone_keeps_todays_frames_and_the_normal_card(browser, server, size):
+@pytest.mark.parametrize("size", ROOMY)
+def test_a_roomy_phone_fills_its_room_with_the_normal_card_and_the_row_sits_just_above_the_bar(browser, server, size):
     ctx, pg = open_page(browser, server, size)
     try:
         start_sample(pg)
-        first, later = TODAY[size]
-        assert frame_height(pg) == first
         assert "tight" not in card_frame(pg).evaluate("document.getElementById('wrap').className")
+        first = frame_height(pg)
+        room = round(rect(pg, BAR)["y"] - rect(pg, CARD)["y"])
+        assert room - 12 <= first <= room + 6, (first, room)  # the frame fills the room down to the bar (900 px at most)
         name = card_name(pg)
         keep_and_wait(pg, name)
         to_top(pg)
-        assert frame_height(pg) == later
+        assert frame_height(pg) == first  # the same frame on card 2: the buttons stay where the thumb is
         assert "tight" not in card_frame(pg).evaluate("document.getElementById('wrap').className")
-        assert row_gap(pg) >= 0
+        assert 0 <= row_gap(pg) <= 12
     finally:
         ctx.close()
 
@@ -341,7 +348,7 @@ def test_the_decision_to_tighten_is_made_from_the_measured_room():
     """A new scan starts tight only when the room is short, and a card tightens only when its normal frame does not fit; the
     thresholds (TIGHT_BELOW, ROOM_FLOOR) are judgment values, so only the shape of the rule is pinned."""
     assert re.search(r"tight = hostRoom\(\) < TIGHT_BELOW", SCRIPT) and "ROOM_FLOOR" in SCRIPT
-    assert "if (Math.max(HEIGHT, Math.min(780, contentHeight + actionsHeight + 10)) <= room) { break; }" in SCRIPT  # fits: stays normal
+    assert "if (Math.max(HEIGHT, Math.min(780, contentHeight + actionsHeight + 10)) <= avail) { break; }" in SCRIPT  # fits: stays normal
 
 
 WATCH_LIVE = """() => { window.__live = []; window.__renders = 0;
@@ -351,13 +358,13 @@ WATCH_LIVE = """() => { window.__live = []; window.__renders = 0;
 
 
 @needs_browser
-@pytest.mark.parametrize("size,frame_grows", [((390, 844), True), ((320, 640), False)])
-def test_the_announcement_of_the_choice_survives_the_frame_growing(browser, server, size, frame_grows):
+@pytest.mark.parametrize("size,frame_grows", [((390, 844), False), ((320, 640), False)])
+def test_the_announcement_of_the_choice_is_said_once_and_the_frame_does_not_move(browser, server, size, frame_grows):
     """Streamlit re-sends the same props when the frame height changes; the second draw used to replace the live region.
 
-    It only happens where the frame really grows from card 1 to card 2 (475 -> 603 px at 390x844): there Streamlit sends two
-    renders and render() must ignore the second one. At 320x640 the frame is 511 px on both cards, so only one render arrives and
-    the check cannot fail: it is kept as the other half (nothing is announced twice there either)."""
+    The frame used to grow from card 1 to card 2 (475 -> 603 px at 390x844), which made Streamlit send two renders. The frame is the
+    same on every card now (it fills the room), so after a swipe one render arrives and the announcement is said once; render() still
+    ignores a second, identical one (the first draw of a frame and a changing chip above the card send one)."""
     ctx, pg = open_page(browser, server, size)
     try:
         start_sample(pg)
@@ -370,8 +377,8 @@ def test_the_announcement_of_the_choice_survives_the_frame_growing(browser, serv
         after = frame_height(pg)
         history = fr.evaluate("window.__live")
         renders = fr.evaluate("window.__renders")
-        assert (after > before) is frame_grows, (before, after)
-        assert renders >= (2 if frame_grows else 1), renders  # where the frame grows Streamlit really sent the props twice
+        assert (after > before) is frame_grows and after == before, (before, after)
+        assert renders >= 1, renders
         assert len(history) == 1 and history[0].startswith("Kept the pill. Card 2 of 7"), history  # said once, and not overwritten
         assert fr.evaluate("document.getElementById('live').textContent").startswith("Kept the pill. Card 2 of 7")
     finally:
@@ -422,7 +429,14 @@ def test_a_frame_that_cannot_read_its_page_behaves_exactly_as_before(browser, se
         assert fr.evaluate("window.__blocked === true")
         assert fr.evaluate("(() => { try { return !!window.frameElement; } catch (e) { return 'THROWS ' + e.name; } })()").startswith("THROWS")
         seen = walk(pg, 3, lambda: (frame_height(pg), fr.evaluate("document.getElementById('wrap').classList.contains('tight')")))
-        assert [m for _, m in seen] == [(475, False), (680, False), (680, False)], seen  # today's frames, never tight
+        # Frames sized to the card's content as before (+ the tools row, + the blank strip under the buttons), never tight.
+        assert [m for _, m in seen] == [(601, False), (748, False), (748, False)], seen
+        assert fr.evaluate("document.getElementById('wrap').classList.contains('spacer')")
+        # The page cannot be measured, so the row of the second card starts under the bar; the page's own padding is gone on this
+        # screen, and the strip is what lets it be scrolled clear: it can be reached and tapped.
+        pg.evaluate(f"{MAIN}.scrollTo(0, 100000)")
+        pg.wait_for_timeout(300)
+        assert row_gap(pg) >= 0, row_gap(pg)
         assert pg.errors == []
     finally:
         ctx.close()
@@ -507,7 +521,8 @@ def test_a_turned_phone_starts_over_and_comes_back_to_the_normal_card(browser, s
         start_sample(pg)
         keep_and_wait(pg, card_name(pg))
         to_top(pg)
-        assert frame_height(pg) == 603 and row_gap(pg) >= 0
+        portrait = frame_height(pg)
+        assert row_gap(pg) >= 0 and "tight" not in card_frame(pg).evaluate("document.getElementById('wrap').className")
         pg.set_viewport_size({"width": 844, "height": 390})
         pg.wait_for_timeout(900)
         to_top(pg)
@@ -515,7 +530,8 @@ def test_a_turned_phone_starts_over_and_comes_back_to_the_normal_card(browser, s
         pg.set_viewport_size({"width": 390, "height": 844})
         pg.wait_for_timeout(900)
         to_top(pg)
-        assert frame_height(pg) == 603 and row_gap(pg) >= 0
+        assert frame_height(pg) == portrait and row_gap(pg) >= 0  # back in portrait: the same fixed screen again
+        assert "tight" not in card_frame(pg).evaluate("document.getElementById('wrap').className")
         assert pg.errors == []
     finally:
         ctx.close()
