@@ -26,7 +26,10 @@ def _run(at: AppTest) -> AppTest:
 def test_first_load_renders_welcome():
     at = _run(AppTest.from_file(APP, default_timeout=60))
     text = " ".join(m.value for m in at.markdown)
-    assert "Analyze my supplement" in " ".join(b.label for b in at.button)
+    assert "Scan" in [b.label for b in at.button]  # the bar's Scan item; the three ways to start are in its sheet
+    at.button(key="appbar_scan").click()
+    _run(at)
+    assert "Analyze my supplement" in [b.label for b in at.button]
     assert "swipe" in text.lower()
 
 

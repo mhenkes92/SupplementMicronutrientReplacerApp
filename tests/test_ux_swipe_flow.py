@@ -145,6 +145,7 @@ def test_restore_previous_food_ignores_unknown_or_missing(sw):
 def _sample_app() -> AppTest:
     at = AppTest.from_file(APP, default_timeout=60)
     at.run()
+    at.button(key="appbar_scan").click().run()  # the sample button lives in the Scan sheet
     at.button(key="swipe_try_sample").click().run()
     assert not at.exception
     assert at.session_state["swipe_cards"]

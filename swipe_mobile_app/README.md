@@ -8,6 +8,15 @@ replace the nutrient with an everyday whole food (with the amount that matches t
 **left** to keep the pill. The last screen is your plan: what to eat, what to keep taking, a
 meal plan, a weekly shopping list with prices, Ask AI and a shareable summary.
 
+## The screen
+
+The page is the card and a fixed bottom bar of five items: **Guide** (athlete RDA table), **Diet** (dietary filter and the
+pregnancy setting), **Scan** (the filled one: analyze a supplement, resume the last scan, or try a sample label; half-way
+through a scan or on a finished plan it asks first), **Recent** (the scans kept in this browser) and **About**. Nothing sits
+below the welcome card, so there is nothing to scroll to. While a diet filter or pregnancy mode is on, the page shows it in a
+one-line chip under the brand and the Diet item carries a dot. On phones the bar starts at the page gutter and leaves the
+bottom-right corner free for the Streamlit Cloud badge.
+
 ## How it works
 
 | Step | What runs | Speed |
@@ -32,7 +41,7 @@ streamlit run swipe_mobile_app/app.py
 ```
 
 Without the `BLOCKBRAIN_*` configuration everything except photo reading, the meal plan and Ask AI works
-(try "✨ Try it with a sample label").
+(tap **Scan**, then "Try with a sample label").
 
 ## Configuration (Streamlit Cloud → App settings → Secrets, or environment variables)
 

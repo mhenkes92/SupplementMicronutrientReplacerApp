@@ -3164,11 +3164,16 @@ def _record_scan_to_history(decisions: dict[str, dict[str, Any]], diet_label: st
     st.session_state["swipe_history_recorded_sig"] = sig
 
 
-# --- The three sheets (Guide, Scans, About): which one is requested ---------------------------------------
+# --- The five bar items: which sheet (or question) a tap asks for -----------------------------------------
 # A sheet is a dialog drawn at the end of the run, as the last branch of the one-dialog-at-a-time chain in _build_mobile_ui.
 # `swipe_sheet` stays set until the sheet is dismissed (like the other dialogs' flags), so a stray rerun cannot close it.
-_SHEET_TITLES = {"guide": "Athlete RDA guide", "scans": "Recent scans", "about": "About & privacy"}
-_BAR_ITEMS = (("guide", "Guide"), ("scans", "Scans"), ("about", "About"))
+# Guide | Diet | Scan | Recent | About: Scan is the primary item (filled). "Recent" is the history item: its key and its sheet
+# keep the name "scans" and the sheet its title "Recent scans" (the bar label "Scans" next to "Scan" was easy to confuse).
+_SHEET_TITLES = {
+    "guide": "Athlete RDA guide", "diet": "Diet & pregnancy", "scan": "Scan a supplement", "scans": "Recent scans",
+    "about": "About & privacy",
+}
+_BAR_ITEMS = (("guide", "Guide"), ("diet", "Diet"), ("scan", "Scan"), ("scans", "Recent"), ("about", "About"))
 
 
 def _analysis_in_flight() -> bool:
@@ -3184,7 +3189,26 @@ def _open_sheet(name: str) -> None:
     st.session_state["swipe_open_analyze"] = False
     st.session_state["swipe_plan_item"] = None
     st.session_state.pop("swipe_guide_focus", None)
+    if name == "diet":
+        # The Diet sheet is the only place the two widgets are drawn. Streamlit applies a value written into a widget's key only in
+        # the run right after the write, so one that Resume wrote while the widgets were not on screen would be ignored when they
+        # appear later (the sheet showed "No restriction" and the toggle off with the filter on). Without state they are seeded
+        # from the mirrors (`swipe_diet_profile_id`, `swipe_pregnant`), which are what every part of the app reads.
+        for key in ("swipe_diet_pills", "swipe_pregnant_toggle"):
+            st.session_state.pop(key, None)
     st.session_state["swipe_sheet"] = name
+
+
+def _tap_scan() -> None:
+    """The bar's Scan item. On the welcome screen (and on cards nothing was decided on) it opens the Scan sheet: the ways to start.
+    Half-way through a scan, or on the results, it asks first with the question the page's Scan button has always asked
+    (`_request_analyze`), so a stray tap never throws a scan or a plan away."""
+    if _analysis_in_flight():
+        return
+    _open_sheet("scan")
+    if _on_results_screen() or _selected_session_in_progress():
+        st.session_state["swipe_sheet"] = None
+        st.session_state["swipe_confirm_restart"] = True
 
 
 def _close_sheet() -> None:
@@ -3205,7 +3229,9 @@ def _sheet_requested() -> bool:
 
 
 def _show_sheet() -> None:
-    {"guide": _guide_sheet, "scans": _scans_sheet, "about": _about_sheet}[st.session_state["swipe_sheet"]]()
+    {
+        "guide": _guide_sheet, "diet": _diet_sheet, "scan": _scan_sheet, "scans": _scans_sheet, "about": _about_sheet,
+    }[st.session_state["swipe_sheet"]]()
 
 
 def _sheet_anchor(name: str) -> str:
@@ -4217,6 +4243,12 @@ def _render_header() -> None:
                 color: #0f172a;
                 margin-top: 10px;
             }
+            .hero-hint {
+                margin-top: 14px;
+                font-size: 0.9rem;
+                font-weight: 700;
+                color: #047857;
+            }
             .hero-sub {
                 font-size: 0.92rem;
                 line-height: 1.45;
@@ -4254,22 +4286,28 @@ def _render_header() -> None:
                 from { transform: rotate(0deg); }
                 to { transform: rotate(360deg); }
             }
-            /* Bottom bar: the three global tools as tabs, fixed on every screen. The keyed horizontal container is
-               drawn first in each run; the busy twin is its dead copy while an analysis runs. Both sides keep clear of
-               the floating Manage app badge that Streamlit Cloud draws over the corner, so the pill stays centred. */
+            /* Bottom bar: the five global tools (Guide, Diet, Scan, Recent, About) as tabs, fixed on every screen. The keyed
+               horizontal container is drawn first in each run; the busy twin is its dead copy while an analysis runs.
+               Five tabs of at least 44 px do not fit between two badge gutters on a 320 px phone, so on phones the pill
+               starts at the page gutter (the left edge of the content) and only the right side keeps clear of the floating
+               Manage app badge that Streamlit Cloud draws over that corner; from 641 px it is centred again. */
             [class~="st-key-appbar"],
             [class~="st-key-appbar_busy"] {
-                --ss-bar-gutter: calc(15vw + 12px);  /* the one knob for the Cloud badge corner */
+                --ss-bar-gutter: calc(15vw + 12px);  /* the one knob for the Cloud badge corner (right side only on phones) */
+                /* the content column's left edge (.block-container: 440 px wide, 1rem padding); never more than 16 px, so larger text takes nothing from the five tabs */
+                --ss-bar-left: calc(max(0px, (100% - 440px) / 2) + min(1rem, 16px));
+                --ss-ico-scan: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10'/%3E%3C/svg%3E");
+                --ss-ico-diet: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 19C5 10 10 5 20 4c0 10-5 15-14 15'/%3E%3Cpath d='M5 19c2-4 5-7 9-9'/%3E%3C/svg%3E");
                 --ss-ico-guide: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6.5 7v10M3 9.5v5M17.5 7v10M21 9.5v5M6.5 12h11'/%3E%3C/svg%3E");
                 --ss-ico-scans: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3 9'/%3E%3Cpath d='M3 4v5h5'/%3E%3Cpath d='M12 7.5V12l3 2'/%3E%3C/svg%3E");
                 --ss-ico-about: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 21.5s8-3.8 8-9.7V5.2L12 2.5 4 5.2v6.6c0 5.9 8 9.7 8 9.7z'/%3E%3Cpath d='M9 12l2.2 2.2L15.5 10'/%3E%3C/svg%3E");
                 position: fixed;
                 z-index: 999980;
-                left: 0;
-                right: 0;
-                margin: 0 auto;
+                left: var(--ss-bar-left);
+                right: auto;
+                margin: 0;
                 bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
-                width: min(calc(100% - 2 * var(--ss-bar-gutter)), 320px) !important;
+                width: min(calc(100% - var(--ss-bar-left) - var(--ss-bar-gutter)), 408px) !important;
                 min-height: 3.5rem;
                 box-sizing: border-box;
                 padding: 0.25rem;
@@ -4297,6 +4335,8 @@ def _render_header() -> None:
                 opacity: 1 !important;
                 transition: none !important;
             }
+            [class~="st-key-appbar_scan"], [class~="st-key-appbar_busy_scan"] { --ss-ico: var(--ss-ico-scan); }
+            [class~="st-key-appbar_diet"], [class~="st-key-appbar_busy_diet"] { --ss-ico: var(--ss-ico-diet); }
             [class~="st-key-appbar_guide"], [class~="st-key-appbar_busy_guide"] { --ss-ico: var(--ss-ico-guide); }
             [class~="st-key-appbar_scans"], [class~="st-key-appbar_busy_scans"] { --ss-ico: var(--ss-ico-scans); }
             [class~="st-key-appbar_about"], [class~="st-key-appbar_busy_about"] { --ss-ico: var(--ss-ico-about); }
@@ -4341,9 +4381,16 @@ def _render_header() -> None:
             [class~="st-key-appbar_busy"] button > div > span {
                 display: contents;
             }
+            /* Streamlit pulls every markdown block up by 1rem (it cancels a paragraph's margin) and gives it a 1.6 line height: inside the
+               button that hangs the label below the icon, off-centre (plain on a transparent tab, plain to see on the filled Scan tab). */
+            [class~="st-key-appbar"] button [data-testid="stMarkdownContainer"],
+            [class~="st-key-appbar_busy"] button [data-testid="stMarkdownContainer"] {
+                margin: 0 !important;
+                line-height: 0.8125rem;
+            }
             [class~="st-key-appbar"] button p,
             [class~="st-key-appbar_busy"] button p {
-                font-size: min(0.75rem, 4.2vw);  /* at 200 % text on a 320 px phone three labels of 0.75rem do not fit: never below the normal 12 px there */
+                font-size: min(0.75rem, 3.6vw);  /* five labels: capped by the width of the phone, so larger text never makes "Recent" wider than its tab */
                 font-weight: 700;
                 line-height: 0.8125rem;
                 white-space: nowrap !important;  /* Streamlit's own `.stButton button [data-testid=stMarkdownContainer] p` sets `normal` and is more specific */
@@ -4357,6 +4404,31 @@ def _render_header() -> None:
             }
             [class~="st-key-appbar"] button:active { background: rgba(16, 185, 129, 0.18); color: #065f46; }
             [class~="st-key-appbar"] button:focus-visible { outline-offset: -3px !important; }
+            /* Scan is the one filled item (white on #047857 is 5.4:1). The generic rules above are as specific as the :hover and
+               :active ones, so the filled item names its states itself. */
+            [class~="st-key-appbar"] [class~="st-key-appbar_scan"] button,
+            [class~="st-key-appbar_busy"] [class~="st-key-appbar_busy_scan"] button {
+                background: #047857;
+                color: #ffffff;
+                border-radius: 1.25rem;
+            }
+            [class~="st-key-appbar"] [class~="st-key-appbar_scan"] button:hover { background: #065f46; color: #ffffff; }
+            [class~="st-key-appbar"] [class~="st-key-appbar_scan"] button:active { background: #064e3b; color: #ffffff; }
+            /* A dot on the Diet tab while a filter or the pregnancy setting is on: it follows the one-line chip under the brand
+               (.diet-note, drawn in the same run), so the two can never disagree. */
+            [class~="st-key-appbar_diet"] button, [class~="st-key-appbar_busy_diet"] button { position: relative; }
+            body:has(.diet-note) [class~="st-key-appbar_diet"] button::after,
+            body:has(.diet-note) [class~="st-key-appbar_busy_diet"] button::after {
+                content: "";
+                position: absolute;
+                top: 5px;
+                left: calc(50% + 4px);
+                width: 9px;
+                height: 9px;
+                border-radius: 50%;
+                background: #d97706;
+                box-shadow: 0 0 0 2px #ffffff;
+            }
             [class~="st-key-appbar_busy"] button:disabled { opacity: 0.6; cursor: not-allowed; }
             @media (prefers-reduced-motion: no-preference) {
                 [class~="st-key-appbar"] button:active { transform: scale(0.97); transition: transform 90ms ease; }
@@ -4373,7 +4445,7 @@ def _render_header() -> None:
             body:has([data-testid="stSpinner"]) [class~="st-key-appbar"] button { opacity: 0.6; }
             @media (max-height: 700px) {
                 [class~="st-key-appbar"], [class~="st-key-appbar_busy"] {
-                    min-height: 3.25rem;
+                    min-height: 3.375rem;  /* 54 px: the tabs inside are 46 px high (the label no longer hangs below its box, see above) */
                     bottom: calc(0.375rem + env(safe-area-inset-bottom, 0px));
                     padding: 0.1875rem;
                 }
@@ -4386,13 +4458,45 @@ def _render_header() -> None:
                 [data-testid="stLayoutWrapper"]:has(> [class~="st-key-appbar_busy"]) { margin-bottom: -0.5rem; }
                 [class~="st-key-swipe_card"] { padding: 0.375rem; }
             }
-            /* Short phones: keep the first button above the bar. */
+            /* Short phones: the welcome screen is the hero, one line of advice and the bar, and it must not scroll. */
             @media (max-height: 600px) {
                 .hero-sub { display: none; }
+                /* 568 px tall (an iPhone SE): the card gives back ~35 px so that a filter chip fits above the bar too */
+                .hero { padding: 16px 16px 14px 16px; }
+                .hero-art { font-size: 2rem; }
+                .hero-title { font-size: 1.4rem; margin-top: 6px; }
+                .steps { margin-top: 12px; }
+                .hero-hint { margin-top: 10px; }
+            }
+            @media (max-height: 700px) and (max-width: 340px) {
+                .hero-sub { display: none; }  /* 320 px wide: the three steps wrap to two lines, so the long text goes one phone height earlier */
+            }
+            @media (max-height: 660px) {
+                .block-container:has(.diet-note) .hero-sub { display: none; }  /* the chip takes a line: the long text goes, the screen still does not scroll */
+            }
+            /* Nothing below the hero on the welcome screen: the page reserves only the bar (its footprint plus the badge corner), so
+               it does not scroll by an empty strip. */
+            .block-container:has(.hero-hint) {
+                padding-bottom: calc(4.25rem + env(safe-area-inset-bottom, 0px));
             }
             @media (forced-colors: active) {
                 [class~="st-key-appbar"], [class~="st-key-appbar_busy"] { border: 1px solid CanvasText; }
                 [class~="st-key-appbar"] button::before, [class~="st-key-appbar_busy"] button::before { background: ButtonText; forced-color-adjust: none; }
+                [class~="st-key-appbar"] [class~="st-key-appbar_scan"] button,
+                [class~="st-key-appbar_busy"] [class~="st-key-appbar_busy_scan"] button { border: 2px solid ButtonText; forced-color-adjust: none; background: Highlight; color: HighlightText; }
+                [class~="st-key-appbar"] [class~="st-key-appbar_scan"] button::before,
+                [class~="st-key-appbar_busy"] [class~="st-key-appbar_busy_scan"] button::before { background: HighlightText; }
+                body:has(.diet-note) [class~="st-key-appbar_diet"] button::after,
+                body:has(.diet-note) [class~="st-key-appbar_busy_diet"] button::after { background: Highlight; box-shadow: 0 0 0 2px Canvas; forced-color-adjust: none; }
+            }
+            @media (min-width: 641px) {
+                /* Wide window: centred, which clears the badge corner by itself ((641 - 400) / 2 is more than 15vw + 12px). */
+                [class~="st-key-appbar"], [class~="st-key-appbar_busy"] {
+                    left: 0;
+                    right: 0;
+                    margin: 0 auto;
+                    width: 400px !important;
+                }
             }
             @media print {
                 [class~="st-key-appbar"], [class~="st-key-appbar_busy"] { display: none; }
@@ -4521,6 +4625,33 @@ def _render_header() -> None:
             .gd-empty { padding: 14px; border: 1px dashed #cbd5e1; border-radius: 16px; background: #ffffff; font-size: 0.86rem; line-height: 1.45; color: #334155; }
             .gd-note { margin-top: 14px; padding: 10px 12px; border: 1px solid #bfdbfe; border-radius: 14px; background: #eff6ff; font-size: 0.82rem; line-height: 1.45; color: #1e3a5f; }
             .gd-fine { margin: 10px 0 0 0; font-size: 0.76rem; line-height: 1.45; color: #475569; }
+            /* The one-line chip beside the brand (under it when it does not fit) while a diet filter or pregnancy mode is on; a text, never hidden. */
+            .topbar {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 0.3rem 0.6rem;
+                margin: 0 0 0.4rem 0;
+            }
+            .topbar .brand { margin: 0; }
+            .diet-note {
+                display: inline-block;
+                max-width: 100%;
+                margin: 0;
+                padding: 2px 10px;
+                border: 1px solid #fcd34d;
+                border-radius: 999px;
+                background: #fffbeb;
+                font-size: 0.8rem;
+                font-weight: 800;
+                line-height: 1.35;
+                color: #78350f;
+                overflow-wrap: anywhere;
+            }
+            @media (forced-colors: active) { .diet-note { border: 1px solid ButtonText; } }
+            /* Diet sheet: what the chosen filter does, and the fine print. */
+            .diet-effect { margin: 6px 0 12px 0; padding: 10px 12px; border: 1px solid #fcd34d; border-radius: 14px; background: #fffbeb; font-size: 0.86rem; line-height: 1.45; color: #78350f; }
+            .diet-fine { margin: 10px 0 12px 0; font-size: 0.76rem; line-height: 1.45; color: #475569; }
             /* Recent scans: one card per scan. */
             .sc-sub { margin: 0 0 10px 0; font-size: 0.84rem; color: #475569; }
             .sc-card { margin: 0 0 10px 0; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 16px; background: #ffffff; }
@@ -4554,8 +4685,9 @@ def _render_header() -> None:
             .ab-ico { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 28px; height: 28px; border-radius: 9px; background: #ecfdf5; font-size: 0.95rem; }
             .ab-foot { margin-top: 4px; text-align: center; font-size: 0.76rem; color: #475569; }
         </style>
-        <div class="brand" role="heading" aria-level="1"><span class="brand-mark" aria-hidden="true">S</span>SuppSwipe</div>
-        """,
+        <div class="topbar"><div class="brand" role="heading" aria-level="1"><span class="brand-mark" aria-hidden="true">S</span>SuppSwipe</div>"""
+        + _diet_chip_html()
+        + "</div>",
         unsafe_allow_html=True,
     )
 
@@ -4644,6 +4776,7 @@ def _on_pregnancy_change() -> None:
 
 
 def _render_dietary_pills() -> None:
+    """The dietary filter chips. Drawn only inside the Diet sheet (the one place their widget key may exist)."""
     ordered_ids, profile_by_id = _dietary_profile_lookup()
     if not ordered_ids:
         return
@@ -4658,8 +4791,8 @@ def _render_dietary_pills() -> None:
         # Native chips wrap onto several lines on a phone; the old horizontal
         # radio squeezed every label into a one-letter-wide column.
         # The key is the chips' identity, so `default` only seeds them when they
-        # have no state yet. Passing it while the state is set (e.g. by Resume)
-        # makes Streamlit log a default-vs-state warning.
+        # have no state yet (the sheet drops it when it opens, see _open_sheet).
+        # Passing it while the state is set makes Streamlit log a default-vs-state warning.
         st.pills(
             "Dietary filter",
             options=ordered_ids,
@@ -4680,17 +4813,20 @@ def _render_dietary_pills() -> None:
             label_visibility="collapsed",
             format_func=label_for,
         )
+
+
+def _render_pregnancy_toggle() -> None:
+    """The pregnancy toggle with its explanation as visible text (a tooltip's "?" is hard to hit on a phone)."""
     st.toggle(
         "🤰 Pregnant or breastfeeding",
-        # As with the chips: no value while the key has state (set by Resume),
-        # which would log a default-vs-state warning.
+        # As with the chips: no value while the key has state, which would log a default-vs-state warning.
         value=False if "swipe_pregnant_toggle" in st.session_state else _pregnancy_mode(),
         key="swipe_pregnant_toggle",
         on_change=_on_pregnancy_change,
-        help=(
-            "Hides liver and other organ meats, marks nutrients usually kept as a supplement "
-            "in pregnancy and adds food-safety rules to the meal plan."
-        ),
+    )
+    st.caption(
+        "Hides liver and other organ meats, marks nutrients usually kept as a supplement in pregnancy "
+        "and adds food-safety rules to the meal plan."
     )
 
 
@@ -5157,24 +5293,34 @@ def _confirm_restart_dialog() -> None:
             st.rerun(scope="app")
 
 
+@st.dialog("Scan another supplement?", on_dismiss=_close_restart_dialog)
+def _confirm_scan_another_dialog() -> None:
+    """The bar's Scan item on the results: the page's own "Scan another supplement" button at the end of the plan starts at
+    once, but the bar is always within reach of a thumb, so it asks first (the plan on screen cannot be rebuilt from Recent scans)."""
+    sample = str((st.session_state.get("swipe_label_source") or {}).get("kind", "") or "") == "sample"
+    st.write(
+        "This clears the sample plan on screen. The sample is not saved."
+        if sample else "This clears the plan on screen. Your choices stay in Recent scans."
+    )
+    col_cancel, col_ok = st.columns(2)
+    with col_cancel:
+        if st.button("Cancel", width="stretch", key="swipe_scan_another_cancel"):
+            _close_restart_dialog()
+            st.rerun(scope="app")
+    with col_ok:
+        if st.button("Scan another", type="primary", width="stretch", key="swipe_scan_another_confirm"):
+            _request_analyze(results=True)  # what the page's own button does: reset, forget the saved scan, open the Analyze window
+            st.rerun(scope="app")
+
+
 def _on_results_screen() -> bool:
     """True once every card is decided and the plan dashboard is showing."""
     cards = st.session_state.get("swipe_cards") or []
     return bool(cards) and int(st.session_state.get("swipe_index", 0) or 0) >= len(cards)
 
 
-def _render_results_settings() -> None:
-    """The diet filter and pregnancy toggle, folded away under the plan.
-
-    Changing them still re-checks the swaps and the plan updates above."""
-    diet = _active_diet_label(_selected_dietary_profile()) or "no restriction"
-    label = f"Diet: {diet}" + (" · pregnant / breastfeeding" if _pregnancy_mode() else "")
-    with st.expander(label, icon="⚙️", key="swipe_results_settings"):
-        _render_dietary_pills()
-
-
 def _render_analyze_bar(results: bool = False, button: bool = True) -> None:
-    """The primary Scan button under the page. The three tools (guide, scans, about) live in the fixed bottom bar."""
+    """The primary Scan button under a finished plan. Everything else (Scan, Diet, Guide, Recent, About) is in the fixed bottom bar."""
     if button:
         _render_analyze_button(results=results, primary=results)
 
@@ -5203,7 +5349,7 @@ def _render_analyze_button(results: bool = False, primary: bool = False) -> None
         st.rerun()
 
 
-# --- Bottom bar: the three global tools as app-style tabs ------------------------------------------------------
+# --- Bottom bar: the five global tools as app-style tabs ------------------------------------------------------
 # Fixed to the bottom of every screen (welcome, cards, analyzing, results). A tap sets `swipe_sheet`; the sheet itself
 # (a dialog) is drawn at the end of the run, as the last branch of the one-dialog-at-a-time chain in _build_mobile_ui.
 # The flag stays set until the sheet is dismissed (like the other dialogs), so a stray rerun cannot close it.
@@ -5218,6 +5364,8 @@ def _render_app_bar(slot: Any = None, busy: bool = False) -> None:
         for name, label in _BAR_ITEMS:
             if busy:
                 st.button(label, key=f"{prefix}_{name}", width="stretch", disabled=True)
+            elif name == "scan":
+                st.button(label, key=f"{prefix}_{name}", width="stretch", on_click=_tap_scan)  # a sheet, or a question first
             else:
                 st.button(label, key=f"{prefix}_{name}", width="stretch", on_click=_open_sheet, args=(name,))
 
@@ -5269,7 +5417,137 @@ def _about_sheet() -> None:
             "Food data from USDA FoodData Central. Upper limits from EFSA and NIH ODS. "
             "Athlete targets from ISSN and ACSM/AND/DC."
         )
-        st.markdown(f"<div class='ab-foot'>Build {html.escape(BUILD_TAG)}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='ab-foot'>© mfitness92 · Build {html.escape(BUILD_TAG)}</div>", unsafe_allow_html=True)
+
+
+# --- Scan sheet (the bar's Scan item): the ways to start, formerly three buttons under the welcome card -------------------
+def _diet_summary(diet_id: Any, pregnant: bool) -> str:
+    """"Vegan · Pregnancy", "Vegan", "Pregnancy mode", or "" when nothing restricts the foods."""
+    _ids, by_id = _dietary_profile_lookup()
+    label = _active_diet_label(by_id.get(bb.normalize_lookup_key(str(diet_id or "none"))))
+    if label:
+        return label + (" · Pregnancy" if pregnant else "")
+    return "Pregnancy mode" if pregnant else ""
+
+
+def _resume_detail(saved: dict[str, Any], now: float | None = None) -> str:
+    """What "Resume last scan" brings back: "5 of 7 cards done · saved yesterday" (a sample says so). Elapsed days, not a date or a
+    time of day: the stamp is the server's clock."""
+    total = int(saved.get("total") or 0)
+    done = min(total, len(saved.get("decisions") or {}))
+    head = f"All {total} cards done" if total and done >= total else f"{done} of {total} cards done"
+    try:
+        days = int(max(0.0, float(time.time() if now is None else now) - float(saved.get("ts"))) // 86400)
+    except (TypeError, ValueError):
+        days = 0
+    when = "today" if days < 1 else "yesterday" if days == 1 else f"{days} days ago"
+    sample = str((saved.get("label_source") or {}).get("kind", "") or "") == "sample"
+    return f"{'Sample label · ' if sample else ''}{head} · saved {when}"
+
+
+def _start_sample_from_sheet() -> None:
+    """The sample button of the Scan sheet. The sheet opens only on the welcome screen or on cards nobody has decided on yet (a scan
+    half-way through or a plan on screen is asked about first, see _tap_scan), so replacing those cards loses nothing."""
+    if st.session_state.get("swipe_cards"):
+        _reset_swipe_state()
+        _forget_saved_scan()
+    st.session_state["swipe_last_auto_signature"] = ""  # the sample may have been the last input: its signature must not turn this into a no-op
+    if _stage_analysis_from_inputs(b"", b"", _SAMPLE_LABEL_TEXT):
+        _close_sheet()
+        st.rerun(scope="app")
+
+
+@st.dialog("Scan a supplement", on_dismiss=_close_sheet)
+def _scan_sheet() -> None:
+    cards = st.session_state.get("swipe_cards") or []
+    with st.container(key="sheet_scan"):
+        st.markdown(f"<div class='sc-sub' {_sheet_anchor('scan')}>Choose how to start.</div>", unsafe_allow_html=True)
+        if st.button(
+            "Analyze my supplement", icon=":material/photo_camera:", type="primary", width="stretch", key="swipe_scan_analyze"
+        ):
+            _scan_from_sheet()
+        st.caption("Photo, upload, barcode, link or pasted text.")
+        # Resume only on the welcome screen: once cards are on screen they are the saved scan.
+        saved = None if cards else _resumable_scan(st.session_state.get("_suppswipe_saved_scan"))
+        if saved is not None:
+            if st.button("Resume last scan", icon=":material/history:", width="stretch", key="swipe_resume_scan"):
+                _resume_saved_scan()
+                if st.session_state.pop("swipe_resume_failed", False):
+                    _forget_saved_scan()  # an unreadable scan is not offered again
+                    st.markdown(
+                        "<div class='sc-ask' role='alert'><b>Couldn't restore your last scan.</b>"
+                        "<p>Please scan the label again.</p></div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    _close_sheet()
+                    st.rerun(scope="app")
+            st.caption(_resume_detail(saved))
+            kept = _diet_summary(saved.get("diet"), saved.get("pregnant") is True)
+            if kept:
+                st.caption(f"That scan used: {kept}")
+        if st.button("Try with a sample label", icon=":material/auto_awesome:", width="stretch", key="swipe_try_sample"):
+            _start_sample_from_sheet()
+        st.caption(
+            "A demo label, not your product. It is not saved." + (" It replaces the cards on screen." if cards else "")
+        )
+        if saved is not None:
+            st.caption("Starting a new scan replaces the one you can resume.")
+
+
+# --- Diet sheet (the bar's Diet item): the dietary filter and the pregnancy toggle, formerly chips on the page ----------
+def _diet_chip_text() -> str:
+    """The one line the page shows while the filter or pregnancy mode is on ("" = nothing restricts the foods)."""
+    summary = _diet_summary(st.session_state.get("swipe_diet_profile_id", "none"), _pregnancy_mode())
+    return summary if summary in ("", "Pregnancy mode") else f"Diet: {summary}"
+
+
+def _diet_chip_html() -> str:
+    """The chip under the brand. Plain text, not a control: the bar's Diet item is the way in, and a text cannot interrupt a running
+    analysis. The Diet item's dot (CSS) follows the presence of this element."""
+    text = _diet_chip_text()
+    return f"<div class='diet-note'><span aria-hidden='true'>🥗</span> {html.escape(text)}</div>" if text else ""
+
+
+def _diet_effect_html() -> str:
+    """What the chosen filter does, in the profile's own words (it follows the chips live: the dialog reruns alone)."""
+    profile = _selected_dietary_profile()
+    label = _active_diet_label(profile)
+    if not label:
+        return "<div class='diet-effect' aria-live='polite'><b>No restriction.</b> No foods are screened out.</div>"
+    description = html.escape(str((profile or {}).get("description", "") or "").strip())
+    return f"<div class='diet-effect' aria-live='polite'><b>{html.escape(label)}.</b> {description}</div>"
+
+
+@st.dialog("Diet & pregnancy", on_dismiss=_close_sheet)
+def _diet_sheet() -> None:
+    with st.container(key="sheet_diet"):
+        if not _dietary_profile_lookup()[0]:
+            st.markdown(f"<div class='sc-sub' {_sheet_anchor('diet')}>Diet filters are unavailable right now.</div>", unsafe_allow_html=True)
+            return
+        st.markdown(
+            f"<div class='sc-sub' {_sheet_anchor('diet')}>Foods that don't fit are left out of your suggestions and your plan.</div>",
+            unsafe_allow_html=True,
+        )
+        _render_dietary_pills()
+        st.markdown(_diet_effect_html(), unsafe_allow_html=True)
+        _render_pregnancy_toggle()
+        if st.session_state.get("swipe_decisions"):
+            st.caption(
+                "Your choices so far are kept. A swap that doesn't fit the new filter is flagged and left out of your plan "
+                "until you pick another food."
+            )
+        st.markdown(
+            "<div class='diet-fine'>A guide based on food names and categories, not a certification or an allergy safeguard. "
+            "If you have an allergy, check the product label.</div>",
+            unsafe_allow_html=True,
+        )
+        # A chip tapped here reruns only this dialog (its callbacks already updated the mirrors). The page behind follows when the
+        # sheet is dismissed (X, Esc, tap outside) or on Done: both rerun the app. An immediate st.rerun(scope="app") here would
+        # rebuild the dialog under the finger (measured: the dialog node is replaced, focus and animation restart).
+        if st.button("Done", type="primary", width="stretch", key="swipe_diet_done"):
+            _close_sheet()
+            st.rerun(scope="app")
 
 
 def _render_label_source_notice() -> None:
@@ -5631,12 +5909,6 @@ def _resumable_scan(saved: Any, now: float | None = None) -> dict[str, Any] | No
     }
 
 
-def _resume_label(saved: dict[str, Any]) -> str:
-    total = int(saved.get("total") or 0)
-    done = min(total, len(saved.get("decisions") or {}))
-    return f"↩ Resume your last scan ({done} of {total} cards done)"
-
-
 def _restore_scan(state: Any, saved: dict[str, Any]) -> bool:
     """Rebuild the cards from the saved label text and re-apply the decisions.
     A saved swap whose food is no longer among the card's foods is dropped (the
@@ -5669,7 +5941,11 @@ def _restore_scan(state: Any, saved: dict[str, Any]) -> bool:
     except Exception:
         index = 0
     sig = _analysis_input_signature(b"", b"", text)
-    diet = str(saved.get("diet", "none") or "none")
+    # A filter that is on stays on: Resume never relaxes it. The scan's own filter applies only where none is set now, and the
+    # pregnancy setting is on if either side has it. (`_resume_filter_note` tells the visitor when the two differ.)
+    current_diet = str(state.get("swipe_diet_profile_id", "none") or "none")
+    saved_diet = str(saved.get("diet", "none") or "none")
+    diet = current_diet if bb.normalize_lookup_key(current_diet) not in ("", "none") else saved_diet
     state["swipe_cards"] = cards
     state["swipe_analysis_text"] = text
     state["swipe_components"] = components
@@ -5679,21 +5955,40 @@ def _restore_scan(state: Any, saved: dict[str, Any]) -> bool:
     state["swipe_index"] = max(0, min(len(cards), index))
     state["swipe_edit_return"] = False
     state["swipe_diet_profile_id"] = diet
-    state["swipe_diet_pills"] = diet  # keep the filter chips in step
-    pregnant = saved.get("pregnant", False) is True  # strictly a JSON true: bool("false") would be True
+    pregnant = saved.get("pregnant", False) is True or bool(state.get("swipe_pregnant", False))  # strictly a JSON true: bool("false") would be True
     state["swipe_pregnant"] = pregnant
-    state["swipe_pregnant_toggle"] = pregnant  # and the toggle
+    # The chips and the toggle exist only inside the Diet sheet, and a value written into the key of a widget that is not on screen
+    # is not applied when it appears later (the sheet then showed "No restriction" with the filter on). The mirrors above are what
+    # counts; the sheet is seeded from them when it opens.
+    state.pop("swipe_diet_pills", None)
+    state.pop("swipe_pregnant_toggle", None)
     state["swipe_last_auto_signature"] = sig
     if saved.get("recorded"):
         state["swipe_history_recorded_sig"] = sig  # already in the scan history
     return True
 
 
+def _resume_filter_note(saved: dict[str, Any], state: Any) -> str:
+    """After a resume: what filter the scan now runs with, when there is one (a toast). When it differs from the one the scan was saved with
+    (the visitor had set another before resuming) both are named, so a filter never changes without a word."""
+    now = _diet_summary(state.get("swipe_diet_profile_id"), bool(state.get("swipe_pregnant", False)))
+    then = _diet_summary(saved.get("diet"), saved.get("pregnant") is True)
+    if now == then:
+        return f"Resumed with the filter from that scan: {now}." if now else ""
+    return f"Resumed with your filter: {now or 'none'}. That scan was saved with: {then or 'no filter'}."
+
+
 def _resume_saved_scan() -> None:
-    """Button callback for "Resume your last scan"."""
+    """The Scan sheet's "Resume last scan": rebuild the cards, set `swipe_resume_failed` when that is not possible. A filter note
+    (see _resume_filter_note) is shown as a toast by the next full run: a toast sent from inside the sheet (a fragment) that then
+    asks for an app-wide rerun is dropped about two times in three."""
     saved = _resumable_scan(st.session_state.get("_suppswipe_saved_scan"))
     if saved is None or not _restore_scan(st.session_state, saved):
         st.session_state["swipe_resume_failed"] = True
+        return
+    note = _resume_filter_note(saved, st.session_state)
+    if note:
+        st.session_state["_suppswipe_resume_note"] = note
 
 
 def _forget_saved_scan() -> None:
@@ -5746,23 +6041,11 @@ def _render_card() -> None:
             "<div class='step' role='listitem'><span aria-hidden='true'>📸</span><b>Scan</b><small>your label</small></div>"
             "<div class='step' role='listitem'><span aria-hidden='true'>👆</span><b>Swipe</b><small>keep or replace</small></div>"
             "<div class='step' role='listitem'><span aria-hidden='true'>🥗</span><b>Eat</b><small>your food plan</small></div>"
-            "</div></div>",
+            "</div>"
+            "<div class='hero-hint'>Tap <b>Scan</b> below to start <span aria-hidden='true'>↓</span></div></div>",
             unsafe_allow_html=True,
         )
-        _render_analyze_button(primary=True)
-        saved_scan = _resumable_scan(st.session_state.get("_suppswipe_saved_scan"))
-        if saved_scan is not None:
-            st.button(
-                _resume_label(saved_scan),
-                width="stretch",
-                key="swipe_resume_scan",
-                on_click=_resume_saved_scan,
-            )
-        if st.session_state.pop("swipe_resume_failed", False):
-            st.caption("Couldn't restore your last scan — please scan the label again.")
-        if st.button("✨ Try it with a sample label", width="stretch", key="swipe_try_sample"):
-            if _stage_analysis_from_inputs(b"", b"", _SAMPLE_LABEL_TEXT):
-                st.rerun()
+        # No button on this screen: the ways to start (Analyze, Resume, Sample) are in the Scan sheet of the bottom bar (_scan_sheet).
         st.caption(
             "General information, not medical advice. Talk to a doctor before stopping a supplement "
             "you were prescribed, or if you are pregnant, ill or on medication."
@@ -5876,7 +6159,7 @@ def _render_card() -> None:
                 if prof_label and prof_label.lower() not in ("no restriction", "none"):
                     st.caption(
                         f"No whole-food alternatives fit the “{prof_label}” filter. "
-                        "Switch the dietary filter below to see options."
+                        "Tap Diet in the bottom bar to change the filter."
                     )
                 else:
                     st.caption("No whole-food alternatives available for this card.")
@@ -7091,15 +7374,13 @@ def _build_mobile_ui() -> None:
     _render_app_bar()
     _render_card()
     if _on_results_screen():
-        _render_results_settings()
-        _render_analyze_bar(results=True)
-    else:
-        _render_dietary_pills()
-        # On the welcome screen the main button sits in the hero (_render_card).
-        _render_analyze_bar(button=bool(st.session_state.get("swipe_cards")))
+        _render_analyze_bar(results=True)  # the Scan button at the end of a finished plan; elsewhere the bar's Scan item does it
+    resume_note = st.session_state.pop("_suppswipe_resume_note", "")
+    if resume_note:
+        st.toast(resume_note)  # from this full run, not from the sheet: see _resume_saved_scan
     # A dialog stays requested until it is closed (Cancel, X, or its action).
     if st.session_state.get("swipe_confirm_restart"):
-        _confirm_restart_dialog()
+        (_confirm_scan_another_dialog if _on_results_screen() else _confirm_restart_dialog)()
     elif st.session_state.get("swipe_open_analyze"):
         _analyze_dialog()
     elif _plan_item_dialog_requested():
@@ -7114,7 +7395,8 @@ def _build_mobile_ui() -> None:
         show_debug = False
     if show_debug:
         _render_debug_panel()
-    st.markdown("<div class='brand-foot'>© mfitness92</div>", unsafe_allow_html=True)
+    if st.session_state.get("swipe_cards"):  # the welcome screen is the hero and the bar; its © line is in About
+        st.markdown("<div class='brand-foot'>© mfitness92</div>", unsafe_allow_html=True)
     _sync_scan_history_with_browser()
 
 

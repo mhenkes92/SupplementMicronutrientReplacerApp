@@ -295,7 +295,7 @@ def test_a_damaged_or_huge_saved_scan_is_not_offered_and_never_raises(sw):
     assert sw._resumable_scan(good, now=1010.0) is good
     fixed = sw._resumable_scan({**base, "decisions": 5, "label_source": 5}, now=1010.0)
     assert fixed["decisions"] == {} and fixed["label_source"] == {}
-    assert sw._resume_label(fixed)  # does not raise
+    assert sw._resume_detail(fixed)  # does not raise
     assert sw._resumable_scan({**base, "text": "Vitamin C 80 mg\n" * 5000}, now=1010.0) is None  # beyond the label size cap
 
 
