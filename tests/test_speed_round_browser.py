@@ -21,7 +21,8 @@ from types import SimpleNamespace
 import pytest
 
 from test_ux_browser import (  # noqa: F401  (fixtures are used by name)
-    _FAKE_ROUTING, ROOT, _free_port, _mixed_results, browser, card, card_name, finish_all_cards, settle, start_sample, wait_name_change,
+    _FAKE_ROUTING, ROOT, _free_port, _mixed_results, browser, card, card_name, choose_diet, close_sheet, finish_all_cards, open_diet_sheet,
+    settle, start_sample, wait_name_change,
 )
 
 WRITE_DELAY = 0.12  # seconds after every streamed line: about 70 lines, so the whole answer takes about 8 s
@@ -162,8 +163,10 @@ def test_a_manual_meal_plan_shows_its_first_words_while_it_is_written(browser, s
     server.fake.write_delay = WRITE_DELAY
     ctx, page = _new_page(browser, server)
     try:
+        open_diet_sheet(page)  # the pregnancy toggle lives in the Diet sheet of the bottom bar
         page.get_by_text("Pregnant or breastfeeding").click()
         settle(page)
+        close_sheet(page)
         _mixed_results(page)
         page.get_by_role("tab", name="🍽️ Meals").click()
         button = page.get_by_role("button", name="Generate my meals")
@@ -232,8 +235,7 @@ def test_the_finished_plan_follows_the_end_of_the_stream_closely(browser, speed_
         try:
             start_sample(page)
             if diet:
-                page.locator('[data-testid="stButtonGroup"] button', has_text=diet).click()
-                settle(page)
+                choose_diet(page, diet)
             name = card_name(page)
             card(page).locator("#btnRepl").click()
             wait_name_change(page, name)
