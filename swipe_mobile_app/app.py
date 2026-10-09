@@ -4589,6 +4589,16 @@ def _render_header() -> None:
                     color: #334155;
                 }
             }
+            /* A sheet covers the bar item that opened it. A second tap on that item (a double tap, or an impatient re-tap while the page is
+               slow) used to land on the sheet: on a short phone the pregnancy toggle sits right there and was flipped, even switched OFF.
+               The sheet's body ignores taps for the first 450 ms; the tap falls through to the bar, which only opens the sheet again. */
+            @keyframes ss-sheet-arm {
+                from { pointer-events: none; }
+                to { pointer-events: none; }
+            }
+            [data-testid="stDialog"]:has([class*="st-key-sheet_"]) [role="dialog"] > div:last-child {
+                animation: ss-sheet-arm 450ms linear;
+            }
             @keyframes ss-sheet-in {
                 from { transform: translateY(32px); opacity: 0.4; }
                 to { transform: none; opacity: 1; }
