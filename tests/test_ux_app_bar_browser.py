@@ -537,6 +537,13 @@ def test_the_ask_ai_chat_box_is_not_under_the_bar(ai_server, page):
 def test_the_bar_is_a_centred_pill_with_room_for_the_badge_corner_on_both_sides(browser, server, size):
     ctx, pg = new_page(browser, server, size)
     try:
+        pg.locator(BAR_BUTTON).nth(2).wait_for(timeout=10000)
+        # The bar's styling arrives with the header's style block: measure only once it is the fixed pill (on a loaded machine
+        # the first paint was a plain strip at the top of the page).
+        pg.wait_for_function(
+            "() => { const e = document.querySelector('.st-key-appbar'); return !!e && getComputedStyle(e).position === 'fixed'; }",
+            timeout=10000,
+        )
         bar = rect(pg, BAR)
         assert abs(bar["x"] - (bar["vw"] - bar["right"])) <= 1, bar  # centred
         assert bar["x"] >= 0.15 * bar["vw"] + 11, bar  # 15 % badge width + 12 px, on both sides
