@@ -4311,10 +4311,12 @@ def _render_header() -> None:
             }
             [class~="st-key-appbar"] button p,
             [class~="st-key-appbar_busy"] button p {
-                font-size: 0.75rem;
+                font-size: min(0.75rem, 4.2vw);  /* at 200 % text on a 320 px phone three labels of 0.75rem do not fit: never below the normal 12 px there */
                 font-weight: 700;
                 line-height: 0.8125rem;
-                white-space: nowrap;
+                white-space: nowrap !important;  /* Streamlit's own `.stButton button [data-testid=stMarkdownContainer] p` sets `normal` and is more specific */
+                word-break: normal !important;
+                overflow-wrap: normal !important;
                 margin: 0;
             }
             [class~="st-key-appbar"] button:hover { background: transparent; color: #334155; }

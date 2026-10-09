@@ -694,3 +694,23 @@ def test_the_clear_history_question_is_announced(page):
     dialog = page.locator(DIALOG)
     dialog.get_by_role("button", name="Clear history").click()
     dialog.locator("[role=alert]").get_by_text("Delete all 1 saved scan?").wait_for(timeout=5000)
+
+
+@pytest.mark.parametrize("size", [(320, 640), (360, 640)])
+def test_the_bar_labels_stay_on_one_line_at_double_text_size(browser, server, size):
+    """Streamlit's own rule for a button's markdown paragraph (white-space: normal) is more specific than the bar's; at 200 % text
+    on a 320 px phone the labels used to break mid-word ("Guid" / "e") and the bar grew to 150 px."""
+    ctx, pg = new_page(browser, server, size)
+    try:
+        pg.locator(BAR_BUTTON).nth(2).wait_for(timeout=10000)
+        pg.add_style_tag(content="html { font-size: 200% !important; }")
+        pg.wait_for_timeout(400)
+        lines = pg.evaluate(
+            "() => [...document.querySelectorAll('[class~=\"st-key-appbar\"] button p')].map(p => {"
+            " const r = document.createRange(); r.selectNodeContents(p); return r.getClientRects().length; })"
+        )
+        assert lines == [1, 1, 1], lines
+        assert rect(pg, BAR)["h"] <= 120, rect(pg, BAR)
+        assert pg.evaluate("document.scrollingElement.scrollWidth") <= size[0]
+    finally:
+        ctx.close()
