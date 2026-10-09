@@ -1260,8 +1260,8 @@ def _portion_core_for_target(
 
 
 # --- Daily micronutrient targets ---------------------------------------------
-# One authoritative table used by both the per-card portion hint and the final
-# "Athlete RDA guide". "rda" = general adult RDA/AI (NIH ODS); "athlete" = a
+# One authoritative table used by both the per-card portion hint and the
+# "Athlete RDA guide" sheet. "rda" = general adult RDA/AI (NIH ODS); "athlete" = a
 # representative daily target for active people (ISSN 2017; ACSM/AND/DC 2016),
 # raised where training increases needs or sweat losses. Units are chosen so
 # they normalise cleanly against USDA food units for the portion math. "keys"
@@ -3025,7 +3025,7 @@ _MAX_LABEL_CHARS = 20_000
 
 
 def _clean_history_entry(entry: Any) -> dict[str, Any] | None:
-    """A scan-history entry from the browser's storage, in the shape the popover needs, or None.
+    """A scan-history entry from the browser's storage, in the shape the Recent scans sheet needs, or None.
     Whatever a device holds (an older build's data, hand-edited or damaged values) must never
     make every run of the app fail."""
     if not isinstance(entry, dict):
@@ -3132,31 +3132,169 @@ def _record_scan_to_history(decisions: dict[str, dict[str, Any]], diet_label: st
     st.session_state["swipe_history_recorded_sig"] = sig
 
 
-def _render_scan_history_popover() -> None:
-    history = _load_scan_history()
-    if not history:
+# --- The three sheets (Guide, Scans, About): which one is requested ---------------------------------------
+# A sheet is a dialog drawn at the end of the run, as the last branch of the one-dialog-at-a-time chain in _build_mobile_ui.
+# `swipe_sheet` stays set until the sheet is dismissed (like the other dialogs' flags), so a stray rerun cannot close it.
+_SHEET_TITLES = {"guide": "Athlete RDA guide", "scans": "Recent scans", "about": "About & privacy"}
+_BAR_ITEMS = (("guide", "Guide"), ("scans", "Scans"), ("about", "About"))
+
+
+def _analysis_in_flight() -> bool:
+    return bool(st.session_state.get("swipe_is_analyzing", False)) and isinstance(st.session_state.get("swipe_pending_request"), dict)
+
+
+def _open_sheet(name: str) -> None:
+    """Bar button callback. The user asked for this sheet, so an older request (a window that was never answered) is dropped:
+    the dialogs are exclusive and the older ones would win. Never while an analysis runs (the busy buttons are disabled anyway)."""
+    if _analysis_in_flight():
         return
-    with st.popover(f"🕘 Recent scans ({len(history)})", width="stretch"):
-        st.caption("Your past scans, saved only in this browser — newest first.")
-        for entry in reversed(history[-15:]):
-            ts = str(entry.get("ts", "") or "")
-            diet = str(entry.get("diet", "") or "")
-            kept = entry.get("kept", []) or []
-            replaced = entry.get("replaced", []) or []
-            head = f"**{ts}** · {len(replaced)} swapped / {len(kept)} kept"
-            if diet and diet.lower() not in ("no restriction", "none"):
-                head += f" · {diet}"
-            st.markdown(head)
-            for r in replaced:
-                st.markdown(f"- 🥗 {_nutrient_title(r.get('component'))} → {r.get('food', '')} ({r.get('amount', '')})")
-            for k in kept:
-                st.markdown(f"- 💊 {_nutrient_title(k.get('component'))} {k.get('dose', '')}".rstrip())
-            st.divider()
-        if st.button("Clear history", width="stretch", key="swipe_clear_history"):
-            st.session_state["suppswipe_scan_history"] = []
-            st.session_state["_suppswipe_history_clear"] = True
-            _forget_saved_scan()
-            st.rerun()
+    st.session_state["swipe_confirm_restart"] = False
+    st.session_state["swipe_open_analyze"] = False
+    st.session_state["swipe_plan_item"] = None
+    st.session_state.pop("swipe_guide_focus", None)
+    st.session_state["swipe_sheet"] = name
+
+
+def _close_sheet() -> None:
+    """Also the sheets' on_dismiss (X, Esc, tap outside): the request stays until one of them clears it."""
+    st.session_state["swipe_sheet"] = None
+    for key in ("swipe_guide_focus", "swipe_scans_confirm", "swipe_scans_more"):
+        st.session_state.pop(key, None)
+
+
+def _sheet_requested() -> bool:
+    name = st.session_state.get("swipe_sheet")
+    if name is None:
+        return False
+    if name not in _SHEET_TITLES:  # a stale or damaged flag opens nothing
+        _close_sheet()
+        return False
+    return True
+
+
+def _show_sheet() -> None:
+    {"guide": _guide_sheet, "scans": _scans_sheet, "about": _about_sheet}[st.session_state["swipe_sheet"]]()
+
+
+def _sheet_anchor(name: str) -> str:
+    """Attributes for the first block of a sheet. Streamlit focuses the dialog itself and the focus trap leaves Tab nothing but
+    the X, while the body is a scroller *inside* the dialog: arrow keys and PageDown scroll only the ancestors of the focused
+    element. A focusable block inside the scroller gives the keyboard something to scroll."""
+    return f"tabindex='0' role='region' aria-label='{html.escape(_SHEET_TITLES[name])} content'"
+
+
+# --- Recent scans sheet (opened from the bottom bar) -------------------------------------------------------
+_SCANS_PAGE = 10  # newest scans shown at first; "Show older scans" adds the rest (the device keeps _HISTORY_MAX)
+
+
+def _scan_date(ts: Any) -> str:
+    """"2026-10-06 19:40" -> "6 Oct 2026". Date only: the stamp is the server's clock (UTC on Streamlit Cloud), so a time of day would be wrong for most visitors."""
+    try:
+        day = datetime.datetime.strptime(str(ts or "")[:10], "%Y-%m-%d")
+    except ValueError:
+        return str(ts or "")[:10] or "Earlier"
+    return f"{day.day} {day.strftime('%b %Y')}"
+
+
+def _scan_card_html(entry: dict[str, Any]) -> str:
+    """One past scan as a card: date, diet, the nutrients, two counts and the choices behind a disclosure (no widget, so
+    opening one never reruns the sheet)."""
+    replaced = [r for r in entry.get("replaced", []) or [] if isinstance(r, dict)]
+    kept = [k for k in entry.get("kept", []) or [] if isinstance(k, dict)]
+    names = [_nutrient_title(r.get("component")) for r in replaced] + [_nutrient_title(k.get("component")) for k in kept]
+    preview = ", ".join(names[:3]) + (f" + {len(names) - 3} more" if len(names) > 3 else "")
+    diet = str(entry.get("diet", "") or "")
+    diet_html = f"<span class='sc-diet'>{html.escape(diet)}</span>" if diet and diet.lower() not in ("no restriction", "none") else ""
+    choices = "".join(
+        f"<div class='sc-li'>🥗 <b>{html.escape(_nutrient_title(r.get('component')))}</b> → {html.escape(str(r.get('food', '') or ''))}"
+        + (f" ({html.escape(str(r.get('amount', '') or ''))})" if r.get("amount") else "")
+        + "</div>"
+        for r in replaced
+    ) + "".join(
+        f"<div class='sc-li'>💊 <b>{html.escape(_nutrient_title(k.get('component')))}</b> {html.escape(str(k.get('dose', '') or ''))}</div>"
+        for k in kept
+    )
+    return (
+        "<div class='sc-card'>"
+        f"<div class='sc-head'><span class='sc-date'>{html.escape(_scan_date(entry.get('ts')))}</span>{diet_html}</div>"
+        f"<div class='sc-prev'>{html.escape(preview)}</div>"
+        "<div class='sc-chips'>"
+        f"<span class='sc-chip' data-tone='swap'>🥗 {len(replaced)} swapped</span>"
+        f"<span class='sc-chip' data-tone='keep'>💊 {len(kept)} kept</span></div>"
+        + (f"<details><summary>See your choices</summary>{choices}</details>" if choices else "")
+        + "</div>"
+    )
+
+
+def _ask_clear_history() -> None:
+    st.session_state["swipe_scans_confirm"] = True
+
+
+def _keep_history() -> None:
+    st.session_state.pop("swipe_scans_confirm", None)
+
+
+def _show_older_scans() -> None:
+    st.session_state["swipe_scans_more"] = True
+
+
+def _scan_from_sheet() -> None:
+    """The empty state's button: leave the sheet and do what the page's Scan button does. From inside the dialog, so the
+    page needs the app-wide rerun."""
+    on_results = _on_results_screen()
+    _close_sheet()
+    _request_analyze(results=on_results)
+    st.rerun(scope="app")
+
+
+@st.dialog("Recent scans", on_dismiss=_close_sheet)
+def _scans_sheet() -> None:
+    history = _load_scan_history()  # a button in this dialog reruns only this function: read the list fresh
+    with st.container(key="sheet_scans"):
+        if not history:
+            st.session_state.pop("swipe_scans_confirm", None)
+            st.markdown(
+                "<div class='sc-empty'><div class='sc-ic' aria-hidden='true'>🕘</div>"
+                "<div class='sc-none' role='heading' aria-level='3'>No scans yet</div>"
+                "<p>Finished scans appear here, saved only in this browser. The sample label is not saved.</p></div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("Scan a supplement", type="primary", width="stretch", key="swipe_scans_cta"):
+                _scan_from_sheet()
+            return
+        st.markdown(
+            f"<div class='sc-sub' {_sheet_anchor('scans')}>{len(history)} saved in this browser, newest first.</div>"
+            if len(history) > 1 else f"<div class='sc-sub' {_sheet_anchor('scans')}>1 saved in this browser.</div>",
+            unsafe_allow_html=True,
+        )
+        newest_first = list(reversed(history))
+        shown = newest_first if st.session_state.get("swipe_scans_more") else newest_first[:_SCANS_PAGE]
+        st.markdown("".join(_scan_card_html(e) for e in shown), unsafe_allow_html=True)
+        older = len(newest_first) - len(shown)
+        if older > 0:
+            st.button(
+                f"Show {older} older scan" + ("s" if older > 1 else ""), width="stretch", key="swipe_scans_older",
+                on_click=_show_older_scans,
+            )
+        if not st.session_state.get("swipe_scans_confirm"):
+            st.button("Clear history", width="stretch", key="swipe_clear_history", on_click=_ask_clear_history)
+            return
+        st.markdown(
+            f"<div class='sc-ask' role='alert'><b>Delete all {len(history)} saved scan{'s' if len(history) > 1 else ''}?</b>"
+            "<p>They are removed from this browser, and so is the scan you could resume.</p></div>",
+            unsafe_allow_html=True,
+        )
+        col_keep, col_delete = st.columns(2)
+        with col_keep:
+            st.button("Keep them", width="stretch", key="swipe_clear_history_cancel", on_click=_keep_history)
+        with col_delete:
+            if st.button("Delete", type="primary", width="stretch", key="swipe_clear_history_confirm"):
+                st.session_state["suppswipe_scan_history"] = []
+                st.session_state["_suppswipe_history_clear"] = True
+                _forget_saved_scan()
+                st.session_state.pop("swipe_scans_confirm", None)
+                st.toast("Scan history cleared")
+                st.rerun(scope="app")
 
 
 def _excluded_swaps_caption(excluded: list[dict[str, Any]], diet_label: str) -> None:
@@ -4084,6 +4222,303 @@ def _render_header() -> None:
                 from { transform: rotate(0deg); }
                 to { transform: rotate(360deg); }
             }
+            /* Bottom bar: the three global tools as tabs, fixed on every screen. The keyed horizontal container is
+               drawn first in each run; the busy twin is its dead copy while an analysis runs. Both sides keep clear of
+               the floating Manage app badge that Streamlit Cloud draws over the corner, so the pill stays centred. */
+            [class~="st-key-appbar"],
+            [class~="st-key-appbar_busy"] {
+                --ss-bar-gutter: calc(15vw + 12px);  /* the one knob for the Cloud badge corner */
+                --ss-ico-guide: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6.5 7v10M3 9.5v5M17.5 7v10M21 9.5v5M6.5 12h11'/%3E%3C/svg%3E");
+                --ss-ico-scans: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3 9'/%3E%3Cpath d='M3 4v5h5'/%3E%3Cpath d='M12 7.5V12l3 2'/%3E%3C/svg%3E");
+                --ss-ico-about: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 21.5s8-3.8 8-9.7V5.2L12 2.5 4 5.2v6.6c0 5.9 8 9.7 8 9.7z'/%3E%3Cpath d='M9 12l2.2 2.2L15.5 10'/%3E%3C/svg%3E");
+                position: fixed;
+                z-index: 999980;
+                left: 0;
+                right: 0;
+                margin: 0 auto;
+                bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+                width: min(calc(100% - 2 * var(--ss-bar-gutter)), 320px) !important;
+                min-height: 3.5rem;
+                box-sizing: border-box;
+                padding: 0.25rem;
+                gap: 0 !important;
+                flex-direction: row !important;
+                flex-wrap: nowrap !important;
+                align-items: stretch !important;
+                background: #ffffff;
+                border: 1px solid rgba(15, 23, 42, 0.08);
+                border-radius: 1.75rem;
+                box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14), 0 2px 6px rgba(15, 23, 42, 0.08);
+                opacity: 1 !important;
+                transition: none !important;
+            }
+            /* The zero-height wrapper of the bar would add one flex gap above the brand. */
+            [data-testid="stLayoutWrapper"]:has(> [class~="st-key-appbar"]),
+            [data-testid="stLayoutWrapper"]:has(> [class~="st-key-appbar_busy"]) {
+                margin-bottom: -1rem;
+            }
+            [class~="st-key-appbar"] > [data-testid="stElementContainer"],
+            [class~="st-key-appbar_busy"] > [data-testid="stElementContainer"] {
+                flex: 1 1 0 !important;
+                min-width: 0 !important;
+                width: auto !important;
+                opacity: 1 !important;
+                transition: none !important;
+            }
+            [class~="st-key-appbar_guide"], [class~="st-key-appbar_busy_guide"] { --ss-ico: var(--ss-ico-guide); }
+            [class~="st-key-appbar_scans"], [class~="st-key-appbar_busy_scans"] { --ss-ico: var(--ss-ico-scans); }
+            [class~="st-key-appbar_about"], [class~="st-key-appbar_busy_about"] { --ss-ico: var(--ss-ico-about); }
+            [class~="st-key-appbar"] [data-testid="stButton"],
+            [class~="st-key-appbar_busy"] [data-testid="stButton"] {
+                width: 100%;
+                height: 100%;
+            }
+            [class~="st-key-appbar"] button,
+            [class~="st-key-appbar_busy"] button {
+                width: 100%;
+                height: 100%;
+                min-height: 3rem;
+                padding: 0 2px;
+                border: 0;
+                border-radius: 1.5rem;
+                background: transparent;
+                color: #334155;
+                box-shadow: none;
+                touch-action: manipulation;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                gap: 2px;
+            }
+            /* The icon is a mask on the button itself, so the accessible name stays the plain label. */
+            [class~="st-key-appbar"] button::before,
+            [class~="st-key-appbar_busy"] button::before {
+                content: "";
+                display: block;
+                width: 1.375rem;
+                height: 1.375rem;
+                flex: 0 0 1.375rem;
+                background: currentColor;
+                -webkit-mask: var(--ss-ico) center / contain no-repeat;
+                mask: var(--ss-ico) center / contain no-repeat;
+            }
+            [class~="st-key-appbar"] button > div,
+            [class~="st-key-appbar"] button > div > span,
+            [class~="st-key-appbar_busy"] button > div,
+            [class~="st-key-appbar_busy"] button > div > span {
+                display: contents;
+            }
+            [class~="st-key-appbar"] button p,
+            [class~="st-key-appbar_busy"] button p {
+                font-size: 0.75rem;
+                font-weight: 700;
+                line-height: 0.8125rem;
+                white-space: nowrap;
+                margin: 0;
+            }
+            [class~="st-key-appbar"] button:hover { background: transparent; color: #334155; }
+            @media (hover: hover) {
+                [class~="st-key-appbar"] button:hover { background: rgba(16, 185, 129, 0.08); }
+            }
+            [class~="st-key-appbar"] button:active { background: rgba(16, 185, 129, 0.18); color: #065f46; }
+            [class~="st-key-appbar"] button:focus-visible { outline-offset: -3px !important; }
+            [class~="st-key-appbar_busy"] button:disabled { opacity: 0.6; cursor: not-allowed; }
+            @media (prefers-reduced-motion: no-preference) {
+                [class~="st-key-appbar"] button:active { transform: scale(0.97); transition: transform 90ms ease; }
+            }
+            /* Room for the bar when something is scrolled into view, and no bar over the field being typed in
+               (the on-screen keyboard would put it on top of the field). Only controls that open a keyboard count: a
+               toggle, a radio or a dropdown keeps focus after a tap and must not hide the bar. Both rules start at body:
+               a popover's body is mounted outside the app root, so an app-scoped selector would never see its field. */
+            [data-testid="stMain"] { scroll-padding-bottom: 5rem; }
+            body:has(textarea:focus, input:is(:not([type]), [type="text"], [type="search"], [type="number"], [type="email"], [type="url"], [type="tel"], [type="password"]):not([role="combobox"]):focus) [class~="st-key-appbar"] { display: none; }
+            /* A long run (an Ask AI answer, a meal plan being cooked) blocks the script: a tap on the bar would rerun it and throw the work away.
+               The spinner can sit in the page or in the card's Ask AI popover (a portal on the body). */
+            body:has([data-testid="stSpinner"]) [class~="st-key-appbar"] { pointer-events: none; }
+            body:has([data-testid="stSpinner"]) [class~="st-key-appbar"] button { opacity: 0.6; }
+            @media (max-height: 700px) {
+                [class~="st-key-appbar"], [class~="st-key-appbar_busy"] {
+                    min-height: 3.25rem;
+                    bottom: calc(0.375rem + env(safe-area-inset-bottom, 0px));
+                    padding: 0.1875rem;
+                }
+                [class~="st-key-appbar"] button, [class~="st-key-appbar_busy"] button { min-height: 2.75rem; }
+                /* The bar takes ~60 px of a short screen: win it back above the card (the Keep / Replace row is the card's
+                   last line), with tighter gaps and a thinner frame, so the row clears the bar on more phones. */
+                .block-container { padding-top: 0.4rem; }
+                [data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] { gap: 0.5rem; }
+                [data-testid="stLayoutWrapper"]:has(> [class~="st-key-appbar"]),
+                [data-testid="stLayoutWrapper"]:has(> [class~="st-key-appbar_busy"]) { margin-bottom: -0.5rem; }
+                [class~="st-key-swipe_card"] { padding: 0.375rem; }
+            }
+            /* Short phones: keep the first button above the bar. */
+            @media (max-height: 600px) {
+                .hero-sub { display: none; }
+            }
+            @media (forced-colors: active) {
+                [class~="st-key-appbar"], [class~="st-key-appbar_busy"] { border: 1px solid CanvasText; }
+                [class~="st-key-appbar"] button::before, [class~="st-key-appbar_busy"] button::before { background: ButtonText; forced-color-adjust: none; }
+            }
+            @media print {
+                [class~="st-key-appbar"], [class~="st-key-appbar_busy"] { display: none; }
+            }
+            /* The three sheets (Guide, Scans, About) are dialogs. Phones: a bottom sheet whose title and X stay put while
+               only the body scrolls. The X is a 44 px target everywhere. */
+            [data-testid="stDialog"]:has([class*="st-key-sheet_"]) [role="dialog"] button[aria-label="Close"] {
+                min-width: 44px;
+                min-height: 44px;
+            }
+            [data-testid="stDialog"]:has([class*="st-key-sheet_"]) [role="dialog"] [tabindex="0"]:focus-visible {
+                outline: 3px solid #1d4ed8;
+                outline-offset: 2px;
+                border-radius: 6px;
+            }
+            @media (max-width: 640px) {
+                [data-testid="stDialog"]:has([class*="st-key-sheet_"]) { align-items: flex-end; padding: 0; }
+                [data-testid="stDialog"]:has([class*="st-key-sheet_"]) > div {
+                    margin: 0;
+                    width: 100%;
+                    max-width: none;
+                    border-radius: 24px 24px 0 0;
+                    max-height: calc(100vh - 56px);
+                    max-height: calc(100dvh - 56px);
+                    display: flex;
+                    flex-direction: column;
+                    box-shadow: 0 -8px 32px rgba(15, 23, 42, 0.18);
+                }
+                [data-testid="stDialog"]:has([class*="st-key-sheet_"]) [role="dialog"] {
+                    display: flex;
+                    flex-direction: column;
+                    min-height: 0;
+                    flex: 1 1 auto;
+                    position: relative;
+                }
+                /* the grabber */
+                [data-testid="stDialog"]:has([class*="st-key-sheet_"]) [role="dialog"]::before {
+                    content: "";
+                    position: absolute;
+                    top: 8px;
+                    left: 50%;
+                    width: 36px;
+                    height: 4px;
+                    margin-left: -18px;
+                    border-radius: 999px;
+                    background: #cbd5e1;
+                }
+                /* the one scroller; the last 72 px stay empty so the last row can leave the Cloud badge's corner */
+                [data-testid="stDialog"]:has([class*="st-key-sheet_"]) [role="dialog"] > div:last-child {
+                    overflow-y: auto;
+                    min-height: 0;
+                    padding: 4px 16px calc(72px + env(safe-area-inset-bottom, 0px)) 16px;
+                }
+                [data-testid="stDialog"]:has([class*="st-key-sheet_"]) [role="dialog"] h2 {
+                    padding: 24px 56px 8px 16px;
+                    font-size: 1.3rem;
+                    font-weight: 900;
+                    letter-spacing: -0.01em;
+                    color: #0f172a;
+                }
+                [data-testid="stDialog"]:has([class*="st-key-sheet_"]) [role="dialog"] button[aria-label="Close"] {
+                    top: 14px;
+                    right: 8px;
+                    border-radius: 22px;
+                    background: #f1f5f9;
+                    color: #334155;
+                }
+            }
+            @media (max-width: 640px) and (prefers-reduced-motion: no-preference) {
+                [data-testid="stDialog"]:has([class*="st-key-sheet_"]) > div { animation: ss-sheet-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+            }
+            @media (min-width: 641px) {
+                /* Wide window: the same fixed title and X, and one scroller in the body. */
+                [data-testid="stDialog"]:has([class*="st-key-sheet_"]) [role="dialog"] {
+                    max-height: calc(100vh - 6rem);
+                    max-height: calc(100dvh - 6rem);
+                    display: flex;
+                    flex-direction: column;
+                    position: relative;
+                }
+                [data-testid="stDialog"]:has([class*="st-key-sheet_"]) [role="dialog"] > div:last-child {
+                    flex: 1 1 auto;
+                    min-height: 0;
+                    overflow-y: auto;
+                    padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+                }
+                [data-testid="stDialog"]:has([class*="st-key-sheet_"]) [role="dialog"] button[aria-label="Close"] {
+                    border-radius: 22px;
+                    background: #f1f5f9;
+                    color: #334155;
+                }
+            }
+            @keyframes ss-sheet-in {
+                from { transform: translateY(32px); opacity: 0.4; }
+                to { transform: none; opacity: 1; }
+            }
+            /* Athlete RDA guide: rows with a bar (light = adult RDA, dark = the extra for athletes). */
+            .gd-intro { font-size: 0.9rem; line-height: 1.45; color: #334155; margin: 0 0 10px 0; }
+            .gd-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.76rem; font-weight: 700; color: #334155; margin: 0 0 4px 0; }
+            .gd-key::before { content: ""; display: inline-block; width: 14px; height: 8px; margin-right: 6px; border-radius: 999px; background: #34d399; }
+            .gd-key[data-tone="extra"]::before { background: #047857; }
+            .gd-key[data-tone="pill"]::before { width: 10px; height: 10px; margin-right: 8px; border-radius: 50%; background: #0f172a; box-shadow: 0 0 0 2px #ffffff, 0 0 0 3px #0f172a; }
+            .gd-h { display: flex; justify-content: space-between; align-items: baseline; margin: 16px 0 6px 0; font-size: 0.8rem; font-weight: 900; letter-spacing: 0.05em; text-transform: uppercase; color: #334155; }
+            .gd-h small { font-size: 0.76rem; font-weight: 700; letter-spacing: 0; text-transform: none; color: #475569; }
+            .gd-sub2 { margin: 10px 0 4px 2px; font-size: 0.8rem; font-weight: 900; letter-spacing: 0.04em; text-transform: uppercase; color: #475569; }
+            ul.gd-list { list-style: none; margin: 0; padding: 0; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; }
+            ul.gd-list > li { margin: 0; padding: 11px 14px 12px 14px; }
+            ul.gd-list > li + li { border-top: 1px solid #f1f5f9; }
+            ul.gd-list > li[data-focus] { background: #ecfdf5; box-shadow: inset 3px 0 0 #047857; }
+            .gd-sr { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+            .gd-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+            .gd-name { min-width: 0; font-size: 0.95rem; font-weight: 800; color: #0f172a; overflow-wrap: break-word; }
+            .gd-val { margin-left: auto; font-size: 0.95rem; font-weight: 900; color: #0f172a; white-space: nowrap; }
+            .gd-flag { padding: 1px 7px; border: 1px solid #bfdbfe; border-radius: 999px; background: #eff6ff; font-size: 0.68rem; font-weight: 800; color: #1e3a5f; white-space: nowrap; }
+            .gd-tag { padding: 1px 8px; border-radius: 999px; font-size: 0.68rem; font-weight: 800; white-space: nowrap; }
+            .gd-tag[data-tone="swapped"] { background: #d1fae5; color: #065f46; }
+            .gd-tag[data-tone="kept"] { background: #fee2e2; color: #7f1d1d; }
+            .gd-bar { position: relative; display: flex; gap: 2px; height: 8px; margin: 8px 0 6px 0; }
+            .gd-bar i { display: block; height: 100%; }
+            .gd-bar i[data-part="adult"] { background: #34d399; border-radius: 999px 0 0 999px; }
+            .gd-bar i[data-part="adult"]:only-child { border-radius: 999px; }
+            .gd-bar i[data-part="extra"] { flex: 1 1 auto; background: #047857; border-radius: 0 999px 999px 0; }
+            .gd-dot { position: absolute; top: -2px; width: 12px; height: 12px; border-radius: 50%; background: #0f172a; box-shadow: 0 0 0 2px #ffffff; }
+            .gd-sub { font-size: 0.78rem; line-height: 1.35; color: #475569; }
+            .gd-line { margin-top: 5px; font-size: 0.82rem; line-height: 1.4; color: #1e293b; overflow-wrap: break-word; }
+            .gd-empty { padding: 14px; border: 1px dashed #cbd5e1; border-radius: 16px; background: #ffffff; font-size: 0.86rem; line-height: 1.45; color: #334155; }
+            .gd-note { margin-top: 14px; padding: 10px 12px; border: 1px solid #bfdbfe; border-radius: 14px; background: #eff6ff; font-size: 0.82rem; line-height: 1.45; color: #1e3a5f; }
+            .gd-fine { margin: 10px 0 0 0; font-size: 0.76rem; line-height: 1.45; color: #475569; }
+            /* Recent scans: one card per scan. */
+            .sc-sub { margin: 0 0 10px 0; font-size: 0.84rem; color: #475569; }
+            .sc-card { margin: 0 0 10px 0; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 16px; background: #ffffff; }
+            .sc-head { display: flex; align-items: baseline; gap: 8px; }
+            .sc-date { font-size: 0.98rem; font-weight: 900; color: #0f172a; }
+            .sc-diet { margin-left: auto; padding: 1px 8px; border: 1px solid #bfdbfe; border-radius: 999px; background: #eff6ff; font-size: 0.72rem; font-weight: 800; color: #1e3a5f; white-space: nowrap; }
+            .sc-prev { margin-top: 2px; font-size: 0.82rem; color: #475569; overflow-wrap: break-word; }
+            .sc-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+            .sc-chip { padding: 2px 9px; border-radius: 999px; font-size: 0.76rem; font-weight: 800; }
+            .sc-chip[data-tone="swap"] { background: #d1fae5; color: #065f46; }
+            .sc-chip[data-tone="keep"] { background: #fee2e2; color: #7f1d1d; }
+            .sc-card summary { display: flex; align-items: center; gap: 6px; min-height: 44px; margin-top: 4px; font-size: 0.84rem; font-weight: 800; color: #047857; cursor: pointer; }
+            .sc-card summary::after { content: "▾"; }
+            .sc-card details[open] summary::after { content: "▴"; }
+            .sc-li { padding: 4px 0; font-size: 0.84rem; line-height: 1.35; color: #1e293b; overflow-wrap: break-word; }
+            .sc-empty { padding: 28px 12px 12px 12px; text-align: center; }
+            .sc-ic { display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; margin: 0 auto 12px auto; border-radius: 50%; background: #ecfdf5; font-size: 1.8rem; }
+            .sc-none { font-size: 1.05rem; font-weight: 900; color: #0f172a; }
+            .sc-empty p { max-width: 300px; margin: 6px auto 0 auto; font-size: 0.88rem; line-height: 1.45; color: #475569; }
+            .sc-ask { margin: 10px 0 6px 0; padding: 10px 12px; border: 1px solid #fecaca; border-radius: 14px; background: #fef2f2; font-size: 0.86rem; color: #7f1d1d; }
+            .sc-ask p { margin: 4px 0 0 0; font-size: 0.82rem; line-height: 1.4; color: #7f1d1d; }
+            [class~="st-key-swipe_clear_history_confirm"] button { border-color: #b91c1c !important; background: #b91c1c !important; color: #ffffff !important; }
+            /* About and privacy: five cards. */
+            [class*="st-key-about_"] { gap: 0.4rem; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 16px; background: #ffffff; }
+            /* Streamlit pulls every markdown block up by 1rem (it cancels a paragraph's margin): not inside these cards. */
+            [class*="st-key-about_"] [data-testid="stMarkdownContainer"] { margin-bottom: 0; }
+            [class~="st-key-about_notice"] { border-color: #fed7aa; background: #fff7ed; }
+            [class*="st-key-about_"] p, [class*="st-key-about_"] li { font-size: 0.86rem; line-height: 1.45; color: #1e293b; }
+            [class~="st-key-about_notice"] p { color: #7c2d12; }
+            .ab-h { display: flex; align-items: center; gap: 8px; font-size: 0.95rem; font-weight: 900; color: #0f172a; }
+            .ab-ico { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 28px; height: 28px; border-radius: 9px; background: #ecfdf5; font-size: 0.95rem; }
+            .ab-foot { margin-top: 4px; text-align: center; font-size: 0.76rem; color: #475569; }
         </style>
         <div class="brand" role="heading" aria-level="1"><span class="brand-mark" aria-hidden="true">S</span>SuppSwipe</div>
         """,
@@ -4705,10 +5140,22 @@ def _render_results_settings() -> None:
 
 
 def _render_analyze_bar(results: bool = False, button: bool = True) -> None:
+    """The primary Scan button under the page. The three tools (guide, scans, about) live in the fixed bottom bar."""
     if button:
         _render_analyze_button(results=results, primary=results)
-    _render_scan_history_popover()
-    _render_privacy_popover()
+
+
+def _request_analyze(results: bool = False) -> None:
+    """What the page's Scan button asks for: the Analyze window, or the Start over question while a scan is half
+    done. A finished plan is already in Recent scans, so on the results there is nothing to lose."""
+    if results:
+        _reset_swipe_state()
+        _forget_saved_scan()
+        st.session_state["swipe_open_analyze"] = True
+    elif _selected_session_in_progress():
+        st.session_state["swipe_confirm_restart"] = True
+    else:
+        st.session_state["swipe_open_analyze"] = True
 
 
 def _render_analyze_button(results: bool = False, primary: bool = False) -> None:
@@ -4718,26 +5165,51 @@ def _render_analyze_button(results: bool = False, primary: bool = False) -> None
         label = "📸 Analyze my supplement"
     kind = "primary" if primary else "secondary"
     if st.button(label, type=kind, width="stretch", key="swipe_analyze_btn"):
-        if results:
-            # A finished plan is already in Recent scans: nothing to lose.
-            _reset_swipe_state()
-            _forget_saved_scan()
-            st.session_state["swipe_open_analyze"] = True
-        elif _selected_session_in_progress():
-            st.session_state["swipe_confirm_restart"] = True
-        else:
-            st.session_state["swipe_open_analyze"] = True
+        _request_analyze(results)
         st.rerun()
 
 
-def _render_privacy_popover() -> None:
+# --- Bottom bar: the three global tools as app-style tabs ------------------------------------------------------
+# Fixed to the bottom of every screen (welcome, cards, analyzing, results). A tap sets `swipe_sheet`; the sheet itself
+# (a dialog) is drawn at the end of the run, as the last branch of the one-dialog-at-a-time chain in _build_mobile_ui.
+# The flag stays set until the sheet is dismissed (like the other dialogs), so a stray rerun cannot close it.
+def _render_app_bar(slot: Any = None, busy: bool = False) -> None:
+    """Draw the bar. Normally one plain keyed container, the same element on every run: Streamlit then keeps it mounted (an
+    st.empty() slot sends an empty element first on each run, the browser sometimes paints that, and a remounted button loses
+    the focus a closing sheet gives back). While an analysis runs the script is blocked inside it and any tap would interrupt it
+    (and start the OCR again), so the bar is drawn into `slot` (an st.empty()) with dead, disabled buttons under other keys; if
+    the analysis ends in an error the slot is emptied and the live bar is drawn."""
+    prefix = "appbar_busy" if busy else "appbar"
+    with (slot if slot is not None else st).container(key=prefix, horizontal=True, wrap=False, gap="small"):
+        for name, label in _BAR_ITEMS:
+            if busy:
+                st.button(label, key=f"{prefix}_{name}", width="stretch", disabled=True)
+            else:
+                st.button(label, key=f"{prefix}_{name}", width="stretch", on_click=_open_sheet, args=(name,))
+
+
+def _about_card(key: str, icon: str, title: str, anchor: bool = False) -> Any:
+    """One card of the About sheet: a keyed container (the CSS styles it) opened with its heading. `anchor`: the heading
+    is the sheet's keyboard stop (see _sheet_anchor)."""
+    card = st.container(key=f"about_{key}")
+    stop = " tabindex='0'" if anchor else ""
+    card.markdown(
+        f"<div class='ab-h' role='heading' aria-level='3'{stop}><span class='ab-ico' aria-hidden='true'>{icon}</span>{title}</div>",
+        unsafe_allow_html=True,
+    )
+    return card
+
+
+@st.dialog("About & privacy", on_dismiss=_close_sheet)
+def _about_sheet() -> None:
     """Plain-language notice of what the app does with a visitor's input."""
-    with st.popover("🔒 About & privacy", width="stretch"):
-        st.markdown(
+    with st.container(key="sheet_about"):
+        _about_card("notice", "🩺", "Not medical advice", anchor=True).markdown(
             "**SuppSwipe** gives general nutrition information — it is not medical advice. "
             "Talk to a doctor or pharmacist before stopping a supplement you were prescribed, "
-            "or if you are pregnant, ill or take medication.\n\n"
-            "**What happens to your input**\n"
+            "or if you are pregnant, ill or take medication."
+        )
+        _about_card("sent", "📤", "What is sent to services").markdown(
             "- Label photos, pasted text or links and *Ask AI* questions are sent to "
             "[Blockbrain](https://theblockbrain.ai), the AI service that reads labels and writes answers. "
             "Don't include personal details.\n"
@@ -4747,16 +5219,23 @@ def _render_privacy_popover() -> None:
             "(Halal, Kosher, gluten-, lactose- or nut-free, low-sodium): those are sent only when you tap "
             "*Generate meals*.\n"
             "- Barcode numbers are looked up in public product databases and web search "
-            "(Open Food Facts, UPCitemdb, DuckDuckGo). Pasted links are fetched by the app's server.\n"
-            "- Your scan history and the scan you're working on (with your dietary filter and pregnancy "
+            "(Open Food Facts, UPCitemdb, DuckDuckGo). Pasted links are fetched by the app's server."
+        )
+        _about_card("device", "📱", "What stays on your device").markdown(
+            "Your scan history and the scan you're working on (with your dietary filter and pregnancy "
             "setting) are stored only in this browser, so you can resume after a refresh; *Clear history* "
-            "deletes both, *Start over* deletes the scan in progress.\n"
+            "deletes both, *Start over* deletes the scan in progress."
+        )
+        _about_card("server", "🔐", "On the server").markdown(
             "- There are no accounts. Label text and generated answers may be kept in the server's "
             "memory for a few hours so repeat requests are faster.\n"
-            "- The app runs on Streamlit Community Cloud, which has its own privacy notice.\n\n"
-            "**Sources:** food data from USDA FoodData Central; upper limits from EFSA and NIH ODS."
+            "- The app runs on Streamlit Community Cloud, which has its own privacy notice."
         )
-        st.caption(f"Build {BUILD_TAG}")
+        _about_card("sources", "📚", "Sources").markdown(
+            "Food data from USDA FoodData Central. Upper limits from EFSA and NIH ODS. "
+            "Athlete targets from ISSN and ACSM/AND/DC."
+        )
+        st.markdown(f"<div class='ab-foot'>Build {html.escape(BUILD_TAG)}</div>", unsafe_allow_html=True)
 
 
 def _render_label_source_notice() -> None:
@@ -4764,7 +5243,7 @@ def _render_label_source_notice() -> None:
     user's own photo (front-of-pack photos without a readable facts panel)."""
     source = st.session_state.get("swipe_label_source") or {}
     if str(source.get("kind", "") or "") == "sample":
-        st.caption("🧪 Sample label — not your product. Scan your own supplement any time.")
+        st.caption("🧪 Sample label, not your product.")
         return
     if str(source.get("kind", "") or "") != "ai_research":
         return
@@ -4965,6 +5444,30 @@ def _apply_card_swipe(state: Any, value: Any) -> bool:
     # Edit mode goes straight back to the results instead of the next card.
     state["swipe_index"] = len(cards) if editing else index + 1
     state["swipe_edit_return"] = False
+    return True
+
+
+def _apply_card_guide_tap(state: Any, value: Any) -> bool:
+    """A tap on the athlete line of the card (the component sends {"kind": "guide", id, card, index}): open the Athlete RDA
+    guide at that nutrient. True for every guide value, handled or ignored, so it never reaches _apply_card_swipe; it never
+    changes the card or a decision. A tap made on another card (stale) or one already handled does nothing."""
+    if not isinstance(value, dict) or value.get("kind") != "guide":
+        return False
+    tap_id = str(value.get("id", "") or "")
+    if not tap_id or tap_id == str(state.get("swipe_last_guide_id", "") or ""):
+        return True
+    state["swipe_last_guide_id"] = tap_id
+    cards = list(state.get("swipe_cards") or [])
+    index = int(state.get("swipe_index", 0) or 0)
+    if not 0 <= index < len(cards):
+        return True
+    component_key = str(cards[index].get("component_key", "") or "")
+    if str(value.get("card") or "") != component_key or str(value.get("index")) != str(index):
+        return True
+    state["swipe_confirm_restart"] = False
+    state["swipe_open_analyze"] = False
+    state["swipe_sheet"] = "guide"
+    state["swipe_guide_focus"] = component_key
     return True
 
 
@@ -5191,7 +5694,9 @@ def _render_card() -> None:
     # The swipe that triggered this run (if any) is applied first, so the next
     # card renders in this same run (see "Swipe handling" above).
     if cards:
-        _apply_card_swipe(st.session_state, st.session_state.get(swipe_key))
+        card_value = st.session_state.get(swipe_key)
+        if not _apply_card_guide_tap(st.session_state, card_value):
+            _apply_card_swipe(st.session_state, card_value)
     index = int(st.session_state.get("swipe_index", 0))
     decisions: dict[str, dict[str, Any]] = st.session_state.get("swipe_decisions", {})
 
@@ -5268,7 +5773,7 @@ def _render_card() -> None:
     match_dose_txt = ""
     rda_amount_txt = ""
     rda_label_txt = ""
-    with st.container(border=True):
+    with st.container(border=True, key="swipe_card"):
         # Computed here but shown INSIDE the swipe card (passed as `warn` below),
         # so only the dropdown / Ask AI / dietary filter sit below the card.
         card_form = str(card.get("form", "") or "")
@@ -5650,7 +6155,7 @@ def _plan_warnings(
 # --- Plan items: tap a food or a kept pill, get its options window -------------
 # Every food row and kept-pill row of the Plan tab is HTML (.plan-row) with a transparent button over it
 # (CSS: planrow_ / planbtn_). A tap opens a dialog for THAT item with the options that used to sit at the
-# bottom of the page: change the choice, what the whole food adds (AI), the Athlete RDA guide.
+# bottom of the page: change the choice, what the whole food adds (AI), the athlete targets.
 # Misfit rows ("doesn't fit <diet>") keep their own button: their one action is to choose another food.
 
 
@@ -5754,7 +6259,7 @@ def _plan_item_dialog_body() -> None:
         if item["kind"] == "food":
             with st.expander("\U0001F331 What the whole food adds (AI)"):
                 _render_plan_item_adds(item)
-        with st.expander("\U0001F3C3 Athlete RDA guide"):
+        with st.expander("\U0001F3C3 Athlete targets"):
             _render_plan_item_athlete(item)
         if st.button("Done", width="stretch", key="plandlg_close"):
             _close_plan_item_dialog()
@@ -5888,9 +6393,19 @@ def _render_plan_item_adds(item: dict[str, Any]) -> None:
         st.fragment(_benefits_box, run_every=1.0 if pending is not None else None)(key)
 
 
+def _open_guide_from_dialog(component_key: str) -> None:
+    """Leave the options window for the Athlete RDA guide, at this item's nutrient. Always from the dialog body (see
+    _change_choice_from_dialog); closing the guide lands on the results."""
+    _close_plan_item_dialog()
+    st.session_state["swipe_sheet"] = "guide"
+    st.session_state["swipe_guide_focus"] = component_key
+    st.rerun(scope="app")
+
+
 def _render_plan_item_athlete(item: dict[str, Any]) -> None:
-    """The targets of this item's nutrients, then the table of all of them."""
+    """The targets of this item's nutrients, as rows of the guide; the other nutrients are one tap away in the guide."""
     food = (item["row"] or {}).get("food")
+    rows: list[str] = []
     for d in item["items"]:
         title = _md_escape(_nutrient_title(d.get("component")) or "This nutrient")
         entry = _rda_for_component(str(d.get("component_key", "") or d.get("component", "") or ""))
@@ -5898,23 +6413,24 @@ def _render_plan_item_athlete(item: dict[str, Any]) -> None:
             st.caption(f"{title}: no athlete target is tracked for this nutrient.")
             continue
         unit = str(entry["unit"])
-        facts = [f"athlete target **{_md_escape(_format_rda_target(entry))}**", f"adult RDA {bb.format_float(float(entry['rda']))} {unit}"]
-        nrv = _format_eu_nrv(entry)
-        if nrv != "–":
-            facts.append(f"EU label (100% NRV) {nrv} {unit}")
-        lines = [f"**{_md_escape(entry['display'])}** — " + ", ".join(facts)]
+        lines: list[str] = []
+        ratio: float | None = None
         if food:
             reach = _portion_for_target(food, entry["athlete"], unit, str(entry["display"]), note=False)
             if reach:
-                lines.append(f"To reach the athlete target: {_md_escape(reach)}")
+                lines.append(f"To reach the athlete target: <b>{html.escape(reach)}</b>")
         else:
             ratio = _dose_vs_athlete_ratio(
                 str(d.get("component_key", "") or ""), d.get("dose_value"), str(d.get("dose_unit", "") or ""), str(d.get("form", "") or "")
             )
             if ratio is not None:
-                lines.append(f"Your pill: {_format_need_share(int(round(ratio * 100)))} of the athlete target")
-        st.markdown("  \n".join(lines))
-    _render_athlete_rda_table()
+                lines.append(f"Your pill: {_athlete_share_phrase(ratio)}")
+        rows.append(_guide_row_html(entry, lines=lines, ratio=ratio))
+    if rows:
+        st.markdown(_guide_legend_html(not food) + "<ul class='gd-list'>" + "".join(rows) + "</ul>", unsafe_allow_html=True)
+    st.caption("All nutrients, with your scan first, are in the Guide.")
+    if st.button("Open the Athlete guide", width="stretch", key="plandlg_guide"):
+        _open_guide_from_dialog(str(item["items"][0].get("component_key", "") or ""))
 
 
 def _render_plan_tab(
@@ -5988,11 +6504,6 @@ def _render_plan_tab(
     if not rows and not keep_items and not misfit_items:
         st.info("Swipe through your cards to build your plan.")
 
-    # The three options that used to sit down here (change a choice, what the whole food adds, the Athlete RDA
-    # guide) open from a tap on a row. The reference table stays one tap away, for plans without a tappable row.
-    st.markdown("<div style='height:0.6rem'></div>", unsafe_allow_html=True)
-    _render_athlete_rda_popup()
-
 
 def _render_meals_tab(replace_items: list[dict[str, Any]], diet_label: str, excluded: list[dict[str, Any]]) -> str:
     """Instant serving ideas + the AI meal plan. Returns the plan's cache key."""
@@ -6065,8 +6576,8 @@ def _live_meal_plan(plan_key: str) -> None:
     Only this fragment re-runs while it streams; one full re-run when it is done
     shows the finished plan with its buttons (and stops the polling)."""
     if llm_cache.inflight(plan_key) is None:
-        if st.session_state.get("swipe_plan_item"):
-            return  # a plan item window is open: redrawing the page would make it blink; closing it redraws the page anyway
+        if st.session_state.get("swipe_plan_item") or st.session_state.get("swipe_sheet"):
+            return  # a window or a sheet is open: redrawing the page would make it blink; closing it redraws the page anyway
         st.rerun()
     partial = llm_cache.partial(plan_key)
     if partial:
@@ -6322,46 +6833,179 @@ def _format_eu_nrv(entry: dict[str, Any]) -> str:
     return bb.format_float(value) if value is not None else "–"
 
 
-def _render_athlete_rda_table() -> None:
-    """The Athlete RDA guide's body: caption, table of every tracked micronutrient, risk note. The unit sits in the
-    nutrient column, so the table has four columns and fits a phone."""
-    st.caption(
-        "Approximate daily targets for every micronutrient the app tracks. "
-        "EU NRV = the reference intake behind the %NRV on EU labels; adult "
-        "RDA/AI from NIH ODS; athlete targets raised per ISSN and "
-        "ACSM/AND/DC where training increases needs or sweat losses. General "
-        "guidance only — consult a sports dietitian for personalised advice."
+# --- Athlete RDA guide: one row component for the sheet and for a plan item's window -------------------------
+# Every row is one nutrient: its athlete target, a bar (light = the adult RDA, dark = the extra athletes need, full
+# width = the athlete target) and, for the current scan, a ring where the pill's dose lies. Rows are plain HTML (one class
+# per element: the CSS test reads class='x'); the bars are hidden from screen readers and every number is also text.
+_GUIDE_VITAMINS = (
+    "Vitamin A", "Vitamin B1 (Thiamin)", "Vitamin B2 (Riboflavin)", "Vitamin B3 (Niacin)", "Vitamin B5 (Pantothenic)",
+    "Vitamin B6", "Vitamin B7 (Biotin)", "Vitamin B9 (Folate)", "Vitamin B12", "Vitamin C", "Vitamin D", "Vitamin E", "Vitamin K",
+)
+
+
+def _guide_groups() -> list[tuple[str, list[dict[str, Any]]]]:
+    """Every tracked nutrient in three groups: vitamins in the order of the alphabet and the numbers, minerals A-Z, then omega-3 and choline."""
+    vitamins = sorted(
+        (e for e in _MICRONUTRIENT_RDA if e["display"].startswith("Vitamin")),
+        key=lambda e: _GUIDE_VITAMINS.index(e["display"]) if e["display"] in _GUIDE_VITAMINS else len(_GUIDE_VITAMINS),
     )
-    st.table(
-        [
-            {
-                "Nutrient (per day)": f"{entry['display']} ({entry['unit']})",
-                "EU NRV": _format_eu_nrv(entry),
-                "Adult RDA": bb.format_float(float(entry["rda"])),
-                "Athlete": bb.format_float(float(entry["athlete"])),
-            }
-            for entry in _MICRONUTRIENT_RDA
-        ]
+    other = [e for e in _MICRONUTRIENT_RDA if e["display"].startswith(("Omega", "Choline"))]
+    minerals = sorted((e for e in _MICRONUTRIENT_RDA if e not in vitamins and e not in other), key=lambda e: e["display"])
+    return [("Vitamins", vitamins), ("Minerals", minerals), ("Omega-3 and choline", other)]
+
+
+def _athlete_share_phrase(ratio: float) -> str:
+    """"40% of the athlete target" / "2.5× the athlete target"."""
+    share = _format_need_share(int(round(ratio * 100)))
+    return f"{share} the athlete target" if share.endswith("×") else f"{share} of the athlete target"
+
+
+def _guide_row_html(
+    entry: dict[str, Any], *, tag: str = "", lines: list[str] | None = None, ratio: float | None = None, focus: bool = False
+) -> str:
+    """One nutrient of the guide as a list item. `lines` are extra lines (already escaped HTML), `tag` a chip such as
+    "swapped", `ratio` the pill's dose as a share of the athlete target (a ring on the bar, up to the end of it)."""
+    unit = str(entry["unit"])
+    rda, athlete = float(entry["rda"]), float(entry["athlete"])
+    dfe = " DFE" if "folate" in entry["keys"] else ""  # the folate targets are dietary folate equivalents, the EU label value is folic acid as printed
+    target = f"{bb.format_float(athlete)} {unit}{dfe}"
+    adult = f"{bb.format_float(rda)} {unit}{dfe}"
+    raised = athlete > rda
+    nrv = _format_eu_nrv(entry)
+    nrv_text = f"{nrv} {unit}" + (" folic acid" if dfe else "")
+    often_low = bool(set(entry["keys"]) & _HIGH_RISK_NUTRIENT_KEYS)
+    sub = [f"Adult RDA {adult}" if raised else f"Same as the adult RDA ({adult})"]
+    if nrv != "–":
+        sub.append(f"EU label {nrv_text}")
+    spoken = (
+        f"{entry['display']}: athlete target {target}, " + (f"adult RDA {adult}" if raised else "same as the adult RDA")
+        + (f", EU label {nrv_text}" if nrv != "–" else "") + (", often low in athletes" if often_low else "") + "."
     )
-    st.caption(
-        "\U0001F4A1 Athletes training >10 h/week, in low-sunlight regions, or on "
-        "plant-based diets are most at risk of Vitamin D, Iron, B12, Zinc and "
-        "Omega-3 deficiencies. Iron RDA shown is the general adult value "
-        "(menstruating women need ~18 mg; men ~8 mg)."
+    focus_attr = " data-focus='1'" if focus else ""
+    parts = [f"<i data-part='adult' style='width:{(rda / athlete * 100.0) if raised else 100.0:.1f}%'></i>"]
+    if raised:
+        parts.append("<i data-part='extra'></i>")
+    if ratio is not None:
+        at = max(0.0, min(1.0, ratio)) * 100.0
+        parts.append(f"<b class='gd-dot' style='left:{at:.1f}%;transform:translateX(-{at:.1f}%)'></b>")
+    return (
+        f"<li class='gd-row'{focus_attr}>"
+        f"<span class='gd-sr'>{html.escape(spoken)}</span>"
+        "<div class='gd-top' aria-hidden='true'>"
+        f"<span class='gd-name'>{html.escape(str(entry['display']))}</span>"
+        + (f"<span class='gd-tag' data-tone='{html.escape(tag)}'>{html.escape(tag)}</span>" if tag else "")
+        + ("<span class='gd-flag'>often low</span>" if often_low else "")
+        + f"<span class='gd-val'>{html.escape(target)}</span></div>"
+        f"<div class='gd-bar' aria-hidden='true'>{''.join(parts)}</div>"
+        f"<div class='gd-sub' aria-hidden='true'>{html.escape(' · '.join(sub))}</div>"
+        + "".join(f"<div class='gd-line'>{line}</div>" for line in lines or [])
+        + "</li>"
     )
 
 
-def _render_athlete_rda_popup() -> None:
-    """Static reference: approximate daily micronutrient targets for athletes.
+def _guide_legend_html(with_pill: bool) -> str:
+    return (
+        "<div class='gd-legend'><span class='gd-key' data-tone='adult'>Adult RDA</span>"
+        "<span class='gd-key' data-tone='extra'>Extra for athletes</span>"
+        + ("<span class='gd-key' data-tone='pill'>Your pill</span>" if with_pill else "")
+        + "</div>"
+    )
 
-    Values are approximate consensus figures from ISSN (Nutrient Timing, 2017),
-    ACSM/AND/DC Nutrition and Athletic Performance (2016/2021), and NIH Office
-    of Dietary Supplements RDA fact sheets. General guidance only — kept in a
-    popover so the long table doesn't push the results down. The same table
-    sits in every plan item's options window (_render_plan_item_athlete).
-    """
-    with st.popover("\U0001F3C3 Athlete RDA guide", width="stretch"):
-        _render_athlete_rda_table()
+
+def _guide_scan_rows(focus_key: str = "") -> tuple[list[dict[str, Any]], list[str]]:
+    """The nutrients of the current scan that have a guide row, in card order ({"entry", "cards"}), the focused one first, and
+    the titles of the cards without one (a single EPA or DHA). A row several cards share (Vitamin K and K2, omega-3 and fish oil) appears once."""
+    rows: dict[str, dict[str, Any]] = {}
+    missing: list[str] = []
+    for card in st.session_state.get("swipe_cards") or []:
+        entry = _rda_for_component(str(card.get("component_key", "") or card.get("component", "") or ""))
+        if entry is None:
+            missing.append(_nutrient_title(card.get("component")))
+            continue
+        rows.setdefault(str(entry["display"]), {"entry": entry, "cards": []})["cards"].append(card)
+    ordered = list(rows.values())
+    ordered.sort(key=lambda r: not (focus_key and any(str(c.get("component_key", "") or "") == focus_key for c in r["cards"])))
+    return ordered, missing
+
+
+def _guide_scan_row_html(row: dict[str, Any], decisions: dict[str, Any], focus: bool) -> str:
+    """A nutrient of the scan: its row, plus what the pill gives and, if swapped, the food amount that reaches the athlete target."""
+    entry, cards = row["entry"], row["cards"]
+    unit, display = str(entry["unit"]), str(entry["display"])
+    lines: list[str] = []
+    ratio: float | None = None
+    for card in cards:
+        key = str(card.get("component_key", "") or "")
+        decision = decisions.get(key) or {}
+        who = f"<b>{html.escape(_nutrient_title(card.get('component')))}</b>: " if len(cards) > 1 else ""
+        card_ratio = _dose_vs_athlete_ratio(key, card.get("dose_value"), str(card.get("dose_unit", "") or ""), str(card.get("form", "") or ""))
+        if card_ratio is not None:
+            ratio = card_ratio if ratio is None else ratio
+            lines.append(f"💊 {who}In your pill: <b>{html.escape(str(card.get('dose_label', '') or ''))}</b> · {_athlete_share_phrase(card_ratio)}")
+        food = decision.get("selected_food")
+        if decision.get("decision") == "replace" and food:
+            reach = _portion_for_target(food, entry["athlete"], unit, display, note=False)
+            name = html.escape(_food_name(food))
+            if reach:
+                eat = "eat " if re.match(r"[~<\d]", reach) else ""
+                lines.append(f"🥗 {who}Swapped for <b>{name}</b>: {eat}<b>{html.escape(reach)}</b>" + (" to reach it" if eat else ""))
+            else:
+                lines.append(f"🥗 {who}Swapped for <b>{name}</b>")
+    tag = ""
+    if len(cards) == 1:
+        tag = {"replace": "swapped", "keep": "kept"}.get(str((decisions.get(str(cards[0].get("component_key", "") or "")) or {}).get("decision", "")), "")
+    return _guide_row_html(entry, tag=tag, lines=lines, ratio=ratio, focus=focus)
+
+
+@st.dialog("Athlete RDA guide", on_dismiss=_close_sheet)
+def _guide_sheet() -> None:
+    """Targets for every tracked nutrient, the current scan's first. A sheet draws no widget, so it never reruns by itself."""
+    focus_key = str(st.session_state.get("swipe_guide_focus", "") or "")
+    rows, missing = _guide_scan_rows(focus_key)
+    decisions = st.session_state.get("swipe_decisions") or {}
+    scan_names = {str(r["entry"]["display"]) for r in rows}
+    with st.container(key="sheet_guide"):
+        st.markdown(
+            f"<p class='gd-intro' {_sheet_anchor('guide')}>Athlete targets are the daily amounts for people who train regularly. They sit above the "
+            "adult RDA where training raises your needs or you lose more through sweat.</p>" + _guide_legend_html(bool(rows)),
+            unsafe_allow_html=True,
+        )
+        if rows:
+            count = f"{len(rows)} nutrient" + ("s" if len(rows) > 1 else "")
+            st.markdown(
+                f"<div class='gd-h' role='heading' aria-level='3'>In your scan<small>{count}</small></div><ul class='gd-list'>"
+                + "".join(
+                    _guide_scan_row_html(r, decisions, bool(focus_key) and any(str(c.get("component_key", "") or "") == focus_key for c in r["cards"]))
+                    for r in rows
+                )
+                + "</ul>"
+                + (f"<p class='gd-fine'>No athlete target is tracked for {html.escape(', '.join(dict.fromkeys(missing)))}.</p>" if missing else ""),
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                "<div class='gd-h' role='heading' aria-level='3'>In your scan</div>"
+                "<div class='gd-empty'>Scan a supplement and its nutrients appear here first, with your pill's dose next to the athlete target.</div>",
+                unsafe_allow_html=True,
+            )
+        heading = f"<div class='gd-h' role='heading' aria-level='3'>{'All other nutrients' if rows else 'All nutrients'}</div>"
+        for title, entries in _guide_groups():
+            entries = [e for e in entries if str(e["display"]) not in scan_names]
+            if entries:
+                st.markdown(
+                    heading + f"<div class='gd-sub2' role='heading' aria-level='4'>{html.escape(title)}</div><ul class='gd-list'>"
+                    + "".join(_guide_row_html(e) for e in entries) + "</ul>",
+                    unsafe_allow_html=True,
+                )
+                heading = ""
+        st.markdown(
+            "<div class='gd-note'>💡 Athletes training more than 10 hours a week, living in low-sunlight regions or eating "
+            "plant-based are most at risk of low vitamin D, iron, B12, zinc and omega-3. The iron RDA shown is the general adult "
+            "value (menstruating women need about 18 mg, men about 8 mg).</div>"
+            "<p class='gd-fine'>EU label = the reference value behind the %NRV printed on EU labels. Adult RDA/AI from NIH ODS; "
+            "athlete targets from ISSN and ACSM/AND/DC. General guidance only, not medical advice: a sports dietitian can tailor targets to you.</p>",
+            unsafe_allow_html=True,
+        )
 
 
 def _debug_requested() -> bool:
@@ -6402,9 +7046,15 @@ def _render_debug_panel() -> None:
 
 def _build_mobile_ui() -> None:
     _init_state()
+    _load_scan_history()  # the Scans sheet and the browser sync read it; making it here means it always exists
     _render_header()
-    if bool(st.session_state.get("swipe_is_analyzing", False)) and isinstance(st.session_state.get("swipe_pending_request"), dict):
-        _run_pending_analysis()
+    # The bar is drawn first, so a running analysis can never leave a live one behind (see _render_app_bar).
+    if _analysis_in_flight():
+        bar_slot = st.empty()
+        _render_app_bar(bar_slot, True)
+        _run_pending_analysis()  # returns only after an error: the page below is drawn again
+        bar_slot.empty()
+    _render_app_bar()
     _render_card()
     if _on_results_screen():
         _render_results_settings()
@@ -6420,6 +7070,8 @@ def _build_mobile_ui() -> None:
         _analyze_dialog()
     elif _plan_item_dialog_requested():
         _show_plan_item_dialog()
+    elif _sheet_requested():
+        _show_sheet()
     if st.session_state.pop("_suppswipe_scroll_top", False):
         _scroll_to_top()
     try:
