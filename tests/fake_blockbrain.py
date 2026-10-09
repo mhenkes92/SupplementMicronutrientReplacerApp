@@ -41,6 +41,11 @@ class FakeBlockbrain:
         self.completion_script: list[Any] = ["cortex fake answer"]
         self.completion_calls = 0
         self.models_body: Any = {"items": [{"id": "fake-model-1", "supportsVision": True}]}
+        # A slow writer: seconds to wait after EVERY line of a streamed answer (agentic and cortex), so a test or a browser
+        # check can watch the text grow. 0 = as fast as the socket takes it. `last_write_at` (time.time()) is the moment the
+        # last line of the last stream left the fake: the end of the stream, for "how long after that did the page show it".
+        self.write_delay = 0.0
+        self.last_write_at = 0.0
         self._polls: dict[str, int] = {}
         self._lock = threading.Lock()
         self._server: ThreadingHTTPServer | None = None
@@ -69,11 +74,24 @@ class FakeBlockbrain:
                 self.wfile.write(data)
 
             def _send_sse(self, lines: list[str]) -> None:
+                # A slow writer sends a chunked body, as the real platform does: each line reaches the client when it is
+                # written (an HTTP/1.0 body read until close is delivered in 512-byte pieces by `requests`, which would make
+                # a slow stream arrive in lumps of several seconds).
+                chunked = bool(outer.write_delay)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
+                if chunked:
+                    self.send_header("Transfer-Encoding", "chunked")
                 self.end_headers()
-                for line in lines:
-                    self.wfile.write((line + "\n").encode())
+                for index, line in enumerate(lines):
+                    data = (line + "\n").encode()
+                    self.wfile.write(f"{len(data):x}\r\n".encode() + data + b"\r\n" if chunked else data)
+                    self.wfile.flush()
+                    outer.last_write_at = time.time()
+                    if outer.write_delay and index < len(lines) - 1:
+                        time.sleep(float(outer.write_delay))
+                if chunked:
+                    self.wfile.write(b"0\r\n\r\n")
                     self.wfile.flush()
 
             def _authorised(self) -> bool:
