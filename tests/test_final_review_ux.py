@@ -103,7 +103,7 @@ def test_snapshot_and_restore_keep_the_pregnancy_toggle(sw, sample_cards):
     assert snap["pregnant"] is True
     restored: dict = {}
     assert sw._restore_scan(restored, snap)
-    assert restored["swipe_pregnant"] is True and restored["swipe_pregnant_toggle"] is True
+    assert restored["swipe_pregnant"] is True and "swipe_pregnant_toggle" not in restored  # the toggle is in the Diet sheet only
     # An older snapshot without the field resumes with the toggle off.
     restored = {}
     assert sw._restore_scan(restored, {k: v for k, v in snap.items() if k != "pregnant"})

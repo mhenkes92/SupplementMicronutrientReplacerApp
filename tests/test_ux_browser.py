@@ -117,14 +117,43 @@ def settle(page, seconds: float = 0.8) -> None:
         pass
 
 
+def open_scan_sheet(page) -> None:
+    """The bar's Scan item: the three ways to start (Analyze / Resume / Sample) are in its sheet."""
+    page.locator('[class~="st-key-appbar_scan"] button').click()
+    page.get_by_role("dialog").wait_for(timeout=10000)
+    settle(page, 0.5)
+
+
+def open_diet_sheet(page) -> None:
+    page.locator('[class~="st-key-appbar_diet"] button').click()
+    page.get_by_role("dialog").wait_for(timeout=10000)
+    settle(page, 0.5)
+
+
+def close_sheet(page) -> None:
+    page.keyboard.press("Escape")
+    page.get_by_role("dialog").wait_for(state="detached", timeout=10000)
+    settle(page)
+
+
+def choose_diet(page, label: str) -> None:
+    """A chip of the Diet sheet; closing the sheet is what applies it to the page behind (a dismiss reruns the app)."""
+    open_diet_sheet(page)
+    page.locator('[data-testid="stDialog"] [data-testid="stButtonGroup"] button', has_text=label).click()
+    settle(page)
+    close_sheet(page)
+
+
 def start_sample(page) -> None:
-    page.get_by_role("button", name="Try it with a sample label").click()
+    open_scan_sheet(page)
+    page.get_by_role("button", name="Try with a sample label").click()
     card(page).locator("#card .name").wait_for(timeout=60000)
     settle(page)
 
 
 def start_own_label(page) -> None:
     """A visitor's own pasted label (the sample label is a demo: it is not saved as a scan)."""
+    open_scan_sheet(page)
     page.get_by_role("button", name="Analyze my supplement").click()
     dialog = page.get_by_role("dialog")
     dialog.locator("button", has_text="Paste").click()
@@ -307,7 +336,7 @@ def test_results_tabs_show_their_content(page):
     shot(page, "ux_results_share_tab")
     assert page.get_by_role("button", name="↩ Back to the cards").count() == 1
     # Settings fold away under the plan; scanning again needs no confirmation.
-    assert page.locator('[data-testid="stExpander"]', has_text="Diet: no restriction").count() == 1
+    assert page.locator('[data-testid="stExpander"]', has_text="Diet:").count() == 0  # the settings moved into the Diet sheet
     page.get_by_role("button", name="📸 Scan another supplement").click()
     page.get_by_role("dialog").wait_for(timeout=10000)
 
@@ -326,8 +355,7 @@ def test_filter_line_and_misfit_flag(page):
     card(page).locator("#btnRepl").click()
     wait_name_change(page, name)
     settle(page)
-    page.locator('[data-testid="stButtonGroup"] button', has_text="Vegan").click()
-    settle(page)
+    choose_diet(page, "Vegan")
     page.get_by_text("Filter: Vegan").wait_for(timeout=5000)
     shot(page, "ux_card_filter_line")
     finish_all_cards(page)
@@ -357,20 +385,24 @@ def test_resume_after_refresh_and_start_over_clears_it(page):
     total = card(page).locator("#card .count").inner_text().split(" of ")[1].strip()
     resume_at = card_name(page)
     page.reload(wait_until="networkidle")
-    resume = page.get_by_role("button", name=f"↩ Resume your last scan (2 of {total} cards done)")
+    open_scan_sheet(page)
+    resume = page.get_by_role("button", name="Resume last scan")
     resume.wait_for(timeout=20000)
+    page.get_by_text(f"2 of {total} cards done · saved today").wait_for(timeout=5000)  # what it brings back, and when
     shot(page, "ux_welcome_resume")
     resume.click()
     card(page).locator("#card .name").wait_for(timeout=20000)
     assert card_name(page) == resume_at
     settle(page)
-    page.get_by_role("button", name="Analyze my supplement").click()
+    page.locator('[class~="st-key-appbar_scan"] button').click()  # half-way through a scan the Scan item asks first
     page.get_by_role("button", name="Start over").click()
     settle(page, 1.5)
     page.keyboard.press("Escape")
     page.reload(wait_until="networkidle")
     settle(page, 2.0)
-    assert page.get_by_role("button", name="Resume your last scan").count() == 0
+    open_scan_sheet(page)  # the offer lives in the sheet: look there, or "no Resume button" proves nothing
+    assert page.get_by_role("button", name="Try with a sample label").count() == 1
+    assert page.get_by_role("button", name="Resume last scan").count() == 0
 
 
 def test_clear_history_on_the_results_forgets_the_saved_scan(page):
@@ -386,7 +418,9 @@ def test_clear_history_on_the_results_forgets_the_saved_scan(page):
     assert page.evaluate("localStorage.getItem('suppswipe_current_scan_v1')") is None
     page.reload(wait_until="networkidle")
     settle(page, 2.0)
-    assert page.get_by_role("button", name="Resume your last scan").count() == 0
+    open_scan_sheet(page)
+    assert page.get_by_role("button", name="Try with a sample label").count() == 1
+    assert page.get_by_role("button", name="Resume last scan").count() == 0
 
 
 def test_filter_change_keeps_the_chosen_food_while_offered(page):
@@ -399,8 +433,7 @@ def test_filter_change_keeps_the_chosen_food_while_offered(page):
     settle(page)
     chosen = choose_option(page, 2)
     assert "mushroom" in chosen.lower()
-    page.locator('[data-testid="stButtonGroup"] button', has_text="Vegan").click()
-    settle(page)
+    choose_diet(page, "Vegan")
     page.get_by_text("Filter: Vegan").wait_for(timeout=5000)
     assert selected_option(page) == chosen
 
@@ -414,22 +447,27 @@ def _active_chips(page) -> list[str]:
 
 def test_resume_keeps_the_diet_filter_chip(page):
     start_sample(page)
-    page.locator('[data-testid="stButtonGroup"] button', has_text="Vegan").click()
-    settle(page)
+    choose_diet(page, "Vegan")
     name = card_name(page)
     card(page).locator("#btnKeep").click()
     wait_name_change(page, name)
     settle(page, 1.2)
     page.reload(wait_until="networkidle")
-    page.get_by_role("button", name="Resume your last scan").click(timeout=20000)
+    open_scan_sheet(page)
+    page.get_by_role("button", name="Resume last scan").click(timeout=20000)
     card(page).locator("#card .name").wait_for(timeout=20000)
     settle(page)
-    assert _active_chips(page) == ["Vegan"]
+    page.get_by_text("Filter: Vegan").wait_for(timeout=5000)  # said on the page at once ...
+    open_diet_sheet(page)
+    assert _active_chips(page) == ["Vegan"]  # ... and the sheet opens on it (a value written while the chips were not on screen is not applied by Streamlit)
+    close_sheet(page)
     name = card_name(page)
     card(page).locator("#btnKeep").click()  # the next run keeps the filter
     wait_name_change(page, name)
     settle(page)
+    open_diet_sheet(page)
     assert _active_chips(page) == ["Vegan"]
+    close_sheet(page)
     page.get_by_text("Filter: Vegan").wait_for(timeout=5000)
 
 
@@ -461,7 +499,7 @@ def test_start_over_always_opens_the_analyze_dialog(page):
         card(page).locator("#btnKeep").click()
         wait_name_change(page, name)
         settle(page)
-        page.get_by_role("button", name="Analyze my supplement").click()
+        page.locator('[class~="st-key-appbar_scan"] button').click()  # half-way through a scan: the question, not the sheet
         page.get_by_role("button", name="Start over").click()
         page.wait_for_timeout(2000)
         settle(page)
@@ -471,18 +509,17 @@ def test_start_over_always_opens_the_analyze_dialog(page):
     dialog.get_by_role("button", name="Cancel").click()
     settle(page, 1.5)
     assert dialog.count() == 0
-    page.get_by_role("button", name="Try it with a sample label").wait_for(timeout=10000)
+    page.locator('[class~="st-key-appbar_scan"] button').wait_for(timeout=10000)
 
 
 def test_small_phone_sees_the_first_card_after_the_sample_button(browser, server):
     # UXJ-F2: the page kept the scroll position of the (far down) button.
     ctx, pg = _small_page(browser, server)
     try:
-        # Scrolled down to the dietary filter, then back up to the sample button.
-        pg.locator('[data-testid="stButtonGroup"]').first.scroll_into_view_if_needed()
-        assert pg.evaluate("document.querySelector('[data-testid=stMain]').scrollTop") > 0
-        button = pg.get_by_role("button", name="Try it with a sample label")
-        button.scroll_into_view_if_needed()
+        # No page below the hero to scroll to any more: the welcome page is the hero and the bar.
+        assert pg.evaluate("document.querySelector('[data-testid=stMain]').scrollTop") == 0
+        open_scan_sheet(pg)
+        button = pg.get_by_role("button", name="Try with a sample label")
         button.click()
         card(pg).locator("#card .name").wait_for(timeout=60000)
         settle(pg, 1.5)
@@ -496,9 +533,8 @@ def test_small_phone_sees_the_first_card_after_the_sample_button(browser, server
 def test_small_phone_sees_an_analysis_error(browser, server):
     ctx, pg = _small_page(browser, server)
     try:
-        button = pg.get_by_role("button", name="Analyze my supplement")
-        button.scroll_into_view_if_needed()
-        button.click()
+        open_scan_sheet(pg)
+        pg.get_by_role("button", name="Analyze my supplement").click()
         dialog = pg.get_by_role("dialog")
         dialog.locator("button", has_text="Paste").click()
         settle(pg)
@@ -516,16 +552,20 @@ def test_small_phone_sees_an_analysis_error(browser, server):
 def test_resume_keeps_the_pregnancy_toggle(page):
     # UXJ-F4
     start_sample(page)
+    open_diet_sheet(page)
     page.get_by_text("Pregnant or breastfeeding").click()
     settle(page)
+    close_sheet(page)
     name = card_name(page)
     card(page).locator("#btnKeep").click()
     wait_name_change(page, name)
     settle(page, 1.2)
     page.reload(wait_until="networkidle")
-    page.get_by_role("button", name="Resume your last scan").click(timeout=20000)
+    open_scan_sheet(page)
+    page.get_by_role("button", name="Resume last scan").click(timeout=20000)
     card(page).locator("#card .name").wait_for(timeout=20000)
     settle(page)
+    open_diet_sheet(page)
     toggle = page.locator("label", has_text="Pregnant or breastfeeding").locator("input")
     assert toggle.is_checked()
 

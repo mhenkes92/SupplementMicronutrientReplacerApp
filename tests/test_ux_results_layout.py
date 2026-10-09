@@ -31,6 +31,7 @@ def _labels(node, kind):
 def _results_app() -> AppTest:
     at = AppTest.from_file(APP, default_timeout=60)
     at.run()
+    at.button(key="appbar_scan").click().run()  # the sample button lives in the Scan sheet
     at.button(key="swipe_try_sample").click().run()
     cards = at.session_state["swipe_cards"]
     key = "tinder_" + str(at.session_state["swipe_reset_nonce"])
@@ -57,7 +58,7 @@ def test_results_use_tabs_not_popovers(results_app):
     assert not set(OLD_POPOVERS) & set(popovers), popovers
     # Editing moved into the dialog of each row, the guide and the rest into the bottom bar: no popover is left.
     assert popovers == [] and "✎ Change a choice" not in popovers
-    assert [b.key for b in at.button if str(b.key).startswith("appbar_")] == ["appbar_guide", "appbar_scans", "appbar_about"]
+    assert [b.key for b in at.button if str(b.key).startswith("appbar_")] == ["appbar_guide", "appbar_diet", "appbar_scan", "appbar_scans", "appbar_about"]
     assert not at.get("dialog")  # nothing is open until a row is tapped
     text = " ".join(m.value for m in at.markdown)
     assert "plan-hero" in text and "nutrients now come from food" in text

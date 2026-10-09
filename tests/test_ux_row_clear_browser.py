@@ -29,7 +29,7 @@ if BROWSER:  # these modules skip themselves when the opt-in is off: the source 
     from test_ux_app_bar_browser import BAR, BAR_BUTTON, MAIN, rect
     from test_ux_browser import (  # noqa: F401  (fixtures are used by name)
         CARD, DIALOG, browser, card, card_name, change_choice, finish_all_cards, iframe_kept, mark_iframe, page, results_heading, server,
-        settle, start_own_label, start_sample, wait_name_change,
+        open_scan_sheet, settle, start_own_label, start_sample, wait_name_change,
     )
 
 
@@ -465,6 +465,7 @@ def test_a_card_reopened_from_the_results_clears_the_bar_and_keeps_its_hint(brow
 def test_a_label_with_upper_limit_warnings_keeps_every_red_box_in_full_view(browser, server):
     ctx, pg = open_page(browser, server, (320, 640))
     try:
+        open_scan_sheet(pg)  # the Scan item of the bar holds the three ways to start
         pg.get_by_role("button", name="Analyze my supplement").click()
         dialog = pg.get_by_role("dialog")
         dialog.locator("button", has_text="Paste").click()
@@ -842,7 +843,8 @@ def test_a_resumed_scan_explains_the_swipe_on_the_card_it_opens_on(browser, serv
         settle(pg, 1.2)
         resume_at = card_name(pg)
         pg.reload(wait_until="networkidle")
-        pg.get_by_role("button", name="Resume your last scan").click(timeout=20000)
+        open_scan_sheet(pg)
+        pg.get_by_role("dialog").get_by_role("button", name="Resume last scan").click(timeout=20000)
         card(pg).locator("#card .name").wait_for(timeout=20000)
         settle(pg)
         assert card_name(pg) == resume_at

@@ -30,6 +30,7 @@ def _results_app(replace_every: int = 2) -> AppTest:
     """The sample label, decided card by card: every `replace_every`-th card replaced, the others kept."""
     at = AppTest.from_file(APP, default_timeout=60)
     at.run()
+    at.button(key="appbar_scan").click().run()  # the sample button lives in the Scan sheet
     at.button(key="swipe_try_sample").click().run()
     cards = at.session_state["swipe_cards"]
     key = "tinder_" + str(at.session_state["swipe_reset_nonce"])
@@ -146,6 +147,7 @@ def test_a_kept_pill_dialog_has_no_comparison():
 def test_one_food_for_two_nutrients_is_one_row_with_a_change_button_per_nutrient():
     at = AppTest.from_file(APP, default_timeout=60)
     at.run()
+    at.button(key="appbar_scan").click().run()  # the sample button lives in the Scan sheet
     at.button(key="swipe_try_sample").click().run()
     cards = at.session_state["swipe_cards"]
     food = next(c["foods"][0] for c in cards if c.get("foods"))

@@ -33,6 +33,9 @@ def _food_options(at: AppTest) -> list[str]:
 
 
 def _toggle(at: AppTest):
+    if not any("Pregnant or breastfeeding" in t.label for t in at.toggle):
+        at.button(key="appbar_diet").click()  # the toggle lives in the Diet sheet
+        _run(at)
     return next(t for t in at.toggle if "Pregnant or breastfeeding" in t.label)
 
 

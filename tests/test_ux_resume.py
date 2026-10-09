@@ -75,9 +75,15 @@ def test_resumable_only_for_a_week(sw, sample_cards):
     assert sw._resumable_scan("junk") is None and sw._resumable_scan(None) is None
 
 
-def test_resume_label_counts_done_cards(sw, sample_cards):
-    snap = sw._scan_snapshot(_scan_state(sw, sample_cards))
-    assert sw._resume_label(snap) == f"↩ Resume your last scan (2 of {len(sample_cards)} cards done)"
+def test_resume_detail_says_what_comes_back_and_when(sw, sample_cards):
+    snap = sw._scan_snapshot(_scan_state(sw, sample_cards), now=1_000_000.0)
+    n = len(sample_cards)
+    assert sw._resume_detail(snap, now=1_000_000.0 + 60) == f"2 of {n} cards done · saved today"
+    assert sw._resume_detail(snap, now=1_000_000.0 + 30 * 3600) == f"2 of {n} cards done · saved yesterday"
+    assert sw._resume_detail(snap, now=1_000_000.0 + 3 * DAY) == f"2 of {n} cards done · saved 3 days ago"
+    assert sw._resume_detail(dict(snap, decisions={f"k{i}": {} for i in range(n)}), now=1_000_000.0) == f"All {n} cards done · saved today"
+    assert sw._resume_detail(dict(snap, label_source={"kind": "sample"}), now=1_000_000.0).startswith("Sample label · 2 of")
+    assert sw._resume_detail(dict(snap, ts="junk"), now=1_000_000.0).endswith("saved today")  # a damaged stamp never raises
 
 
 def test_restore_rebuilds_cards_and_reapplies_decisions(sw, sample_cards):
@@ -91,7 +97,8 @@ def test_restore_rebuilds_cards_and_reapplies_decisions(sw, sample_cards):
     assert state["swipe_decisions"][first]["card_index"] == 0
     assert state["swipe_decisions"][second]["decision"] == "keep"
     assert state["swipe_index"] == 2
-    assert state["swipe_diet_profile_id"] == "vegetarian" == state["swipe_diet_pills"]
+    assert state["swipe_diet_profile_id"] == "vegetarian"
+    assert "swipe_diet_pills" not in state  # the chips live in the Diet sheet only: the mirror is what the sheet is seeded from
     assert state["swipe_last_auto_signature"]
 
 
@@ -123,8 +130,11 @@ def test_welcome_offers_resume_and_restores(sw, sample_cards):
     at = AppTest.from_file(APP, default_timeout=60)
     at.session_state["_suppswipe_saved_scan"] = snap
     at.run()
+    assert not [b for b in at.button if b.key == "swipe_resume_scan"]  # not on the page ...
+    at.button(key="appbar_scan").click().run()  # ... but in the Scan sheet
     resume = [b for b in at.button if b.key == "swipe_resume_scan"]
-    assert resume and resume[0].label == f"↩ Resume your last scan (2 of {len(sample_cards)} cards done)"
+    assert resume and resume[0].label == "Resume last scan"
+    assert f"2 of {len(sample_cards)} cards done · saved today" in [c.value for c in at.caption]  # what it brings back, and when
     resume[0].click().run()
     assert not at.exception, [e.value for e in at.exception]
     assert at.session_state["swipe_index"] == 2
@@ -137,7 +147,9 @@ def test_old_saved_scan_is_not_offered(sw, sample_cards):
     at = AppTest.from_file(APP, default_timeout=60)
     at.session_state["_suppswipe_saved_scan"] = snap
     at.run()
-    assert not [b for b in at.button if b.key == "swipe_resume_scan"]
+    at.button(key="appbar_scan").click().run()  # the offer lives in the Scan sheet: look there, or this proves nothing
+    assert [b for b in at.button if b.key == "swipe_try_sample"]  # the sheet is open ...
+    assert not [b for b in at.button if b.key == "swipe_resume_scan"]  # ... and offers no Resume
 
 
 def test_saved_scan_args_only_restamp_on_change(sw, sample_cards):
@@ -155,13 +167,17 @@ def test_clear_history_also_forgets_the_saved_scan(sw, sample_cards):
     at.session_state["_suppswipe_saved_scan"] = sw._scan_snapshot(_scan_state(sw, sample_cards), now=time.time())
     at.session_state["suppswipe_scan_history"] = [{"ts": "2026-10-01 10:00", "diet": "", "kept": [], "replaced": []}]
     at.run()
+    at.button(key="appbar_scan").click().run()
     assert [b for b in at.button if b.key == "swipe_resume_scan"]
+    at.session_state["swipe_sheet"] = None
     at.button(key="appbar_scans").click().run()
     at.button(key="swipe_clear_history").click().run()  # asks first
     assert at.session_state["_suppswipe_saved_scan"] is not None
     at.button(key="swipe_clear_history_confirm").click().run()
     assert at.session_state["_suppswipe_saved_scan"] is None
-    assert not [b for b in at.button if b.key == "swipe_resume_scan"]
+    at.button(key="appbar_scan").click().run()
+    assert [b for b in at.button if b.key == "swipe_try_sample"]  # the sheet is open ...
+    assert not [b for b in at.button if b.key == "swipe_resume_scan"]  # ... and the forgotten scan is not offered
 
 
 def test_cleared_scan_is_not_saved_again_until_it_changes(sw, sample_cards):

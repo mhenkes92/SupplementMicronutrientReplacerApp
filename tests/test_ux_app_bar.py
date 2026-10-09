@@ -1,8 +1,10 @@
-"""The fixed bottom bar (Guide, Scans, About) and its three sheets. AppTest reruns the whole script on every click, so a
+"""The fixed bottom bar (Guide | Diet | Scan | Recent | About) and its sheets. AppTest reruns the whole script on every click, so a
 sheet is requested by a session flag (`swipe_sheet`) like the other dialogs; what only a browser can prove (docking, the
-Cloud badge, the sheets' size, Esc and focus) is in tests/test_ux_app_bar_browser.py."""
+Cloud badge, the sheets' size, Esc and focus) is in tests/test_ux_app_bar_browser.py. The Scan and Diet items, their sheets and the
+Resume rules are in tests/test_ux_bar_v2.py."""
 from __future__ import annotations
 
+import html
 import re
 from pathlib import Path
 
@@ -10,9 +12,9 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 APP = str(Path(__file__).resolve().parent.parent / "swipe_mobile_app" / "app.py")
-BAR = {"guide": "appbar_guide", "scans": "appbar_scans", "about": "appbar_about"}
-LABELS = ["Guide", "Scans", "About"]
-TITLES = {"guide": "Athlete RDA guide", "scans": "Recent scans", "about": "About & privacy"}
+BAR = {"guide": "appbar_guide", "diet": "appbar_diet", "scan": "appbar_scan", "scans": "appbar_scans", "about": "appbar_about"}
+LABELS = ["Guide", "Diet", "Scan", "Recent", "About"]  # the history item is "Recent": next to "Scan" a "Scans" was easy to confuse
+TITLES = {"guide": "Athlete RDA guide", "diet": "Diet & pregnancy", "scan": "Scan a supplement", "scans": "Recent scans", "about": "About & privacy"}
 SHEET = "swipe_sheet"
 REMOVED_POPOVERS = ("🏃 Athlete RDA guide", "🕘 Recent scans", "🔒 About & privacy")
 OWN_LABEL = "Vitamin C 80 mg 100%\nZinc 10 mg 100%\nSelenium 55 µg 100%"
@@ -49,6 +51,7 @@ def _screen(name: str) -> AppTest:
     if name == "welcome":
         pass
     elif name == "cards":
+        at.button(key="appbar_scan").click().run()  # the sample button lives in the Scan sheet
         at.button(key="swipe_try_sample").click().run()
     elif name == "results":
         _analyse(at)
@@ -77,9 +80,9 @@ def _text(at: AppTest) -> str:
 
 # ------------------------------------------------------------------ the bar is on every screen
 @pytest.mark.parametrize("screen", SCREENS)
-def test_every_screen_has_the_bar_with_all_three_buttons_and_no_popover_left(screen):
+def test_every_screen_has_the_bar_with_all_five_buttons_and_no_popover_left(screen):
     at = _screen(screen)
-    assert [b.key for b in _bar(at)] == list(BAR.values())  # always all three, in this order, whatever the history holds
+    assert [b.key for b in _bar(at)] == list(BAR.values())  # always all five, in this order, whatever the history holds
     assert [b.label for b in _bar(at)] == LABELS
     assert not any(b.disabled for b in _bar(at))
     assert at.get("dialog") == []  # nothing is open until a button is tapped
@@ -87,10 +90,11 @@ def test_every_screen_has_the_bar_with_all_three_buttons_and_no_popover_left(scr
     assert not [p for p in popovers if p.startswith(REMOVED_POPOVERS)], popovers  # the card's "💬 Ask AI" popover may stay
 
 
-def test_the_primary_scan_button_stays_where_it_is():
-    for screen, label in (("welcome", "📸 Analyze my supplement"), ("results", "📸 Scan another supplement")):
-        at = _screen(screen)
-        assert [b.label for b in at.button if b.key == "swipe_analyze_btn"] == [label]
+def test_the_primary_scan_button_is_only_on_the_results_page_and_the_welcome_page_has_only_the_bar():
+    at = _screen("welcome")
+    assert [b.key for b in at.button if not str(b.key).startswith("appbar")] == []  # hero card + bar, nothing to scroll to
+    at = _screen("results")
+    assert [b.label for b in at.button if b.key == "swipe_analyze_btn"] == ["📸 Scan another supplement"]
 
 
 def test_no_bar_label_collides_with_the_labels_other_tests_and_users_look_for():
@@ -106,9 +110,19 @@ def test_each_button_opens_its_sheet_on_each_screen(sw, screen, sheet):
     before = (at.session_state["swipe_index"], len(at.session_state["swipe_decisions"]))
     at.button(key=BAR[sheet]).click().run()
     assert not at.exception, [e.value for e in at.exception]
+    if sheet == "scan" and screen == "results":  # a finished plan: the bar's Scan item asks before it clears it
+        assert _titles(at) == ["Scan another supplement?"]
+        assert (at.session_state["swipe_index"], len(at.session_state["swipe_decisions"])) == before
+        return
     assert _titles(at) == [TITLES[sheet]]  # exactly one dialog
     text = _text(at)
-    if sheet == "guide":
+    if sheet == "scan":
+        keys = [b.key for b in at.button if not str(b.key).startswith("appbar")]
+        assert ("swipe_try_sample" in keys) and ("swipe_scan_analyze" in keys)
+        assert ("swipe_resume_scan" not in keys)  # no saved scan in this session
+    elif sheet == "diet":
+        assert "swipe_diet_pills" in [g.key for g in at.get("button_group")] and any("Pregnant" in t.label for t in at.toggle)
+    elif sheet == "guide":
         for name in ("Vitamin B12", "Magnesium", "Omega-3 ALA", "Selenium"):  # every tracked nutrient is in the guide
             assert name in text
         assert ("In your scan" in text) and (("Scan a supplement and its nutrients appear here" in text) == (screen in ("welcome", "error")))
@@ -310,7 +324,7 @@ def test_one_dialog_at_a_time_and_the_older_dialogs_win():
     at.session_state["swipe_open_analyze"] = False
     at.session_state["swipe_confirm_restart"] = True
     at.run()
-    assert _titles(at) == ["Start over?"]
+    assert _titles(at) == ["Scan another supplement?"]  # on the results the question is the plan's; mid-scan it is "Start over?"
     at.session_state["swipe_confirm_restart"] = False
     at.session_state["swipe_plan_item"] = {"kind": "keep", "key": at.session_state["swipe_cards"][0]["component_key"]}
     at.run()
@@ -357,7 +371,7 @@ def test_start_over_in_the_middle_of_a_scan_keeps_history_and_closes_no_bar():
     card = at.session_state["swipe_cards"][0]
     at.session_state[key] = {"dir": "left", "id": "s1", "card": card["component_key"], "index": 0}
     at.run()
-    at.button(key="swipe_analyze_btn").click().run()  # mid-scan: asks first
+    at.button(key=BAR["scan"]).click().run()  # mid-scan: the bar's Scan item asks first, like the page button did
     assert _titles(at) == ["Start over?"]
     at.button(key="swipe_restart_confirm").click().run()
     assert _titles(at) == ["Analyze my supplement"]
@@ -492,7 +506,7 @@ def test_each_sheet_has_a_keyboard_stop_inside_its_scroller(sheet):
     blocks = [m.value for m in at.markdown if "tabindex='0'" in m.value]
     assert len(blocks) == 1, blocks  # one stop, not one per row
     if sheet != "about":
-        assert f"role='region' aria-label='{TITLES[sheet]} content'" in blocks[0]
+        assert f"role='region' aria-label='{html.escape(TITLES[sheet])} content'" in blocks[0]
     else:
         assert "role='heading'" in blocks[0] and "Not medical advice" in blocks[0]
 

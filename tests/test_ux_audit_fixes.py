@@ -157,6 +157,7 @@ def test_the_sample_label_is_marked_english_and_not_saved_as_a_scan():
 
     at = AppTest.from_file(APP, default_timeout=60)
     at.run()
+    at.button(key="appbar_scan").click().run()  # the sample button lives in the Scan sheet
     at.button(key="swipe_try_sample").click().run()
     assert at.session_state["swipe_label_source"]["kind"] == "sample"
     assert any("Sample label" in c.value for c in at.caption)  # on the cards ...
