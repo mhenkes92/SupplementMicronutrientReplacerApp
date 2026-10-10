@@ -13,7 +13,8 @@ meal plan, a weekly shopping list with prices, Ask AI and a shareable summary.
 The welcome screen is one card with a big **Scan a supplement** button inside it. The cards screen is one fixed screen too: the swipe
 card fills the room between the brand and a fixed bottom bar of five items, and nothing is drawn below it, so the page does not
 scroll (a card that is taller than its frame, on a small phone or at large text, scrolls inside itself with a fade and a "scroll for
-more" pill). Above **Keep / Replace** the card has three tools: **Swap food** (pick another whole food; only when the card has one),
+more" pill; where a very large text size would leave the card a slit of less than 240 px between its tools and its buttons, the frame
+grows to give it that and the page scrolls to the buttons, as it does on a landscape phone). Above **Keep / Replace** the card has three tools: **Swap food** (pick another whole food; only when the card has one),
 **Ask AI** (only when the AI is configured) and **More** (report a problem with the card). Each opens a sheet over the card and
 returns to the same card. Only the results (the long plan) scroll like a normal page.
 

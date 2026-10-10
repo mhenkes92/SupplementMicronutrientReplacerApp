@@ -402,6 +402,7 @@ def _init_state() -> None:
         "swipe_analysis_text": "",
         "swipe_components": [],
         "swipe_rag_chats": {},
+        "swipe_rag_inflight": {},
         "swipe_diet_profile_id": "none",
         "swipe_pregnant": False,
         "swipe_reset_nonce": 0,
@@ -935,8 +936,12 @@ def _answer_ask_ai_question(
         bb.note_config_error()
         return _local_rag_answer(scoped_question)
 
-    # One question = one unit of the session's generation allowance (a cached first question above is free).
-    if not _consume_llm_quota("generate"):
+    # One question = one unit of the session's generation allowance (a cached first question above is free). The same question
+    # asked again while its answer is being written, or after it was (a sheet closed in the middle of an answer and reopened: see
+    # _render_ask_ai_chat), is the same unit, not a second one.
+    generation_key = cache_key or llm_cache.make_key("ask_ai_followup", component_name, question, history)
+    continuing = bool(llm_cache.get(generation_key)) or llm_cache.inflight(generation_key) is not None
+    if not continuing and not _consume_llm_quota("generate"):
         if placeholder is not None:
             placeholder.info(_QUOTA_MESSAGE)
         return _local_rag_answer(scoped_question)
@@ -958,7 +963,7 @@ def _answer_ask_ai_question(
     )
     # 1) The Examine knowledge-base bot (BLOCKBRAIN_KB_BOT_ID), when configured: answers with figures and sources.
     ask_model = _feature_model("ask")  # also syncs the Streamlit secrets into the environment
-    if str(os.environ.get("BLOCKBRAIN_KB_BOT_ID", "") or "").strip():
+    if not continuing and str(os.environ.get("BLOCKBRAIN_KB_BOT_ID", "") or "").strip():
         if placeholder is not None:
             placeholder.markdown("_Looking it up in the knowledge base…_")
         kb_answer, kb_sources = bb.call_blockbrain_ask(
@@ -966,14 +971,13 @@ def _answer_ask_ai_question(
             model=ask_model or None, budget_s=90,
         )
         if kb_answer and not bb.looks_like_agent_error(kb_answer):
-            if cache_key:
-                llm_cache.put(cache_key, kb_answer)
+            llm_cache.put(generation_key, kb_answer)  # also a follow-up: a sheet closed before this was painted finds it again
             if placeholder is not None:
                 placeholder.markdown(kb_answer)
             return kb_answer, (_SOURCE_KB if kb_sources else _SOURCE_AGENT)
     # 2) The general model.
     answer = _stream_llm_text(
-        cache_key or llm_cache.make_key("ask_ai_followup", component_name, question, history),
+        generation_key,
         system_prompt,
         user_prompt,
         placeholder=placeholder,
@@ -4492,9 +4496,10 @@ def _render_header() -> None:
             }
             /* Short phones: the welcome screen is the hero card (its Scan button inside), one line of advice and the bar, and it must
                not scroll. */
-            @media (max-height: 600px) {
+            @media (max-height: 608px) {
                 .hero-sub { display: none; }
-                /* 568 px tall (an iPhone SE): the card gives back ~35 px so that a filter chip fits above the bar too */
+                /* 568 px tall (an iPhone SE): the card gives back ~35 px so that a filter chip fits above the bar too (608, not 600: the
+                   long text needs ~610 px to fit under the three steps, measured on every width from 360 up) */
                 [class~="st-key-hero_card"] { padding: 16px 16px 14px 16px; gap: 10px; }
                 .hero-art { font-size: 2rem; }
                 .hero-title { font-size: 1.4rem; margin-top: 6px; }
@@ -4532,6 +4537,9 @@ def _render_header() -> None:
             [class~="st-key-swipe_card"] { padding: 0; gap: 0; }
             /* An inline frame sits on a text baseline and leaves a strip under itself: the card's frame is a block. */
             iframe[src*="tinder_swipe"] { display: block; }
+            /* While an analysis runs the card of the scan before stays on screen, dimmed: it is not to be tapped (the component also
+               ignores it, and a tap would restart the run). */
+            body:has(.analyze-loading-wrap) iframe[src*="tinder_swipe"] { pointer-events: none; }
             /* The two helper frames (the history store, the scroll-to-top frame) are 0 px high, but their wrappers still take a text line
                and a flex gap (~57 px after the last element of a page): out of the flow, so a fixed screen ends where its content ends. */
             [class~="st-key-suppswipe_history_store"],
@@ -5213,11 +5221,13 @@ def _run_pending_analysis() -> None:
         _set_progress(100, "Opening your first card…")
 
         st.session_state["swipe_cards"] = _build_swipe_cards(components, details)
+        _new_scan_serial(st.session_state)
         st.session_state["swipe_analysis_text"] = combined
         st.session_state["swipe_label_source"] = label_source
         st.session_state["swipe_components"] = components
         st.session_state["swipe_decisions"] = {}
         st.session_state["swipe_rag_chats"] = {}
+        st.session_state["swipe_rag_inflight"] = {}
         st.session_state["swipe_index"] = 0
         st.session_state["swipe_is_analyzing"] = False
         st.session_state["swipe_pending_request"] = None
@@ -5273,6 +5283,19 @@ def _focus_bar_item() -> None:
     )
     with st.container(key="focus_shim"):  # drawn as nothing (CSS): a bare zero-height component still adds a flex gap to the page
         components.html(script, height=0)
+
+
+def _scroll_sheet_to_chat_input() -> None:
+    """A chat in a sheet grows downwards: from the second answer on the input would be below the fold, and a visitor would have to know to
+    scroll the sheet to ask a follow-up. Scrolls the open sheet so that the input (and the last answer above it) is in view."""
+    nonce = int(st.session_state.get("_suppswipe_scroll_nonce", 0) or 0) + 1
+    st.session_state["_suppswipe_scroll_nonce"] = nonce
+    components.html(
+        "<script>/* chat %d */(function(){try{var d=window.parent.document;function go(){"
+        "var box=d.querySelector('[role=dialog] [data-testid=stChatInput]');if(box){box.scrollIntoView({block:'end'});}}"
+        "setTimeout(go,60);setTimeout(go,350);}catch(e){}})();</script>" % nonce,
+        height=0,
+    )
 
 
 def _stage_analysis_from_inputs(
@@ -5971,6 +5994,20 @@ def _shown_food(state: Any, index: int, component_key: str) -> dict[str, Any] | 
     return view.get("selected")
 
 
+def _new_scan_serial(state: Any) -> None:
+    """Cards of a new scan are installed: events of the card component made on the OLD scan (see _from_an_earlier_scan) are dead."""
+    state["swipe_scan_serial"] = int(state.get("swipe_scan_serial", 0) or 0) + 1
+
+
+def _from_an_earlier_scan(state: Any, value: dict[str, Any]) -> bool:
+    """True for an event that the card component made on another scan than the one on screen. The component keeps its last value
+    under the same key across scans, and a tap on the old card made while an analysis ran (the old card stays on screen, dimmed,
+    until the new one replaces it) is read by the first run that draws the new cards: card id and index can match (the first card of
+    two labels often is the same nutrient). The component echoes the `scan` it was drawn with; an event without one (a
+    hand-made value) is judged by the card id and index alone, as before."""
+    return "scan" in value and str(value.get("scan")) != str(int(state.get("swipe_scan_serial", 0) or 0))
+
+
 def _apply_card_swipe(state: Any, value: Any) -> bool:
     """Apply a keep / replace / back reported by the card component to `state`
     (st.session_state or a plain dict). True when it changed the screen."""
@@ -5980,6 +6017,8 @@ def _apply_card_swipe(state: Any, value: Any) -> bool:
     if not swipe_id or swipe_id == str(state.get("swipe_last_swipe_id", "") or ""):
         return False
     state["swipe_last_swipe_id"] = swipe_id
+    if _from_an_earlier_scan(state, value):
+        return False
     cards = list(state.get("swipe_cards") or [])
     index = int(state.get("swipe_index", 0) or 0)
     if not 0 <= index < len(cards):
@@ -6030,6 +6069,8 @@ def _apply_card_guide_tap(state: Any, value: Any) -> bool:
     if not tap_id or tap_id == str(state.get("swipe_last_guide_id", "") or ""):
         return True
     state["swipe_last_guide_id"] = tap_id
+    if _from_an_earlier_scan(state, value):
+        return True
     cards = list(state.get("swipe_cards") or [])
     index = int(state.get("swipe_index", 0) or 0)
     if not 0 <= index < len(cards):
@@ -6060,6 +6101,8 @@ def _apply_card_tool_tap(state: Any, value: Any) -> bool:
     state["swipe_last_tool_id"] = tap_id
     if state.get("swipe_is_analyzing") and isinstance(state.get("swipe_pending_request"), dict):
         return True  # everything stays dead while an analysis runs
+    if _from_an_earlier_scan(state, value):
+        return True  # made on the card of the scan before this one
     cards = list(state.get("swipe_cards") or [])
     index = int(state.get("swipe_index", 0) or 0)
     if not 0 <= index < len(cards):
@@ -6079,6 +6122,18 @@ def _apply_card_tool_tap(state: Any, value: Any) -> bool:
 def _food_pick_key(component_key: str, index: int) -> str:
     """Where the food picked for a card is kept: a plain session key (the Swap food sheet's own widget is gone with the sheet)."""
     return f"swipe_food_pick_{component_key}_{index}"
+
+
+def _forget_food_picks_of_other_cards(state: Any, cards: list[dict[str, Any]], index: int) -> None:
+    """A food picked in the Swap food sheet is the card's for as long as the card is on screen. When the card is left (a swipe,
+    Back, the results) the pick goes: what was decided is in the decision, which seeds the card when it is reopened
+    (_restore_previous_food); a pick that was never decided on is gone, as the old dropdown's value was, so a reopened card does
+    not show a food its own "Your choice: ..." line and the plan disagree with."""
+    keep = ""
+    if 0 <= index < len(cards):
+        keep = _food_pick_key(str(cards[index].get("component_key", "") or ""), index)
+    for key in [k for k in list(state.keys()) if str(k).startswith("swipe_food_pick_") and k != keep]:
+        state.pop(key, None)
 
 
 def _open_card(index: int, edit: bool = False) -> None:
@@ -6249,11 +6304,13 @@ def _restore_scan(state: Any, saved: dict[str, Any]) -> bool:
     saved_diet = str(saved.get("diet", "none") or "none")
     diet = current_diet if bb.normalize_lookup_key(current_diet) not in ("", "none") else saved_diet
     state["swipe_cards"] = cards
+    _new_scan_serial(state)
     state["swipe_analysis_text"] = text
     state["swipe_components"] = components
     state["swipe_label_source"] = dict(saved.get("label_source") or {"kind": "input", "url": ""})
     state["swipe_decisions"] = decisions
     state["swipe_rag_chats"] = {}
+    state["swipe_rag_inflight"] = {}
     state["swipe_index"] = max(0, min(len(cards), index))
     state["swipe_edit_return"] = False
     state["swipe_diet_profile_id"] = diet
@@ -6329,6 +6386,7 @@ def _render_card() -> None:
         if not _apply_card_guide_tap(st.session_state, card_value) and not _apply_card_tool_tap(st.session_state, card_value):
             _apply_card_swipe(st.session_state, card_value)
     index = int(st.session_state.get("swipe_index", 0))
+    _forget_food_picks_of_other_cards(st.session_state, cards, index)
     decisions: dict[str, dict[str, Any]] = st.session_state.get("swipe_decisions", {})
 
     if not cards:
@@ -6354,7 +6412,7 @@ def _render_card() -> None:
             # (a returning visitor would take the card for a first visit); both labels fit one line at 320 px.
             resumable = _resumable_scan(st.session_state.get("_suppswipe_saved_scan")) is not None
             st.button(
-                "Scan or resume" if resumable else "Scan a supplement", type="primary", width="stretch", key="hero_scan",
+                "Scan or resume" if resumable else "Scan a supplement", type="primary", width="stretch", key="hero_scan",  # no icon=: its ligature name is read aloud
                 on_click=_tap_scan,
             )
         st.caption(
@@ -6534,6 +6592,8 @@ def _render_card() -> None:
             previous=_previous_choice_label(decisions.get(component_key)),
             editing=bool(st.session_state.get("swipe_edit_return", False)),
             cardId=component_key,
+            # The scan these cards belong to: the component echoes it in every event (see _from_an_earlier_scan).
+            scan=int(st.session_state.get("swipe_scan_serial", 0) or 0),
             # Changes after every handled swipe, so the card always gets
             # fresh props (and resets) even when it stays on the same card.
             ack=str(st.session_state.get("swipe_last_swipe_id", "") or ""),
@@ -7322,14 +7382,24 @@ def _render_ask_ai_chat(
         key=f"swipe_rag_chat_input_{component_key}_{index}",
         max_chars=_ASK_AI_MAX_CHARS,
     )
+    if rerun_scope == "fragment" and history:
+        _scroll_sheet_to_chat_input()  # the sheet of a card: the input is kept in view as the chat grows
+    inflight: dict[str, str] = st.session_state.setdefault("swipe_rag_inflight", {})
     if history and st.button("Clear chat", type="tertiary", key=f"swipe_rag_clear_{component_key}_{index}"):
         chat_store[component_key] = []
         st.session_state["swipe_rag_chats"] = chat_store
+        inflight.pop(component_key, None)
         _rerun_chat(rerun_scope)
 
     pending = str(st.session_state.pop(pending_key, "") or "")
     asked = (pending or str(question or "").strip())[:_ASK_AI_MAX_CHARS]
+    if not asked:
+        # A question whose answer was still being written when the sheet was closed (X, Esc, a tap outside: each reruns the app and
+        # stops this script before the turn below is stored). Asking it again costs nothing: the answer is cached (or still being
+        # written by the background job, which this run then waits for), and it is the same unit of the allowance.
+        asked = str(inflight.get(component_key, "") or "")[:_ASK_AI_MAX_CHARS]
     if asked:
+        inflight[component_key] = asked
         with st.chat_message("user"):
             st.write(asked)
         bubble = st.empty()  # the assistant's bubble is cleared again when there is no answer (no empty avatar)
@@ -7345,6 +7415,7 @@ def _render_ask_ai_chat(
                         placeholder=stream_box,
                         dose_label=str(card.get("dose_label", "") or ""),
                     )
+        inflight.pop(component_key, None)
         if answer is None:
             bubble.empty()
             st.error(_ai_retry_note("Ask AI is unavailable right now — please try again in a moment."))

@@ -36,7 +36,8 @@ def send(at: AppTest, value: dict[str, Any]) -> AppTest:
 def tool_value(at: AppTest, kind: str, **override: Any) -> dict[str, Any]:
     """What the component sends for a tap on the tool `kind` of the card on screen (a fresh id each time)."""
     card = at.session_state["swipe_cards"][int(at.session_state["swipe_index"])]
-    value = {"kind": kind, "id": f"{kind}-{next(_serial)}", "card": card["component_key"], "index": int(at.session_state["swipe_index"])}
+    value = {"kind": kind, "id": f"{kind}-{next(_serial)}", "card": card["component_key"], "index": int(at.session_state["swipe_index"]),
+             "scan": int(at.session_state.get("swipe_scan_serial", 0) or 0)}  # the scan the card was drawn with, echoed like the component does
     value.update(override)
     return value
 
@@ -67,4 +68,5 @@ def swap_options(at: AppTest) -> list[str]:
 
 def swipe(at: AppTest, direction: str, swipe_id: str) -> AppTest:
     card = at.session_state["swipe_cards"][int(at.session_state["swipe_index"])]
-    return send(at, {"dir": direction, "id": swipe_id, "card": card["component_key"], "index": int(at.session_state["swipe_index"])})
+    return send(at, {"dir": direction, "id": swipe_id, "card": card["component_key"], "index": int(at.session_state["swipe_index"]),
+                     "scan": int(at.session_state.get("swipe_scan_serial", 0) or 0)})
