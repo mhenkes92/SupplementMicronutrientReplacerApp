@@ -19,6 +19,7 @@ import sys
 import subprocess
 import threading
 import time
+import traceback
 import types
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -9011,6 +9012,9 @@ BLOCKBRAIN_CONNECT_TIMEOUT_S = _env_float("BLOCKBRAIN_CONNECT_TIMEOUT_S", 10.0)
 BLOCKBRAIN_READ_TIMEOUT_S = _env_float("BLOCKBRAIN_READ_TIMEOUT_S", 240.0)
 BLOCKBRAIN_TOTAL_BUDGET_S = _env_float("BLOCKBRAIN_TOTAL_BUDGET_S", 150.0)
 BLOCKBRAIN_VISION_BUDGET_S = _env_float("BLOCKBRAIN_VISION_BUDGET_S", 120.0)
+# The first photo route may use at most this much of the budget while a second route is left: a route that stalls (the platform keeps
+# the line open and sends nothing) must not leave the other one no time at all. 0 = no cap.
+BLOCKBRAIN_VISION_FIRST_ROUTE_S = _env_float("BLOCKBRAIN_VISION_FIRST_ROUTE_S", 60.0)
 
 # Diagnostics of the most recent Blockbrain call (best-effort; shown in the app's ?debug=1 panel).
 # Keys: kind, route, model, total_s, usage, error.
@@ -9146,12 +9150,23 @@ def _client() -> Any:
 # A call that ran out of its budget keeps its thread (and its open line) until Blockbrain closes it: cap how many
 # calls may be running at once, abandoned ones included, so a stalled platform cannot pile up threads and Compute Blocks.
 _WORKER_SLOTS = threading.BoundedSemaphore(max(1, int(_env_float("BLOCKBRAIN_MAX_CONCURRENT", 8.0))))
+# A visitor's photo has slots of its own: the meal plan, Ask AI and the product-image reader (see call_blockbrain_vision) could
+# otherwise take all of the above and every photo would be refused with "busy" while Blockbrain itself is fine.
+_VISION_SLOTS = threading.BoundedSemaphore(max(1, int(_env_float("BLOCKBRAIN_MAX_CONCURRENT_VISION", 6.0))))
 
 
-def _run_with_budget(fn: Callable[[], Any], budget_s: float) -> Any:
+def call_slots_free() -> dict[str, int]:
+    """How many of the call slots are free right now (for ?debug=1; the semaphores' counters are all there is to read)."""
+    return {
+        "general": int(getattr(_WORKER_SLOTS, "_value", -1)),
+        "photo": int(getattr(_VISION_SLOTS, "_value", -1)),
+    }
+
+
+def _run_with_budget(fn: Callable[[], Any], budget_s: float, slots: "threading.BoundedSemaphore | None" = None) -> Any:
     """fn() with a wall-clock cap: TimeoutError when it takes longer (its thread then finishes on its own);
-    RuntimeError at once when too many calls are already running."""
-    slots = _WORKER_SLOTS  # the worker gives back the slot it took, even if the module-level semaphore was replaced meanwhile
+    RuntimeError at once when too many calls are already running (`slots`: the pool to take a slot from, default: the shared one)."""
+    slots = slots if slots is not None else _WORKER_SLOTS  # the worker gives back the slot it took, even if the module-level semaphore was replaced meanwhile
     if not slots.acquire(blocking=False):
         raise RuntimeError("Blockbrain is busy: too many calls are still running. Try again in a minute.")
     box: dict[str, Any] = {}
@@ -9179,9 +9194,10 @@ def _run_with_budget(fn: Callable[[], Any], budget_s: float) -> Any:
 
 
 def _note_failure(kind: str, why: Any, started: float, route: str = "") -> str:
-    """Remember (per thread and process) and log why a call failed; returns the message. Never holds the key."""
+    """Remember (per thread and process) and log why a call failed; returns the message. Never holds the key, the organisation id or
+    a bot id (a platform error that is written as the answer may echo them)."""
     global LAST_BLOCKBRAIN_ERROR, LAST_BLOCKBRAIN_TIMING
-    message = _redact(why if isinstance(why, str) else (str(why) or type(why).__name__))[:300]
+    message = _scrub_secrets(why if isinstance(why, str) else (str(why) or type(why).__name__))[:300]
     elapsed = round(time.monotonic() - started, 2)
     LAST_BLOCKBRAIN_ERROR = message
     _CALL_STATE.error = message
@@ -9413,7 +9429,8 @@ def _vision_jpeg_payload(data: bytes) -> bytes:
             and len(data) <= 1_500_000
         ):
             return data
-    except Exception:
+    except Exception as exc:
+        _IMAGE_STATE.notes = _unreadable_image_notes(data, exc)
         return b""
     upright = _load_upright_image(data, BLOCKBRAIN_VISION_MAX_SIDE)
     return _jpeg_bytes(upright, 88) if upright is not None else b""
@@ -9422,62 +9439,151 @@ def _vision_jpeg_payload(data: bytes) -> bytes:
 _AUTH_HTTP_RE = re.compile(r"\bHTTP (?:401|403)\b")
 
 
-def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
-    """Read a label photo with Blockbrain's vision model (blockbrain_llm_client.Blockbrain.ocr); returns the transcribed
-    label text, or "" on any failure (then last_call_error() says why).
+# --- What happened to a photo -------------------------------------------------------------------------------------------------
+# The visitor's script thread prepares the image and makes the call, so what is known about it (the image facts, the attempt of each
+# route) is kept per thread, like last_call_error(): one visitor's failure never shows up on another one's card. The attempts are
+# {route, outcome, note, at}; outcome is one of
+#   text (it read), empty, refusal (it answered, not with label text), image_missing (the model never got the picture),
+#   platform_error (Blockbrain's own error written as the answer), error (an exception: HTTP status, stream error, connection),
+#   timeout (the route's share of the budget ran out), refused (the image was never sent).
+def reset_vision_trace() -> None:
+    """Forget this thread's image facts and route attempts (a new photo starts)."""
+    _IMAGE_STATE.notes = {}
+    _CALL_STATE.attempts = []
 
-    The configured route (BLOCKBRAIN_OCR_ROUTE, default agentic) is tried first and the other route when it fails or the
-    model says it got no image. `model` is accepted for the older call sites and ignored (see call_blockbrain_text).
+
+def image_notes() -> dict[str, Any]:
+    """What this thread learned about its last image: format, width, height, bytes, the variants built, and `reason` (with `kind`,
+    `limit`, `error`) when it was not sent."""
+    return dict(getattr(_IMAGE_STATE, "notes", None) or {})
+
+
+def vision_attempts() -> list[dict[str, Any]]:
+    """This thread's route attempts of the last call_blockbrain_vision (see above; `at` = seconds into the call)."""
+    return [dict(a) for a in (getattr(_CALL_STATE, "attempts", None) or [])]
+
+
+def _record_attempt(via: str, outcome: str, note: str = "", started: float | None = None) -> None:
+    note = _scrub_secrets(note) if note else ""  # (no organisation or bot id in anything kept, whatever the server echoed)
+    LAST_VISION_ATTEMPT_LOG.append(f"{via}:{outcome}" + (f" | {note}" if note else ""))
+    attempts = getattr(_CALL_STATE, "attempts", None)
+    if attempts is None:
+        attempts = _CALL_STATE.attempts = []
+    attempts.append(
+        {"route": via, "outcome": outcome, "note": str(note or "")[:300], "at": round(time.monotonic() - started, 1) if started else 0.0}
+    )
+
+
+def note_vision_rejection(outcome: str, text: str) -> None:
+    """The app turned down a reply this adapter had accepted (`refusal` or `platform_error` as the "label"): the same trace as the
+    adapter's own rejections, so the failure card and the log say what happened."""
+    _record_attempt("app", outcome, "" if outcome == "refusal" else _redact(str(text or "").replace("\n", " ")[:180]))
+    _note_failure(
+        "vision",
+        "the model answered with an error, not label text" if outcome == "platform_error" else "the model answered but not with label text (a refusal)",
+        time.monotonic(),
+        "app",
+    )
+
+
+def note_app_error(exc: BaseException) -> None:
+    """The photo step itself raised (a bug in this app, not an answer of the AI): the same trace as the other failures, so the
+    card says "something went wrong while reading the photo" instead of blaming the AI or the picture. Only the exception CLASS goes
+    on the card; the log also gets the place in the code (file, line, function: no message, which may hold what the file held)."""
+    name = type(exc).__name__
+    where = "?"
+    try:
+        frame = traceback.extract_tb(exc.__traceback__)[-1]
+        where = f"{Path(frame.filename).name}:{frame.lineno} in {frame.name}"
+    except Exception:
+        pass
+    logger.warning("the photo step raised %s at %s", name, where)
+    _record_attempt("app", "app_error", name)
+    _note_failure("vision", f"unexpected {name} in the photo step", time.monotonic(), "app")
+
+
+def _image_missing_is_explicit(text: str) -> bool:
+    """The reply says outright that no picture arrived ("no image attached", "I don't see any image"), as opposed to the
+    apology of a model that got the picture and could not read it ("I'm sorry, I can't read the text")."""
+    start = " ".join([ln.strip() for ln in str(text or "").strip()[:600].splitlines() if ln.strip()][:2])
+    return bool(_IMAGE_MISSING_RE.search(start) or _IMAGE_CANNOT_SEE_RE.search(start) or _is_blockbrain_image_missing_response(text))
+
+
+def call_blockbrain_vision(image_bytes: bytes, model: str | None = None, background: bool = False) -> str:
+    """Read a label photo with Blockbrain's vision model (blockbrain_llm_client.Blockbrain.ocr); returns the transcribed
+    label text, or "" on any failure (then last_call_error() says why and vision_attempts() what each route did).
+
+    The configured route (BLOCKBRAIN_OCR_ROUTE, default agentic) is tried first and the other route when it fails, answers with
+    a refusal or says it got no image; the first route may use only BLOCKBRAIN_VISION_FIRST_ROUTE_S of the budget. `model` is
+    accepted for the older call sites and ignored (see call_blockbrain_text). A visitor's photo takes a slot of its own pool;
+    `background` (the product-image reader, which sends several photos at once) takes the shared one.
     """
     global LAST_VISION_RAW_RESPONSE
     global LAST_VISION_ATTEMPT_LOG
     LAST_VISION_RAW_RESPONSE = ""
     LAST_VISION_ATTEMPT_LOG = []
+    _CALL_STATE.attempts = []
     started = time.monotonic()
     reset_call_error()
     jpeg_bytes = _vision_jpeg_payload(image_bytes)
     if not jpeg_bytes:
-        LAST_VISION_ATTEMPT_LOG.append("image:refused (unreadable or oversized image)")
-        _note_failure("vision", "the image is unreadable or too large", started)
+        notes = image_notes()
+        why = str(notes.get("reason", "") or "") + (f" {notes['kind']}" if notes.get("kind") else "")
+        _record_attempt("image", "refused", why.strip() or "unreadable or oversized image", started)
+        _note_failure("vision", "the image is unreadable or too large" + (f" ({why.strip()})" if why.strip() else ""), started)
         return ""
     try:
         client = _client()
     except Exception as exc:
+        _record_attempt("config", "error", _redact(exc)[:180], started)
         _note_failure("vision", exc, started)
         return ""
-    for via in _ocr_routes():
+    slots = _WORKER_SLOTS if background else _VISION_SLOTS
+    pending = list(_ocr_routes())
+    cortex_retried = False
+    while pending:
+        via = pending.pop(0)
         left = float(BLOCKBRAIN_VISION_BUDGET_S) - (time.monotonic() - started)
         if left < 0.5:
             break
+        if pending and BLOCKBRAIN_VISION_FIRST_ROUTE_S > 0:
+            left = min(left, float(BLOCKBRAIN_VISION_FIRST_ROUTE_S))  # a stalled route must not take the other route's time
         try:
             reply = _run_with_budget(
                 lambda via=via: client.ocr(jpeg_bytes, prompt=_VISION_PROMPT, via=via, max_side=BLOCKBRAIN_VISION_MAX_SIDE),
                 left,
+                slots,
             )
         except TimeoutError as exc:
-            LAST_VISION_ATTEMPT_LOG.append(f"{via}:timeout")
+            _record_attempt(via, "timeout", "", started)
             _note_failure("vision", exc, started, via)
-            return ""  # the budget is spent: no second route
+            continue  # the other route gets what is left of the budget (nothing, when it is spent)
         except Exception as exc:
-            LAST_VISION_ATTEMPT_LOG.append(f"{via}:error | {_redact(exc)[:180]}")
+            _record_attempt(via, "error", _redact(exc)[:180], started)
             _note_failure("vision", exc, started, via)
             if _AUTH_HTTP_RE.search(str(exc)):
                 break  # both routes use the same key and organisation: a second try only costs time
             continue
         out = str(getattr(reply, "text", "") or "").strip()
-        snippet = out.replace("\n", " ")[:180]
+        snippet = _redact(out.replace("\n", " ")[:180])
         if out:
             LAST_VISION_RAW_RESPONSE = out
         if not out:
-            LAST_VISION_ATTEMPT_LOG.append(f"{via}:empty")
+            _record_attempt(via, "empty", "", started)
             _note_failure("vision", "Blockbrain vision returned no text", started, via)
+            if via == "cortex" and not cortex_retried:
+                # The client retries an empty agentic run once on a new conversation, but not an empty cortex answer.
+                cortex_retried = True
+                pending.insert(0, "cortex")
             continue
         if looks_like_agent_error(out):
-            LAST_VISION_ATTEMPT_LOG.append(f"{via}:platform_error | {snippet}")
+            _record_attempt(via, "platform_error", snippet, started)
             _note_failure("vision", out, started, via)
             continue
-        if _image_not_received(out) or _is_blockbrain_image_missing_response(out):
-            LAST_VISION_ATTEMPT_LOG.append(f"{via}:image_missing | {snippet}")
+        missing = _image_not_received(out) or _is_blockbrain_image_missing_response(out)
+        refusal = is_ocr_refusal(out)
+        if missing and (_image_missing_is_explicit(out) or not refusal):
+            _record_attempt(via, "image_missing", "", started)  # (the model's words stay out of what is kept: LAST_VISION_RAW_RESPONSE has them)
             _note_failure(
                 "vision",
                 "the model did not receive the image (is the configured model or bot able to read images?)",
@@ -9485,7 +9591,12 @@ def call_blockbrain_vision(image_bytes: bytes, model: str | None = None) -> str:
                 via,
             )
             continue
-        LAST_VISION_ATTEMPT_LOG.append(f"{via}:text | {snippet}")
+        if refusal:
+            # "I'm sorry, I can't read this": not label text. The other route's model may read it, so it is asked too.
+            _record_attempt(via, "refusal", "", started)  # (a refusal quotes the picture: not kept, see _attempts_line)
+            _note_failure("vision", "the model answered but not with label text (a refusal)", started, via)
+            continue
+        _record_attempt(via, "text", snippet, started)
         _note_success("vision", reply, started)
         _remember_ocr_route(via)
         return _mask_unreadable_numbers(out)
@@ -9557,6 +9668,247 @@ def _is_blockbrain_image_missing_response(text: str) -> bool:
         "i do not see any image",
     ]
     return any(marker in raw for marker in markers)
+
+
+# A vision model's refusal or apology ("I'm sorry, I can't read the text in this image") is not label text: never cached (a
+# transient refusal would stick for 6 h) and never treated as a label.
+_OCR_REFUSAL_RE = re.compile(
+    r"\b(?:i'?m sorry|i am sorry|i apologi[sz]e|sorry, (?:but )?i|i (?:can ?not|can'?t|am unable to|'m unable to|"
+    r"was unable to|could ?n[o']t)\b|unable to (?:read|extract|see|process|identify)|as an ai\b|"
+    r"es tut mir leid|leider (?:kann|konnte) ich|ich kann (?:den|die|das|keinen?)\b.{0,40}\bnicht)",
+    re.IGNORECASE,
+)
+
+
+def is_ocr_refusal(text: Any) -> bool:
+    """True for vision output that is a refusal / apology rather than label text
+    (a short reply with a refusal phrase and no dose)."""
+    raw = str(text or "").strip()
+    if not raw or not _OCR_REFUSAL_RE.search(raw[:300]):
+        return False
+    return not re.search(r"\d\s*(?:mg|mcg|µg|ug|iu|i\.?e\.?|%)", raw, re.IGNORECASE)
+
+
+# --- Why a photo was not read: the stage, the reason, and a details line that is safe to show ------------------------------
+# kind -> group. image: nothing was sent to the AI; no_answer: it was sent and nothing (usable) came back; unavailable: a
+# setting or the platform is wrong, so another photo will not help; answer: it answered with nothing readable; app: this app
+# raised an exception while it handled the photo (see note_app_error).
+_IMAGE_REASON_KIND = {
+    "empty": "image_empty", "unsupported_format": "image_unsupported", "too_large": "image_too_large",
+    "damaged": "image_damaged", "too_small": "image_too_small", "blank": "image_blank", "busy": "image_busy",
+}
+_KIND_GROUP = {
+    **{kind: "image" for kind in _IMAGE_REASON_KIND.values()},
+    "timeout": "no_answer", "busy": "no_answer", "unreachable": "no_answer", "service_error": "no_answer", "slots_busy": "no_answer",
+    "auth": "unavailable", "platform": "unavailable", "model_blind": "unavailable",
+    "empty": "answer", "refusal": "answer", "unreadable": "answer", "blank_photo": "answer",
+    "app_error": "app",
+}
+_AUTH_NOTE_RE = re.compile(r"missing configuration|not a known model key|HTTP (?:401|403|404)\b|unauthori[sz]ed|forbidden", re.IGNORECASE)
+_EMPTY_NOTE_RE = re.compile(r"returned an empty answer|returned no text|empty answer", re.IGNORECASE)
+_TIMEOUT_NOTE_RE = re.compile(r"did not answer|timed?[\s-]*out|\btimeout\b|not processed in time", re.IGNORECASE)
+_CONNECT_NOTE_RE = re.compile(
+    r"ConnectionError|Connection (?:aborted|reset|refused|error)|Connect(?:ion)?Pool|Max retries|Name or service|"
+    r"RemoteDisconnected|IncompleteRead|ChunkedEncodingError|ProtocolError|SSLError|getaddrinfo",
+    re.IGNORECASE,
+)
+_BUSY_NOTE_RE = re.compile(
+    r"HTTP (?:408|425|429|5\d\d)\b|\bbusy\b|too many|rate[\s-]?limit|overload|credit|\bquota\b|capacity|temporar", re.IGNORECASE
+)
+
+
+def _classify_error_note(note: str) -> str:
+    """The kind of an exception message the client raised (an HTTP status, a stream error, a connection failure)."""
+    text = str(note or "")
+    if _AUTH_NOTE_RE.search(text):
+        return "auth"
+    if "too many calls are still running" in text:
+        return "slots_busy"  # refused here, before anything was sent: every call slot is taken by calls that have not finished
+    if _EMPTY_NOTE_RE.search(text):
+        return "empty"
+    if _TIMEOUT_NOTE_RE.search(text):
+        return "timeout"
+    if _CONNECT_NOTE_RE.search(text):
+        return "unreachable"
+    if _BUSY_NOTE_RE.search(text):
+        return "busy"
+    return "service_error"
+
+
+def _attempt_kind(outcome: str, note: str) -> str:
+    """The failure kind of one route attempt ("" for a read that worked)."""
+    if outcome == "timeout":
+        return "timeout"
+    if outcome == "platform_error":
+        return "platform"
+    if outcome == "image_missing":
+        return "model_blind"
+    if outcome == "app_error":
+        return "app_error"
+    if outcome in {"refusal", "empty"}:
+        return outcome
+    if outcome in {"error", "refused"}:
+        return _classify_error_note(note)
+    return ""
+
+
+def classify_vision_attempts(attempts: Any) -> str:
+    """The failure kind the LAST failed attempt of a photo read shows ("" when there was none)."""
+    for attempt in reversed(list(attempts or [])):
+        kind = _attempt_kind(str(attempt.get("outcome", "")), str(attempt.get("note", "")))
+        if kind:
+            return kind
+    return ""
+
+
+_DETAIL_SECRET_ENV = ("BLOCKBRAIN_API_KEY", "BLOCKBRAIN_ORG_ID", "BLOCKBRAIN_BOT_ID", "BLOCKBRAIN_KB_BOT_ID")
+# A dose with its unit, spelled out or not ("10 mg", "5 mgs", "10 milligrams", "80 mcg", "400 IU", "100 %").
+_DETAIL_VALUE_RE = re.compile(
+    r"\d[\d.,]*\s*(?:(?:milli|micro|kilo)?grams?|mgs?|[µμ]gs?|mcgs?|ugs?|g|ius?|i\.e\.|kcal|%)(?![A-Za-z])", re.IGNORECASE
+)
+# A bare 24-digit hex token is shaped like a Blockbrain bot id (and like any other Mongo-style id): never worth showing.
+_HEX_ID_RE = re.compile(r"(?<![0-9A-Za-z])[0-9a-fA-F]{24}(?![0-9A-Za-z])")
+
+
+def _known_ids() -> list[str]:
+    """Every key, organisation and bot id this app is configured with, longest first: the ones in the environment, the ones the
+    client would actually use (BLOCKBRAIN_MODEL=claude-sonnet-5 sets no bot id variable at all; the client takes the bot id of
+    KNOWN_MODELS), and the bot ids of every KNOWN_MODELS entry."""
+    values: list[Any] = [os.environ.get(name) for name in _DETAIL_SECRET_ENV]
+    module = _bbc_now()
+    try:
+        client = module.Blockbrain()
+        values += [client.org_id, client.bot_id]
+    except Exception:  # an incomplete configuration has no ids to hide
+        pass
+    try:
+        values += [pair[1] for pair in module.KNOWN_MODELS.values()]
+    except Exception:
+        pass
+    ids = {str(v).strip() for v in values if v and len(str(v).strip()) >= 4}
+    return sorted(ids, key=len, reverse=True)
+
+
+def _scrub_secrets(text: Any) -> str:
+    """`text` without the key (see _redact) and without the organisation and bot ids: a platform error may echo what it was called with.
+    Case does not matter, and any bare 24-digit hex token (the shape of a bot id) goes too."""
+    out = _redact(text)
+    for value in _known_ids():
+        out = re.sub(re.escape(value), "***", out, flags=re.IGNORECASE)
+    return _HEX_ID_RE.sub("id", out)
+
+
+def _detail_text(text: Any, limit: int = 80) -> str:
+    """`text` made safe for the failure card's details line, which every visitor sees: no key, no organisation or bot id, no link or
+    long identifier, no markup, no label values; one line of at most `limit` characters."""
+    out = _scrub_secrets(text)
+    out = re.sub(r"https?://\S+", "link", out)
+    out = re.sub(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F-]{12,}\b", "id", out)
+    out = re.sub(r"\b[A-Za-z0-9_-]{28,}\b", "id", out)
+    if _DETAIL_VALUE_RE.search(out):
+        return "model text hidden"  # label values never leave the app, not even inside a model's apology
+    out = re.sub(r"[\[\]\(\)\{\}\*_`#<>|~\\$]", " ", out)
+    return re.sub(r"\s+", " ", out).strip()[:limit]
+
+
+def _plain(text: str) -> str:
+    """A fixed phrase of the details line without the characters markdown would act on (kinds are written with hyphens)."""
+    return str(text).replace("_", "-")
+
+
+def _size_text(size: Any) -> str:
+    n = int(size or 0)
+    if n <= 0:
+        return "0 bytes"
+    return f"{n / 1_000_000:.1f} MB" if n >= 1_000_000 else f"{max(1, round(n / 1000))} KB"
+
+
+def _image_line(notes: dict[str, Any]) -> str:
+    fmt = str(notes.get("format") or notes.get("kind") or "").strip() or "unknown format"
+    dims = f" {notes['width']}x{notes['height']}" if notes.get("width") and notes.get("height") else ""
+    line = f"image {_detail_text(fmt, 12)}{dims}, {_size_text(notes.get('bytes'))}"
+    variants = [v for v in (notes.get("variants") or []) if isinstance(v, dict)]
+    if variants:
+        line += " → " + ", ".join(
+            f"{str(v.get('name', '')).replace('_jpeg', '')} {v.get('width')}x{v.get('height')} ({_size_text(v.get('bytes'))})"
+            for v in variants
+        )
+    return line
+
+
+def _attempts_line(groups: list[tuple[str, list[dict[str, Any]]]]) -> str:
+    parts: list[str] = []
+    for name, attempts in groups:
+        steps = []
+        for a in attempts:
+            outcome = str(a.get("outcome", ""))
+            note = str(a.get("note", ""))
+            # Text is shown for an exception (an HTTP status) and for Blockbrain's own error written as the answer. A refusal and an
+            # image-missing reply are the model talking about the picture: they can quote the label, a name or an address, and this
+            # line goes to every visitor and to the log, so only the outcome and the route are shown (as for an empty answer, a
+            # timeout and the app's own error, whose class is in the first line).
+            shown = ""
+            if outcome in {"error", "refused"}:
+                head = re.match(r"\s*([A-Za-z][\w .'-]{0,40}?: HTTP \d{3})", note)
+                shown = _detail_text(head.group(1) if head else note)
+            elif outcome == "platform_error":
+                known = bool(_AGENT_ERROR_PREFIX_RE.match(note.strip()) or _MODEL_CONFIG_PHRASE_RE.search(note))
+                shown = _detail_text(note) if known else "error text hidden"  # any other "error" is the model's own words
+            at = f" @{float(a['at']):.1f}s" if a.get("at") else ""
+            steps.append(f"{a.get('route', '?')} {_plain(outcome)}{at}" + (f' "{shown}"' if shown else ""))
+        if steps:
+            parts.append(f"{str(name).replace('_jpeg', '')}: " + ", ".join(steps))
+    return "tried " + "; ".join(parts) if parts else ""
+
+
+def vision_failure_report(tried: Any = None) -> dict[str, Any]:
+    """Why a photo was not read, for the failure card and the diagnostics.
+
+    `tried`: [(variant name, that variant's vision_attempts())] of every variant sent. With none, the image itself is the reason
+    (image_notes()). Returns {stage, kind, group, facts, lines}: stage is image (nothing was sent), service (no usable answer
+    came back), answer (it answered with nothing readable) or app (this app raised an exception, see note_app_error); `lines` is
+    safe for any visitor to see (see _detail_text)."""
+    notes = image_notes()
+    groups = [(str(name), [dict(a) for a in (items or [])]) for name, items in (tried or [])]
+    attempts = [a for _name, items in groups for a in items]
+    reason = str(notes.get("reason", "") or "")
+    if reason and not attempts:
+        kind = _IMAGE_REASON_KIND.get(reason, "image_damaged")
+    else:
+        kind = classify_vision_attempts(attempts)
+        if not kind and last_call_error():
+            kind = _classify_error_note(last_call_error())
+        kind = kind or "unreadable"
+        if _KIND_GROUP.get(kind) == "answer" and notes.get("flat"):
+            kind = "blank_photo"  # it answered with nothing, and the picture is one flat colour
+    group = _KIND_GROUP.get(kind, "answer")
+    stage = group if group in {"image", "answer", "app"} else "service"
+    shown = _plain(reason if group == "image" and reason else kind)
+    if group == "app":
+        name = next((str(a.get("note", "")) for a in reversed(attempts) if a.get("outcome") == "app_error"), "")
+        head = f"stage app · error {_detail_text(name, 40) or 'unknown'}"  # the exception class, as note_app_error kept it
+    elif group == "image":
+        extra = ""
+        if reason == "unsupported_format" and notes.get("kind"):
+            extra = f" {_detail_text(notes['kind'], 12)}"
+        elif reason == "too_large" and notes.get("width") and notes.get("height"):
+            extra = f" {notes['width'] * notes['height'] / 1e6:.1f} MP, limit {float(notes.get('limit', 0)) / 1e6:.1f} MP"
+        elif reason == "damaged" and notes.get("error"):
+            extra = f" {_detail_text(notes['error'], 40)}"
+        head = f"stage image, no AI call · {shown}{extra}"
+    else:
+        head = f"stage {stage} · {shown}"
+    lines = [head]
+    for line in (_attempts_line(groups), _image_line(notes) if notes else ""):
+        if line:
+            lines.append(line)
+    facts = {
+        "format_kind": _detail_text(notes.get("kind", ""), 12),
+        "megapixels": round(float(notes.get("width", 0) or 0) * float(notes.get("height", 0) or 0) / 1e6, 1),
+        "limit_megapixels": round(float(notes.get("limit", 0) or 0) / 1e6, 1),
+    }
+    logger.warning("photo not read: %s", " | ".join(lines))
+    return {"stage": stage, "kind": kind, "group": group, "facts": facts, "lines": lines}
 
 
 def call_text_llm(system_prompt: str, user_prompt: str, model: str | None = None) -> str:
@@ -10232,31 +10584,128 @@ def extract_image_text_with_blockbrain(image_bytes: bytes, model: str | None = N
 # Uploads larger than this are refused before decoding (a tiny PNG can declare
 # enormous dimensions and decode to gigabytes — a decompression bomb that would
 # take down the shared Streamlit container). 60 MP covers 50 MP phone photos
-# (JPEG, decoded at reduced scale); PNG / WebP decode at full size, so 16 MP
-# (screenshots and exported label photos are far below it).
+# (JPEG, decoded at reduced scale); PNG / WebP decode at full size, so far less
+# (screenshots and exported label photos are below it).
 VISION_MAX_INPUT_PIXELS = 60_000_000
-# A 15.6 MP PNG of 152 KB peaked at 222 MB, a 15 MP WebP of 84 KB at 348 MB (measured): 8 MP bounds a single decode.
-VISION_MAX_INPUT_PIXELS_NON_JPEG = 8_000_000
+# A 15.6 MP PNG of 152 KB peaked at 222 MB, a 15 MP WebP of 84 KB at 348 MB (measured): 8.5 MP bounds a single decode and still
+# takes a 4K screenshot (3840x2160 = 8.3 MP).
+VISION_MAX_INPUT_PIXELS_NON_JPEG = 8_500_000
 # At most two decodes at the same time, however many visitors upload: the box has 1 GB. Others wait a little, then give up.
 _DECODE_SLOTS = threading.BoundedSemaphore(2)
 _DECODE_WAIT_S = 15.0
 VISION_FAST_SIDE = 1400
 VISION_DETAIL_SIDE = BLOCKBRAIN_VISION_MAX_SIDE
+# A picture whose short side is below this cannot hold a nutrition table; one that is flat and dark is a covered lens. Neither is sent:
+# the AI would only be asked to read nothing.
+VISION_MIN_SIDE = 32
+# "Flat" means: practically every pixel is within _VISION_FLAT_DEVIATION brightness levels (of 255) of the median, i.e. fewer than
+# _VISION_FLAT_OUTLIER_SHARE of the pixels stand out. Counting the outliers instead of averaging (the spread of a 64x64 box
+# average was used before) keeps a table that is photographed from a distance legible: a few lines of small dark text are well
+# under 1 % of a 3 MP picture, and an average washes them out, so a far-away photo was called "one flat colour" (and, on a dark
+# background, refused as black without any AI call). Sensor noise or a smooth gradient never makes a picture flat by mistake: it
+# only keeps the "flat" label off, which costs nothing.
+_VISION_FLAT_DEVIATION = 16
+_VISION_FLAT_OUTLIER_SHARE = 0.0002
+_VISION_DARK_MEAN = 40.0
+
+# What this thread learned about its last image (see image_notes()).
+_IMAGE_STATE = threading.local()
+
+
+def _sniff_image_kind(data: bytes) -> str:
+    """A name for what the first bytes of a file say it is ("" when unknown): for the message only, never for a decision."""
+    head = bytes(data[:32])
+    if head[4:8] == b"ftyp":
+        brand = head[8:12]
+        if brand in (b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1", b"msf1"):
+            return "HEIC"
+        if brand in (b"avif", b"avis"):
+            return "AVIF"
+        return "video"
+    for magic, name in ((b"GIF8", "GIF"), (b"BM", "BMP"), (b"II*\x00", "TIFF"), (b"MM\x00*", "TIFF"), (b"%PDF-", "PDF"),
+                        (b"\xff\xd8\xff", "JPEG"), (b"\x89PNG", "PNG")):
+        if head.startswith(magic):
+            return name
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "WEBP"
+    if head.lstrip()[:1] == b"<":
+        return "SVG/HTML"
+    return ""
+
+
+def _unreadable_image_notes(data: bytes, exc: BaseException | None) -> dict[str, Any]:
+    """The notes for bytes Pillow could not open: an empty file, a type we do not read (HEIC, GIF, PDF ...), or a damaged photo."""
+    kind = _sniff_image_kind(data)
+    if not data:
+        reason = "empty"
+    elif kind in {"JPEG", "PNG", "WEBP"}:
+        reason = "damaged"
+    else:
+        reason = "unsupported_format"
+    return {"bytes": len(data), "reason": reason, "kind": kind or ("" if reason == "empty" else "unknown"),
+            "error": type(exc).__name__ if exc is not None else ""}
+
+
+def _flatten_to_rgb(image: "Image.Image") -> "Image.Image":
+    """RGB pixels of `image`. Transparency is composited onto WHITE first: convert("RGB") alone drops the alpha channel and shows
+    whatever colour is stored under the transparent pixels, which is black in most exports, so a sharp transparent PNG / WebP
+    (a product picture saved from a web shop) reached the model as a black square."""
+    transparent = image.mode in ("RGBA", "LA", "PA", "La", "RGBa") or "transparency" in image.info
+    if not transparent:
+        return image.convert("RGB")
+    try:
+        rgba = image.convert("RGBA")
+        return Image.alpha_composite(Image.new("RGBA", rgba.size, (255, 255, 255, 255)), rgba).convert("RGB")
+    except Exception:
+        return image.convert("RGB")
+
+
+_EXIF_ORIENTATION_OPS = {
+    2: Image.Transpose.FLIP_LEFT_RIGHT, 3: Image.Transpose.ROTATE_180, 4: Image.Transpose.FLIP_TOP_BOTTOM,
+    5: Image.Transpose.TRANSPOSE, 6: Image.Transpose.ROTATE_270, 7: Image.Transpose.TRANSVERSE, 8: Image.Transpose.ROTATE_90,
+}
+
+
+def _upright(image: "Image.Image") -> "Image.Image":
+    """`image` turned the right way up by its EXIF orientation. One odd byte in the EXIF block makes ImageOps.exif_transpose raise
+    (struct.error) although the pixels are fine: the orientation is then read and applied on its own, and at worst the pixels are
+    used as they are, instead of refusing a sharp photo."""
+    try:
+        return ImageOps.exif_transpose(image)
+    except Exception:
+        pass
+    try:
+        op = _EXIF_ORIENTATION_OPS.get(int(image.getexif().get(0x0112, 1) or 1))
+        return image.transpose(op) if op is not None else image
+    except Exception:
+        return image
 
 
 def _load_upright_image(image_bytes: bytes, max_side: int) -> "Image.Image | None":
-    """Decode an upload once, upright (EXIF) and no larger than max_side.
+    """Decode an upload once, upright (EXIF), on a white background (transparency) and no larger than max_side.
 
     JPEGs are decoded at reduced scale (draft mode), so a 50 MP photo never
     materialises at full size. Only JPEG, PNG and WebP are opened (no other format plugin ever sees an upload), and
-    at most two decodes run at once. Returns None for unreadable or oversized input.
+    at most two decodes run at once. Returns None for unreadable or oversized input; image_notes() then says why.
     """
+    notes: dict[str, Any] = {"bytes": len(image_bytes or b"")}
+    _IMAGE_STATE.notes = notes
+    if not image_bytes:
+        notes["reason"] = "empty"
+        return None
     if not _DECODE_SLOTS.acquire(timeout=_DECODE_WAIT_S):
         logger.warning("refusing an image: too many decodes already running")
+        notes["reason"] = "busy"
         return None
     try:
-        image = Image.open(io.BytesIO(image_bytes), formats=("JPEG", "PNG", "WEBP"))
+        try:
+            image = Image.open(io.BytesIO(image_bytes), formats=("JPEG", "PNG", "WEBP"))
+        except Exception as exc:
+            notes.update(_unreadable_image_notes(image_bytes, exc))
+            logger.warning("refusing an image: %s (%s)", notes["reason"], notes["kind"])
+            return None
         width, height = image.size
+        notes.update(format=str(image.format or ""), width=width, height=height)
         # Phone cameras (iPhone, Samsung) write JPEGs with an MPF block, which Pillow reports as "MPO".
         is_jpeg = str(image.format or "").upper() in {"JPEG", "MPO"}
         # Only JPEG decodes at reduced scale (draft): a PNG / WebP is decoded
@@ -10265,16 +10714,19 @@ def _load_upright_image(image_bytes: bytes, max_side: int) -> "Image.Image | Non
         limit = VISION_MAX_INPUT_PIXELS if is_jpeg else min(VISION_MAX_INPUT_PIXELS, VISION_MAX_INPUT_PIXELS_NON_JPEG)
         if width * height > limit:
             logger.warning("refusing %dx%d image (over %d px)", width, height, limit)
+            notes.update(reason="too_large", limit=limit)
             return None
         if is_jpeg:
             # Ask for the size we need, not for max_side x max_side: a 4032x3024 photo is only reduced when the request
             # is 2016x1512 or smaller (the old square request left every 12 MP photo at full size: 184 MB, 2x slower).
             scale = min(1.0, max_side / float(max(width, height)))
             image.draft("RGB", (max(1, math.ceil(width * scale)), max(1, math.ceil(height * scale))))
-        image = ImageOps.exif_transpose(image).convert("RGB")
+        image = _flatten_to_rgb(_upright(image))
         image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
         return image
-    except Exception:
+    except Exception as exc:
+        logger.warning("could not decode an image: %s", type(exc).__name__)  # the class only: never what the file held
+        notes.update(reason="damaged", error=type(exc).__name__)
         return None
     finally:
         _DECODE_SLOTS.release()
@@ -10286,17 +10738,52 @@ def _jpeg_bytes(image: "Image.Image", quality: int) -> bytes:
     return buffer.getvalue()
 
 
+def _flatness(image: "Image.Image") -> tuple[bool, float]:
+    """(is the picture one flat colour, its mean brightness): see _VISION_FLAT_DEVIATION. Measured on the picture as it will be sent
+    (at most 2000 px), so a thin line of text is not averaged away."""
+    histogram = image.convert("L").histogram()
+    total = sum(histogram) or 1
+    mean = sum(level * count for level, count in enumerate(histogram)) / total
+    seen, median = 0, 0
+    for level, count in enumerate(histogram):
+        seen += count
+        if seen * 2 >= total:
+            median = level
+            break
+    outliers = sum(count for level, count in enumerate(histogram) if abs(level - median) > _VISION_FLAT_DEVIATION)
+    return outliers / total < _VISION_FLAT_OUTLIER_SHARE, mean
+
+
 def build_vision_image_variants(image_bytes: bytes) -> list[tuple[str, bytes]]:
     """(name, jpeg) variants for vision OCR from ONE decode: a fast ~1400px read
-    first, then a sharper ~2000px one used only when the first read is weak."""
+    first, then a sharper ~2000px one used only when the first read is weak.
+    [] when the picture is not sent (image_notes() says why: unreadable, too big, too small, black)."""
+    reset_vision_trace()
     detail = _load_upright_image(image_bytes, VISION_DETAIL_SIDE)
     if detail is None:
         return []
+    notes = _IMAGE_STATE.notes
+    if min(detail.size) < VISION_MIN_SIDE:
+        notes["reason"] = "too_small"
+        return []
+    try:
+        flat, mean = _flatness(detail)
+        notes["flat"] = flat
+        if flat and mean < _VISION_DARK_MEAN:
+            notes["reason"] = "blank"
+            return []
+    except Exception:
+        pass
     fast = detail.copy()
     fast.thumbnail((VISION_FAST_SIDE, VISION_FAST_SIDE), Image.Resampling.LANCZOS)
     variants = [("fast_jpeg", _jpeg_bytes(fast, 80))]
+    sizes = [fast.size]
     if max(detail.size) > VISION_FAST_SIDE:
         variants.append(("detail_jpeg", _jpeg_bytes(detail, 88)))
+        sizes.append(detail.size)
+    notes["variants"] = [
+        {"name": name, "width": size[0], "height": size[1], "bytes": len(data)} for (name, data), size in zip(variants, sizes)
+    ]
     return variants
 
 
@@ -10743,7 +11230,10 @@ _SERVING_LINE_RE = re.compile(
 )
 _PRODUCT_IMAGE_MAX_BYTES = 8_000_000
 _PRODUCT_IMAGE_MAX = 8
-_PRODUCT_IMAGE_WORKERS = 6
+# Three reads at a time: every read is a vision call that holds a call slot until the platform answers, and the losing reads of a
+# gallery (the facts table is usually image 2 or 3 of 8) used to take six of the eight slots for a result nobody waited for.
+_PRODUCT_IMAGE_WORKERS = 3
+_GALLERY_STOP = threading.local()  # the worker's "the answer is already found" flag, see extract_label_text_from_product_images
 _IMAGE_URL_SKIP_RE = re.compile(r"\.(?:svg|gif)(?:$|\?)|sprite|logo|icon|badge|pixel|transparent|loading", re.I)
 
 
@@ -10793,8 +11283,13 @@ def _fetch_public_image(url: str) -> bytes:
 
 
 def _read_product_image(url: str) -> str:
+    stop = getattr(_GALLERY_STOP, "event", None)
+    if stop is not None and stop.is_set():
+        return ""
     variants = build_vision_image_variants(_fetch_public_image(url))
-    return call_blockbrain_vision(variants[-1][1]) if variants else ""
+    if stop is not None and stop.is_set():
+        return ""  # another picture already gave the facts table: this read would only cost a call
+    return call_blockbrain_vision(variants[-1][1], background=True) if variants else ""
 
 
 def extract_label_text_from_product_images(page_html: str, page_url: str) -> str:
@@ -10805,8 +11300,14 @@ def extract_label_text_from_product_images(page_html: str, page_url: str) -> str
         return ""
     best_text, best_doses = "", 0
     pool = ThreadPoolExecutor(max_workers=min(_PRODUCT_IMAGE_WORKERS, len(urls)), thread_name_prefix="suppswipe-pimg")
+    stop = threading.Event()
+
+    def _read(u: str) -> str:
+        _GALLERY_STOP.event = stop
+        return _read_product_image(u)
+
     try:
-        futures = [pool.submit(_read_product_image, u) for u in urls]
+        futures = [pool.submit(_read, u) for u in urls]
         for future in as_completed(futures, timeout=BLOCKBRAIN_VISION_BUDGET_S + 20):
             try:
                 text = str(future.result() or "").strip()
@@ -10826,6 +11327,7 @@ def extract_label_text_from_product_images(page_html: str, page_url: str) -> str
     except Exception:
         pass
     finally:
+        stop.set()
         pool.shutdown(wait=False, cancel_futures=True)
     return best_text
 

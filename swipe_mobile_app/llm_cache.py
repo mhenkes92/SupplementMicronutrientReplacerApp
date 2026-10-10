@@ -191,6 +191,15 @@ def consume_global(now: float, window_s: float, hourly_limit: int, daily_limit: 
         return True
 
 
+def refund_global(stamp: float) -> None:
+    """Take back one use recorded by consume_global (a scan that never reached the AI)."""
+    with _usage_lock:
+        try:
+            _usage_times.remove(stamp)
+        except ValueError:
+            pass
+
+
 def consume_counter(name: str, now: float, window_s: float, limit: int) -> bool:
     """Record one use of the metered resource `name` (all sessions); False (and nothing recorded) when `limit` uses
     already happened within `window_s` seconds. Out of reach of Streamlit's `clear_cache`, like the LLM ledger."""

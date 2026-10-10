@@ -562,7 +562,9 @@ EXPECTED: dict[str, dict[str, str]] = {
         'error': '[Agent X] Failed to run: the model is unavailable',
         'problem': '',
         'retry': "Couldn't generate meals right now — please try again.",
-        'short': '',
+        # Was '' before the photo-failure round (a text starting with "[" was cut to nothing, so the panel looked healthy after exactly
+        # the failure it exists to show); now the words without the brackets.
+        'short': 'Agent X Failed to run: the model is unavailable',
         'ask': 'Ask AI is unavailable right now — please try again in a moment.',
     },
 }

@@ -161,10 +161,12 @@ def test_report_never_logs_personal_text_from_the_label_line(sw, monkeypatch, ca
 def _png(width: int, height: int) -> bytes:
     import io
 
-    from PIL import Image
+    from PIL import Image, ImageDraw
 
+    image = Image.new("1", (width, height))
+    ImageDraw.Draw(image).rectangle((0, 0, width // 2, height), fill=1)  # half white: an all-black picture is not sent (a covered lens)
     buf = io.BytesIO()
-    Image.new("1", (width, height)).save(buf, format="PNG", optimize=True)
+    image.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
 
 

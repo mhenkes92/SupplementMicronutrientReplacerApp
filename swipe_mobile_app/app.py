@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 import hmac
 import html
 import io
@@ -452,24 +453,11 @@ def _cached_extract_from_url(url: str, _llm_allowed: Any = None) -> str:
     return text
 
 
-# A vision model's refusal or apology ("I'm sorry, I can't read the text in
-# this image") is not label text: never cached (a transient refusal would
-# stick for 6 h) and never treated as a label.
-_OCR_REFUSAL_RE = re.compile(
-    r"\b(?:i'?m sorry|i am sorry|i apologi[sz]e|sorry, (?:but )?i|i (?:can ?not|can'?t|am unable to|'m unable to|"
-    r"was unable to|could ?n[o']t)\b|unable to (?:read|extract|see|process|identify)|as an ai\b|"
-    r"es tut mir leid|leider (?:kann|konnte) ich|ich kann (?:den|die|das|keinen?)\b.{0,40}\bnicht)",
-    re.IGNORECASE,
-)
-
-
 def _is_ocr_refusal(text: str) -> bool:
-    """True for vision output that is a refusal / apology rather than label text
-    (a short reply with a refusal phrase and no dose)."""
-    raw = str(text or "").strip()
-    if not raw or not _OCR_REFUSAL_RE.search(raw[:300]):
-        return False
-    return not re.search(r"\d\s*(?:mg|mcg|µg|ug|iu|i\.?e\.?|%)", raw, re.IGNORECASE)
+    """True for vision output that is a refusal / apology ("I'm sorry, I can't read the text in this image") rather than label
+    text: never cached (a transient refusal would stick for 6 h) and never treated as a label. The adapter applies the same test
+    to each route's reply (blockbrain.app.is_ocr_refusal), so a refusal makes it ask the other route."""
+    return bb.is_ocr_refusal(text)
 
 
 def _ocr_has_product_words(text: str) -> bool:
@@ -477,15 +465,23 @@ def _ocr_has_product_words(text: str) -> bool:
     return len(re.findall(r"[A-Za-zÄÖÜäöüß]{3,}", str(text or ""))) >= 2
 
 
+class _OcrNoText(RuntimeError):
+    """The photo was read but nothing usable came back (empty, a refusal, a platform error): the expected failure of a photo read,
+    whose reason the adapter has already noted. Any other exception out of _cached_ocr is a bug and is reported as one."""
+
+
 @st.cache_data(show_spinner=False, ttl=6 * 3600, max_entries=64)
 def _cached_ocr(image_bytes: bytes) -> str:
     text = str(bb.extract_image_text_with_blockbrain(image_bytes) or "")
     if not text.strip():
-        raise RuntimeError("vision OCR returned no text")
+        raise _OcrNoText("vision OCR returned no text")
+    # Rejected here too (the adapter already does it for its own calls): the reason is then in the log and on the failure card.
     if _is_ocr_refusal(text):
-        raise RuntimeError("vision OCR returned a refusal, not label text")
+        bb.note_vision_rejection("refusal", text)
+        raise _OcrNoText("vision OCR returned a refusal, not label text")
     if bb.looks_like_agent_error(text):
-        raise RuntimeError("vision OCR returned a Blockbrain error, not label text")
+        bb.note_vision_rejection("platform_error", text)
+        raise _OcrNoText("vision OCR returned a Blockbrain error, not label text")
     return text
 
 
@@ -511,25 +507,67 @@ def _build_ocr_image_variants(image_bytes: bytes) -> list[tuple[str, bytes]]:
     full-resolution original is never uploaded and oversized images are refused."""
     try:
         return list(bb.build_vision_image_variants(image_bytes))
-    except Exception:
+    except Exception as exc:  # a bug, not a bad file: kept for the failure card (stage app) instead of "no text came back"
+        bb.note_app_error(exc)
         return []
+
+
+_PHOTO_REPORT_KEY = "_suppswipe_photo_report"  # why the last photo was not read (blockbrain.app.vision_failure_report)
+_VISION_CHARGED_KEY = "_suppswipe_vision_charged"  # the photo whose scan allowance this analysis has already paid
+
+
+def _charge_vision_quota(image_bytes: bytes) -> bool:
+    """One scan allowance per photo and attempt. A rerun that restarts the same analysis (the phone's connection dropped and came
+    back, a late component value) must not pay again; the key is cleared when the analysis ends."""
+    digest = hashlib.sha256(bytes(image_bytes)).hexdigest()
+    if st.session_state.get(_VISION_CHARGED_KEY) == digest:
+        return True
+    if not _consume_llm_quota("vision"):
+        return False
+    st.session_state[_VISION_CHARGED_KEY] = digest
+    return True
+
+
+def _store_photo_report(report: dict[str, Any]) -> None:
+    st.session_state[_PHOTO_REPORT_KEY] = report
 
 
 def _extract_image_text_best_effort(image_bytes: bytes) -> tuple[str, str]:
     """Return the first OCR read that passes the label-quality gate; otherwise the
     best-scoring read across variants (so a weak small-image read still gets a
-    second chance at higher resolution)."""
-    if not _consume_llm_quota("vision"):
-        raise RuntimeError(_QUOTA_MESSAGE)
+    second chance at higher resolution). When nothing is read, the reason (a stage and a kind,
+    see blockbrain.app.vision_failure_report) is kept for the failure card."""
+    if not _charge_vision_quota(image_bytes):
+        raise RuntimeError(_quota_message())
+    st.session_state.pop(_PHOTO_REPORT_KEY, None)
+    bb.reset_vision_trace()
+    bb.reset_call_error()  # (an earlier failure on this thread is not this photo's)
+    variants = _build_ocr_image_variants(image_bytes)
+    if not variants:
+        # Nothing was sent to the AI (a file type or size it cannot open, a covered lens, an error while preparing it): not a scan.
+        _refund_llm_quota("vision")
+        st.session_state.pop(_VISION_CHARGED_KEY, None)
+        _store_photo_report(bb.vision_failure_report([("prepare", bb.vision_attempts())]))  # (attempts: only an app error can be there)
+        return "", ""
     best_text, best_route, best_score = "", "", (-1, -1)
-    for variant_name, variant_bytes in _build_ocr_image_variants(image_bytes):
+    tried: list[tuple[str, list[dict[str, Any]]]] = []
+    for variant_name, variant_bytes in variants:
         try:
             text = str(_cached_ocr(variant_bytes) or "").strip()
-        except Exception:
+        except _OcrNoText:
+            text = ""  # (the adapter noted why)
+        except Exception as exc:
+            # Not an answer of the AI but a bug in the photo step (even after a good read, e.g. in the number check): it must not
+            # pass for "the AI returned no text". The class goes on the card, the code place in the log.
+            bb.note_app_error(exc)
             text = ""
         if not text:
-            if bb.last_call_error():
-                break  # the call itself failed (down, refused, timed out): a second try would only cost the budget again
+            attempts = bb.vision_attempts()
+            tried.append((variant_name, attempts))
+            # The call itself failed (down, refused, timed out): a second try would only cost the budget again. A refusal is
+            # the exception: the sharper picture may be what the model needed.
+            if bb.last_call_error() and bb.classify_vision_attempts(attempts) != "refusal":
+                break
             continue
         route = f"Blockbrain vision OCR ({variant_name})"
         try:
@@ -540,6 +578,8 @@ def _extract_image_text_best_effort(image_bytes: bytes) -> tuple[str, str]:
         score = _ocr_quality_score(text)
         if score > best_score:
             best_text, best_route, best_score = text, route, score
+    if not best_text:
+        _store_photo_report(bb.vision_failure_report(tried))
     return best_text, best_route
 
 
@@ -677,13 +717,25 @@ def _consume_llm_quota(kind: str) -> bool:
     recent = [t for t in store.get(kind, []) if now - t < _LLM_QUOTA_WINDOW_S]
     if len(recent) >= _llm_quota_limit(kind):
         store[kind] = recent
+        st.session_state["_suppswipe_quota_scope"] = "session"
         return False
     if not _consume_global_llm_quota(now):
         store[kind] = recent
+        st.session_state["_suppswipe_quota_scope"] = "global"  # the whole app's backstop, not this visitor's own allowance
         return False
     recent.append(now)
     store[kind] = recent
     return True
+
+
+def _refund_llm_quota(kind: str) -> None:
+    """Give back the latest use of `kind` (a scan that never reached the AI): the session's allowance and the app-wide ledger."""
+    store = st.session_state.get("_suppswipe_llm_usage")
+    times = list(store.get(kind, [])) if isinstance(store, dict) else []
+    if times:
+        stamp = times.pop()
+        store[kind] = times
+        llm_cache.refund_global(stamp)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -718,6 +770,17 @@ _QUOTA_MESSAGE = (
     "You've reached this session's limit for AI answers. Please try again in a "
     "little while — saved answers still work."
 )
+# The app-wide backstop (all visitors together) refused, not this visitor's own allowance.
+_QUOTA_MESSAGE_GLOBAL = (
+    "The AI helper is very busy right now (many visitors at once, a limit for AI answers). Please try again in a "
+    "little while — saved answers still work."
+)
+_QUOTA_MESSAGES = (_QUOTA_MESSAGE, _QUOTA_MESSAGE_GLOBAL)
+
+
+def _quota_message() -> str:
+    """The sentence for a refused AI use: which limit refused (this session's, or the whole app's)."""
+    return _QUOTA_MESSAGE_GLOBAL if st.session_state.get("_suppswipe_quota_scope") == "global" else _QUOTA_MESSAGE
 
 
 def _generation_model() -> str:
@@ -792,7 +855,7 @@ def _stream_llm_text(
         return ""
     if consume_quota and not _consume_llm_quota("generate"):
         if placeholder is not None:
-            placeholder.info(_QUOTA_MESSAGE)
+            placeholder.info(_quota_message())
         return ""
 
     call_model = model or None  # the callers read the per-feature model (environment, secrets) on this thread: never on the worker
@@ -943,7 +1006,7 @@ def _answer_ask_ai_question(
     continuing = bool(llm_cache.get(generation_key)) or llm_cache.inflight(generation_key) is not None
     if not continuing and not _consume_llm_quota("generate"):
         if placeholder is not None:
-            placeholder.info(_QUOTA_MESSAGE)
+            placeholder.info(_quota_message())
         return _local_rag_answer(scoped_question)
 
     # 1) The model.
@@ -3085,6 +3148,9 @@ def _sync_scan_history_with_browser() -> None:
     with anything recorded before it arrived."""
     if _history_store is None:
         return
+    # A failure card was drawn by this very run (_abort): the rerun that follows the first history read would wipe it, and the
+    # visitor would land on the welcome screen with no word. The merge is kept; the next run of her own shows what it changed.
+    failure_shown = bool(st.session_state.pop("_suppswipe_failure_shown", False))
     pending = st.session_state.pop("_suppswipe_history_save", None)
     clear = bool(st.session_state.pop("_suppswipe_history_clear", False))
     clear_scan = bool(st.session_state.pop("_suppswipe_scan_clear", False))
@@ -3132,7 +3198,8 @@ def _sync_scan_history_with_browser() -> None:
         st.session_state["suppswipe_scan_history"] = merged[-_HISTORY_MAX:]
         if merged[-_HISTORY_MAX:] != stored_history:  # merged, cleaned or dropped something: write the repaired list back
             st.session_state["_suppswipe_history_save"] = merged[-_HISTORY_MAX:]
-        st.rerun()
+        if not failure_shown:
+            st.rerun()
 
 
 def _record_scan_to_history(decisions: dict[str, dict[str, Any]], diet_label: str) -> None:
@@ -4960,7 +5027,11 @@ def _ai_service_problem(error: str | None = None) -> str:
     if error is None:
         error = bb.last_call_error()
     if re.search(
-        r"missing configuration|not a known model key|HTTP (?:401|403|404)\b|unauthori[sz]ed|forbidden", error, re.IGNORECASE
+        r"missing configuration|not a known model key|HTTP (?:401|403|404)\b|unauthori[sz]ed|forbidden"
+        # The platform's own error written as the answer, and a model or bot that cannot read pictures: settings, not the photo.
+        r"|resolve (?:the )?model configuration|did not receive the image|answered with an error",
+        error,
+        re.IGNORECASE,
     ):
         return "The AI helper is unavailable right now. "
     return ""
@@ -4972,14 +5043,90 @@ def _ai_retry_note(default: str, error: str | None = None) -> str:
     return f"{problem}Please try again later." if problem else default
 
 
+_PASTE_ADVICE = "paste the nutrition table as text (🔗 Paste — that works without AI)"
+
+
+def _photo_report() -> dict[str, Any]:
+    """Why the last photo was not read (see blockbrain.app.vision_failure_report), or {} when there is no such report."""
+    report = st.session_state.get(_PHOTO_REPORT_KEY)
+    return dict(report) if isinstance(report, dict) else {}
+
+
+def _photo_failure_message(report: dict[str, Any]) -> str:
+    """The sentence for a photo that was not read: what happened, and what helps. Only a failure of the answer itself (nothing
+    readable came back) blames the photo; a file the app could not open, a service that did not answer and a setting that is
+    wrong each say so, because retaking the picture helps in none of them."""
+    kind = str(report.get("kind", "") or "")
+    group = str(report.get("group", "") or "")
+    facts = report.get("facts") if isinstance(report.get("facts"), dict) else {}
+    if group == "image":
+        sent = "so nothing was sent to the AI"
+        if kind == "image_empty":
+            return f"That file is empty (0 bytes), {sent}. Choose the photo again, take it with the 📷 Camera option, or {_PASTE_ADVICE}."
+        if kind == "image_unsupported":
+            what = f" ({facts['format_kind']})" if facts.get("format_kind") and facts.get("format_kind") != "unknown" else ""
+            return (
+                f"That file isn't a picture type we can open{what}, {sent}. Use a JPEG, PNG or WebP picture (the 📷 Camera option "
+                f"always works), or {_PASTE_ADVICE}."
+            )
+        if kind == "image_too_large":
+            size = f" ({facts['megapixels']:g} megapixels)" if facts.get("megapixels") else ""
+            return (
+                f"That picture is too big to open here{size}, {sent}. Use a normal phone photo (JPEG) or a smaller screenshot, "
+                f"or {_PASTE_ADVICE}."
+            )
+        if kind == "image_too_small":
+            return (
+                f"That picture is too small to hold a nutrition table, {sent}. Take a closer photo with the whole table in the "
+                f"frame, or {_PASTE_ADVICE}."
+            )
+        if kind == "image_blank":
+            return f"That picture is completely black, {sent}. Check that the lens is uncovered and take it again, or {_PASTE_ADVICE}."
+        if kind == "image_busy":
+            return f"Several photos are being opened right now and yours had to wait too long, {sent}. Try again in a minute, or {_PASTE_ADVICE}."
+        return f"That file looks damaged or incomplete, {sent}. Choose the photo again or take a new one, or {_PASTE_ADVICE}."
+    if group == "unavailable":
+        return "The AI helper is unavailable right now. Paste the nutrition table as text instead (🔗 Paste — that works without AI)."
+    if kind == "slots_busy":
+        return f"Too many AI requests are running at once right now, so your photo was not sent. Try again in a minute, or {_PASTE_ADVICE}."
+    if group == "no_answer":
+        why = {
+            "timeout": "didn't answer in time",
+            "busy": "turned your photo down (it is busy or over its limit)",
+            "unreachable": "couldn't be reached",
+        }.get(kind, "reported an error")
+        return f"The AI label reader {why}; your photo was sent but no text came back. Try again in a minute, or {_PASTE_ADVICE}."
+    if group == "app":
+        return f"Something went wrong while reading the photo. Please try again, or {_PASTE_ADVICE}."
+    if kind == "blank_photo":
+        return (
+            "The AI found nothing to read: the picture is one flat colour. Check the lens and the light and take it again, "
+            f"or {_PASTE_ADVICE}."
+        )
+    return ""
+
+
+def _photo_details_lines(report: dict[str, Any]) -> list[str]:
+    """The technical details of a failed photo for the card: stage, what each route did, the image facts that were sent, the build.
+    Written by the adapter from fixed phrases and scrubbed text (no key, no organisation or bot id, no label text)."""
+    lines = [str(x) for x in (report.get("lines") or []) if str(x).strip()]
+    if lines:
+        lines.append(f"build {BUILD_TAG}")
+    return lines
+
+
 def _ai_unavailable_message(what: str) -> str:
     """The analysis error when an AI step failed (not the user's input)."""
     problem = _ai_service_problem() if what in {"photo", "link"} else ""
     if problem:
         return f"{problem}Paste the nutrition table as text instead (🔗 Paste — that works without AI)."
+    if what == "photo":
+        message = _photo_failure_message(_photo_report())
+        if message:
+            return message
     if what == "quota":
         return (
-            f"{_QUOTA_MESSAGE} Until then, paste the nutrition table as text (🔗 Paste — that "
+            f"{_quota_message()} Until then, paste the nutrition table as text (🔗 Paste — that "
             "works without AI)."
         )
     if what == "front":
@@ -5056,11 +5203,12 @@ def _run_pending_analysis() -> None:
             progress_bar.progress(pct_clamped)
             progress_text.markdown(f"**{pct_clamped}%**")
 
-        def _abort(message: str) -> None:
+        def _abort(message: str, photo_details: bool = False) -> None:
             st.session_state["swipe_is_analyzing"] = False
             st.session_state["swipe_pending_request"] = None
             st.session_state["swipe_analysis_kicked"] = False
             st.session_state["swipe_progress_pct"] = 0
+            st.session_state.pop(_VISION_CHARGED_KEY, None)  # a retry of the same photo is a new scan
             # Allow retrying the exact same input (it was deduplicated by signature).
             st.session_state["swipe_last_auto_signature"] = ""
             chip.empty()  # no "Analyzing…" pill above the error
@@ -5070,6 +5218,12 @@ def _run_pending_analysis() -> None:
             # What the user pasted comes back when the dialog is reopened (nobody retypes a label).
             st.session_state["swipe_paste_draft"] = str(req.get("manual", "") or "")[:_MAX_LABEL_CHARS]
             st.error(message)
+            if photo_details:
+                # Visible without ?debug=1: a screenshot of the card says what happened (stage, what each route did, the image sent).
+                details = _photo_details_lines(_photo_report())
+                if details:
+                    st.caption("Technical details  \n" + "  \n".join(details))
+            st.session_state["_suppswipe_failure_shown"] = True  # see _sync_scan_history_with_browser: no rerun may wipe this card
             _request_scroll_top()  # the error is at the top; the Analyze button far below
 
         _set_progress(6, "Preparing your analysis…")
@@ -5132,7 +5286,13 @@ def _run_pending_analysis() -> None:
                         ):
                             ai_failed = "front"
                     except Exception as exc:
-                        ai_failed = "quota" if str(exc) == _QUOTA_MESSAGE else "photo"
+                        ai_failed = "quota" if str(exc) in _QUOTA_MESSAGES else "photo"
+                        if ai_failed == "photo":
+                            # Not the AI's answer: something in the app itself. Only the class of the exception is shown.
+                            _store_photo_report({
+                                "stage": "app", "kind": "app_error", "group": "app", "facts": {},
+                                "lines": [f"stage app · error {type(exc).__name__}"],
+                            })
 
             manual = str(req.get("manual", "") or "").strip()
             if manual:
@@ -5190,7 +5350,8 @@ def _run_pending_analysis() -> None:
                     _ai_unavailable_message(ai_failed or ("page" if url_error else ""))
                     if (ai_failed or url_error)
                     else barcode_note
-                    or "Nothing to analyze yet. Add a photo, a barcode, a product link or the supplement facts text."
+                    or "Nothing to analyze yet. Add a photo, a barcode, a product link or the supplement facts text.",
+                    photo_details=ai_failed == "photo",
                 )
                 return
             if barcode_note:
@@ -5208,7 +5369,7 @@ def _run_pending_analysis() -> None:
                 _abort(_ai_unavailable_message(ai_failed) if ai_failed else (
                     "We couldn't find any vitamins or minerals in that. Paste the 'Supplement Facts' lines, "
                     "for example 'Vitamin D3 20 µg', or take a clearer photo of the table."
-                ))
+                ), photo_details=ai_failed == "photo")
                 return
 
             # Keep only scientifically recognised micronutrients (vitamins +
@@ -5229,7 +5390,7 @@ def _run_pending_analysis() -> None:
                 _abort(_ai_unavailable_message("front"))
                 return
             if not components and ai_failed:
-                _abort(_ai_unavailable_message(ai_failed))
+                _abort(_ai_unavailable_message(ai_failed), photo_details=ai_failed == "photo")
                 return
             if not components:
                 _abort(
@@ -5257,6 +5418,8 @@ def _run_pending_analysis() -> None:
         st.session_state["swipe_pending_request"] = None
         st.session_state["swipe_analysis_kicked"] = False
         st.session_state["swipe_progress_pct"] = 0
+        st.session_state.pop(_VISION_CHARGED_KEY, None)
+        st.session_state.pop(_PHOTO_REPORT_KEY, None)
         _request_scroll_top()  # the first card renders at the top
         st.rerun()
 
@@ -5341,6 +5504,8 @@ def _stage_analysis_from_inputs(
     st.session_state["swipe_progress_pct"] = 1
     st.session_state["swipe_analysis_kicked"] = False
     st.session_state["swipe_is_analyzing"] = True
+    st.session_state.pop(_PHOTO_REPORT_KEY, None)  # the reason the LAST photo failed is not this one's
+    st.session_state.pop(_VISION_CHARGED_KEY, None)
     _request_scroll_top()
     return True
 
@@ -5416,6 +5581,10 @@ def _analyze_dialog() -> None:
             label_visibility="collapsed",
         )
         upload_bytes = upload.getvalue() if upload is not None else b""
+        st.caption("JPEG, PNG or WebP, up to 10 MB.")
+        if upload is not None and not upload_bytes:
+            # Nothing would start (an empty file is no input), and nothing would say why.
+            st.warning("That file is empty (0 bytes). Choose the photo again, or use the 📷 Camera option.")
     else:
         # A form, so typing (or tapping Cancel, which blurs the box) never starts
         # an analysis with half-typed text; only the Analyze button does.
@@ -7089,7 +7258,7 @@ def _render_plan_item_adds(item: dict[str, Any]) -> None:
     # disabling the focused control would throw a keyboard user's focus out of the window when the text arrives.
     # Its callback starts the job, so the run it triggers already shows the progress.
     if st.session_state.pop("swipe_plan_quota", None) == key:
-        box.info(_QUOTA_MESSAGE)
+        box.info(_quota_message())
     if (not ready and pending is None) or st.session_state.get("swipe_plan_asked") == key:
         st.button(
             "Show the comparison", type="primary", width="stretch", key="plandlg_benefits",
@@ -7742,8 +7911,13 @@ def _debug_requested() -> bool:
 
 def _short_error(text: str) -> str:
     """What the diagnostics may show of an error: the kind ("create conversation: HTTP 404"), never what the server said."""
-    first = re.split(r"[{\[\n]", str(text or ""), maxsplit=1)[0].strip()
-    return first[:80]
+    raw = str(text or "")
+    first = re.split(r"[{\[\n]", raw, maxsplit=1)[0].strip()
+    if not first:
+        # Blockbrain's own error is written "[Agent customAgent] - Failed to resolve model configuration": cutting at the "[" left
+        # nothing, and the panel looked healthy after exactly the failure it exists to show. Drop the brackets, keep the words.
+        first = bb._detail_text(re.split(r"[{\n]", raw, maxsplit=1)[0])  # (no key, organisation or bot id, link or long identifier)
+    return bb._scrub_secrets(first)[:80]  # an error text may echo the ids it was called with
 
 
 def _render_debug_panel() -> None:
@@ -7761,6 +7935,9 @@ def _render_debug_panel() -> None:
                 # Timings are process-wide and carry no text from a server; the error is this session's own.
                 "last_call": {k: v for k, v in dict(getattr(bb, "LAST_BLOCKBRAIN_TIMING", {}) or {}).items() if k != "error"},
                 "last_error": _short_error(bb.last_call_error()),
+                # The same stage / per-route lines the failure card shows: they stay for this session, unlike last_error (per run).
+                "last_photo": {"kind": _photo_report().get("kind", ""), "lines": _photo_details_lines(_photo_report())},
+                "call_slots_free": bb.call_slots_free(),
                 "last_link": {"provider": str(getattr(bb, "LAST_TEXT_PROVIDER", "") or ""),
                               "reason": str(getattr(bb, "LAST_URL_PARSE_REASON", "") or "")},
             }
