@@ -4325,7 +4325,7 @@ def _render_header() -> None:
                Manage app badge that Streamlit Cloud draws over that corner; from 641 px it is centred again. */
             [class~="st-key-appbar"],
             [class~="st-key-appbar_busy"] {
-                --ss-bar-gutter: calc(15vw + 12px);  /* the one knob for the Cloud badge corner (right side only on phones) */
+                --ss-bar-gutter: 126px;  /* the one knob for the Cloud badge corner (right side only on phones): the badge is 122 px wide, see below */
                 /* the content column's left edge (.block-container: 440 px wide, 1rem padding); never more than 16 px, so larger text takes nothing from the five tabs */
                 --ss-bar-left: calc(max(0px, (100% - 440px) / 2) + min(1rem, 16px));
                 --ss-ico-scan: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10'/%3E%3C/svg%3E");
@@ -4424,7 +4424,7 @@ def _render_header() -> None:
             }
             [class~="st-key-appbar"] button p,
             [class~="st-key-appbar_busy"] button p {
-                font-size: min(0.75rem, 3.6vw);  /* five labels: capped by the width of the phone, so larger text never makes "Recent" wider than its tab */
+                font-size: min(0.75rem, 3vw);  /* five labels: capped by the width of the phone, so larger text never makes "Recent" wider than its tab */
                 font-weight: 700;
                 line-height: 0.8125rem;
                 white-space: nowrap !important;  /* Streamlit's own `.stButton button [data-testid=stMarkdownContainer] p` sets `normal` and is more specific */
@@ -4496,21 +4496,22 @@ def _render_header() -> None:
             }
             /* Short phones: the welcome screen is the hero card (its Scan button inside), one line of advice and the bar, and it must
                not scroll. */
-            @media (max-height: 608px) {
-                .hero-sub { display: none; }
-                /* 568 px tall (an iPhone SE): the card gives back ~35 px so that a filter chip fits above the bar too (608, not 600: the
-                   long text needs ~610 px to fit under the three steps, measured on every width from 360 up) */
-                [class~="st-key-hero_card"] { padding: 16px 16px 14px 16px; gap: 10px; }
-                .hero-art { font-size: 2rem; }
-                .hero-title { font-size: 1.4rem; margin-top: 6px; }
-                .steps { margin-top: 12px; }
-            }
             @media (max-height: 660px) {
                 /* 640 px tall: the Scan button took the line the old hint had, and then some */
                 [class~="st-key-hero_card"] { padding: 16px 16px 14px 16px; gap: 10px; }
                 .hero-art { font-size: 2.1rem; }
                 .hero-title { margin-top: 6px; }
                 .steps { margin-top: 12px; }
+            }
+            /* after the 660 px block on purpose: it sets the same properties and the later rule wins */
+            @media (max-height: 608px) {
+                .hero-sub { display: none; }
+                /* 568 px tall (an iPhone SE): the card gives back ~45 px so that a filter chip fits above the bar too (608, not 600: the
+                   long text needs ~610 px to fit under the three steps, measured on every width from 360 up) */
+                [class~="st-key-hero_card"] { padding: 14px 16px 12px 16px; gap: 10px; }
+                .hero-art { font-size: 2rem; }
+                .hero-title { font-size: 1.4rem; margin-top: 6px; }
+                .steps { margin-top: 8px; }
             }
             /* The long hero text is shown only where the whole welcome screen still fits without scrolling. How much room it needs depends
                on the width (the narrower the phone, the more lines the text and the three steps take) and on the filter chip (one more
@@ -4561,12 +4562,13 @@ def _render_header() -> None:
                 body:has(.diet-note) [class~="st-key-appbar_busy_diet"] button::after { background: Highlight; box-shadow: 0 0 0 2px Canvas; forced-color-adjust: none; }
             }
             @media (min-width: 641px) {
-                /* Wide window: centred, which clears the badge corner by itself ((641 - 400) / 2 is more than 15vw + 12px). */
+                /* Wide window: centred, which clears the badge corner by itself from 652 px ((652 - 400) / 2 = the 126 px gutter); just above
+                   641 px the pill shrinks a little so that it still does. */
                 [class~="st-key-appbar"], [class~="st-key-appbar_busy"] {
                     left: 0;
                     right: 0;
                     margin: 0 auto;
-                    width: 400px !important;
+                    width: min(400px, calc(100% - 252px)) !important;
                 }
             }
             @media print {
@@ -4724,6 +4726,24 @@ def _render_header() -> None:
             .gd-empty { padding: 14px; border: 1px dashed #cbd5e1; border-radius: 16px; background: #ffffff; font-size: 0.86rem; line-height: 1.45; color: #334155; }
             .gd-note { margin-top: 14px; padding: 10px 12px; border: 1px solid #bfdbfe; border-radius: 14px; background: #eff6ff; font-size: 0.82rem; line-height: 1.45; color: #1e3a5f; }
             .gd-fine { margin: 10px 0 0 0; font-size: 0.76rem; line-height: 1.45; color: #475569; }
+            /* Streamlit Cloud draws two things over the bottom-right corner: the round avatar of the app's owner and, for the owner, the red
+               Manage app button. Together they are about 122 px wide (measured on a real iPhone: the avatar sat on top of the About tab when
+               the pill only cleared the red button), so the pill ends 126 px short of the right edge. Five tabs of 44 px still fit beside
+               that from 353 px wide when the left margin is 8 px (from 375 px with the normal 16 px). Narrower phones cannot hold five 44 px
+               tabs beside the whole badge: there only the red button is kept clear and the avatar can cover a corner of the About tab. */
+            @media (max-width: 374px) {
+                [class~="st-key-appbar"], [class~="st-key-appbar_busy"] {
+                    --ss-bar-left: calc(max(0px, (100% - 440px) / 2) + 8px);
+                    padding: 0;  /* 360 px wide: (360 - 8 - 126 - 2 for the frame) / 5 = 44.8 px per tab; the tabs' own radius follows the frame */
+                }
+                [class~="st-key-appbar"] button, [class~="st-key-appbar_busy"] button { padding: 0; }
+            }
+            @media (max-width: 352px) {
+                [class~="st-key-appbar"], [class~="st-key-appbar_busy"] {
+                    --ss-bar-gutter: calc(15vw + 12px);
+                    --ss-bar-left: calc(max(0px, (100% - 440px) / 2) + min(1rem, 16px));
+                }
+            }
             /* The one-line chip beside the brand (under it when it does not fit) while a diet filter or pregnancy mode is on; a text, never hidden. */
             .topbar {
                 display: flex;
@@ -4733,6 +4753,10 @@ def _render_header() -> None:
                 margin: 0 0 0.4rem 0;
             }
             .topbar .brand { margin: 0; }
+            /* Streamlit's own Fork / GitHub buttons float over the right end of this row (about 90 px, from x = 307 of 393). A short chip
+               ("Diet: Vegan") ends well before them; a long one ("Diet: Vegan · Pregnancy") would run beneath them, so it gets its own row
+               under the brand (a zero-height full-width item forces the wrap), where nothing floats over it. */
+            .topbar .topbreak { flex: 0 0 100%; height: 0; margin: 0 0 -0.3rem 0; padding: 0; }  /* the negative margin takes back the row gap the empty row adds */
             .diet-note {
                 display: inline-block;
                 max-width: 100%;
@@ -5678,11 +5702,18 @@ def _diet_chip_text() -> str:
     return summary if summary in ("", "Pregnancy mode") else f"Diet: {summary}"
 
 
+_DIET_CHIP_BESIDE_BRAND = 15  # characters: "Diet: Vegan" (11) sits beside the brand, "Diet: Vegetarian" (16) and longer go under it
+
+
 def _diet_chip_html() -> str:
     """The chip under the brand. Plain text, not a control: the bar's Diet item is the way in, and a text cannot interrupt a running
     analysis. The Diet item's dot (CSS) follows the presence of this element."""
     text = _diet_chip_text()
-    return f"<div class='diet-note'><span aria-hidden='true'>🥗</span> {html.escape(text)}</div>" if text else ""
+    if not text:
+        return ""
+    # A long chip would run beneath Streamlit's Fork / GitHub buttons at the right end of the brand row: it goes under the brand.
+    wrap = "<div class='topbreak' aria-hidden='true'></div>" if len(text) > _DIET_CHIP_BESIDE_BRAND else ""
+    return f"{wrap}<div class='diet-note'><span aria-hidden='true'>🥗</span> {html.escape(text)}</div>"
 
 
 def _diet_effect_html() -> str:
