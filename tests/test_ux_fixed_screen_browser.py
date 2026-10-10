@@ -708,6 +708,8 @@ def test_the_results_screen_still_scrolls_like_a_long_page(browser, server):
         start_sample(pg)
         finish_all_cards(pg, replace=True)
         results_heading(pg).wait_for(timeout=10000)
+        # the heading paints before the rest of the dashboard: wait for the page to grow instead of measuring the first frame
+        pg.wait_for_function(f"{MAIN}.scrollHeight - {MAIN}.clientHeight > 0", timeout=10000)
         assert scroll_state(pg)["main"] > 0  # the dashboard is long on purpose
         pg.evaluate(f"{MAIN}.scrollTo(0, 100000)")
         pg.wait_for_timeout(300)
