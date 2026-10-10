@@ -217,7 +217,8 @@ def test_scan_asks_first_in_the_middle_of_a_scan_and_on_the_results_and_the_ques
     item(page, "scan").click()
     dialog.get_by_role("button", name="Scan another").click()
     dialog.get_by_text("Analyze my supplement").first.wait_for(timeout=10000)
-    assert results_heading(page).count() == 0  # cleared, and the Analyze window is open
+    results_heading(page).wait_for(state="detached", timeout=10000)  # cleared (the dialog can paint a frame before the page behind it repaints), and the Analyze window is open
+    assert results_heading(page).count() == 0
 
 
 # ------------------------------------------------------------------ the Diet item and the safety regressions
