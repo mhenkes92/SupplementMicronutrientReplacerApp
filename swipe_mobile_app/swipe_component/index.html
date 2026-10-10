@@ -125,10 +125,12 @@
   #extras button:not([aria-disabled="true"]):active { transform: scale(0.97); background: #f1f5f9; }
   #extras button[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
   #actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 4px 8px 4px; flex: 0 0 auto; }
+  /* Equal shares of the row; a label is never broken inside a word: a button that cannot hold its longest word wraps onto its own
+     row (a large text size on a narrow phone), and from about 140 % text the decorative arrows go (the label says it). */
   #actions button {
     flex: 1 1 0;
-    min-width: 0;
-    overflow-wrap: anywhere;
+    min-width: min-content;
+    overflow-wrap: break-word;
     min-height: 46px;
     border-radius: 12px;
     font: inherit;
@@ -139,7 +141,8 @@
     background: #fff;
   }
   #actions button:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
-  #actions #btnBack { flex: 0 0 52px; border-color: #e2e8f0; color: #334155; }
+  #actions #btnBack { flex: 0 0 52px; min-width: 52px; border-color: #e2e8f0; color: #334155; }
+  #wrap.big .arr { display: none; }
   #actions #btnKeep { border-color: #fca5a5; color: #b91c1c; }
   #actions #btnRepl { border-color: #047857; color: #ffffff; background: #047857; }
   #actions button:not(:disabled):active { transform: scale(0.97); }
@@ -190,8 +193,8 @@
   </div>
   <div id="actions">
     <button type="button" id="btnBack" aria-label="Back to the previous card" title="Back">&#8617;</button>
-    <button type="button" id="btnKeep" aria-label="Keep pill">&#9664; Keep pill</button>
-    <button type="button" id="btnRepl" aria-label="Replace">Replace &#9654;</button>
+    <button type="button" id="btnKeep" aria-label="Keep pill"><span class="arr" aria-hidden="true">&#9664; </span>Keep pill</button>
+    <button type="button" id="btnRepl" aria-label="Replace">Replace<span class="arr" aria-hidden="true"> &#9654;</span></button>
   </div>
   <div id="live" class="sr-only" aria-live="polite"></div>
 </div>
@@ -217,6 +220,7 @@
   var tight = false;  // the compact card (see "#wrap.tight"); once on it stays on for the scan
   var showSrc = true; // the full USDA name in the food block: only while the card has room for it (see fitHeight)
   var spacer = false; // the blank strip under the buttons (see "#wrap.spacer")
+  var big = false;    // a large text size (the root font size is 140 % or more): see "#wrap.big"
   var drawnBefore = false;  // a card was drawn in this page load already (a resumed scan opens on a later card: its hint is still new)
   var firstCard = true;     // the card on screen is the first of the scan or the first this page load drew: it keeps the swipe hint
   var wrap = document.getElementById("wrap");
@@ -230,6 +234,7 @@
   // it once and answers with the next card's props in the same script run.
   var cardId = "";
   var cardIndex = 0;
+  var scanId = "";   // the scan these cards belong to (from Python); echoed in every event so the page can tell an old card's tap from a new one's
   var seq = 0;
   var animEnd = 0;      // fly-out animation end; new props wait for it
   var pendingArgs = null;
@@ -251,6 +256,8 @@
   var ROOM_FLOOR = 320;     // never a frame shorter than this (landscape phones scroll the page as before)
   var FILL_MAX = 900;       // the tallest frame that fills the room (the tallest phones are ~930 px high; a desktop window gets a card, not a column)
   var SPACER = 76;          // the blank strip under the buttons of a frame that cannot fill the room (the bar's footprint and a little air)
+  var MIN_WINDOW = 240;     // the least height the card itself is given to read in (the stage); see fitHeight
+  var growMax = 0;          // the frame height a scan needed when the room was too small for MIN_WINDOW (one height for the whole scan)
   var footprint = 0;        // from the bar's top edge to the bottom of the window (px), as hostRoom() saw it; a bigger bar (large text) needs a longer strip
   var spacerPx = SPACER;    // the strip this frame has now
   // The tallest frame that still leaves the Keep / Replace row above the page's fixed bottom bar (page scrolled to the top).
@@ -271,7 +278,7 @@
   // The one place the wrapper's classes are written.
   function paint() {
     wrap.className = (tight ? "tight" : "") + (firstCard ? " first" : "") + (finePointer ? " fine" : "") +
-      (showSrc ? "" : " nosrc") + (spacer ? " spacer" : "");
+      (showSrc ? "" : " nosrc") + (spacer ? " spacer" : "") + (big ? " big" : "");
     wrap.style.paddingBottom = (spacer && spacerPx > SPACER) ? spacerPx + "px" : "";   // the class gives the usual strip
   }
   function setTight(on) {
@@ -308,6 +315,7 @@
   // clear of the bar.
   var lastRoom = null;   // the room the frame was last fitted to (see the poll below)
   function fitHeight() {
+    big = (parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16) >= 22;
     var room = hostRoom();
     lastRoom = room;
     var measured = isFinite(room);
@@ -322,7 +330,15 @@
     }
     var h = Math.max(HEIGHT, Math.min(780, contentHeight + actionsHeight + 10), maxHeight);
     maxHeight = h;
-    spacer = !(measured && room >= ROOM_FLOOR);
+    // A frame that fills a room too small for the card to be read in (a large text size on a small phone: the tools and the
+    // Keep / Replace row take the room, and the card is left a slit) is made as tall as MIN_WINDOW needs instead, and the page
+    // scrolls, as it does for a landscape phone: the card scrolls inside its window, the page scrolls the buttons into reach.
+    var grow = measured && avail - actionsHeight < MIN_WINDOW;
+    if (grow) {
+      avail = Math.max(actionsHeight + MIN_WINDOW, growMax);
+      growMax = avail;
+    }
+    spacer = grow || !(measured && room >= ROOM_FLOOR);
     if (measured) {
       h = avail;   // a frame that fills the room
     }
@@ -336,6 +352,15 @@
     if (Math.abs(h - lastHeight) > 2) { lastHeight = h; setHeight(h); }
     setTimeout(updateCue, 80);
   }
+  // The room itself changed (a turned phone, a window, the toolbars, a filter chip above the card): the density is chosen again from
+  // that room, so a room that came back is not left with the cramped card it had while it was short. (Card after card, within one
+  // room, the density only ever tightens: every card of the scan has one look.)
+  function refit() {
+    tight = hostRoom() < TIGHT_BELOW;
+    maxHeight = 0;
+    growMax = 0;
+    fitHeight();
+  }
   var lastW = window.innerWidth;
   window.addEventListener("resize", function () {
     if (window.innerWidth !== lastW) { lastW = window.innerWidth; tight = hostRoom() < TIGHT_BELOW; }  // a turned phone starts over
@@ -346,7 +371,7 @@
   try {
     window.parent.addEventListener("resize", function () {
       clearTimeout(hostTimer);
-      hostTimer = setTimeout(function () { if (!committed) { fitHeight(); } }, 120);
+      hostTimer = setTimeout(function () { if (!committed) { refit(); } }, 120);
     });
   } catch (e) {}
   // The room also changes without any message to this frame: a filter chip appears above the card when the Diet sheet closes, a
@@ -355,7 +380,7 @@
   setInterval(function () {
     if (committed || document.hidden || lastRoom === null) { return; }
     var room = hostRoom();
-    if (room !== lastRoom) { fitHeight(); }
+    if (room !== lastRoom) { refit(); }
   }, 250);
   function setValue(v) { send("streamlit:setComponentValue", { value: v, dataType: "json" }); }
 
@@ -375,6 +400,7 @@
     committed = false;
     canReplace = (args.canReplace !== false);
     cardId = String(args.cardId || "");
+    scanId = args.scan == null ? "" : String(args.scan);
     cardIndex = parseInt(args.index || 0, 10) || 0;
     var firstDraw = !drawnBefore;   // the first card this frame draws (a new scan, a resumed one, a card opened from the results)
     firstCard = cardIndex === 0 || !drawnBefore;
@@ -385,7 +411,7 @@
     btnBack.setAttribute("aria-label", editing ? "Back to your results" : "Back to the previous card");
     btnBack.title = editing ? "Back to results" : "Back";
     HEIGHT = parseInt(args.height || 420, 10) || 420;
-    if (cardIndex === 0 && !editing) { maxHeight = 0; tight = hostRoom() < TIGHT_BELOW; }  // a new scan (or back at the first card) starts from its own size
+    if (cardIndex === 0 && !editing) { maxHeight = 0; growMax = 0; tight = hostRoom() < TIGHT_BELOW; }  // a new scan (or back at the first card) starts from its own size
     else if (firstDraw) { tight = hostRoom() < TIGHT_BELOW; }  // a resumed scan or a card opened from the results: the density a new scan has on this phone
     setTight(tight);
     card.style.setProperty("--accent", args.accent || "#64748b");
@@ -474,8 +500,21 @@
     railKeep.style.opacity = dx < -8 ? t : 0;
   }
 
+  // The page is analysing a new label: the card of the scan before stays on screen, dimmed, until the new one replaces it, and
+  // nothing on it is live meanwhile (a tap would also restart the run). Same origin as the page; false when it cannot be read.
+  function hostBusy() {
+    try { return !!window.parent.document.querySelector(".analyze-loading-wrap"); } catch (e) { return false; }
+  }
+  // Every event carries the card, its index and the scan it was made on.
+  function stamp(value) {
+    value.card = cardId;
+    value.index = cardIndex;
+    if (scanId !== "") { value.scan = scanId; }
+    return value;
+  }
+
   function commit(dir) {
-    if (committed) return;
+    if (committed || hostBusy()) return;
     if (dir === "right" && !canReplace) return;
     if (dir === "back" && !canBack) return;
     committed = true;
@@ -486,7 +525,7 @@
     btnSwap.setAttribute("aria-disabled", "true"); btnAsk.setAttribute("aria-disabled", "true"); btnMore.setAttribute("aria-disabled", "true");
     announce = dir === "right" ? "Replaced with the whole food. " : (dir === "left" ? "Kept the pill. " : "Going back. ");
     seq += 1;
-    var value = { dir: dir, id: Date.now() + "-" + seq, card: cardId, index: cardIndex };
+    var value = stamp({ dir: dir, id: Date.now() + "-" + seq });
     if (dir === "back" || reduceMotion) {
       setValue(value);
       return;
@@ -519,7 +558,7 @@
   var THRESH = 80;
 
   function down(x, y) {
-    if (committed) return;
+    if (committed || hostBusy()) return;
     movedBeyondTap = false;
     dragging = true; horizontal = null;
     sx = x; sy = y; dx = 0; dy = 0;
@@ -578,21 +617,33 @@
   }
 
   function guideEvent() {
-    if (committed) return;   // a swipe is already on its way
+    if (committed || hostBusy()) return;   // a swipe is already on its way / an analysis is running
     seq += 1;
-    setValue({ kind: "guide", id: "g" + Date.now() + "-" + seq, card: cardId, index: cardIndex, nutrient: cardId });
+    setValue(stamp({ kind: "guide", id: "g" + Date.now() + "-" + seq, nutrient: cardId }));
   }
   // The tools (Swap food / Ask AI / More): each posts one event that the page answers with a sheet. They never change the card or a
   // decision. A second tap within 0.7 s (a double tap) is dropped, and nothing is sent while a swipe is on its way.
   var toolUntil = 0;
+  var returnTo = null;   // the tool that opened a sheet: when the page hands the focus back to this frame it goes to that button again
   function toolEvent(kind) {
-    if (committed) return;
+    if (committed || hostBusy()) return;
     var now = Date.now();
     if (now < toolUntil) return;
     toolUntil = now + 700;
     seq += 1;
-    setValue({ kind: kind, id: kind + "-" + now + "-" + seq, card: cardId, index: cardIndex });
+    returnTo = kind === "swap" ? btnSwap : (kind === "ask" ? btnAsk : btnMore);
+    setValue(stamp({ kind: kind, id: kind + "-" + now + "-" + seq }));
   }
+  // A sheet over the page makes the page behind it inert, so the button that had the focus loses it; the page returns the focus to this
+  // frame when the sheet closes, and the keyboard or screen-reader user is put back on the button they used.
+  window.addEventListener("focus", function () {
+    if (!returnTo || (document.activeElement && document.activeElement !== document.body)) { return; }
+    var button = returnTo;
+    returnTo = null;
+    if (!button.hidden) { try { button.focus({ preventScroll: true }); } catch (e) {} }
+  });
+  // The frame is announced by its title: the component's own name ("app.tinder_swipe") says nothing.
+  try { window.frameElement.setAttribute("title", "Nutrient card: swipe, or use the buttons"); } catch (e) {}
   btnSwap.addEventListener("click", function () { toolEvent("swap"); });
   btnAsk.addEventListener("click", function () { toolEvent("ask"); });
   btnMore.addEventListener("click", function () { toolEvent("report"); });

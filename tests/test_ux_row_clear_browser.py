@@ -52,10 +52,15 @@ def test_every_access_to_the_host_page_is_inside_a_try_that_falls_back_to_the_ol
     for needle in ("window.parent", "frameElement", ".document", "innerHeight"):
         assert needle in inside
     rest = SCRIPT.replace(body, "")
-    assert "frameElement" not in rest and ".document" not in rest and "parent.innerHeight" not in rest
+    assert "parent.innerHeight" not in rest
+    # The few other reads of the host (the busy check of the page, the title of this frame) are each a try / catch of their own.
+    for needle in ("frameElement", r"parent\.document"):
+        for found in re.finditer(needle, rest):
+            assert rest.rfind("try {", 0, found.start()) > rest.rfind("catch (e)", 0, found.start()), rest[found.start() - 80:found.start() + 80]
     # Everything else that mentions the host only posts a message to it or compares the message source.
     others = [m.group(0) for m in re.finditer(r"window\.parent[.\w]*", rest)]
-    assert set(others) <= {"window.parent.postMessage", "window.parent", "window.parent.addEventListener"}, others
+    assert set(others) <= {"window.parent.postMessage", "window.parent", "window.parent.addEventListener",
+                           "window.parent.document.querySelector"}, others
     # The one other thing the frame does to the host: listen for its resize (the bar moves with the phone's toolbars), best effort.
     assert re.search(r"try \{\s+window\.parent\.addEventListener\(\"resize\".*?\}\);\s+\} catch \(e\) \{\}", rest, re.S)
     assert "return Infinity" in body and "isFinite(room)" in SCRIPT  # an unmeasurable room changes nothing downstream
@@ -209,8 +214,13 @@ SHORT = [(320, 568), (320, 640), (360, 640), (390, 664)]
 ROOMY = [(390, 844), (412, 915)]  # phones whose room is larger than the tallest card needs: the normal (not tight) card from the first card on
 OWN_LABEL = "Vitamin C 80 mg 100%\nVitamin D3 20 µg 400%\nZinc 10 mg 100%\nSelenium 55 µg 100%"
 WARN_LABEL = "Vitamin A 3000 µg 375%\nVitamin D3 100 µg 2000%\nIron 45 mg 321%\nZinc 40 mg 400%\nSelenium 300 µg 545%"
+# A text-size setting of the phone (Android "Font size", iOS "Larger Text", a browser's default font size) scales the rem-based text of
+# EVERY frame, the card's too. This init script reaches the page only (it does not run in the card's iframe: measured, the page's
+# html font-size 32 px, the card's 16 px), so `open_page(init=TEXT_200)` also rewrites the card's html to carry the same rule
+# (_zoom_card_frames); before that, every large-text measurement scaled the page chrome and left the card at 100 %.
 TEXT_200 = ("document.addEventListener('DOMContentLoaded', () => { const s = document.createElement('style');"
             " s.textContent = 'html { font-size: 200% !important; }'; document.head.appendChild(s); });")
+TEXT_150 = TEXT_200.replace("200%", "150%")
 # frameElement of the card's frame throws, as it would for a cross-origin or sandboxed frame
 BLOCK_HOST = ("try { if (window.top !== window) { Object.defineProperty(window, 'frameElement', { configurable: true,"
               " get() { throw new DOMException('Blocked a frame with origin', 'SecurityError'); } }); window.__blocked = true; } }"
@@ -227,11 +237,33 @@ CARD_TEXT_JS = """() => {
 
 
 # ------------------------------------------------------------------ browser helpers
+def _text_zoom(init) -> int | None:
+    """The percentage of an init script made like TEXT_200 / TEXT_150, else None."""
+    match = re.search(r"html \{ font-size: (\d+)% !important; \}", init or "")
+    return int(match.group(1)) if match else None
+
+
+def _zoom_card_frames(ctx, percent: int) -> None:
+    """The card's page, served with the same root font size as the zoomed page (what a phone's text-size setting does to every frame)."""
+    style = f"<style>html {{ font-size: {percent}% !important; }}</style>"
+
+    def handler(route):
+        response = route.fetch()
+        body = response.text().replace("</head>", style + "</head>", 1)
+        headers = {k: v for k, v in response.headers.items() if k.lower() not in ("content-length", "content-encoding")}
+        route.fulfill(status=response.status, headers=headers, body=body)
+
+    ctx.route(re.compile(r".*/component/app\.tinder_swipe/index\.html.*"), handler)
+
+
 def open_page(browser, server, size, touch=True, init=None):
-    """A phone-sized page with the bar present; JS errors are collected in pg.errors."""
+    """A phone-sized page with the bar present; JS errors are collected in pg.errors. `init=TEXT_150 / TEXT_200`: a larger text size
+    for the page AND the card's frame."""
     ctx = browser.new_context(viewport={"width": size[0], "height": size[1]}, is_mobile=touch, has_touch=touch, device_scale_factor=2)
     if init:
         ctx.add_init_script(init)
+        if _text_zoom(init):
+            _zoom_card_frames(ctx, _text_zoom(init))
     pg = ctx.new_page()
     pg.errors = []
     pg.on("pageerror", lambda e: pg.errors.append(str(e)))
@@ -502,11 +534,19 @@ def test_a_label_with_upper_limit_warnings_keeps_every_red_box_in_full_view(brow
 
 @needs_browser
 def test_at_double_text_size_the_row_is_clear_and_the_card_scrolls_inside_its_frame(browser, server):
+    """320x640 at 200 % text, the card's own frame zoomed too: its window would be a slit, so the frame grows to give it 240 px and the
+    page scrolls (see MIN_WINDOW); scrolled to the end, the row is clear of the bar on every card."""
     ctx, pg = open_page(browser, server, (320, 640), init=TEXT_200)
     try:
         start_sample(pg)
-        seen = walk(pg, 7, lambda: (row_gap(pg), card_frame(pg).evaluate(
-            "(() => { const c = document.getElementById('card'); return c.scrollHeight - c.clientHeight; })()")))
+
+        def measure():
+            pg.evaluate(f"{MAIN}.scrollTo(0, 100000)")
+            pg.wait_for_timeout(250)
+            return row_gap(pg), card_frame(pg).evaluate(
+                "(() => { const c = document.getElementById('card'); return c.scrollHeight - c.clientHeight; })()")
+
+        seen = walk(pg, 7, measure)
         assert all(gap >= 0 for _, (gap, _) in seen), seen
         assert max(hidden for _, (_, hidden) in seen) > 40, seen  # what does not fit is reachable by scrolling the card
         assert pg.evaluate("document.scrollingElement.scrollWidth") <= 320  # no sideways page scroll
@@ -787,11 +827,14 @@ def test_a_swipe_that_starts_in_the_lower_edge_of_a_scrolling_card_still_moves_t
 
 @needs_browser
 def test_a_tap_on_the_athlete_button_under_the_fade_opens_the_guide(browser, server):
-    """At double text size the athlete-guide button of the first cards reaches under the fade: the tap must still reach it."""
+    """At double text size the athlete-guide button reaches under the fade when the card is scrolled: the tap must still reach it."""
     ctx, pg = open_page(browser, server, (320, 640), init=TEXT_200)
     try:
         start_sample(pg)
         fr = card_frame(pg)
+        # The card (its frame zoomed too) is taller than its window: scroll it until the lower part of the button is under the fade.
+        place = """() => { const c = document.getElementById('card'), s = document.getElementById('stage').getBoundingClientRect(),
+          b = document.querySelector('.pl-guide').getBoundingClientRect(); c.scrollTop += b.bottom - (s.bottom - 6 - 14); }"""
         probe = """() => { const st = document.getElementById('stage'), s = st.getBoundingClientRect(), b = document.querySelector('.pl-guide').getBoundingClientRect();
           const top = Math.max(b.top, s.bottom - 6 - 30), bottom = Math.min(b.bottom, s.bottom - 6);
           if (!st.classList.contains('cue') || bottom - top < 6) { return null; }
@@ -801,6 +844,8 @@ def test_a_tap_on_the_athlete_button_under_the_fade_opens_the_guide(browser, ser
         for i in range(7):
             name = card_name(pg)
             to_top(pg)
+            fr.evaluate(place)
+            pg.wait_for_timeout(200)  # the card's scroll event refreshes the fade
             got = fr.evaluate(probe)
             if got:
                 overlapped.append((name, got))
@@ -830,7 +875,7 @@ def test_a_focused_athlete_button_is_never_under_the_fade_or_the_pill(browser, s
         fr = card_frame(pg)
         probe = """() => { const g = document.querySelector('.pl-guide'), st = document.getElementById('stage'), s = st.getBoundingClientRect(), r = g.getBoundingClientRect();
           return { focused: document.activeElement === g, cue: st.classList.contains('cue'), bottom: r.bottom, fadeTop: s.bottom - 6 - 30,
-                   scrolled: document.getElementById('card').scrollTop }; }"""
+                   height: r.height, room: s.bottom - 6 - 30 - s.top, scrolled: document.getElementById('card').scrollTop }; }"""
 
         def measure():
             fr.evaluate("document.getElementById('card').focus({ preventScroll: true })")
@@ -841,7 +886,10 @@ def test_a_focused_athlete_button_is_never_under_the_fade_or_the_pill(browser, s
         seen = walk(pg, 7, measure)
         assert all(m["focused"] for _, m in seen), seen
         assert any(m["scrolled"] > 3 for _, m in seen), seen  # focusing really scrolled a card (the case this guards)
-        assert all((not m["cue"]) or m["bottom"] <= m["fadeTop"] + 1 for _, m in seen), seen
+        # (A button taller than the window above the fade, the magnesium and selenium notes at 200 % on a 246 px window, cannot be placed
+        # clear of it: the browser then starts at its first line and the rest is a scroll away, so only the ones that fit are checked.)
+        assert all((not m["cue"]) or m["bottom"] <= m["fadeTop"] + 1 or m["height"] > m["room"] for _, m in seen), seen
+        assert sum(1 for _, m in seen if m["height"] <= m["room"]) >= 3, seen  # and most of the cards' buttons do fit
     finally:
         ctx.close()
 

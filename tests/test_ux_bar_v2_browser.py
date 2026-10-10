@@ -22,7 +22,7 @@ MAIN = "document.querySelector('[data-testid=stMain]')"
 WELCOME_SIZES = [(320, 568), (320, 640), (360, 640), (390, 844), (412, 915)]
 BADGE = (
     "() => { const b = document.createElement('div'); b.id = 'fake-badge';"
-    " b.style.cssText = 'position:fixed;right:0;bottom:0;width:15vw;height:50px;z-index:2147483647;background:red';"
+    " b.style.cssText = 'position:fixed;right:0;bottom:0;width:' + (innerWidth >= 353 ? 122 : Math.round(innerWidth * 0.15)) + 'px;height:50px;z-index:2147483647;background:red';"
     " document.body.appendChild(b); }"
 )
 
@@ -81,8 +81,10 @@ def test_five_tabs_of_at_least_44_px_sit_beside_the_simulated_badge_and_each_hit
     try:
         pg.evaluate(BADGE)
         badge, bar = rect(pg, "#fake-badge"), rect(pg, BAR)
-        assert bar["right"] <= badge["x"] - 11.5, (bar, badge)  # the badge's width and the 12 px gap
-        assert abs(bar["x"] - 16) <= 1, bar  # flush with the page gutter on the left
+        # From 353 px wide the pill clears the WHOLE badge (the owner's avatar and the red Manage app button, 122 px wide as measured on a
+        # real iPhone: the avatar sat on the About tab when only the red button was cleared); narrower phones clear the red button only.
+        assert bar["right"] <= badge["x"] - (3.5 if size[0] >= 353 else 11.5), (bar, badge)
+        assert abs(bar["x"] - (8 if 353 <= bar["vw"] <= 374 else 16)) <= 1, bar  # flush with the page gutter on the left
         boxes = [rect(pg, BAR_BUTTON, i) for i in range(5)]
         assert [pg.locator(BAR_BUTTON).nth(i).inner_text().strip() for i in range(5)] == LABELS
         assert all(b["w"] >= 44 and b["h"] >= 44 for b in boxes), [(round(b["w"], 1), round(b["h"], 1)) for b in boxes]
@@ -215,7 +217,8 @@ def test_scan_asks_first_in_the_middle_of_a_scan_and_on_the_results_and_the_ques
     item(page, "scan").click()
     dialog.get_by_role("button", name="Scan another").click()
     dialog.get_by_text("Analyze my supplement").first.wait_for(timeout=10000)
-    assert results_heading(page).count() == 0  # cleared, and the Analyze window is open
+    results_heading(page).wait_for(state="detached", timeout=10000)  # cleared (the dialog can paint a frame before the page behind it repaints), and the Analyze window is open
+    assert results_heading(page).count() == 0
 
 
 # ------------------------------------------------------------------ the Diet item and the safety regressions
@@ -791,5 +794,52 @@ def test_a_focus_that_is_somewhere_already_is_not_taken_away(browser, server):
         item(pg, "about").focus()  # she moves on at once
         pg.wait_for_timeout(1500)
         assert focused_item(pg) == "about"
+    finally:
+        ctx.close()
+
+
+def test_a_phone_photo_sent_through_the_cards_scan_button_gets_its_cards(ai_server, page, tmp_path):
+    """The whole way a visitor takes: the card's own Scan button -> Analyze -> Upload -> a 12 MP phone JPEG (an MPO file, as a phone makes
+    it) -> the label text the AI reads -> the swipe cards. The local fake plays the AI; what is checked is that the app sends the photo
+    and turns its answer into cards (the failure message "Your photo couldn't be read" must not appear)."""
+    import io
+
+    from PIL import Image
+
+    url, fake = ai_server
+    fake.stream_script = ["Supplement Facts\nVitamin C 80 mg 100%\nVitamin D3 20 µg 400%\nZinc 10 mg 100%\nSelenium 55 µg 100%"]
+    big = Image.new("RGB", (4032, 3024), "white")
+    buf = io.BytesIO()
+    big.save(buf, "MPO", save_all=True, append_images=[big.resize((1008, 756))])
+    photo = tmp_path / "phone_label.jpg"
+    photo.write_bytes(buf.getvalue())
+    page.goto(url, wait_until="networkidle")
+    page.locator('[class~="st-key-hero_scan"] button').click()  # the button in the welcome card, not the bar
+    page.get_by_role("dialog").wait_for(timeout=10000)
+    settle(page, 0.5)
+    page.get_by_role("button", name="Analyze my supplement").click()
+    dialog = page.get_by_role("dialog")
+    dialog.locator("button", has_text="Upload").click()
+    settle(page)
+    dialog.locator('input[type="file"]').set_input_files(str(photo))
+    card(page).locator("#card .name").wait_for(timeout=90000)
+    assert "couldn't be read" not in page.locator("body").inner_text()
+
+
+@pytest.mark.parametrize("size", [(390, 844), (393, 852), (412, 915)])
+def test_the_diet_chip_keeps_clear_of_the_streamlit_toolbar_at_the_right_end_of_the_brand_row(browser, server, size):
+    """Streamlit's own Fork / GitHub buttons float over the right end of the brand row (about 90 px). A long chip ("Diet: Vegan ·
+    Pregnancy") used to run beneath them; it now goes under the brand instead, and a short one stays beside it."""
+    ctx, pg = new_page(browser, server, size)
+    try:
+        open_diet_sheet(pg)
+        pg.locator('[data-testid="stDialog"] [data-testid="stButtonGroup"] button', has_text="Vegan").click()
+        pg.get_by_text("Pregnant or breastfeeding").click()
+        settle(pg)
+        close_sheet(pg)
+        chip = pg.locator(".diet-note")
+        chip.wait_for(timeout=10000)
+        box = chip.bounding_box()
+        assert box["x"] + box["width"] <= size[0] - 16 - 90 + 1, (box, size)  # clear of the toolbar zone
     finally:
         ctx.close()

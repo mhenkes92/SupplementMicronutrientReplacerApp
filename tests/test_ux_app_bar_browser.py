@@ -253,12 +253,12 @@ def test_the_bar_clears_a_simulated_manage_app_badge(browser, server, size):
     try:
         pg.evaluate(
             "() => { const b = document.createElement('div'); b.id = 'fake-badge';"
-            " b.style.cssText = 'position:fixed;right:0;bottom:0;width:15vw;height:50px;z-index:2147483647;background:red';"
+            " b.style.cssText = 'position:fixed;right:0;bottom:0;width:' + (innerWidth >= 353 ? 122 : Math.round(innerWidth * 0.15)) + 'px;height:50px;z-index:2147483647;background:red';"
             " document.body.appendChild(b); }"
         )
         badge = rect(pg, "#fake-badge")
         bar = rect(pg, BAR)
-        assert bar["right"] <= badge["x"] - 8 or bar["bottom"] <= badge["y"], (bar, badge)  # the whole pill, with air
+        assert bar["right"] <= badge["x"] - (3.5 if badge["vw"] >= 353 else 8) or bar["bottom"] <= badge["y"], (bar, badge)  # the whole pill, with air
         for i in range(5):
             box = rect(pg, BAR_BUTTON, i)
             assert top_is_bar(pg, box["cx"], box["cy"]), i  # what is under the finger is the button itself, not the badge
@@ -558,7 +558,7 @@ def test_the_ask_ai_chat_box_is_not_under_the_bar(ai_server, page):
 @pytest.mark.parametrize("size", [(390, 844), (360, 640), (320, 640)])
 def test_the_bar_starts_at_the_page_gutter_and_keeps_the_badge_corner_free_on_the_right(browser, server, size):
     """Five tabs of 44 px do not fit between two badge gutters on a 320 px phone: on phones the pill starts at the page gutter and
-    only its right side keeps clear of the badge (15vw + 12 px). Its tabs are equal and finger-sized."""
+    only its right side keeps clear of the badge (126 px from 353 px wide: the avatar and the red button). Its tabs are equal and finger-sized."""
     ctx, pg = new_page(browser, server, size)
     try:
         pg.locator(BAR_BUTTON).nth(2).wait_for(timeout=10000)
@@ -569,7 +569,7 @@ def test_the_bar_starts_at_the_page_gutter_and_keeps_the_badge_corner_free_on_th
             timeout=10000,
         )
         bar = rect(pg, BAR)
-        assert abs(bar["x"] - 16) <= 1, bar  # flush with the page gutter (the content starts at 16 px)
+        assert abs(bar["x"] - (8 if 353 <= bar["vw"] <= 374 else 16)) <= 1, bar  # flush with the page gutter (the content starts at 16 px)
         assert bar["right"] <= bar["vw"] - (0.15 * bar["vw"] + 12) + 1, bar  # 15 % badge width + 12 px on the right
         widths = [rect(pg, BAR_BUTTON, i)["w"] for i in range(5)]
         assert max(widths) - min(widths) <= 1 and min(widths) >= 44, widths  # equal fifths, every one finger-sized

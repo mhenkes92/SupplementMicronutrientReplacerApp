@@ -475,7 +475,7 @@ def test_a_swipe_still_works_after_a_guide_tap():
 def test_the_component_sends_the_guide_event_as_its_own_kind_and_keeps_drags_apart_from_taps():
     src = (Path(APP).parent / "swipe_component" / "index.html").read_text(encoding="utf-8")
     assert '<button type="button" class="pl pl-guide" data-guide="1">' in src and "Opens the athlete guide." in src
-    assert 'kind: "guide"' in src and "if (committed) return;" in src  # nothing while a swipe is on its way
+    assert 'kind: "guide"' in src and "if (committed || hostBusy()) return;" in src  # nothing while a swipe is on its way or an analysis runs
     assert "e.detail > 0 && movedBeyondTap" in src  # a pointer click after a drag is no tap; a keyboard Enter (detail 0) still works
     assert "if (!downOnGuide)" in src  # the capture waits on the line, so a tap reaches the button and a drag still swipes
     assert "outline: 3px solid #1d4ed8" in src and "min-height: 32px" in src  # a visible focus ring and a target of 32 px
