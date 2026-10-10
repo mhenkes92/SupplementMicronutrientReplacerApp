@@ -68,6 +68,8 @@ secret with the same name is copied into the environment.
 | `BLOCKBRAIN_MODEL_MEAL`, `BLOCKBRAIN_MODEL_BENEFITS`, `BLOCKBRAIN_MODEL_ASK` | Optional, **cortex route only**: a Blockbrain model id per feature (for example a cheaper model for the comparison). Unset = the global model. Measured by the VS Code agent: `claude-sonnet-5` is the only one that reproduces every gram amount of the meal plan; see `collab/FACTS_BLOCKBRAIN.md` (section 8) on the `collab/vsc` branch. |
 | `BLOCKBRAIN_KB_BOT_ID` | Optional: id of a knowledge-base bot (the "SuppSwipe Ask AI" bot). Ask AI asks it first; the "From the Examine knowledge base" label appears only when the answer came with sources, otherwise it falls back to the general model and then to the local index. |
 | `BLOCKBRAIN_TOTAL_BUDGET_S`, `BLOCKBRAIN_VISION_BUDGET_S`, `BLOCKBRAIN_READ_TIMEOUT_S` | Optional wall-clock caps for a text call / a photo read and the longest silence on the line (defaults 150 / 120 / 240 s) |
+| `BLOCKBRAIN_VISION_FIRST_ROUTE_S` | Optional: how much of the photo budget the FIRST route may use while the other one is still to be asked (default 60 s; `0` = no cap). A route that stalls then no longer leaves the other none. |
+| `BLOCKBRAIN_MAX_CONCURRENT`, `BLOCKBRAIN_MAX_CONCURRENT_VISION` | Optional: calls running at once, abandoned ones included (default 8 shared by meal plans, Ask AI and link reading; 6 more that only visitors' photos use) |
 | `SUPPSWIPE_PREFETCH_MEALS` | `0` turns off the background meal plan |
 | `SUPPSWIPE_MAX_SCANS_PER_HOUR`, `SUPPSWIPE_MAX_GENERATIONS_PER_HOUR` | Per-visitor AI limits (15 / 40) |
 | `SUPPSWIPE_MAX_BARCODE_LOOKUPS_PER_HOUR`, `..._GLOBAL` | Product-database (barcode) look-ups per visitor / for the whole app (30 / 900 per hour) |
@@ -82,7 +84,30 @@ any other organisation create a bot and set `BLOCKBRAIN_BOT_ID`. Do not use the 
 exists only on the owner's PC. The researchAgent is not used.
 
 Open the app with `?debug=1` to see whether the configuration is complete, the route and model of the last AI call and
-how long it took (never the key, the org id or the bot id).
+how long it took, the free call slots and why the last photo was not read (never the key, the org id or the bot id).
+
+### When a photo is not read
+
+The card says what happened, because retaking the picture helps in only one of these cases, and puts a **Technical details**
+block under it (visible without `?debug=1`, so a screenshot of the card is enough to diagnose it):
+
+| Card says | Stage | Meaning |
+| --- | --- | --- |
+| "That file isn't a picture type we can open (HEIC) … nothing was sent to the AI" (also: empty, too big, too small, damaged, black) | `image` | The app could not open the file; no AI call was made and no scan was used. |
+| "The AI label reader didn't answer in time / turned your photo down / couldn't be reached / reported an error" | `service` | The photo was sent and nothing usable came back (timeout, HTTP 429/5xx, connection, credits). Try again in a minute. |
+| "The AI helper is unavailable right now" | `service` | A setting or the platform is wrong (HTTP 401/403/404, the platform's own error, a model that cannot read pictures). Another photo will not help. |
+| "Your photo couldn't be read: the AI label reader returned no text (it may be busy, or the photo too blurry)" | `answer` | The AI answered with nothing readable (empty, a refusal, a flat picture): retake it sharp and straight. |
+| "Something went wrong while reading the photo" | `app` | This app raised an exception in its own photo step (a bug, not the AI and not the picture); the details name the exception class and the log the place in the code. |
+
+The details line holds the stage and kind, what each route did (`tried fast: agentic timeout @60.0s, cortex error "stream: HTTP 503"`),
+the image facts that were sent (format, size, bytes of each variant) and the build. Only Blockbrain's own error text
+(`[Agent …] - Failed to resolve model configuration`) is shown, cut to 80 characters; what the model itself says about a picture
+(a refusal, "I don't see any image") can quote the label or a name and is never shown or logged: the line names the outcome and
+the route (`agentic refusal, cortex refusal`) and nothing else. Whatever is shown is scrubbed: no key, organisation id or bot id
+(also the bot id the client takes from `BLOCKBRAIN_MODEL`, in any case, and any bare 24-digit hex id), link, long identifier or
+dose (also spelled out: "10 milligrams"). The same lines are in the server log (`photo not read: …`) and in `?debug=1` →
+Diagnostics → `last_photo`. A picture is called "one flat colour" only when practically every pixel has the same brightness, so a
+table photographed from a distance is never accused of it.
 
 ## Picking the model (speed and accuracy)
 
@@ -106,6 +131,7 @@ instead of guessing doses), and it returns each answer complete (no word-by-word
 pip install -r requirements-dev.txt
 python -m pytest tests -q
 SUPPSWIPE_BROWSER_TESTS=1 python -m pytest tests/test_ux_browser.py   # Playwright + Chromium
+SUPPSWIPE_BROWSER_TESTS=1 python -m pytest tests/test_photo_failure_card_browser.py   # the failure card, one class at a time
 ```
 
 The tests run offline and in CI on every push and pull request. Blockbrain is replaced by a local fake server
