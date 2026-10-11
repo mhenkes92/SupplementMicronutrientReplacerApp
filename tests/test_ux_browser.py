@@ -141,6 +141,29 @@ def open_diet_sheet(page) -> None:
     settle(page, 0.5)
 
 
+def open_more_sheet(page) -> None:
+    """The bar's right-most item: the More sheet (About & privacy, and the report of the card on screen)."""
+    page.locator('[class~="st-key-appbar_more"] button').click()
+    page.get_by_role("dialog").wait_for(timeout=10000)
+    settle(page, 0.7)  # a sheet ignores taps for its first 450 ms
+
+
+def open_about_sheet(page) -> None:
+    """About & privacy has no tab of its own: the More sheet's first entry opens it (and replaces the More sheet)."""
+    open_more_sheet(page)
+    page.get_by_role("dialog").get_by_role("button", name="About & privacy").click()
+    page.get_by_role("dialog").get_by_role("heading", name="About & privacy").wait_for(timeout=10000)
+    settle(page, 0.7)
+
+
+def open_report_from_more(page) -> None:
+    """The report of the card on screen: the More sheet's second entry (it replaces the More sheet by the Report sheet)."""
+    open_more_sheet(page)
+    page.get_by_role("dialog").get_by_role("button", name="Report a problem with this card").click()
+    page.get_by_role("dialog").get_by_role("heading", name="Report a problem", exact=True).wait_for(timeout=10000)
+    settle(page, 0.7)
+
+
 def close_sheet(page) -> None:
     page.keyboard.press("Escape")
     page.get_by_role("dialog").wait_for(state="detached", timeout=10000)
@@ -512,7 +535,7 @@ def test_resume_keeps_the_diet_filter_chip(page):
 
 
 def test_build_tag_in_the_about_sheet(page):
-    page.locator('[class~="st-key-appbar_about"] button').click()
+    open_about_sheet(page)  # More tab, then About & privacy
     page.get_by_text("Build ", exact=False).first.wait_for(timeout=5000)
 
 

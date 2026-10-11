@@ -10,18 +10,25 @@ meal plan, a weekly shopping list with prices, Ask AI and a shareable summary.
 
 ## The screen
 
-The welcome screen is one card with a big **Scan a supplement** button inside it. The cards screen is one fixed screen too: the swipe
-card fills the room between the brand and a fixed bottom bar of five items, and nothing is drawn below it, so the page does not
-scroll (a card that is taller than its frame, on a small phone or at large text, scrolls inside itself with a fade and a "scroll for
-more" pill; where a very large text size would leave the card a slit of less than 240 px between its tools and its buttons, the frame
-grows to give it that and the page scrolls to the buttons, as it does on a landscape phone). Above **Keep / Replace** the card has three tools: **Swap food** (pick another whole food; only when the card has one),
-**Ask AI** (only when the AI is configured) and **More** (report a problem with the card). Each opens a sheet over the card and
-returns to the same card. Only the results (the long plan) scroll like a normal page.
+The welcome screen is one card with a big **Scan a supplement** button inside it. The cards screen is one fixed screen too, in the
+style of a swipe app: the swipe card fills the room between the brand and a fixed bottom bar of five items, and nothing is drawn
+below it but the bar, so the page does not scroll. Everything you tap is inside the card: **Back**, **Keep pill** and **Replace**
+are pinned at its foot (they travel with the card when you drag it), an **Ask AI** chip sits in its header beside the nutrient name
+(only when the AI is configured; it asks about this nutrient) and a **Swap food** chip beside **Eat instead** (only when the card has
+a second food; it changes that food). Each chip opens a sheet over the card and returns to the same card. A card that is taller than
+its frame, on a small phone or at large text, scrolls its text inside itself, between the header and the footer, with a fade and a
+"scroll for more" pill (where a very large text size would leave that text a slit of less than 240 px, the frame grows to give it
+that and the page scrolls to the buttons, as it does on a landscape phone). Only the results (the long plan) scroll like a normal
+page.
 
 The bottom bar: **Guide** (athlete RDA table), **Diet** (dietary filter and the pregnancy setting), **Scan** (the filled one:
 analyze a supplement, resume the last scan, or try a sample label; half-way through a scan or on a finished plan it asks first; the sample is
 never saved, so it never takes the place of the scan you can resume),
-**Recent** (the scans kept in this browser) and **About**. While a diet filter or pregnancy mode is on, the page shows it in a
+**Recent** (the scans kept in this browser) and **More** (right-most; it took About's place because a sixth tab does not fit at 360 px).
+The **More** sheet has two entries, each a full-width button with a one-line description: **About & privacy** (what is sent where, what
+stays on the device) and **Report a problem with this card** (logged for review; only while a card is on screen and no photo is being read).
+An entry replaces the sheet instead of stacking a second one, and closing what it opened (Esc, the X, a tap outside, or the report
+itself) puts the keyboard focus back on the More tab. While a diet filter or pregnancy mode is on, the page shows it in a
 one-line chip under the brand and the Diet item carries a dot. On phones the bar starts at the page gutter and leaves the
 bottom-right corner free for the Streamlit Cloud badge.
 

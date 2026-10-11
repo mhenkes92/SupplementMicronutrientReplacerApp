@@ -1,4 +1,4 @@
-"""Browser checks of bar v2 (Guide | Diet | Scan | Recent | About): what AppTest cannot see.
+"""Browser checks of bar v2 (Guide | Diet | Scan | Recent | More): what AppTest cannot see.
 
 Opt-in like tests/test_ux_browser.py (SUPPSWIPE_BROWSER_TESTS=1), whose fixtures and helpers are reused: the five tabs beside the
 simulated Cloud badge, labels on one line, the welcome screen that must not scroll, the Scan and Diet sheets, and the safety
@@ -17,7 +17,7 @@ from test_ux_browser import (  # noqa: F401  (fixtures are used by name)
 BAR = '[class~="st-key-appbar"]'
 BUSY = '[class~="st-key-appbar_busy"]'
 BAR_BUTTON = '[class~="st-key-appbar"] button'
-LABELS = ["Guide", "Diet", "Scan", "Recent", "About"]
+LABELS = ["Guide", "Diet", "Scan", "Recent", "More"]
 MAIN = "document.querySelector('[data-testid=stMain]')"
 WELCOME_SIZES = [(320, 568), (320, 640), (360, 640), (390, 844), (412, 915)]
 BADGE = (
@@ -82,7 +82,7 @@ def test_five_tabs_of_at_least_44_px_sit_beside_the_simulated_badge_and_each_hit
         pg.evaluate(BADGE)
         badge, bar = rect(pg, "#fake-badge"), rect(pg, BAR)
         # From 353 px wide the pill clears the WHOLE badge (the owner's avatar and the red Manage app button, 122 px wide as measured on a
-        # real iPhone: the avatar sat on the About tab when only the red button was cleared); narrower phones clear the red button only.
+        # real iPhone: the avatar sat on the right-most tab when only the red button was cleared); narrower phones clear the red button only.
         assert bar["right"] <= badge["x"] - (3.5 if size[0] >= 353 else 11.5), (bar, badge)
         assert abs(bar["x"] - (8 if 353 <= bar["vw"] <= 374 else 16)) <= 1, bar  # flush with the page gutter on the left
         boxes = [rect(pg, BAR_BUTTON, i) for i in range(5)]
@@ -398,7 +398,7 @@ def test_the_bar_never_covers_the_keep_replace_row_or_the_end_of_the_page(browse
 
 
 @pytest.mark.parametrize("name, title", [("guide", "Athlete RDA guide"), ("diet", "Diet & pregnancy"), ("scan", "Scan a supplement"),
-                                         ("scans", "Recent scans"), ("about", "About & privacy")])
+                                         ("scans", "Recent scans"), ("more", "More")])
 def test_each_of_the_five_tabs_opens_its_own_window_on_the_smallest_phone(browser, server, name, title):
     ctx, pg = new_page(browser, server, (320, 568))
     try:
@@ -478,7 +478,7 @@ def test_no_control_of_the_diet_sheet_is_under_any_bar_tab_whatever_filter_and_p
 
 
 @pytest.mark.parametrize("size", [(320, 568), (360, 640)])
-@pytest.mark.parametrize("name", ["guide", "scan", "scans", "about"])
+@pytest.mark.parametrize("name", ["guide", "scan", "scans", "more"])
 def test_no_control_of_the_other_sheets_is_under_any_bar_tab_either(browser, server, size, name):
     ctx, pg = new_page(browser, server, size)
     try:
@@ -791,9 +791,9 @@ def test_a_focus_that_is_somewhere_already_is_not_taken_away(browser, server):
         pg.wait_for_timeout(800)
         pg.get_by_role("dialog").get_by_role("button", name="Cancel").click()
         pg.get_by_role("dialog").wait_for(state="detached", timeout=10000)
-        item(pg, "about").focus()  # she moves on at once
+        item(pg, "more").focus()  # she moves on at once
         pg.wait_for_timeout(1500)
-        assert focused_item(pg) == "about"
+        assert focused_item(pg) == "more"
     finally:
         ctx.close()
 

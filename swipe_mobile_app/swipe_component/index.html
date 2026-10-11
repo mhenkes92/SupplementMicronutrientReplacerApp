@@ -16,8 +16,8 @@
   }
   #wrap { display: flex; flex-direction: column; height: 100vh; box-sizing: border-box; }
   /* A frame that cannot fill the room above the page's bottom bar (a landscape phone, a page this frame cannot read) keeps a blank
-     strip under the buttons: the page has no bottom padding of its own on the card screen, and this strip is what lets it scroll the
-     Keep / Replace row clear of the bar. */
+     strip under the card: the page has no bottom padding of its own on the card screen, and this strip is what lets it scroll the
+     card's footer (Back / Keep / Replace) clear of the bar. */
   #wrap.spacer { padding-bottom: 76px; }
   #stage {
     position: relative;
@@ -43,29 +43,44 @@
   }
   .rail.keep  { left: 16px;  color: #b91c1c; border-color: #ef4444; transform: rotate(-12deg); }
   .rail.repl  { right: 16px; color: #047857; border-color: #10b981; transform: rotate(12deg); }
+  /* The card is ONE rounded, shadowed box and everything the visitor taps lives inside it: a scrolling body (.cbody: the header with the
+     Ask AI chip, the food with the Swap food chip, the notes) above a pinned footer (#actions: Back / Keep pill / Replace). Nothing of
+     this frame sits below the box; the page's fixed bottom bar is the only thing under it. */
   .tcard {
     position: absolute;
     inset: 0 0 6px 0; /* room for the shadow */
     z-index: 2;
     border-radius: 20px;
-    padding: 14px 14px 12px 14px;
     box-sizing: border-box;
     background: var(--card-bg, linear-gradient(160deg, #ffffff 0%, #f8fbff 55%, #f4f7fb 100%));
     border: 1px solid rgba(15, 23, 42, 0.06);
-    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.07);
+    box-shadow: 0 4px 7px -4px rgba(15, 23, 42, 0.18); /* a contact shadow that fits the 6 px strip: a wide one is cut off by the frame's edges */
     cursor: grab;
     touch-action: pan-y;
     display: flex;
     flex-direction: column;
     will-change: transform;
     outline: none;
-    overflow-y: auto;
-    scroll-padding-bottom: 44px; /* a focused control (the athlete-guide button) is scrolled clear of the fade and the pill at the foot */
+    overflow: hidden; /* the rounded box clips both the body and the footer; the body is what scrolls (.cbody) */
   }
-  .tcard:focus-visible { box-shadow: 0 0 0 3px #2563eb inset; }
+  .tcard:focus-visible { outline: 3px solid #2563eb; outline-offset: -3px; }
   .tcard:active { cursor: grabbing; }
+  /* The window the text is read in: it sits above the footer, so the fade and the pill (children of .cmain) end where the footer begins. */
+  .cmain { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .cbody {
+    flex: 1 1 auto;
+    min-height: 0;
+    box-sizing: border-box;
+    padding: 14px 14px 12px 14px;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    touch-action: pan-y;
+    scroll-padding-bottom: 44px; /* a focused control (the athlete-guide button, a chip) is scrolled clear of the fade and the pill at the foot */
+  }
   /* A card taller than its frame scrolls inside it; its rows must keep their size (the 4 px progress bar used to be squashed to 0). */
-  .tcard > * { flex-shrink: 0; }
+  .cbody > * { flex-shrink: 0; }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .count { font-size: .8rem; font-weight: 800; color: #475569; letter-spacing: .02em; }
   .prev { font-size: .72rem; font-weight: 700; color: #334155; background: rgba(15,23,42,0.06); border-radius: 999px; padding: 2px 8px; }
@@ -84,6 +99,7 @@
     margin-top: 12px; padding: 12px; border-radius: 16px;
     background: rgba(255,255,255,0.82); border: 1px solid rgba(15,23,42,0.06);
   }
+  .foodhead .chip { margin-top: -2px; }   /* the chip leans a little into the box's top padding, never into the food below */
   .foodlbl { font-size: .78rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: #047857; }
   .foodrow { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
   .ficon { flex: 0 0 auto; font-size: 1.7rem; line-height: 1; }
@@ -102,36 +118,52 @@
   .warn { margin-top: 10px; padding: 7px 10px; border-radius: 12px; background: #fff7ed; border: 1px solid #fed7aa; color: #7c2d12; font-size: .82rem; font-weight: 600; line-height: 1.4; }
   .bio { margin-top: 8px; padding: 7px 10px; border-radius: 12px; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a5f; font-size: .82rem; line-height: 1.4; }
   .hint { text-align: center; margin-top: auto; padding-top: 10px; font-size: .8rem; color: #475569; }  /* pinned to the foot of the card */
-  /* Swap food / Ask AI / More: the tools of the card, one row above Keep / Replace (a tap opens a sheet of the page; it never
-     changes the card or a decision). Content-sized buttons on one line; a very large text wraps the row instead of cutting a label. */
-  #extras { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 4px 0 4px; flex: 0 0 auto; }
-  #extras button {
-    flex: 1 1 auto;
-    min-width: 0;
-    min-height: 44px;
-    padding: 0 6px;
-    white-space: nowrap;
-    border-radius: 12px;
+  /* Ask AI (header) and Swap food (the "Eat instead" box): two small chips inside the card, each beside the thing it acts on. A tap opens
+     a sheet of the page; it never changes the card or a decision. The chip is 34 px high to look; its tap area is 46 px (the ::after), which
+     adds nothing to the layout. They exist only when the card offers them (no AI / one food only: no chip, no gap), and are one line each. */
+  .chip {
+    position: relative;
+    flex: 0 0 auto;
+    min-height: 34px;
+    padding: 0 11px;
+    border-radius: 999px;
+    border: 1.5px solid #94a3b8;
+    background: rgba(255, 255, 255, 0.92);
+    color: #1e293b;
     font: inherit;
     font-size: .8rem;
     font-weight: 800;
-    color: #1e293b;
-    background: #fff;
-    border: 1.5px solid #94a3b8;
+    line-height: 1.1;
+    white-space: nowrap;
     cursor: pointer;
+    touch-action: manipulation;
   }
-  #extras button[hidden] { display: none; }
-  #extras button:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
-  #extras button:not([aria-disabled="true"]):active { transform: scale(0.97); background: #f1f5f9; }
-  #extras button[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
-  #actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 4px 8px 4px; flex: 0 0 auto; }
-  /* Equal shares of the row; a label is never broken inside a word: a button that cannot hold its longest word wraps onto its own
-     row (a large text size on a narrow phone), and from about 140 % text the decorative arrows go (the label says it). */
+  .chip::after { content: ""; position: absolute; inset: -6px -4px; }
+  .chip:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
+  .chip:not([aria-disabled="true"]):active { transform: scale(0.97); background: #f1f5f9; }
+  .chip[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+  .head .chip, .foodhead .chip { margin-left: auto; }   /* right-aligned, also when it wraps onto a row of its own (320 px wide, large text) */
+  /* A large text size: the name block has no room beside the badge, so the Ask AI chip takes that place and the name block gets the row
+     under it (a visual order only: the chip is still the first stop of the keyboard, the name is no stop at all). */
+  #wrap.big .head > div { order: 1; }
+  .foodhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; }
+  /* The footer: Back / Keep pill / Replace, pinned to the foot of the card under a hairline, so it never scrolls and never moves. Equal
+     shares of the row; a label is never broken inside a word: a button that cannot hold its longest word wraps onto its own row (a large
+     text size on a narrow phone), and from about 140 % text the decorative arrows go (the label says it). */
+  #actions {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 12px;
+    border-top: 1px solid rgba(15, 23, 42, 0.08);
+    background: rgba(255, 255, 255, 0.72);
+  }
   #actions button {
     flex: 1 1 0;
     min-width: min-content;
     overflow-wrap: break-word;
-    min-height: 46px;
+    min-height: 48px;
     border-radius: 12px;
     font: inherit;
     font-size: .95rem;
@@ -139,6 +171,7 @@
     cursor: pointer;
     border: 2px solid;
     background: #fff;
+    touch-action: manipulation;
   }
   #actions button:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
   #actions #btnBack { flex: 0 0 52px; min-width: 52px; border-color: #e2e8f0; color: #334155; }
@@ -149,10 +182,11 @@
   #actions button:disabled, #actions button[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
   /* Tight card: fitHeight() switches it on when the room above the page's fixed bottom bar is short (small phones, large text),
-     so the Keep / Replace row stays clear of the bar. Same texts, same font sizes for the body copy; only the spacing, the
-     badge and the name shrink, and on a touch screen the swipe hint is dropped after the first card the visit has drawn (a mouse
-     and keyboard user keeps it: it is the only place the arrow keys are named). */
-  #wrap.tight .tcard { padding: 8px 12px 6px 12px; }
+     so the card keeps as much of its text in view as it can. Same texts, same font sizes for the body copy; only the spacing, the
+     badge, the name and the chips (30 px, the same tap area) shrink, and on a touch screen the swipe hint is dropped after the first
+     card the visit has drawn (a mouse and keyboard user keeps it: it is the only place the arrow keys are named). The footer's
+     buttons are 48 px on every card. */
+  #wrap.tight .cbody { padding: 8px 12px 6px 12px; }
   #wrap.tight .head { margin-top: 6px; gap: 10px; }
   #wrap.tight .badge { flex-basis: 40px; height: 40px; font-size: 1.3rem; border-radius: 12px; }
   #wrap.tight .name { font-size: 1.4rem; }
@@ -164,13 +198,16 @@
   #wrap.tight .warn { margin-top: 6px; padding: 5px 8px; }
   #wrap.tight .bio { margin-top: 6px; padding: 5px 8px; }
   #wrap.tight .hint { padding-top: 6px; }
-  #wrap.tight #extras { padding-top: 2px; }
+  #wrap.tight .chip { min-height: 30px; padding: 0 9px; }   /* 61 px wide: it stays beside the name on a 320 px phone (it wraps below only when the name is longer) */
+  #wrap.tight .chip::after { inset: -8px -4px; }
+  #wrap.tight .foodhead .chip { margin-top: 0; }
   #wrap.tight:not(.first):not(.fine) .hint:not(.hint-keep) { display: none; }
-  #wrap.tight #actions { padding: 4px 4px 6px 4px; }
-  /* A card taller than its frame scrolls inside it: a fade (and, when a lot is hidden, a small pill) says there is more. */
-  #stage.cue::after { content: ""; position: absolute; left: 0; right: 0; bottom: 6px; height: 30px; z-index: 4; pointer-events: none;
-                      border-radius: 0 0 20px 20px; background: linear-gradient(to bottom, rgba(248,251,255,0), rgba(248,251,255,.96) 85%); }
-  #cue { display: none; position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 5; pointer-events: none; white-space: nowrap;
+  #wrap.tight #actions { padding: 6px 10px; }
+  /* A card taller than its frame scrolls inside it: a fade (and, when a lot is hidden, a small pill) says there is more. Both are drawn
+     over the foot of the scrolling window only (.cmain), above the footer and never over it, and they move with the card. */
+  #stage.cue .cmain::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 30px; z-index: 4; pointer-events: none;
+                             background: linear-gradient(to bottom, rgba(248,251,255,0), rgba(248,251,255,.96) 85%); }
+  #cue { display: none; position: absolute; left: 50%; bottom: 5px; transform: translateX(-50%); z-index: 5; pointer-events: none; white-space: nowrap;
          font-size: .72rem; font-weight: 800; color: #334155; background: #fff; border: 1px solid rgba(15,23,42,.12); border-radius: 999px; padding: 1px 9px; }
   #stage.cue-strong #cue { display: block; }
   @media (prefers-reduced-motion: reduce) {
@@ -183,18 +220,19 @@
   <div id="stage">
     <div class="rail keep" id="railKeep" aria-hidden="true">KEEP</div>
     <div class="rail repl" id="railRepl" aria-hidden="true">REPLACE</div>
-    <div class="tcard" id="card" tabindex="0" role="group" aria-roledescription="swipe card"></div>
-    <div id="cue" aria-hidden="true">&#9662; scroll for more</div>
-  </div>
-  <div id="extras">
-    <button type="button" id="btnSwap" aria-label="Swap food: choose another whole food" hidden>Swap food</button>
-    <button type="button" id="btnAsk" aria-label="Ask AI about this nutrient" hidden>Ask AI</button>
-    <button type="button" id="btnMore" aria-label="More options: report a problem with this card">More</button>
-  </div>
-  <div id="actions">
-    <button type="button" id="btnBack" aria-label="Back to the previous card" title="Back">&#8617;</button>
-    <button type="button" id="btnKeep" aria-label="Keep pill"><span class="arr" aria-hidden="true">&#9664; </span>Keep pill</button>
-    <button type="button" id="btnRepl" aria-label="Replace">Replace<span class="arr" aria-hidden="true"> &#9654;</span></button>
+    <!-- Tab order (the DOM order, which is the visual one): the card, Ask AI (header), Swap food (Eat instead), the athlete-guide button,
+         then Back, Keep pill, Replace in the footer. The body is rebuilt for every card; the footer is not. -->
+    <div class="tcard" id="card" tabindex="0" role="group" aria-roledescription="swipe card">
+      <div class="cmain">
+        <div class="cbody" id="cbody"></div>
+        <div id="cue" aria-hidden="true">&#9662; scroll for more</div>
+      </div>
+      <div id="actions">
+        <button type="button" id="btnBack" aria-label="Back to the previous card" title="Back">&#8617;</button>
+        <button type="button" id="btnKeep" aria-label="Keep pill"><span class="arr" aria-hidden="true">&#9664; </span>Keep pill</button>
+        <button type="button" id="btnRepl" aria-label="Replace">Replace<span class="arr" aria-hidden="true"> &#9654;</span></button>
+      </div>
+    </div>
   </div>
   <div id="live" class="sr-only" aria-live="polite"></div>
 </div>
@@ -207,11 +245,8 @@
   var btnBack = document.getElementById("btnBack");
   var btnKeep = document.getElementById("btnKeep");
   var btnRepl = document.getElementById("btnRepl");
-  var btnSwap = document.getElementById("btnSwap");
-  var btnAsk = document.getElementById("btnAsk");
-  var btnMore = document.getElementById("btnMore");
-  var extras = document.getElementById("extras");
-  var actions = document.getElementById("actions");
+  var cbody = document.getElementById("cbody");   // the card's scrolling body: rebuilt for every card, with the two chips (#btnAsk, #btnSwap) in it
+  var actions = document.getElementById("actions");   // the pinned footer: Back / Keep pill / Replace (built once, never rebuilt)
   var live = document.getElementById("live");
   var lastFocusId = "";      // the action button the user used last: focus goes back to it when the next card is drawn
   var announce = "";         // "Kept the pill." - said together with the next card
@@ -249,18 +284,19 @@
   }
   function setHeight(h) { send("streamlit:setFrameHeight", { height: h }); }
 
-  var ROW_GAP = 6;          // air between the Keep / Replace row and the bar
-  var ROW_PAD = 8;          // #actions' bottom padding on a normal card (6 px on a tight one, so the row ends ~4 px above the bar there)
+  var ROW_GAP = 6;          // the shadow strip under the card (.tcard's inset): the last 6 px of the frame
+  var ROW_PAD = 8;          // the frame may end this far below the bar's top (ROW_PAD - ROW_GAP = 2 px), so the card ends 4 px above the bar
+  var CARD_EDGE = 8;        // what the frame holds around the card's body and footer: the card's two 1 px borders and the ROW_GAP strip
   var BAR_FALLBACK = 66;    // the bar's height + offset when it cannot be measured (e.g. hidden while a field has focus)
-  var TIGHT_BELOW = 660;    // below this much room (px) a new scan starts tight
+  var TIGHT_BELOW = 660;    // below this much room (px) a new scan starts tight (the sample's tallest card in the normal density needs 600-640: body + 65 px footer + 8 px edges)
   var ROOM_FLOOR = 320;     // never a frame shorter than this (landscape phones scroll the page as before)
   var FILL_MAX = 900;       // the tallest frame that fills the room (the tallest phones are ~930 px high; a desktop window gets a card, not a column)
-  var SPACER = 76;          // the blank strip under the buttons of a frame that cannot fill the room (the bar's footprint and a little air)
-  var MIN_WINDOW = 240;     // the least height the card itself is given to read in (the stage); see fitHeight
+  var SPACER = 76;          // the blank strip under the card of a frame that cannot fill the room (the bar's footprint and a little air)
+  var MIN_WINDOW = 240;     // the least height the card's body is given to read in (the card minus its footer); see fitHeight
   var growMax = 0;          // the frame height a scan needed when the room was too small for MIN_WINDOW (one height for the whole scan)
   var footprint = 0;        // from the bar's top edge to the bottom of the window (px), as hostRoom() saw it; a bigger bar (large text) needs a longer strip
   var spacerPx = SPACER;    // the strip this frame has now
-  // The tallest frame that still leaves the Keep / Replace row above the page's fixed bottom bar (page scrolled to the top).
+  // The tallest frame that still leaves the card (its footer included) above the page's fixed bottom bar (page scrolled to the top).
   // The host page is the same origin as this frame; Infinity (= nothing changes) when it cannot be read.
   function hostRoom() {
     try {
@@ -285,34 +321,39 @@
     tight = on;
     paint();
   }
+  // The height of the card's body with all its text showing (the footer is not part of it).
   function measureContent() {
-    var probe = card.cloneNode(true);
+    var probe = cbody.cloneNode(true);
     probe.removeAttribute("id");
+    var ids = probe.querySelectorAll("[id]");
+    for (var i = 0; i < ids.length; i++) { ids[i].removeAttribute("id"); }   // the probe is a copy: no second #btnAsk / #btnSwap
     probe.style.cssText = "position:absolute;visibility:hidden;left:0;top:0;right:auto;bottom:auto;" +
-      "height:auto;overflow:visible;width:" + card.clientWidth + "px;";
+      "height:auto;overflow:visible;width:" + cbody.clientWidth + "px;";
     stage.appendChild(probe);
     var contentHeight = probe.scrollHeight;
     stage.removeChild(probe);
     return contentHeight;
   }
+  // What the frame holds besides the body: the pinned footer (whatever height its rows make) and the card's edges.
+  function chromeHeight() { return actions.offsetHeight + CARD_EDGE; }
   // A card taller than its frame scrolls inside it; the fade at its foot says so, and a small pill ("scroll for more") as soon as
   // text itself is cut, not only a lot of it. What is hidden is counted without the card's bottom padding: a card that is only
   // short of its padding shows all its text and gets no fade (the fade would wash out the last line for nothing).
   var CUE_FADE = 2;   // px of text cut off: the fade at the card's foot
   var CUE_PILL = 8;   // px of text cut off (about half a line): the "scroll for more" pill
   function updateCue() {
-    var pad = parseFloat(window.getComputedStyle(card).paddingBottom) || 0;
-    var cut = card.scrollHeight - card.clientHeight - card.scrollTop - pad;
+    var pad = parseFloat(window.getComputedStyle(cbody).paddingBottom) || 0;
+    var cut = cbody.scrollHeight - cbody.clientHeight - cbody.scrollTop - pad;
     stage.classList.toggle("cue", cut > CUE_FADE);
     stage.classList.toggle("cue-strong", cut > CUE_PILL);
   }
-  card.addEventListener("scroll", updateCue, { passive: true });
+  cbody.addEventListener("scroll", updateCue, { passive: true });
   // Size the frame. Where the page can be read the frame FILLS the room between its top and the page's fixed bottom bar (at most
-  // FILL_MAX px), on every card, so the card, its tools and the Keep / Replace row are one fixed screen and the page itself does not
-  // scroll; the card keeps its own scroll for what does not fit (fade + pill). The density (normal / tight) is the smallest that
-  // fits the card, and once tight it stays tight for the scan. Where the room cannot be measured the frame is sized to the card's
-  // content as it always was (never below the minimum Python asked for), plus the blank strip that lets the page scroll the row
-  // clear of the bar.
+  // FILL_MAX px), on every card, and the card (body, chips and the Keep / Replace footer, all inside its one box) fills the frame, so
+  // the screen is fixed and the page itself does not scroll; the body keeps its own scroll for what does not fit (fade + pill). The
+  // density (normal / tight) is the smallest that fits the card, and once tight it stays tight for the scan. Where the room cannot be
+  // measured the frame is sized to the card's content as it always was (never below the minimum Python asked for), plus the blank
+  // strip that lets the page scroll the footer clear of the bar.
   var lastRoom = null;   // the room the frame was last fitted to (see the poll below)
   function fitHeight() {
     big = (parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16) >= 22;
@@ -320,35 +361,35 @@
     lastRoom = room;
     var measured = isFinite(room);
     var avail = measured ? Math.min(Math.max(room, ROOM_FLOOR), FILL_MAX) : Infinity;   // the frame height asked for
-    var contentHeight, actionsHeight;
+    var contentHeight, chrome;
     showSrc = false;   // the density is chosen on the card without the optional source line
     for (var on = tight ? 1 : 0; on <= 1; on++) {
       setTight(on === 1);
-      actionsHeight = extras.offsetHeight + actions.offsetHeight + 6;
+      chrome = chromeHeight();
       contentHeight = measureContent();
-      if (Math.max(HEIGHT, Math.min(780, contentHeight + actionsHeight + 10)) <= avail) { break; }  // fits: no need to tighten
+      if (Math.max(HEIGHT, Math.min(780, contentHeight + chrome)) <= avail) { break; }  // fits: no need to tighten
     }
-    var h = Math.max(HEIGHT, Math.min(780, contentHeight + actionsHeight + 10), maxHeight);
+    var h = Math.max(HEIGHT, Math.min(780, contentHeight + chrome), maxHeight);
     maxHeight = h;
-    // A frame that fills a room too small for the card to be read in (a large text size on a small phone: the tools and the
-    // Keep / Replace row take the room, and the card is left a slit) is made as tall as MIN_WINDOW needs instead, and the page
-    // scrolls, as it does for a landscape phone: the card scrolls inside its window, the page scrolls the buttons into reach.
-    var grow = measured && avail - actionsHeight < MIN_WINDOW;
+    // A frame that fills a room too small for the card to be read in (a large text size on a small phone: the footer takes the room,
+    // and the body is left a slit) is made as tall as MIN_WINDOW needs instead, and the page scrolls, as it does for a landscape
+    // phone: the body scrolls inside its window, the page scrolls the footer into reach.
+    var grow = measured && avail - chrome < MIN_WINDOW;
     if (grow) {
-      avail = Math.max(actionsHeight + MIN_WINDOW, growMax);
+      avail = Math.max(chrome + MIN_WINDOW, growMax);
       growMax = avail;
     }
     spacer = grow || !(measured && room >= ROOM_FLOOR);
     if (measured) {
       h = avail;   // a frame that fills the room
     }
-    spacerPx = spacer ? Math.max(SPACER, footprint + ROW_GAP + 4) : SPACER;   // enough for the page to scroll the row clear of the bar
+    spacerPx = spacer ? Math.max(SPACER, footprint + ROW_GAP + 4) : SPACER;   // enough for the page to scroll the footer clear of the bar
     if (spacer) { h += spacerPx; }
     // The source line stays when the card still fits its frame with it.
     showSrc = true;
     paint();
-    var stageRoom = h - (spacer ? spacerPx : 0) - extras.offsetHeight - actions.offsetHeight - 6;
-    if (measured && measureContent() > stageRoom) { showSrc = false; paint(); }
+    var bodyRoom = h - (spacer ? spacerPx : 0) - chromeHeight();
+    if (measured && measureContent() > bodyRoom) { showSrc = false; paint(); }
     if (Math.abs(h - lastHeight) > 2) { lastHeight = h; setHeight(h); }
     setTimeout(updateCue, 80);
   }
@@ -423,8 +464,10 @@
     // No food: the card says why (the diet filter left nothing, no food in the data, ...) instead of pointing at a list that is not there.
     var foodTxt = args.food ? esc(args.food) : esc(args.foodNote || "No whole-food match for this one.");
     var srcHtml = (args.food && args.source) ? '<div class="src">' + esc(args.source) + '</div>' : '';
-    btnSwap.hidden = !args.canSwap;
-    btnAsk.hidden = !args.canAsk;
+    // The two chips exist only when the card offers them (no gap where they would have been). Both are rebuilt with the body, so they
+    // are found by id, and one delegated click listener (below) serves them.
+    var askHtml = args.canAsk ? '<button type="button" class="chip" id="btnAsk" data-tool="ask" aria-label="Ask AI about this nutrient">Ask AI</button>' : '';
+    var swapHtml = args.canSwap ? '<button type="button" class="chip" id="btnSwap" data-tool="swap" aria-label="Swap food: choose another whole food">Swap food</button>' : '';
     var portionRows = "";
     // "eat" only before an actual amount ("~85 g"), not before verdicts such as
     // "not practical from food alone (~2.3 kg/day)" or "a lot of food (...)".
@@ -447,14 +490,15 @@
     var prevHtml = args.previous ? '<span class="prev">Your choice: ' + esc(args.previous) + '</span>' : '';
     var pct = Math.max(4, Math.min(100, Math.round(100 * idx / Math.max(total, 1))));
     var foodIcon = args.foodIcon ? '<span class="ficon" aria-hidden="true">' + esc(args.foodIcon) + '</span>' : '';
-    card.innerHTML =
+    var chipFocus = (document.activeElement && cbody.contains(document.activeElement)) ? document.activeElement.id : "";   // a chip that has the focus is rebuilt below
+    cbody.innerHTML =
       '<div class="row"><span class="count">Card ' + idx + ' of ' + total + '</span>' + prevHtml + '</div>' +
       '<div class="bar" aria-hidden="true"><span style="width:' + pct + '%"></span></div>' +
       '<div class="head"><span class="badge" aria-hidden="true">💊</span><div>' +
       '<div class="name">' + esc(args.name || "Micronutrient") + '</div>' +
-      '<div class="dose">In your pill: <b>' + esc(args.dose || "n/a") + '</b></div></div></div>' +
+      '<div class="dose">In your pill: <b>' + esc(args.dose || "n/a") + '</b></div></div>' + askHtml + '</div>' +
       warnHtml +
-      '<div class="foodwrap"><div class="foodlbl">Eat instead</div>' +
+      '<div class="foodwrap"><div class="foodhead"><div class="foodlbl">Eat instead</div>' + swapHtml + '</div>' +
       '<div class="foodrow">' + foodIcon + '<div class="food' + (args.food ? '' : ' nofood') + '">' + foodTxt + '</div></div>' + srcHtml + portionHtml + '</div>' +
       bioHtml +
       '<div class="hint' + ((!canReplace || editing) ? ' hint-keep' : '') + '">' + (canReplace
@@ -472,7 +516,14 @@
     btnBack.disabled = !canBack;
     btnKeep.disabled = false;
     btnKeep.removeAttribute("aria-disabled"); btnRepl.removeAttribute("aria-disabled"); btnBack.removeAttribute("aria-disabled");
-    btnSwap.removeAttribute("aria-disabled"); btnAsk.removeAttribute("aria-disabled"); btnMore.removeAttribute("aria-disabled");
+    // The card is back in its place (a swiped one is still off to the side) and its body at the top, and only then does a chip that had
+    // the focus get it back: it is scrolled into the window, as a Tab to it would have done (see focusChip).
+    card.style.transition = "none";
+    card.style.transform = "";
+    railKeep.style.opacity = 0;
+    railRepl.style.opacity = 0;
+    cbody.scrollTop = 0;
+    if (chipFocus) { var chip = document.getElementById(chipFocus); if (chip) { focusChip(chip); } }
     // Say what was done and which card is next (cleared first, so identical texts are announced again).
     var said = announce + "Card " + idx + " of " + total + ": " + (args.name || "Micronutrient") + ", " + (args.dose || "dose not available") + ".";
     announce = "";
@@ -482,16 +533,22 @@
       var again = document.getElementById(lastFocusId);
       if (again && !again.disabled) { again.focus({ preventScroll: true }); }
     }
-    card.style.transition = "none";
-    card.style.transform = "";
-    railKeep.style.opacity = 0;
-    railRepl.style.opacity = 0;
     if (!lastHeight) {
       fitHeight();   // the first draw of a frame asks for its final height at once (no short frame that then grows)
       if (!lastHeight) { lastHeight = HEIGHT; setHeight(HEIGHT); }
     }
     requestAnimationFrame(fitHeight);
-    card.scrollTop = 0;
+  }
+  // Focus a chip of the body and bring it into the body's window, clear of the fade and the pill (the body's scroll-padding-bottom) and of
+  // its own focus ring (3 px + 2 px offset). The chip is a new element after every redraw and the window starts at the card's top; at a large
+  // text size on a small phone the "Eat instead" box, and the Swap food chip in it, is below that window, so a focus that does not scroll
+  // would leave the focused chip out of sight or under the fade. Only the body scrolls: the page behind the frame is never moved by it.
+  function focusChip(chip) {
+    try { chip.focus({ preventScroll: true }); } catch (e) { return; }
+    var win = cbody.getBoundingClientRect(), box = chip.getBoundingClientRect();
+    var clear = parseFloat(window.getComputedStyle(cbody).scrollPaddingBottom) || 44, ring = 5;
+    if (box.bottom + ring > win.bottom - clear) { cbody.scrollTop += box.bottom + ring - (win.bottom - clear); }
+    else if (box.top - ring < win.top) { cbody.scrollTop -= win.top - (box.top - ring); }
   }
 
   function rails(dx) {
@@ -522,7 +579,8 @@
     lastFocusId = (active && active.parentNode && active.parentNode.id === "actions") ? active.id : "";
     // aria-disabled (not disabled): a disabled button drops keyboard focus, and the page loses its place after every swipe.
     btnKeep.setAttribute("aria-disabled", "true"); btnRepl.setAttribute("aria-disabled", "true"); btnBack.setAttribute("aria-disabled", "true");
-    btnSwap.setAttribute("aria-disabled", "true"); btnAsk.setAttribute("aria-disabled", "true"); btnMore.setAttribute("aria-disabled", "true");
+    var chips = cbody.querySelectorAll("[data-tool]");
+    for (var i = 0; i < chips.length; i++) { chips[i].setAttribute("aria-disabled", "true"); }
     announce = dir === "right" ? "Replaced with the whole food. " : (dir === "left" ? "Kept the pill. " : "Going back. ");
     seq += 1;
     var value = stamp({ dir: dir, id: Date.now() + "-" + seq });
@@ -590,11 +648,19 @@
     }
   }
 
+  // A press on a button of the card (Back / Keep pill / Replace, the two chips) is a tap and nothing else: it never starts a drag and the
+  // pointer is not captured, so the button gets its own click (with the capture on the card the click would be the card's). The athlete-guide
+  // button is the one button a drag may start on: its capture waits for the finger to move (see below).
+  function onPlainButton(e) {
+    var b = e.target.closest ? e.target.closest("button") : null;
+    return !!b && !b.hasAttribute("data-guide");
+  }
   if (window.PointerEvent) {
     var downOnGuide = false;
     card.addEventListener("pointerdown", function (e) {
       if (e.button != null && e.button !== 0) return;
       downOnGuide = !!(e.target.closest && e.target.closest("[data-guide]"));
+      if (onPlainButton(e)) return;
       down(e.clientX, e.clientY);
       // On the guide link the capture waits until the finger really moves (see move()), so a tap still reaches the button.
       if (!downOnGuide) { try { card.setPointerCapture(e.pointerId); } catch (err) {} }
@@ -608,10 +674,10 @@
     card.addEventListener("pointerup", up);
     card.addEventListener("pointercancel", up);
   } else {
-    card.addEventListener("touchstart", function (e) { var t = e.touches[0]; down(t.clientX, t.clientY); }, { passive: true });
+    card.addEventListener("touchstart", function (e) { if (onPlainButton(e)) return; var t = e.touches[0]; down(t.clientX, t.clientY); }, { passive: true });
     card.addEventListener("touchmove", function (e) { var t = e.touches[0]; move(t.clientX, t.clientY, e); }, { passive: false });
     card.addEventListener("touchend", up);
-    card.addEventListener("mousedown", function (e) { down(e.clientX, e.clientY); });
+    card.addEventListener("mousedown", function (e) { if (onPlainButton(e)) return; down(e.clientX, e.clientY); });
     window.addEventListener("mousemove", function (e) { move(e.clientX, e.clientY, e); });
     window.addEventListener("mouseup", up);
   }
@@ -621,40 +687,54 @@
     seq += 1;
     setValue(stamp({ kind: "guide", id: "g" + Date.now() + "-" + seq, nutrient: cardId }));
   }
-  // The tools (Swap food / Ask AI / More): each posts one event that the page answers with a sheet. They never change the card or a
+  // The tools (Swap food / Ask AI): each posts one event that the page answers with a sheet. They never change the card or a
   // decision. A second tap within 0.7 s (a double tap) is dropped, and nothing is sent while a swipe is on its way.
   var toolUntil = 0;
-  var returnTo = null;   // the tool that opened a sheet: when the page hands the focus back to this frame it goes to that button again
+  var returnTo = "";   // the id of the tool that opened a sheet: when the page hands the focus back to this frame it goes to that chip again
   function toolEvent(kind) {
     if (committed || hostBusy()) return;
     var now = Date.now();
     if (now < toolUntil) return;
     toolUntil = now + 700;
     seq += 1;
-    returnTo = kind === "swap" ? btnSwap : (kind === "ask" ? btnAsk : btnMore);
+    returnTo = kind === "swap" ? "btnSwap" : "btnAsk";
     setValue(stamp({ kind: kind, id: kind + "-" + now + "-" + seq }));
   }
   // A sheet over the page makes the page behind it inert, so the button that had the focus loses it; the page returns the focus to this
   // frame when the sheet closes, and the keyboard or screen-reader user is put back on the button they used.
   window.addEventListener("focus", function () {
     if (!returnTo || (document.activeElement && document.activeElement !== document.body)) { return; }
-    var button = returnTo;
-    returnTo = null;
-    if (!button.hidden) { try { button.focus({ preventScroll: true }); } catch (e) {} }
+    var button = document.getElementById(returnTo);   // by id: the body (and the chip in it) is rebuilt when the card changes
+    returnTo = "";
+    if (button) { focusChip(button); }
   });
   // The frame is announced by its title: the component's own name ("app.tinder_swipe") says nothing.
   try { window.frameElement.setAttribute("title", "Nutrient card: swipe, or use the buttons"); } catch (e) {}
-  btnSwap.addEventListener("click", function () { toolEvent("swap"); });
-  btnAsk.addEventListener("click", function () { toolEvent("ask"); });
-  btnMore.addEventListener("click", function () { toolEvent("report"); });
+  // One click listener for what the body rebuilds with every card: the two chips and the athlete-guide button.
   card.addEventListener("click", function (e) {
-    if (!(e.target.closest && e.target.closest("[data-guide]"))) { return; }
+    var hit = e.target.closest ? e.target.closest("[data-tool], [data-guide]") : null;
+    if (!hit) { return; }
+    if (hit.hasAttribute("data-tool")) { toolEvent(hit.getAttribute("data-tool")); return; }
     if (e.detail > 0 && movedBeyondTap) { movedBeyondTap = false; return; }   // a pointer click after a drag was a swipe, not a tap (keyboard clicks have detail 0)
     guideEvent();
   });
   btnKeep.addEventListener("click", function () { commit("left"); });
   btnRepl.addEventListener("click", function () { commit("right"); });
   btnBack.addEventListener("click", function () { commit("back"); });
+  // The card is the one tab stop of the text, and its scroller is the body inside it: with the focus on the card itself the keys that scroll
+  // a page scroll the body (when it has anything to scroll; otherwise they go on to the page as before).
+  card.addEventListener("keydown", function (e) {
+    if (e.target !== card || e.altKey || e.ctrlKey || e.metaKey || cbody.scrollHeight <= cbody.clientHeight) { return; }
+    var k = e.key, step = Math.max(40, cbody.clientHeight * 0.9);
+    if (k === "ArrowDown") { cbody.scrollTop += 40; }
+    else if (k === "ArrowUp") { cbody.scrollTop -= 40; }
+    else if (k === "PageDown" || (k === " " && !e.shiftKey)) { cbody.scrollTop += step; }
+    else if (k === "PageUp" || (k === " " && e.shiftKey)) { cbody.scrollTop -= step; }
+    else if (k === "Home") { cbody.scrollTop = 0; }
+    else if (k === "End") { cbody.scrollTop = cbody.scrollHeight; }
+    else { return; }
+    e.preventDefault();
+  });
   // aria-disabled buttons are still clickable: the opacity says "not now", commit() ignores a second tap.
   document.addEventListener("keydown", function (e) {
     if (e.key === "ArrowLeft") { commit("left"); e.preventDefault(); }

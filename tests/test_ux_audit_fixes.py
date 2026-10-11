@@ -197,6 +197,6 @@ def test_css_and_copy_follow_the_audit():
 
 def test_the_swipe_frame_only_grows_and_the_camera_fits_a_short_phone():
     swipe = (ROOT / "swipe_mobile_app" / "swipe_component" / "index.html").read_text(encoding="utf-8")
-    assert "maxHeight" in swipe and "Math.max(HEIGHT, Math.min(780, contentHeight + actionsHeight + 10), maxHeight)" in swipe
+    assert "maxHeight" in swipe and "Math.max(HEIGHT, Math.min(780, contentHeight + chrome), maxHeight)" in swipe
     camera = (ROOT / "swipe_mobile_app" / "camera_component" / "index.html").read_text(encoding="utf-8")
     assert "height: var(--cam-h, 300px)" in camera and "parentHeight * 0.34" in camera

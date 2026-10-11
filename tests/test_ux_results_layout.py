@@ -58,7 +58,7 @@ def test_results_use_tabs_not_popovers(results_app):
     assert not set(OLD_POPOVERS) & set(popovers), popovers
     # Editing moved into the dialog of each row, the guide and the rest into the bottom bar: no popover is left.
     assert popovers == [] and "✎ Change a choice" not in popovers
-    assert [b.key for b in at.button if str(b.key).startswith("appbar_")] == ["appbar_guide", "appbar_diet", "appbar_scan", "appbar_scans", "appbar_about"]
+    assert [b.key for b in at.button if str(b.key).startswith("appbar_")] == ["appbar_guide", "appbar_diet", "appbar_scan", "appbar_scans", "appbar_more"]
     assert not at.get("dialog")  # nothing is open until a row is tapped
     text = " ".join(m.value for m in at.markdown)
     assert "plan-hero" in text and "nutrients now come from food" in text
@@ -87,5 +87,7 @@ def test_build_tag_in_the_about_sheet(sw):
     at = AppTest.from_file(APP, default_timeout=60)
     at.run()
     assert f"Build {sw.BUILD_TAG}" not in " ".join(m.value for m in at.markdown)  # nothing is open yet
-    at.button(key="appbar_about").click().run()
+    at.button(key="appbar_more").click().run()  # About has no tab of its own: the More tab opens a sheet with it
+    assert f"Build {sw.BUILD_TAG}" not in " ".join(m.value for m in at.markdown)  # not before the About entry is tapped
+    at.button(key="more_about").click().run()
     assert f"Build {sw.BUILD_TAG}" in " ".join(m.value for m in at.markdown)

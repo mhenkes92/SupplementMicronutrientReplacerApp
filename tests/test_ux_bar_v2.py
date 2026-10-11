@@ -1,4 +1,5 @@
-"""Bar v2: the bottom bar is Guide | Diet | Scan | Recent | About. Scan opens the way to start (Analyze / Resume / Sample, or a question
+"""Bar v2: the bottom bar is Guide | Diet | Scan | Recent | More (More opens About & privacy and the report: tests/test_ux_more_tab.py).
+Scan opens the way to start (Analyze / Resume / Sample, or a question
 first when a scan or a plan is on screen), Diet opens the dietary filter and the pregnancy toggle (they are on no page any more), and
 the welcome screen is the hero card, one hint and the bar.
 
@@ -13,10 +14,12 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from card_tools import open_more, tap_more_entry
+
 ROOT = Path(__file__).resolve().parent.parent
 APP = str(ROOT / "swipe_mobile_app" / "app.py")
 OWN_LABEL = "Vitamin C 80 mg 100%\nZinc 10 mg 100%\nSelenium 55 µg 100%"
-BAR_KEYS = ["appbar_guide", "appbar_diet", "appbar_scan", "appbar_scans", "appbar_about"]
+BAR_KEYS = ["appbar_guide", "appbar_diet", "appbar_scan", "appbar_scans", "appbar_more"]
 
 
 @pytest.fixture(autouse=True)
@@ -122,13 +125,14 @@ def _saved(sw, cards, **extra):
 # ------------------------------------------------------------------ the bar: five items, one order
 def test_the_bar_has_five_items_in_this_order_and_the_history_item_is_called_recent(sw):
     assert [(name, label) for name, label in sw._BAR_ITEMS] == [
-        ("guide", "Guide"), ("diet", "Diet"), ("scan", "Scan"), ("scans", "Recent"), ("about", "About")]
-    assert sw._CARD_SHEETS == ("swap", "ask", "report")  # the card's own tools open three more sheets (tests/test_ux_fixed_screen.py)
-    assert set(sw._SHEET_TITLES) == {name for name, _ in sw._BAR_ITEMS} | set(sw._CARD_SHEETS)
+        ("guide", "Guide"), ("diet", "Diet"), ("scan", "Scan"), ("scans", "Recent"), ("more", "More")]
+    assert sw._CARD_SHEETS == ("swap", "ask", "report")  # the card's own tools open more sheets (tests/test_ux_fixed_screen.py); More opens the report
+    assert sw._MORE_SHEETS == ("about",)  # the sheet that has no tab any more: the More sheet opens it
+    assert set(sw._SHEET_TITLES) == {name for name, _ in sw._BAR_ITEMS} | set(sw._CARD_SHEETS) | set(sw._MORE_SHEETS)
     assert sw._SHEET_TITLES["scans"] == "Recent scans"  # the item is "Recent", its window keeps the title
     at = AppTest.from_file(APP, default_timeout=60).run()
     bar = [b for b in at.button if str(b.key).startswith("appbar")]
-    assert [b.key for b in bar] == BAR_KEYS and [b.label for b in bar] == ["Guide", "Diet", "Scan", "Recent", "About"]
+    assert [b.key for b in bar] == BAR_KEYS and [b.label for b in bar] == ["Guide", "Diet", "Scan", "Recent", "More"]
     assert [b.key for b in at.button if b not in bar] == ["hero_scan"]  # and the welcome card's own Scan button, nothing else
 
 
@@ -138,6 +142,7 @@ def test_scan_is_the_primary_item_in_the_css_and_every_item_has_an_icon_for_the_
         assert f'st-key-appbar_{name}"], [class~="st-key-appbar_busy_{name}"] {{ --ss-ico: var(--ss-ico-{name}); }}' in src
         assert f"--ss-ico-{name}:" in src
     assert 'st-key-appbar_scan"] button' in src and "background: #047857" in src  # filled, white on green
+    assert "st-key-appbar_about" not in src and "st-key-appbar_busy_about" not in src and "--ss-ico-about" not in src  # About is behind More now
     assert 'st-key-appbar_busy_scan"] button' in src  # and the dead twin looks the same
 
 
@@ -188,8 +193,10 @@ def test_the_footer_is_only_on_the_results_screen_and_the_about_sheet_carries_it
     assert not _has_footer(_screen("midscan"))  # the cards are one fixed screen: nothing below the card, not even the © line
     at = _screen("results")
     assert _has_footer(at)
-    at.button(key="appbar_about").click().run()
-    assert f"© mfitness92 · Build {sw.BUILD_TAG}" in " ".join(m.value for m in at.markdown)
+    open_more(at)
+    assert f"© mfitness92 · Build {sw.BUILD_TAG}" not in " ".join(m.value for m in at.markdown)  # not in the More sheet itself ...
+    tap_more_entry(at, "about")
+    assert f"© mfitness92 · Build {sw.BUILD_TAG}" in " ".join(m.value for m in at.markdown)  # ... but in the About sheet it opens
 
 
 # ------------------------------------------------------------------ the Scan item: a sheet on the welcome screen
@@ -789,7 +796,7 @@ def test_the_new_sheets_join_the_one_dialog_chain_and_the_older_requests_win():
     assert _titles(at) == ["Scan a supplement"]
 
 
-@pytest.mark.parametrize("first", ["appbar_guide", "appbar_diet", "appbar_scans", "appbar_about"])
+@pytest.mark.parametrize("first", ["appbar_guide", "appbar_diet", "appbar_scans", "appbar_more"])
 def test_a_second_bar_tap_swaps_the_sheet_never_stacks_two(first):
     at = AppTest.from_file(APP, default_timeout=60).run()
     at.button(key=first).click().run()
@@ -810,7 +817,7 @@ def test_every_sheet_on_every_screen_leaves_the_scan_underneath_alone(sw):
     for screen in ("welcome", "midscan", "results"):
         at = AppTest.from_file(APP, default_timeout=60).run() if screen == "welcome" else _screen(screen)
         before = (at.session_state["swipe_index"], len(at.session_state["swipe_decisions"]), at.session_state["swipe_diet_profile_id"])
-        for key in ("appbar_diet", "appbar_guide", "appbar_scans", "appbar_about", "appbar_scan"):
+        for key in ("appbar_diet", "appbar_guide", "appbar_scans", "appbar_more", "appbar_scan"):
             at.session_state["swipe_sheet"] = None
             at.session_state["swipe_confirm_restart"] = False
             at.button(key=key).click().run()

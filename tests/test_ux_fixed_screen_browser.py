@@ -1,25 +1,24 @@
 """Browser checks of the fixed screens (real Chromium, a touch phone at 2x): the welcome card and the cards screen do not scroll, the card
-carries its own tools (Swap food / Ask AI / More) that open sheets, and a card that does not fit keeps its own scroll.
+carries its own tools (the Ask AI and Swap food chips) that open sheets, and a card that does not fit keeps its own scroll.
 
 Opt-in like tests/test_ux_browser.py (SUPPSWIPE_BROWSER_TESTS=1), whose fixtures and helpers are reused. The offline half (the events,
-the sheets' content, the props) is tests/test_ux_fixed_screen.py.
+the sheets' content, the props) is tests/test_ux_fixed_screen.py. Where the chips, the pinned footer and the card's box are placed:
+tests/test_ux_card_inside_browser.py.
 
-Measured when this was built (sample label, 7 cards; "upper limit" label = 5 cards, three with a red warning box; 100 % text): with
-the tools row and the Keep / Replace row inside the frame, the frame fills the room between the brand and the bar. Every card of the
-sample label fits its frame without the card's own scroll from 360x640 up (320x640: the vitamin D3 card scrolls; 320x568: D3, magnesium,
-selenium); every card of the upper-limit label fits from 412x680, 390x720 and 360x760 up (360x640: the selenium card scrolls by 64 px; 320x640:
-vitamin D3, zinc and selenium scroll; 320x568: all five). The page itself never scrolls, on any of them.
+Measured when this was built (sample label, 7 cards; "upper limit" label = 5 cards, three with a red warning box; 100 % text): everything
+the visitor taps is inside the card's one box (the body with the Ask AI / Swap food chips, the pinned Back / Keep / Replace footer) and
+the frame fills the room between the brand and the bar. Every card of the sample label fits its body without the card's own scroll from
+360x640 up (320x640: the vitamin D3 card scrolls by 9 px; 320x568: D3 by 81 px, magnesium and selenium by 11); every card of the
+upper-limit label fits from 412x680, 390x720, 393x700 and 360x760 up (360x640: the selenium card scrolls by 39 px; 320x640: vitamin D3
+and selenium scroll; 320x568: all five). The page itself never scrolls, on any of them.
 
 Larger text, with the card's own frame zoomed too (tests/test_ux_row_clear_browser.py: an init script reaches the page only, so the first
 large-text figures measured the page chrome at 150 % / 200 % and the card at 100 %, and were wrong): the page still does not scroll at
-150 %, but the cards no longer fit. Sample label at 150 %: 390x844 five of the seven cards scroll inside themselves (15-237 px), 412x915
-only vitamin D3 (108 px), 360x640 and every smaller phone all seven; upper-limit label at 150 %: all five cards on every phone up to
-390x844 (96-335 px) and four of five at 412x915. At 200 % every card of both labels scrolls inside itself on every phone up to 412x915
-(sample 226-1396 px, upper-limit up to 1862 px). The card is never left a slit, though: its window (the stage between the tools and the
-Keep / Replace row) is at least MIN_WINDOW = 240 px. Where the room would leave less (200 % on 320x568, and on 320x640 / 360x640 with the
-sample caption's second line; before: windows of 152 / 201 px, the tools in two rows and Keep / Replace broken inside the words) the frame
-grows to give it that and the page scrolls to the buttons (117 px at 320x568, 45 px at 320x640 and 360x640, the row then clears the bar
-by 16 px): test_at_a_large_text_size_the_card_keeps_a_readable_window_and_the_page_scrolls_only_when_it_must. With the Vegan chip and
+150 %, but the cards no longer fit: sample label at 150 %: on every phone up to 393x852 six or seven of the seven cards scroll inside
+themselves, at 412x915 only vitamin D3 (115 px); at 200 % every card scrolls on every phone up to 412x915 (sample 257-1468 px). The
+card is never left a slit, though: its window (the body above the footer) is at least MIN_WINDOW = 240 px. Where the room would leave
+less (200 % on 320x568: the footer takes two rows, 117 px; room 297, window 172) the frame grows to give it that and the page scrolls to
+the footer: test_at_a_large_text_size_the_card_keeps_a_readable_window_and_the_page_scrolls_only_when_it_must. With the Vegan chip and
 the pregnancy toggle the vitamin D3 and B12 notes are longer: they scroll up to 390x720 and fit from 390x844 (the review's measurement;
 here at 360x640 with the finger: test_with_the_vegan_filter_and_pregnancy_mode_the_longer_notes_scroll_and_the_pregnancy_sentence_is_reachable)."""
 from __future__ import annotations
@@ -37,11 +36,11 @@ from test_ux_browser import (  # noqa: E402,F401  (fixtures are used by name)
     results_heading, server, settle, start_sample, wait_name_change,
 )
 from test_ux_row_clear_browser import (  # noqa: E402,F401
-    TEXT_150, TEXT_200, WARN_LABEL, card_frame, cdp_swipe, centre, frame_height, keep_and_wait, open_page, row_gap,
+    ROW_GAP_MAX, TEXT_150, TEXT_200, WARN_LABEL, card_frame, card_gap, cdp_swipe, centre, frame_height, keep_and_wait, open_page, row_gap,
 )
 
 SAMPLE_SIZES = [(320, 568), (320, 640), (360, 640), (375, 667), (390, 664), (390, 844), (393, 700), (412, 780), (412, 915)]
-FIT_JS = """() => { const c = document.getElementById('card'); const pad = parseFloat(getComputedStyle(c).paddingBottom) || 0;
+FIT_JS = """() => { const c = document.getElementById('cbody'); const pad = parseFloat(getComputedStyle(c).paddingBottom) || 0;
   const s = document.getElementById('stage');
   return { cut: Math.round(c.scrollHeight - c.clientHeight - pad), fade: s.classList.contains('cue'), pill: s.classList.contains('cue-strong'),
            tight: document.getElementById('wrap').classList.contains('tight') }; }"""
@@ -76,12 +75,12 @@ def start_text(pg, text: str) -> int:
 
 
 def walk_fit(pg, count: int) -> list[dict]:
-    """Per card: the page scroll, the row's gap to the bar, the frame and whether the card fits its frame without its own scroll."""
+    """Per card: the page scroll, the row's gap to the bar, the frame and whether the card's body fits its window without its own scroll."""
     seen = []
     for i in range(count):
         name = card_name(pg)
         fit = card_frame(pg).evaluate(FIT_JS)
-        fit.update(name=name, page=no_page_scroll(pg), gap=row_gap(pg), frame=frame_height(pg))
+        fit.update(name=name, page=no_page_scroll(pg), gap=row_gap(pg), edge=card_gap(pg), frame=frame_height(pg))
         seen.append(fit)
         if i < count - 1:
             keep_and_wait(pg, name)
@@ -145,7 +144,8 @@ def test_no_card_of_the_sample_label_scrolls_the_page_and_nothing_is_drawn_under
         start_sample(pg)
         seen = walk_fit(pg, 7)
         assert all(s["page"] for s in seen), seen  # the page itself never scrolls (sideways neither)
-        assert all(0 <= s["gap"] <= 12 for s in seen), seen  # the row is just above the bar, and never under it
+        assert all(0 <= s["gap"] <= ROW_GAP_MAX for s in seen), seen  # the footer's buttons are just above the bar, and never under it
+        assert all(2 <= s["edge"] <= 6 for s in seen), seen  # the card's own box ends 4 px above the bar
         assert len({s["frame"] for s in seen}) == 1, seen  # one frame for the whole scan: the buttons stay where the thumb is
         frame, iframe = seen[0]["frame"], rect(pg, CARD)
         room = rect(pg, BAR)["y"] - iframe["y"]
@@ -165,7 +165,7 @@ def test_no_card_of_an_upper_limit_label_scrolls_the_page_either(browser, server
     try:
         count = start_text(pg, WARN_LABEL)
         seen = walk_fit(pg, count)
-        assert count == 5 and all(s["page"] for s in seen) and all(0 <= s["gap"] <= 12 for s in seen), seen
+        assert count == 5 and all(s["page"] for s in seen) and all(0 <= s["gap"] <= ROW_GAP_MAX for s in seen), seen
         assert len({s["frame"] for s in seen}) == 1, seen
     finally:
         ctx.close()
@@ -193,7 +193,7 @@ def test_every_card_of_an_upper_limit_label_fits_without_the_cards_own_scroll_fr
         ctx.close()
 
 
-LAST_VISIBLE_JS = """() => { const c = document.getElementById('card'); const k = c.getBoundingClientRect();
+LAST_VISIBLE_JS = """() => { const c = document.getElementById('cbody'); const k = c.getBoundingClientRect();
   const shown = [...c.children].filter(e => getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().height > 0);
   const last = shown.pop(); const r = last.getBoundingClientRect();
   return {last: last.className, text: last.textContent.trim().slice(-40), gap: Math.round(k.bottom - r.bottom), top: Math.round(r.top - k.top),
@@ -222,7 +222,7 @@ def test_a_card_that_does_not_fit_keeps_its_own_scroll_with_the_fade_and_the_pil
             settle(pg, 0.3)
         assert card_name(pg) == "Vitamin D3" and next(s for s in seen if s["name"] == "Vitamin D3")["cut"] > 0
         fr = card_frame(pg)
-        assert "ask your doctor whether that suits you" in fr.evaluate("document.getElementById('card').textContent")  # IN the card ...
+        assert "ask your doctor whether that suits you" in fr.evaluate("document.getElementById('cbody').textContent")  # IN the card's body ...
         before = fr.evaluate(LAST_VISIBLE_JS)
         assert before["scrollTop"] == 0 and before["gap"] < 0, before  # its last line is cut off to start with
         x, y = centre(pg)
@@ -267,7 +267,7 @@ def test_with_the_vegan_filter_and_pregnancy_mode_the_longer_notes_scroll_and_th
             settle(pg, 0.3)
         assert card_name(pg) == "Vitamin B12"
         fr = card_frame(pg)
-        assert "ask your doctor or midwife" in fr.evaluate("document.getElementById('card').textContent")  # in the card ...
+        assert "ask your doctor or midwife" in fr.evaluate("document.getElementById('cbody').textContent")  # in the card's body ...
         x, y = centre(pg)
         for _ in range(30):
             if fr.evaluate(LAST_VISIBLE_JS)["cut"] <= 1:
@@ -295,23 +295,26 @@ def test_the_safety_sentence_of_a_long_card_stays_in_the_card_on_the_smallest_ph
 
 @pytest.mark.parametrize("percent", ["100", "150"])
 @pytest.mark.parametrize("size", [(320, 640), (360, 640), (390, 844)])
-def test_the_three_tools_are_finger_sized_labelled_and_on_one_line_at_100_and_150_percent_text(browser, ai_server, size, percent):
+def test_the_two_chips_are_finger_sized_labelled_and_on_one_line_at_100_and_150_percent_text(browser, ai_server, size, percent):
+    """Ask AI (in the header) and Swap food (in the "Eat instead" box) are chips of 34 px (30 px on a tight card) with a tap area of at
+    least 44 px (a pseudo element: it adds nothing to the layout); each label is on one line, the accessible name carries the visible
+    text, and a finger that lands 20 px above or below the middle of the chip still reaches it."""
     url, _fake = ai_server
     ctx, pg = open_page(browser, url, size, init=TEXT_150 if percent == "150" else None)
     try:
         start_sample(pg)
         info = card_frame(pg).evaluate(
-            """() => [...document.querySelectorAll('#extras button')].filter(b => !b.hidden).map(b => { const r = document.createRange(); r.selectNodeContents(b);
-              const k = b.getBoundingClientRect(); const hit = document.elementFromPoint(k.left + k.width / 2, k.top + k.height / 2);
-              return {text: b.textContent.trim(), aria: b.getAttribute('aria-label'), lines: r.getClientRects().length, h: k.height, w: k.width, top: k.top,
-                      right: k.right, left: k.left, hit: hit === b, vw: innerWidth}; })""")
-        assert [i["text"] for i in info] == ["Swap food", "Ask AI", "More"], info
-        assert all(i["h"] >= 44 and i["w"] >= 44 for i in info), info
+            """() => [...document.querySelectorAll('#card .chip')].map(b => { const r = document.createRange(); r.selectNodeContents(b);
+              const k = b.getBoundingClientRect(), after = getComputedStyle(b, '::after'); const at = dy => { const e = document.elementFromPoint(k.left + k.width / 2, k.top + k.height / 2 + dy); return e === b; };
+              return {id: b.id, text: b.textContent.trim(), aria: b.getAttribute('aria-label'), lines: r.getClientRects().length, h: k.height, w: k.width, left: k.left,
+                      right: k.right, mid: at(0), up: at(-20), down: at(20), area: k.height + parseFloat(after.top) * -1 + parseFloat(after.bottom) * -1, vw: innerWidth}; })""")
+        assert [i["text"] for i in info] == ["Ask AI", "Swap food"], info  # in the DOM order: the header first
+        assert all(i["h"] >= 30 and i["w"] >= 44 for i in info), info  # the visible chip is compact ...
+        assert all(i["area"] >= 44 for i in info), info  # ... its tap area is a finger
         assert all(i["lines"] == 1 for i in info), info  # each label on one line
-        assert len({round(i["top"]) for i in info}) == 1, info  # and the three side by side
-        assert all(i["hit"] and 0 <= i["left"] and i["right"] <= i["vw"] for i in info), info
+        assert all(i["mid"] and i["up"] and i["down"] and 0 <= i["left"] and i["right"] <= i["vw"] for i in info), info
         assert all(i["text"] in i["aria"] for i in info)  # the accessible name contains the visible label
-        assert no_page_scroll(pg) and 0 <= row_gap(pg) <= 12
+        assert no_page_scroll(pg) and 0 <= row_gap(pg) <= ROW_GAP_MAX
     finally:
         ctx.close()
 
@@ -320,23 +323,23 @@ def test_ask_ai_is_not_offered_without_an_ai_and_swap_is_offered_on_a_card_with_
     ctx, pg = open_page(browser, server, (390, 844))  # this server has no AI settings
     try:
         start_sample(pg)
-        names = [b.inner_text().strip() for b in card(pg).locator("#extras button:visible").all()]
-        assert names == ["Swap food", "More"], names  # no button that only ends in an error
+        names = [b.inner_text().strip() for b in card(pg).locator("#card .chip").all()]
+        assert names == ["Swap food"], names  # no button that only ends in an error ...
+        assert card(pg).locator("#btnAsk").count() == 0  # ... and none that is only hidden: it is not in the card at all
     finally:
         ctx.close()
 
 
 def test_the_swap_tool_is_not_offered_on_a_card_without_a_second_food_and_the_card_says_why(browser, server):
     """A vegan diet has no whole food for EPA / DHA: the card says so (in its food block, where the Replace button's state is), Replace
-    is off, and there is nothing to swap to, so no Swap food button."""
+    is off, and there is nothing to swap to, so no Swap food chip (and no gap where it would have been)."""
     from test_ux_browser import choose_diet
 
     ctx, pg = open_page(browser, server, (390, 844))
     try:
         choose_diet(pg, "Vegan")
         start_text(pg, "Omega-3 EPA 300 mg DHA 200 mg")
-        names = [b.inner_text().strip() for b in card(pg).locator("#extras button:visible").all()]
-        assert names == ["More"], names
+        assert card(pg).locator("#card .chip").count() == 0 and card(pg).locator("#btnSwap").count() == 0
         assert card(pg).locator("#btnRepl").get_attribute("aria-disabled") == "true" or card(pg).locator("#btnRepl").is_disabled()
         assert "Keeping the supplement is recommended" in card(pg).locator("#card .foodwrap").inner_text()
     finally:
@@ -344,7 +347,7 @@ def test_the_swap_tool_is_not_offered_on_a_card_without_a_second_food_and_the_ca
 
 
 # ------------------------------------------------------------------ the sheets
-TOOLS = [("#btnSwap", "Swap the food"), ("#btnAsk", "Ask AI"), ("#btnMore", "Report a problem")]
+TOOLS = [("#btnSwap", "Swap the food"), ("#btnAsk", "Ask AI")]  # "Report a problem" is a tab of the bar now (tests/test_ux_more_tab_browser.py)
 
 
 def open_tool(pg, selector: str, title: str):
@@ -381,7 +384,7 @@ def test_each_sheet_opens_from_the_card_closes_three_ways_and_returns_to_the_sam
         close_how(pg, how)
         assert card_name(pg) == name and "Card 1 of 7" in card(pg).locator(".count").inner_text()  # the same card ...
         assert card(pg).locator("#btnKeep").is_enabled() and card(pg).locator("#btnBack").is_disabled()  # ... nothing decided, still the first
-        assert no_page_scroll(pg) and 0 <= row_gap(pg) <= 12
+        assert no_page_scroll(pg) and 0 <= row_gap(pg) <= ROW_GAP_MAX
         keep_and_wait(pg, name)  # and it swipes on
     finally:
         ctx.close()
@@ -389,7 +392,8 @@ def test_each_sheet_opens_from_the_card_closes_three_ways_and_returns_to_the_sam
 
 def test_the_keyboard_is_put_back_on_the_tool_it_used_when_its_sheet_closes_and_the_frame_has_a_name(browser, ai_server):
     """A sheet makes the page behind it inert: the focused button lost the focus, and the page gave it back to the bare frame (named by
-    the component's own id, "app.tinder_swipe"). Now the frame is titled, and the button the visitor used has the focus again."""
+    the component's own id, "app.tinder_swipe"). Now the frame is titled, and the chip the visitor used has the focus again (found by its
+    id: the body, and the chip in it, is rebuilt when the card changes)."""
     url, _fake = ai_server
     ctx, pg = open_page(browser, url, (390, 844), touch=False)
     try:
@@ -421,15 +425,15 @@ def test_a_double_tap_on_a_tool_sends_one_event_and_nothing_is_sent_while_a_swip
         start_sample(pg)
         fr = card_frame(pg)
         fr.evaluate(SPY_EVENTS)
-        fr.evaluate("() => { const b = document.getElementById('btnMore'); b.click(); b.click(); document.getElementById('btnMore').click(); }")
+        fr.evaluate("() => { const b = document.getElementById('btnAsk'); b.click(); b.click(); document.getElementById('btnAsk').click(); }")
         events = fr.evaluate("window.__events")
-        assert [e["kind"] for e in events] == ["report"], events  # three taps within 0.7 s: one event, stamped with the card, its index and the scan
+        assert [e["kind"] for e in events] == ["ask"], events  # three taps within 0.7 s: one event, stamped with the card, its index and the scan
         assert events[0]["card"] == "vitamin c" and events[0]["index"] == 0 and str(events[0]["scan"]).isdigit(), events
         pg.get_by_role("dialog").wait_for(timeout=10000)
         close_how(pg, "escape")
         pg.wait_for_timeout(800)
         fr.evaluate("window.__events.length = 0")
-        fr.evaluate("() => { document.getElementById('btnKeep').click(); document.getElementById('btnMore').click(); document.getElementById('btnAsk').click(); }")
+        fr.evaluate("() => { document.getElementById('btnKeep').click(); document.getElementById('btnSwap').click(); document.getElementById('btnAsk').click(); }")
         events = fr.evaluate("window.__events")
         assert [e.get("dir") for e in events] == ["left"], events  # the swipe went; the tools sent nothing after it
         assert wait_name_change(pg, "Vitamin C")
@@ -489,22 +493,6 @@ def test_the_food_picked_in_the_swap_sheet_shows_on_the_card_and_reaches_the_pla
         row = pg.locator('[class*="st-key-planbtn_food_"] button', has_text=food)
         row.first.wait_for(timeout=10000)
         assert row.count() == 1
-    finally:
-        ctx.close()
-
-
-def test_the_report_sheet_thanks_and_returns_to_the_card(browser, server):
-    ctx, pg = open_page(browser, server, (390, 844))
-    try:
-        start_sample(pg)
-        name = card_name(pg)
-        open_tool(pg, "#btnMore", "Report a problem")
-        pg.get_by_role("button", name="🚩 Report a problem with this card").click()
-        pg.locator('[data-testid="stToast"]').first.wait_for(timeout=10000)
-        assert "Thanks — logged for review" in pg.locator('[data-testid="stToast"]').first.inner_text()
-        pg.get_by_role("dialog").wait_for(state="detached", timeout=10000)
-        settle(pg)
-        assert card_name(pg) == name and no_page_scroll(pg)
     finally:
         ctx.close()
 
@@ -571,7 +559,7 @@ def test_a_filter_chip_appearing_above_the_card_keeps_the_screen_fixed(browser, 
         settle(pg, 0.8)
         after = frame_height(pg)
         assert after < before, (before, after)  # a line more above the card: the frame gives back that room, and the page still does not scroll
-        assert no_page_scroll(pg) and 0 <= row_gap(pg) <= 12, (before, after)
+        assert no_page_scroll(pg) and 0 <= row_gap(pg) <= ROW_GAP_MAX, (before, after)
     finally:
         ctx.close()
 
@@ -588,10 +576,10 @@ def test_a_phones_toolbars_coming_and_going_refit_the_frame_and_the_row_stays_cl
         short = frame_height(pg)
         room = rect(pg, BAR)["y"] - rect(pg, CARD)["y"]
         assert short < tall - 60 and room - 12 <= short <= room + 6, (tall, short, room)  # it gave the room back ...
-        assert 0 <= row_gap(pg) <= 12 and no_page_scroll(pg), (row_gap(pg), scroll_state(pg))  # ... the row is clear of the bar, nothing scrolls
+        assert 0 <= row_gap(pg) <= ROW_GAP_MAX and no_page_scroll(pg), (row_gap(pg), scroll_state(pg))  # ... the row is clear of the bar, nothing scrolls
         pg.set_viewport_size({"width": 390, "height": 844})
         pg.wait_for_timeout(1200)
-        assert abs(frame_height(pg) - tall) <= 2 and 0 <= row_gap(pg) <= 12  # and takes it again
+        assert abs(frame_height(pg) - tall) <= 2 and 0 <= row_gap(pg) <= ROW_GAP_MAX  # and takes it again
         name = card_name(pg)
         keep_and_wait(pg, name)
     finally:
@@ -615,7 +603,7 @@ def test_a_room_that_was_short_for_a_moment_does_not_leave_the_card_cramped(brow
         pg.set_viewport_size({"width": 390, "height": 844})
         pg.wait_for_timeout(1500)
         assert card_frame(pg).evaluate(state) == before  # room back: the card as it was
-        assert no_page_scroll(pg) and 0 <= row_gap(pg) <= 12
+        assert no_page_scroll(pg) and 0 <= row_gap(pg) <= ROW_GAP_MAX
     finally:
         ctx.close()
 
@@ -640,22 +628,24 @@ WINDOW_JS = """() => { const words = [];
   for (const id of ['btnKeep', 'btnRepl']) { const b = document.getElementById(id); const walker = document.createTreeWalker(b, NodeFilter.SHOW_TEXT); let n;
     while ((n = walker.nextNode())) { if (n.parentElement.classList.contains('arr')) { continue; } const re = /\\S+/g; let m;
       while ((m = re.exec(n.nodeValue))) { const r = document.createRange(); r.setStart(n, m.index); r.setEnd(n, m.index + m[0].length); words.push([m[0], r.getClientRects().length]); } } }
-  const c = document.getElementById('card'), pad = parseFloat(getComputedStyle(c).paddingBottom) || 0;
-  return { window: Math.round(document.getElementById('stage').getBoundingClientRect().height), root: parseFloat(getComputedStyle(document.documentElement).fontSize),
+  const c = document.getElementById('cbody'), pad = parseFloat(getComputedStyle(c).paddingBottom) || 0;
+  return { window: Math.round(c.getBoundingClientRect().height), root: parseFloat(getComputedStyle(document.documentElement).fontSize),
            spacer: document.getElementById('wrap').classList.contains('spacer'), cut: Math.round(c.scrollHeight - c.clientHeight - pad),
            pill: document.getElementById('stage').classList.contains('cue-strong'), words: words }; }"""
 
 
 @pytest.mark.parametrize("size,percent,grows", [
-    pytest.param((320, 568), "200", True, id="320x568-200"), pytest.param((360, 640), "200", True, id="360x640-200"),
-    pytest.param((390, 844), "200", False, id="390x844-200"), pytest.param((412, 915), "200", False, id="412x915-200"),
+    pytest.param((320, 568), "200", True, id="320x568-200"), pytest.param((320, 640), "200", False, id="320x640-200"),
+    pytest.param((360, 640), "200", False, id="360x640-200"), pytest.param((390, 844), "200", False, id="390x844-200"),
+    pytest.param((412, 915), "200", False, id="412x915-200"),
     pytest.param((320, 568), "150", False, id="320x568-150"), pytest.param((360, 640), "150", False, id="360x640-150"),
 ])
 def test_at_a_large_text_size_the_card_keeps_a_readable_window_and_the_page_scrolls_only_when_it_must(browser, server, size, percent, grows):
     """The text size reaches the card's own frame (tests/test_ux_row_clear_browser.py _zoom_card_frames: the page's 32 px root and the
     card's 16 px used to be what "200 %" measured, so every large-text figure was the page chrome alone). With it: the card is never
-    left a slit between its tools and its buttons (its window is at least MIN_WINDOW = 240 px: below that the frame grows and the page
-    scrolls, as for a landscape phone), the labels of Keep / Replace are never broken inside a word, and the row can be reached."""
+    left a slit above its footer (its window, the body, is at least MIN_WINDOW = 240 px: below that the frame grows and the page
+    scrolls, as for a landscape phone: only 200 % on 320x568 needs that now; the footer is two rows tall at 200 % up to 375 px wide),
+    the labels of Keep / Replace are never broken inside a word, and the footer can be reached."""
     ctx, pg = open_page(browser, server, size, init=TEXT_200 if percent == "200" else TEXT_150)
     try:
         start_sample(pg)
@@ -674,7 +664,7 @@ def test_at_a_large_text_size_the_card_keeps_a_readable_window_and_the_page_scro
                 pg.wait_for_timeout(300)
                 assert row_gap(pg) >= 0, (i, row_gap(pg))  # scrolled to the end, the row is clear of the bar
             else:
-                assert no_page_scroll(pg) and 0 <= row_gap(pg) <= 12, (i, scroll_state(pg), row_gap(pg))
+                assert no_page_scroll(pg) and 0 <= row_gap(pg) <= ROW_GAP_MAX, (i, scroll_state(pg), row_gap(pg))
             if i < 6:
                 keep_and_wait(pg, card_name(pg))  # Playwright refuses a covered target: the Keep button is reachable
                 if grows:
@@ -684,9 +674,9 @@ def test_at_a_large_text_size_the_card_keeps_a_readable_window_and_the_page_scro
 
 
 def test_a_big_bar_at_200_percent_text_on_the_smallest_phone_lets_the_page_scroll_the_row_clear(browser, server):
-    """320x568 at 200 % text: the brand takes three lines and the bar is 108 px tall. The card's window would be a slit (152 px) between
-    its tools (two rows) and its buttons, so the frame grows to give it 240 px and the page scrolls: it is the one place a phone at 100 %
-    text never does. The row can be scrolled clear of the bar and tapped."""
+    """320x568 at 200 % text: the brand takes three lines and the bar is 108 px tall. The card's window would be a slit (172 px) above
+    its footer (two rows), so the frame grows to give it 240 px and the page scrolls: it is the one place a phone at 100 % text never
+    does. The row can be scrolled clear of the bar and tapped."""
     ctx, pg = open_page(browser, server, (320, 568), init=TEXT_200)
     try:
         start_sample(pg)
@@ -747,10 +737,10 @@ def test_closing_the_ask_sheet_in_the_middle_of_an_answer_keeps_the_question_and
         ctx.close()
 
 
-@pytest.mark.parametrize("selector", ["#btnMore", "#btnKeep"])
+@pytest.mark.parametrize("selector", ["#btnAsk", "#btnKeep"])
 def test_a_tap_on_the_old_card_while_a_new_label_is_analysed_goes_nowhere(browser, ai_server, tmp_path, selector):
     """The card of the scan before stays on screen, dimmed, while the next label is read. A tap on it used to be read by the first run
-    of the new scan: a Report sheet nobody asked for, or the new scan's first card decided without being seen."""
+    of the new scan: a sheet nobody asked for, or the new scan's first card decided without being seen."""
     from PIL import Image
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
 

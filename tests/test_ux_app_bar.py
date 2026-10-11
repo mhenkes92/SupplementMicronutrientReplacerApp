@@ -1,7 +1,7 @@
-"""The fixed bottom bar (Guide | Diet | Scan | Recent | About) and its sheets. AppTest reruns the whole script on every click, so a
+"""The fixed bottom bar (Guide | Diet | Scan | Recent | More) and its sheets. AppTest reruns the whole script on every click, so a
 sheet is requested by a session flag (`swipe_sheet`) like the other dialogs; what only a browser can prove (docking, the
 Cloud badge, the sheets' size, Esc and focus) is in tests/test_ux_app_bar_browser.py. The Scan and Diet items, their sheets and the
-Resume rules are in tests/test_ux_bar_v2.py."""
+Resume rules are in tests/test_ux_bar_v2.py, the More sheet (About & privacy, the report) in tests/test_ux_more_tab.py."""
 from __future__ import annotations
 
 import html
@@ -11,10 +11,13 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from card_tools import open_about
+
 APP = str(Path(__file__).resolve().parent.parent / "swipe_mobile_app" / "app.py")
-BAR = {"guide": "appbar_guide", "diet": "appbar_diet", "scan": "appbar_scan", "scans": "appbar_scans", "about": "appbar_about"}
-LABELS = ["Guide", "Diet", "Scan", "Recent", "About"]  # the history item is "Recent": next to "Scan" a "Scans" was easy to confuse
-TITLES = {"guide": "Athlete RDA guide", "diet": "Diet & pregnancy", "scan": "Scan a supplement", "scans": "Recent scans", "about": "About & privacy"}
+BAR = {"guide": "appbar_guide", "diet": "appbar_diet", "scan": "appbar_scan", "scans": "appbar_scans", "more": "appbar_more"}
+LABELS = ["Guide", "Diet", "Scan", "Recent", "More"]  # the history item is "Recent": next to "Scan" a "Scans" was easy to confuse
+TITLES = {"guide": "Athlete RDA guide", "diet": "Diet & pregnancy", "scan": "Scan a supplement", "scans": "Recent scans", "more": "More",
+          "about": "About & privacy"}  # About has no tab: the More sheet opens it
 SHEET = "swipe_sheet"
 REMOVED_POPOVERS = ("🏃 Athlete RDA guide", "🕘 Recent scans", "🔒 About & privacy")
 OWN_LABEL = "Vitamin C 80 mg 100%\nZinc 10 mg 100%\nSelenium 55 µg 100%"
@@ -131,8 +134,9 @@ def test_each_button_opens_its_sheet_on_each_screen(sw, screen, sheet):
         assert "No scans yet" not in text and "kept" in text  # the finished own scan was recorded: a readable card
     elif sheet == "scans":
         assert "No scans yet" in text  # the empty state (this fresh session has no history)
-    else:
-        assert f"Build {sw.BUILD_TAG}" in text and "not medical advice" in text
+    else:  # More: About & privacy always, the report only with a card on screen (the entries themselves: tests/test_ux_more_tab.py)
+        keys = [b.key for b in at.button if not str(b.key).startswith("appbar")]
+        assert ("more_about" in keys) and (("more_report" in keys) == (screen == "cards")), keys
     # Opening a sheet changes nothing about the scan underneath.
     assert (at.session_state["swipe_index"], len(at.session_state["swipe_decisions"])) == before
     assert [b.key for b in _bar(at)] == list(BAR.values())  # the bar is still there behind the sheet
@@ -338,9 +342,9 @@ def test_one_dialog_at_a_time_and_the_older_dialogs_win():
 def test_a_bar_tap_drops_an_older_unanswered_dialog_request():
     at = _screen("results")
     at.session_state["swipe_open_analyze"] = True  # stale: the dialog was never answered
-    at.session_state["swipe_plan_item"] = None
-    at.button(key=BAR["about"]).click().run()
-    assert _titles(at) == [TITLES["about"]] and at.session_state["swipe_open_analyze"] is False
+    at.session_state["swipe_plan_item"] = {"kind": "keep", "key": at.session_state["swipe_cards"][0]["component_key"]}  # and a stale item window
+    at.button(key=BAR["more"]).click().run()
+    assert _titles(at) == [TITLES["more"]] and at.session_state["swipe_open_analyze"] is False and at.session_state["swipe_plan_item"] is None
 
 
 def test_an_unknown_sheet_flag_opens_nothing_and_does_not_break():
@@ -381,11 +385,11 @@ def test_start_over_in_the_middle_of_a_scan_keeps_history_and_closes_no_bar():
 
 
 def test_start_over_forgets_the_sheet_state_but_not_history_or_diet(sw, monkeypatch):
-    state = {SHEET: "about", "swipe_guide_focus": "zinc", "swipe_scans_confirm": True, "swipe_last_guide_id": "g1", "swipe_cards": [1],
-             "suppswipe_scan_history": [ENTRY], "swipe_diet_profile_id": "vegan"}
+    state = {SHEET: "about", "swipe_sheet_from": "more", "swipe_guide_focus": "zinc", "swipe_scans_confirm": True, "swipe_last_guide_id": "g1",
+             "swipe_cards": [1], "suppswipe_scan_history": [ENTRY], "swipe_diet_profile_id": "vegan"}
     monkeypatch.setattr(sw.st, "session_state", state)
     sw._reset_swipe_state()
-    assert not state.get(SHEET) and "swipe_guide_focus" not in state and "swipe_scans_confirm" not in state
+    assert not state.get(SHEET) and "swipe_guide_focus" not in state and "swipe_scans_confirm" not in state and "swipe_sheet_from" not in state
     assert state["suppswipe_scan_history"] == [ENTRY] and state["swipe_diet_profile_id"] == "vegan"
 
 
@@ -479,7 +483,8 @@ def test_the_component_sends_the_guide_event_as_its_own_kind_and_keeps_drags_apa
     assert "e.detail > 0 && movedBeyondTap" in src  # a pointer click after a drag is no tap; a keyboard Enter (detail 0) still works
     assert "if (!downOnGuide)" in src  # the capture waits on the line, so a tap reaches the button and a drag still swipes
     assert "outline: 3px solid #1d4ed8" in src and "min-height: 32px" in src  # a visible focus ring and a target of 32 px
-    assert "Math.max(HEIGHT, Math.min(780, contentHeight + actionsHeight + 10), maxHeight)" in src  # the frame rule is untouched
+    # (The frame rule itself is pinned where the card is tested: tests/test_ux_audit_fixes.py and tests/test_ux_row_clear_browser.py.)
+    assert "function fitHeight()" in src and "maxHeight" in src  # the frame still fits itself and still only grows
 
 
 def test_a_guide_value_never_reaches_the_swipe_handler(sw, monkeypatch):
@@ -506,10 +511,18 @@ def test_each_sheet_has_a_keyboard_stop_inside_its_scroller(sheet):
     assert not at.exception, [e.value for e in at.exception]
     blocks = [m.value for m in at.markdown if "tabindex='0'" in m.value]
     assert len(blocks) == 1, blocks  # one stop, not one per row
-    if sheet != "about":
-        assert f"role='region' aria-label='{html.escape(TITLES[sheet])} content'" in blocks[0]
-    else:
-        assert "role='heading'" in blocks[0] and "Not medical advice" in blocks[0]
+    assert f"role='region' aria-label='{html.escape(TITLES[sheet])} content'" in blocks[0]
+
+
+def test_the_about_sheet_has_a_keyboard_stop_inside_its_scroller_too():
+    """About has no tab of its own: the More sheet opens it. Its stop is the first card's heading (the sheet is long and scrolls)."""
+    at = _screen("welcome")
+    open_about(at)
+    assert not at.exception, [e.value for e in at.exception]
+    assert _titles(at) == [TITLES["about"]]
+    blocks = [m.value for m in at.markdown if "tabindex='0'" in m.value]
+    assert len(blocks) == 1, blocks
+    assert "role='heading'" in blocks[0] and "Not medical advice" in blocks[0]
 
 
 def test_the_clear_history_question_is_an_alert_that_names_what_is_deleted():
