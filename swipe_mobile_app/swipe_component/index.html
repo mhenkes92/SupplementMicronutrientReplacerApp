@@ -118,18 +118,26 @@
   .warn { margin-top: 10px; padding: 7px 10px; border-radius: 12px; background: #fff7ed; border: 1px solid #fed7aa; color: #7c2d12; font-size: .82rem; font-weight: 600; line-height: 1.4; }
   .bio { margin-top: 8px; padding: 7px 10px; border-radius: 12px; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a5f; font-size: .82rem; line-height: 1.4; }
   .hint { text-align: center; margin-top: auto; padding-top: 10px; font-size: .8rem; color: #475569; }  /* pinned to the foot of the card */
-  /* Ask AI (header) and Swap food (the "Eat instead" box): two small chips inside the card, each beside the thing it acts on. A tap opens
-     a sheet of the page; it never changes the card or a decision. The chip is 34 px high to look; its tap area is 46 px (the ::after), which
-     adds nothing to the layout. They exist only when the card offers them (no AI / one food only: no chip, no gap), and are one line each. */
+  /* Ask AI (header) and Swap food (the "Eat instead" box): two chips inside the card, each beside the thing it acts on. A tap opens a sheet
+     of the page; it never changes the card or a decision. They must read as buttons, so each is a raised, tinted pill with a small icon
+     before its bold label: Ask AI in indigo with a sparkle, Swap food in teal with two arrows. Two families, so they are told apart from
+     each other and from the footer (Keep: red outline, Replace: filled green). Text on the tint is 6.7-8.9:1, the 1.5 px border is 4.7:1 or
+     more against every card colour. The chip is 34 px high to look; its tap area is 46 px (the ::after), which adds nothing to the layout.
+     They exist only when the card offers them (no AI / one food only: no chip, no gap), and are one line each. */
   .chip {
+    --c-ink: #3730a3; --c-top: #eef2ff; --c-bot: #e0e7ff; --c-line: #4f46e5; --c-press: #c7d2fe; --c-edge: 79, 70, 229; --c-glow: 99, 102, 241;
     position: relative;
     flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: .4em;
     min-height: 34px;
-    padding: 0 11px;
+    padding: 0 12px 0 10px;
     border-radius: 999px;
-    border: 1.5px solid #94a3b8;
-    background: rgba(255, 255, 255, 0.92);
-    color: #1e293b;
+    border: 1.5px solid var(--c-line);
+    background: linear-gradient(180deg, var(--c-top), var(--c-bot));
+    box-shadow: 0 2px 0 rgba(var(--c-edge), .32), 0 3px 5px -2px rgba(var(--c-edge), .32);   /* a bottom edge: it stands off the card */
+    color: var(--c-ink);
     font: inherit;
     font-size: .8rem;
     font-weight: 800;
@@ -138,9 +146,19 @@
     cursor: pointer;
     touch-action: manipulation;
   }
+  .chip[data-tool="swap"] { --c-ink: #115e59; --c-top: #f0fdfa; --c-bot: #ccfbf1; --c-line: #0f766e; --c-press: #99f6e4; --c-edge: 15, 118, 110; --c-glow: 20, 184, 166; }
+  .chip .ico { flex: 0 0 auto; width: 1.1em; height: 1.1em; }   /* as tall as the label's line, so it grows with the text size and never makes the chip taller */
   .chip::after { content: ""; position: absolute; inset: -6px -4px; }
+  /* The attention ring: a pseudo element on the chip's border box whose box-shadow grows and fades. It is drawn only while the script
+     has put .pulse on the chip (see "The attention pulse"); a shadow is paint only, so it moves nothing and adds no scroll area. */
+  .chip::before { content: ""; position: absolute; inset: -1.5px; border-radius: inherit; pointer-events: none; }
+  .chip.pulse::before { animation: chip-ring 1.4s ease-out 3 both; }
+  @keyframes chip-ring {
+    0%        { box-shadow: 0 0 0 0 rgba(var(--c-glow), .5); }
+    70%, 100% { box-shadow: 0 0 3px 10px rgba(var(--c-glow), 0); }
+  }
   .chip:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
-  .chip:not([aria-disabled="true"]):active { transform: scale(0.97); background: #f1f5f9; }
+  .chip:not([aria-disabled="true"]):active { transform: translateY(1px) scale(0.97); background: var(--c-press); box-shadow: 0 1px 0 rgba(var(--c-edge), .32); }
   .chip[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
   .head .chip, .foodhead .chip { margin-left: auto; }   /* right-aligned, also when it wraps onto a row of its own (320 px wide, large text) */
   /* A large text size: the name block has no room beside the badge, so the Ask AI chip takes that place and the name block gets the row
@@ -198,7 +216,7 @@
   #wrap.tight .warn { margin-top: 6px; padding: 5px 8px; }
   #wrap.tight .bio { margin-top: 6px; padding: 5px 8px; }
   #wrap.tight .hint { padding-top: 6px; }
-  #wrap.tight .chip { min-height: 30px; padding: 0 9px; }   /* 61 px wide: it stays beside the name on a 320 px phone (it wraps below only when the name is longer) */
+  #wrap.tight .chip { min-height: 30px; padding: 0 10px 0 8px; }   /* ~79 px wide with its icon: beside the name from a 340 px phone up (below it only when the name is longer); a 320 px phone has no icon, see below */
   #wrap.tight .chip::after { inset: -8px -4px; }
   #wrap.tight .foodhead .chip { margin-top: 0; }
   #wrap.tight:not(.first):not(.fine) .hint:not(.hint-keep) { display: none; }
@@ -210,8 +228,17 @@
   #cue { display: none; position: absolute; left: 50%; bottom: 5px; transform: translateX(-50%); z-index: 5; pointer-events: none; white-space: nowrap;
          font-size: .72rem; font-weight: 800; color: #334155; background: #fff; border: 1px solid rgba(15,23,42,.12); border-radius: 999px; padding: 1px 9px; }
   #stage.cue-strong #cue { display: block; }
+  /* A 320 px phone (the card's own width is then 288 px; 308 px on a 340 px phone, which still has room): without the icon the chip is as narrow as it
+     was, so the header chip stays beside the name on every card instead of taking a 40 px row of its own on some of them. The tint, the border, the
+     edge, the bold label and the ring stay. */
+  @media (max-width: 300px) {
+    .chip .ico { display: none; }
+    #wrap .chip { padding: 0 11px; }
+    #wrap.tight .chip { padding: 0 9px; }
+  }
   @media (prefers-reduced-motion: reduce) {
     .tcard, .rail { transition: none !important; }
+    .chip.pulse::before { animation: none !important; }   /* no ring at all: the raised, tinted look is the cue */
   }
 </style>
 </head>
@@ -431,6 +458,56 @@
     });
   }
 
+  // The icons of the two chips: inline SVG in the chip's text colour (no emoji font), decorative (the button's aria-label says it).
+  // A sparkle for Ask AI, two opposite arrows for Swap food.
+  var ICON_ASK = '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M6.5 4C6.9 7.2 8.8 9.1 12 9.5C8.8 9.9 6.9 11.8 6.5 15C6.1 11.8 4.2 9.9 1 9.5C4.2 9.1 6.1 7.2 6.5 4Z"/>' +
+    '<path fill="currentColor" d="M12.5 .8C12.7 2.4 13.6 3.3 15.2 3.5C13.6 3.7 12.7 4.6 12.5 6.2C12.3 4.6 11.4 3.7 9.8 3.5C11.4 3.3 12.3 2.4 12.5 .8Z"/></svg>';
+  var ICON_SWAP = '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ' +
+    'd="M2 5h11.5M10.5 2.2L13.5 5l-3 2.8M14 11H2.5M5.5 8.2L2.5 11l3 2.8"/></svg>';
+
+  // The attention pulse: a soft ring around the two chips, three times, for a visitor who has not tried either yet. Only the first card of
+  // a scan gets it (never a card opened from the results), once, about 0.7 s after it is drawn. Any press or key in the card, a swipe, a tap
+  // on the page around it, a busy page or a tap on a chip ends it for good, and reduced motion shows no ring at all (see ".chip.pulse").
+  // The ring is the box-shadow of a pseudo element, so it moves nothing and adds no scroll area. It never loops and never flashes: one slow
+  // ring per 1.4 s.
+  var TOOLS_KEY = "suppswipe_tools_used";   // "1" once a chip was tapped in this browser
+  var PULSE_DELAY = 700, PULSE_MS = 1400, PULSE_CYCLES = 3;   // the cycle length and count are the CSS animation's (".chip.pulse::before")
+  var toolsUsed = false;   // the same flag in memory: localStorage can throw (private window, blocked site data) or come back empty
+  var pulseTimer = 0, pulseKey = "";   // pulseKey: the card (scan + card) that had its turn; a redraw of it never starts the pulse again
+  function toolsWereUsed() {
+    try { if (window.localStorage.getItem(TOOLS_KEY) === "1") { return true; } } catch (e) {}
+    return toolsUsed;
+  }
+  function markToolsUsed() {
+    toolsUsed = true;
+    try { window.localStorage.setItem(TOOLS_KEY, "1"); } catch (e) {}
+  }
+  function stopPulse() {
+    clearTimeout(pulseTimer);
+    var lit = cbody.querySelectorAll(".chip.pulse");
+    for (var i = 0; i < lit.length; i++) { lit[i].classList.remove("pulse"); }
+  }
+  function startPulse() {
+    var chips = cbody.querySelectorAll(".chip");
+    if (!chips.length || committed || document.hidden || hostBusy() || toolsWereUsed()) { return; }
+    for (var i = 0; i < chips.length; i++) { chips[i].classList.add("pulse"); }
+    pulseTimer = setTimeout(stopPulse, PULSE_MS * PULSE_CYCLES + 200);   // the class goes when the third ring has faded
+  }
+  // The visitor is interacting: a press or a key anywhere in the card (a swipe starts with a press), and, best effort, a press or a key in
+  // the page around it (the bar, a sheet).
+  ["pointerdown", "touchstart", "mousedown", "keydown"].forEach(function (type) { document.addEventListener(type, stopPulse, { capture: true, passive: true }); });
+  try {
+    window.parent.addEventListener("pointerdown", stopPulse, true);
+    window.parent.addEventListener("keydown", stopPulse, true);
+    // A new scan brings a new frame: the old one must not leave its listeners on the page around it.
+    window.addEventListener("pagehide", function () {
+      try {
+        window.parent.removeEventListener("pointerdown", stopPulse, true);
+        window.parent.removeEventListener("keydown", stopPulse, true);
+      } catch (e) {}
+    });
+  } catch (e) {}
+
   function render(args) {
     args = args || {};
     // Streamlit re-sends the very same props whenever the frame height changes: that must not redraw the card (it would also
@@ -466,8 +543,8 @@
     var srcHtml = (args.food && args.source) ? '<div class="src">' + esc(args.source) + '</div>' : '';
     // The two chips exist only when the card offers them (no gap where they would have been). Both are rebuilt with the body, so they
     // are found by id, and one delegated click listener (below) serves them.
-    var askHtml = args.canAsk ? '<button type="button" class="chip" id="btnAsk" data-tool="ask" aria-label="Ask AI about this nutrient">Ask AI</button>' : '';
-    var swapHtml = args.canSwap ? '<button type="button" class="chip" id="btnSwap" data-tool="swap" aria-label="Swap food: choose another whole food">Swap food</button>' : '';
+    var askHtml = args.canAsk ? '<button type="button" class="chip" id="btnAsk" data-tool="ask" aria-label="Ask AI about this nutrient">' + ICON_ASK + 'Ask AI</button>' : '';
+    var swapHtml = args.canSwap ? '<button type="button" class="chip" id="btnSwap" data-tool="swap" aria-label="Swap food: choose another whole food">' + ICON_SWAP + 'Swap food</button>' : '';
     var portionRows = "";
     // "eat" only before an actual amount ("~85 g"), not before verdicts such as
     // "not practical from food alone (~2.3 kg/day)" or "a lot of food (...)".
@@ -524,6 +601,13 @@
     railRepl.style.opacity = 0;
     cbody.scrollTop = 0;
     if (chipFocus) { var chip = document.getElementById(chipFocus); if (chip) { focusChip(chip); } }
+    // The attention pulse (see "The attention pulse"): the first card of a scan, once per card.
+    stopPulse();
+    var turn = scanId + "|" + cardId;
+    if (cardIndex === 0 && !editing && (args.canAsk || args.canSwap) && turn !== pulseKey && !toolsWereUsed()) {
+      pulseKey = turn;
+      pulseTimer = setTimeout(startPulse, PULSE_DELAY);
+    }
     // Say what was done and which card is next (cleared first, so identical texts are announced again).
     var said = announce + "Card " + idx + " of " + total + ": " + (args.name || "Micronutrient") + ", " + (args.dose || "dose not available") + ".";
     announce = "";
@@ -575,6 +659,7 @@
     if (dir === "right" && !canReplace) return;
     if (dir === "back" && !canBack) return;
     committed = true;
+    stopPulse();
     var active = document.activeElement;
     lastFocusId = (active && active.parentNode && active.parentNode.id === "actions") ? active.id : "";
     // aria-disabled (not disabled): a disabled button drops keyboard focus, and the page loses its place after every swipe.
@@ -714,7 +799,7 @@
   card.addEventListener("click", function (e) {
     var hit = e.target.closest ? e.target.closest("[data-tool], [data-guide]") : null;
     if (!hit) { return; }
-    if (hit.hasAttribute("data-tool")) { toolEvent(hit.getAttribute("data-tool")); return; }
+    if (hit.hasAttribute("data-tool")) { markToolsUsed(); stopPulse(); toolEvent(hit.getAttribute("data-tool")); return; }   // the visitor found the chips: no more pulse
     if (e.detail > 0 && movedBeyondTap) { movedBeyondTap = false; return; }   // a pointer click after a drag was a swipe, not a tap (keyboard clicks have detail 0)
     guideEvent();
   });

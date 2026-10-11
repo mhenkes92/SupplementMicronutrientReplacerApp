@@ -304,7 +304,7 @@ def test_the_two_chips_are_finger_sized_labelled_and_on_one_line_at_100_and_150_
     try:
         start_sample(pg)
         info = card_frame(pg).evaluate(
-            """() => [...document.querySelectorAll('#card .chip')].map(b => { const r = document.createRange(); r.selectNodeContents(b);
+            """() => [...document.querySelectorAll('#card .chip')].map(b => { const r = document.createRange(); r.selectNodeContents([...b.childNodes].filter(n => n.nodeType === 3).pop());  // the label's text (the icon is an svg before it)
               const k = b.getBoundingClientRect(), after = getComputedStyle(b, '::after'); const at = dy => { const e = document.elementFromPoint(k.left + k.width / 2, k.top + k.height / 2 + dy); return e === b; };
               return {id: b.id, text: b.textContent.trim(), aria: b.getAttribute('aria-label'), lines: r.getClientRects().length, h: k.height, w: k.width, left: k.left,
                       right: k.right, mid: at(0), up: at(-20), down: at(20), area: k.height + parseFloat(after.top) * -1 + parseFloat(after.bottom) * -1, vw: innerWidth}; })""")

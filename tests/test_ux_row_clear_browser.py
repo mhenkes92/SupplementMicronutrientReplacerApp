@@ -64,7 +64,7 @@ def test_every_access_to_the_host_page_is_inside_a_try_that_falls_back_to_the_ol
     # Everything else that mentions the host only posts a message to it or compares the message source.
     others = [m.group(0) for m in re.finditer(r"window\.parent[.\w]*", rest)]
     assert set(others) <= {"window.parent.postMessage", "window.parent", "window.parent.addEventListener",
-                           "window.parent.document.querySelector"}, others
+                           "window.parent.removeEventListener", "window.parent.document.querySelector"}, others
     # The one other thing the frame does to the host: listen for its resize (the bar moves with the phone's toolbars), best effort.
     assert re.search(r"try \{\s+window\.parent\.addEventListener\(\"resize\".*?\}\);\s+\} catch \(e\) \{\}", rest, re.S)
     assert "return Infinity" in body and "isFinite(room)" in SCRIPT  # an unmeasurable room changes nothing downstream
@@ -262,10 +262,10 @@ def _zoom_card_frames(ctx, percent: int) -> None:
     ctx.route(re.compile(r".*/component/app\.tinder_swipe/index\.html.*"), handler)
 
 
-def open_page(browser, server, size, touch=True, init=None):
+def open_page(browser, server, size, touch=True, init=None, **context_options):
     """A phone-sized page with the bar present; JS errors are collected in pg.errors. `init=TEXT_150 / TEXT_200`: a larger text size
-    for the page AND the card's frame."""
-    ctx = browser.new_context(viewport={"width": size[0], "height": size[1]}, is_mobile=touch, has_touch=touch, device_scale_factor=2)
+    for the page AND the card's frame. `context_options` go to the browser context (e.g. reduced_motion="reduce")."""
+    ctx = browser.new_context(viewport={"width": size[0], "height": size[1]}, is_mobile=touch, has_touch=touch, device_scale_factor=2, **context_options)
     if init:
         ctx.add_init_script(init)
         if _text_zoom(init):
