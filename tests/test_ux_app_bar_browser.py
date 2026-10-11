@@ -1,4 +1,4 @@
-"""Browser checks of the fixed bottom bar (Guide | Diet | Scan | Recent | About) and its sheets.
+"""Browser checks of the fixed bottom bar (Guide | Diet | Scan | Recent | More) and its sheets.
 
 Opt-in like tests/test_ux_browser.py (SUPPSWIPE_BROWSER_TESTS=1), whose fixtures and helpers are reused. What AppTest cannot see:
 docking, one row, the Cloud badge, the page never hiding behind the bar, the sheets' size, Esc and focus, the busy bar."""
@@ -14,14 +14,14 @@ from test_ux_browser import (  # noqa: F401  (fixtures are used by name)
 BAR = '[class~="st-key-appbar"]'
 BUSY = '[class~="st-key-appbar_busy"]'
 BAR_BUTTON = '[class~="st-key-appbar"] button'
-LABELS = ("Guide", "Diet", "Scan", "Recent", "About")
-ORDER = ("guide", "diet", "scan", "scans", "about")
+LABELS = ("Guide", "Diet", "Scan", "Recent", "More")
+ORDER = ("guide", "diet", "scan", "scans", "more")
 SIZES = [(390, 844), (320, 640)]
 MAIN = "document.querySelector('[data-testid=stMain]')"
 
 
 def bar_button(page, name: str):
-    """A bar item by its key name (guide, diet, scan, scans = Recent, about), never by position."""
+    """A bar item by its key name (guide, diet, scan, scans = Recent, more), never by position."""
     assert name in ORDER, name
     return page.locator(f'[class~="st-key-appbar_{name}"] button')
 
@@ -271,7 +271,7 @@ def test_the_bar_clears_a_simulated_manage_app_badge(browser, server, size):
 @pytest.mark.parametrize("screen", ["welcome", "card", "results"])
 @pytest.mark.parametrize("item, title", [
     ("guide", "Athlete RDA guide"), ("diet", "Diet & pregnancy"), ("scan", "Scan a supplement"), ("scans", "Recent scans"),
-    ("about", "About & privacy")])
+    ("more", "More")])
 def test_each_sheet_opens_fits_the_phone_and_closes_without_touching_the_page(browser, server, size, screen, item, title):
     if item == "scan" and screen == "results":
         pytest.skip("a finished plan: the Scan item asks first (test_ux_bar_v2_browser)")
@@ -510,7 +510,7 @@ def test_the_bar_is_alive_again_when_an_analysis_ends_in_an_error(page):
     settle(page)
     assert page.locator(BUSY).count() == 0 and page.locator(f"{BAR} button").count() == 5
     assert page.locator(f"{BAR} button:disabled").count() == 0
-    bar_button(page, "about").tap()
+    bar_button(page, "more").tap()
     page.locator(DIALOG).wait_for(timeout=10000)
 
 
@@ -677,14 +677,19 @@ def test_the_delete_button_of_the_clear_history_question_is_red(page):
 @pytest.mark.parametrize("item, title", [("guide", "Athlete RDA guide"), ("about", "About & privacy")])
 def test_a_sheet_can_be_scrolled_with_the_keyboard(browser, server, item, title):
     """Streamlit focuses the dialog and its focus trap leaves Tab only the X: arrow keys scroll just the ancestors of the focused
-    element, so the sheet's first block is a Tab stop inside the scroller."""
+    element, so the sheet's first block is a Tab stop inside the scroller. About has no tab: the More sheet's first entry opens it."""
     ctx, pg = new_page(browser, server, (390, 640))
     try:
-        button = bar_button(pg, item)
+        button = bar_button(pg, "more" if item == "about" else item)
         button.focus()
         pg.keyboard.press("Enter")
         pg.locator(DIALOG).wait_for(timeout=10000)
         settle(pg)
+        if item == "about":
+            pg.locator(DIALOG).get_by_role("button", name="About & privacy").focus()
+            pg.keyboard.press("Enter")  # the keyboard way in: the entry replaces the More sheet
+            pg.locator(DIALOG).get_by_role("heading", name=title).wait_for(timeout=10000)
+            settle(pg)
         scroller = "document.querySelector('[data-testid=stDialog] [role=dialog] > div:last-child')"
         assert pg.evaluate(f"{scroller}.scrollHeight > {scroller}.clientHeight + 200")  # there is something below the fold
         for _ in range(4):
@@ -715,7 +720,7 @@ def test_opening_and_closing_sheets_never_remounts_the_bar_and_gives_the_focus_b
         )
         for rep in range(10):
             index = rep % 5
-            pg.locator(BAR_BUTTON).nth(index).focus()  # raw DOM index: Guide, Diet, Scan, Recent, About
+            pg.locator(BAR_BUTTON).nth(index).focus()  # raw DOM index: Guide, Diet, Scan, Recent, More
             pg.keyboard.press("Space" if rep % 2 else "Enter")
             pg.locator(DIALOG).wait_for(timeout=10000)
             settle(pg, 0.4)

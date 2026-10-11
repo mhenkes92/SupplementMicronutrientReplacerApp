@@ -4,7 +4,8 @@ Scan button.
 Owner's request (2026-10-09): "I don't like that u can scroll down ... place ask ai and the food drop down menu inside the card to swipe
 ... Since the first card doesn't have much content ... put the scan button inside the card". What was drawn under the card (the food
 list with its USDA line, the Ask AI popover, the report button, the "Filter: X" caption, the footer) is gone; the card's own tools
-(Swap food / Ask AI / More, three buttons inside the component, above Keep / Replace) open three sheets instead. AppTest has no
+(the Ask AI chip in its header and the Swap food chip beside "Eat instead", both inside the component) open two sheets instead, and
+the report is the second entry of the bar's More sheet (the server still accepts a "report" tool event from a stale page). AppTest has no
 iframe: a test plays the component by writing its value under the component's key (tests/card_tools.py), which is exactly what the
 browser does. What only a browser can measure (no page scroll, the buttons' size, the sheets over the real card) is in
 tests/test_ux_fixed_screen_browser.py."""
@@ -780,19 +781,25 @@ def test_the_welcome_card_keeps_its_text_and_loses_only_the_hint_line():
 
 
 # ------------------------------------------------------------------ the component and the page (static)
-def test_the_component_has_the_three_tools_above_keep_and_replace_and_posts_one_kind_each():
-    assert re.search(r'<div id="extras">\s*<button type="button" id="btnSwap"[^>]*hidden>Swap food</button>\s*'
-                     r'<button type="button" id="btnAsk"[^>]*hidden>Ask AI</button>\s*'
-                     r'<button type="button" id="btnMore"[^>]*>More</button>\s*</div>\s*<div id="actions">', COMPONENT)
-    for kind, button in (("swap", "btnSwap"), ("ask", "btnAsk"), ("report", "btnMore")):
-        assert f'{button}.addEventListener("click", function () {{ toolEvent("{kind}"); }});' in COMPONENT
+def test_the_component_has_two_chips_inside_the_card_and_posts_one_kind_each():
+    """The tools of the card are two chips inside it (Ask AI in the header, Swap food in the "Eat instead" box), drawn only when the card
+    offers them; the third tool of the old row below the card (More: report a problem) is a tab of the page's bar now, so the component
+    never posts a 'report' event (the page still accepts one from an old frame: the sheet tests above). Details of the structure:
+    tests/test_ux_card_inside.py."""
+    for gone in ('id="extras"', "btnMore", '"report"', "More options"):
+        assert gone not in COMPONENT, gone
+    assert re.search(r'<button type="button" class="chip" id="btnAsk" data-tool="ask" aria-label="Ask AI about this nutrient">Ask AI</button>', COMPONENT)
+    assert re.search(r'<button type="button" class="chip" id="btnSwap" data-tool="swap" aria-label="Swap food: choose another whole food">Swap food</button>', COMPONENT)
+    assert "args.canAsk ? '<button" in COMPONENT and "args.canSwap ? '<button" in COMPONENT  # absent (no gap) when the card does not offer it
+    assert "btnSwap.hidden" not in COMPONENT and "btnAsk.hidden" not in COMPONENT
+    assert 'toolEvent(hit.getAttribute("data-tool"));' in COMPONENT  # one delegated listener: the chips are rebuilt with every card
     assert 'setValue(stamp({ kind: kind, id: kind + "-" + now + "-" + seq }));' in COMPONENT
-    body = COMPONENT[COMPONENT.index("function toolEvent(kind)"):COMPONENT.index('btnSwap.addEventListener("click"')]
+    body = COMPONENT[COMPONENT.index("function toolEvent(kind)"):COMPONENT.index("// One click listener for what the body rebuilds")]
     assert "if (committed || hostBusy()) return;" in body and "toolUntil" in body  # nothing while a swipe is on its way or an analysis runs; a double tap sends one event
-    assert "btnSwap.hidden = !args.canSwap;" in COMPONENT and "btnAsk.hidden = !args.canAsk;" in COMPONENT
-    css = COMPONENT[COMPONENT.index("#extras button {"):COMPONENT.index("#extras button[hidden]")]
-    assert "min-height: 44px" in css and "white-space: nowrap" in css  # finger-sized, the label on one line
-    assert 'aria-label="Swap food: choose another whole food"' in COMPONENT and 'aria-label="More options: report a problem with this card"' in COMPONENT
+    assert 'returnTo = kind === "swap" ? "btnSwap" : "btnAsk";' in body  # the focus goes back to the chip by id (the chip is rebuilt with the card)
+    css = COMPONENT[COMPONENT.index("  .chip {"):COMPONENT.index("  .chip:focus-visible")]
+    assert "min-height: 34px" in css and "white-space: nowrap" in css and "touch-action: manipulation" in css  # one line, a touch target
+    assert ".chip::after { content: \"\"; position: absolute; inset: -6px -4px; }" in COMPONENT  # a 46 px tap area around the 34 px chip, no layout
 
 
 def test_the_frame_looks_at_its_room_again_when_nothing_tells_it_that_it_changed():

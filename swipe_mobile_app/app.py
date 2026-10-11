@@ -3239,16 +3239,23 @@ def _record_scan_to_history(decisions: dict[str, dict[str, Any]], diet_label: st
 # --- The five bar items: which sheet (or question) a tap asks for -----------------------------------------
 # A sheet is a dialog drawn at the end of the run, as the last branch of the one-dialog-at-a-time chain in _build_mobile_ui.
 # `swipe_sheet` stays set until the sheet is dismissed (like the other dialogs' flags), so a stray rerun cannot close it.
-# Guide | Diet | Scan | Recent | About: Scan is the primary item (filled). "Recent" is the history item: its key and its sheet
+# Guide | Diet | Scan | Recent | More: Scan is the primary item (filled). "Recent" is the history item: its key and its sheet
 # keep the name "scans" and the sheet its title "Recent scans" (the bar label "Scans" next to "Scan" was easy to confuse).
+# "More" (the right-most tab, where About used to be) opens a short sheet whose two entries replace it: About & privacy, and
+# Report a problem with the card on screen. A sixth tab does not fit (five are 44.8 px at 360 px), so what is not used all the
+# time lives behind this one.
 _SHEET_TITLES = {
     "guide": "Athlete RDA guide", "diet": "Diet & pregnancy", "scan": "Scan a supplement", "scans": "Recent scans",
+    "more": "More",
+    # Reached through the More sheet, not by a tab of their own.
     "about": "About & privacy",
-    # The card's own tools (Swap food / Ask AI / More on the swipe card), opened by an event of the card, not by the bar.
+    # The card's own tools (Swap food / Ask AI on the swipe card), opened by an event of the card, not by the bar. "report" is
+    # also the More sheet's second entry; the card's component no longer sends it, a stale one still may (_apply_card_tool_tap).
     "swap": "Swap the food", "ask": "Ask AI", "report": "Report a problem",
 }
-_BAR_ITEMS = (("guide", "Guide"), ("diet", "Diet"), ("scan", "Scan"), ("scans", "Recent"), ("about", "About"))
-_CARD_SHEETS = ("swap", "ask", "report")  # opened by the swipe card's tools (see _apply_card_tool_tap), not by the bar
+_BAR_ITEMS = (("guide", "Guide"), ("diet", "Diet"), ("scan", "Scan"), ("scans", "Recent"), ("more", "More"))
+_MORE_SHEETS = ("about",)  # sheets that only the More sheet opens (the report is a card sheet: _CARD_SHEETS)
+_CARD_SHEETS = ("swap", "ask", "report")  # opened by the swipe card's tools (see _apply_card_tool_tap) and by More, not by the bar
 
 
 def _analysis_in_flight() -> bool:
@@ -3264,6 +3271,7 @@ def _open_sheet(name: str) -> None:
     st.session_state["swipe_open_analyze"] = False
     st.session_state["swipe_plan_item"] = None
     st.session_state.pop("swipe_guide_focus", None)
+    st.session_state.pop("swipe_sheet_from", None)  # a bar tap is not a step on from the More sheet
     st.session_state.pop("_suppswipe_focus_bar", None)  # a window is asked for again: the focus is its business now
     if name == "diet":
         # The Diet sheet is the only place the two widgets are drawn. Streamlit applies a value written into a widget's key only in
@@ -3288,15 +3296,21 @@ def _tap_scan() -> None:
 
 
 def _close_sheet() -> None:
-    """Also the sheets' on_dismiss (X, Esc, tap outside): the request stays until one of them clears it."""
+    """Also the sheets' on_dismiss (X, Esc, tap outside): the request stays until one of them clears it. A sheet that the More
+    sheet opened (About, the report) gives the keyboard focus back to the More tab: the button that opened it left with the More
+    sheet, so the browser has nothing to return the focus to."""
+    name = st.session_state.get("swipe_sheet")
+    came_from_more = st.session_state.pop("swipe_sheet_from", None) == "more" and name in (*_MORE_SHEETS, "report")
     st.session_state["swipe_sheet"] = None
     for key in ("swipe_guide_focus", "swipe_scans_confirm", "swipe_scans_more", "swipe_sheet_card"):
         st.session_state.pop(key, None)
+    if came_from_more:
+        _request_bar_focus("more")
 
 
-def _card_sheet_view() -> dict[str, Any] | None:
-    """What the card sheets (swap / ask / report) are about: the card on screen, as the last full run drew it
-    (`swipe_card_view`), or None when that is not the card the sheet was opened for (another card, the results, no cards)."""
+def _card_on_screen() -> tuple[str, int] | None:
+    """(component_key, index) of the card on screen, as the last full run drew it (`swipe_card_view`); None when there is no card
+    (the welcome screen, the results) or the view is not the card the state is on."""
     state = st.session_state
     cards = state.get("swipe_cards") or []
     index = int(state.get("swipe_index", 0) or 0)
@@ -3304,9 +3318,18 @@ def _card_sheet_view() -> dict[str, Any] | None:
     if not 0 <= index < len(cards) or view.get("index") != index:
         return None
     component_key = str(cards[index].get("component_key", "") or "")
-    if view.get("component_key") != component_key or list(state.get("swipe_sheet_card") or []) != [component_key, index]:
+    if view.get("component_key") != component_key:
         return None
-    return view
+    return component_key, index
+
+
+def _card_sheet_view() -> dict[str, Any] | None:
+    """What the card sheets (swap / ask / report) are about: the card on screen, as the last full run drew it
+    (`swipe_card_view`), or None when that is not the card the sheet was opened for (another card, the results, no cards)."""
+    on_screen = _card_on_screen()
+    if on_screen is None or list(st.session_state.get("swipe_sheet_card") or []) != list(on_screen):
+        return None
+    return st.session_state["swipe_card_view"]
 
 
 def _sheet_requested() -> bool:
@@ -3328,8 +3351,8 @@ def _sheet_requested() -> bool:
 
 def _show_sheet() -> None:
     {
-        "guide": _guide_sheet, "diet": _diet_sheet, "scan": _scan_sheet, "scans": _scans_sheet, "about": _about_sheet,
-        "swap": _swap_sheet, "ask": _ask_sheet, "report": _report_sheet,
+        "guide": _guide_sheet, "diet": _diet_sheet, "scan": _scan_sheet, "scans": _scans_sheet, "more": _more_sheet,
+        "about": _about_sheet, "swap": _swap_sheet, "ask": _ask_sheet, "report": _report_sheet,
     }[st.session_state["swipe_sheet"]]()
 
 
@@ -4385,7 +4408,7 @@ def _render_header() -> None:
                 from { transform: rotate(0deg); }
                 to { transform: rotate(360deg); }
             }
-            /* Bottom bar: the five global tools (Guide, Diet, Scan, Recent, About) as tabs, fixed on every screen. The keyed
+            /* Bottom bar: the five global tools (Guide, Diet, Scan, Recent, More) as tabs, fixed on every screen. The keyed
                horizontal container is drawn first in each run; the busy twin is its dead copy while an analysis runs.
                Five tabs of at least 44 px do not fit between two badge gutters on a 320 px phone, so on phones the pill
                starts at the page gutter (the left edge of the content) and only the right side keeps clear of the floating
@@ -4399,7 +4422,7 @@ def _render_header() -> None:
                 --ss-ico-diet: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 19C5 10 10 5 20 4c0 10-5 15-14 15'/%3E%3Cpath d='M5 19c2-4 5-7 9-9'/%3E%3C/svg%3E");
                 --ss-ico-guide: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6.5 7v10M3 9.5v5M17.5 7v10M21 9.5v5M6.5 12h11'/%3E%3C/svg%3E");
                 --ss-ico-scans: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3 9'/%3E%3Cpath d='M3 4v5h5'/%3E%3Cpath d='M12 7.5V12l3 2'/%3E%3C/svg%3E");
-                --ss-ico-about: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 21.5s8-3.8 8-9.7V5.2L12 2.5 4 5.2v6.6c0 5.9 8 9.7 8 9.7z'/%3E%3Cpath d='M9 12l2.2 2.2L15.5 10'/%3E%3C/svg%3E");
+                --ss-ico-more: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Ccircle cx='5' cy='12' r='2.2'/%3E%3Ccircle cx='12' cy='12' r='2.2'/%3E%3Ccircle cx='19' cy='12' r='2.2'/%3E%3C/svg%3E");
                 position: fixed;
                 z-index: 999980;
                 left: var(--ss-bar-left);
@@ -4440,7 +4463,7 @@ def _render_header() -> None:
             [class~="st-key-appbar_diet"], [class~="st-key-appbar_busy_diet"] { --ss-ico: var(--ss-ico-diet); }
             [class~="st-key-appbar_guide"], [class~="st-key-appbar_busy_guide"] { --ss-ico: var(--ss-ico-guide); }
             [class~="st-key-appbar_scans"], [class~="st-key-appbar_busy_scans"] { --ss-ico: var(--ss-ico-scans); }
-            [class~="st-key-appbar_about"], [class~="st-key-appbar_busy_about"] { --ss-ico: var(--ss-ico-about); }
+            [class~="st-key-appbar_more"], [class~="st-key-appbar_busy_more"] { --ss-ico: var(--ss-ico-more); }
             [class~="st-key-appbar"] [data-testid="stButton"],
             [class~="st-key-appbar_busy"] [data-testid="stButton"] {
                 width: 100%;
@@ -4641,8 +4664,8 @@ def _render_header() -> None:
             @media print {
                 [class~="st-key-appbar"], [class~="st-key-appbar_busy"] { display: none; }
             }
-            /* The three sheets (Guide, Scans, About) are dialogs. Phones: a bottom sheet whose title and X stay put while
-               only the body scrolls. The X is a 44 px target everywhere. */
+            /* The sheets (Guide, Diet, Scan, Recent, More, About and the card's) are dialogs. Phones: a bottom sheet whose title and X stay
+               put while only the body scrolls. The X is a 44 px target everywhere. */
             [data-testid="stDialog"]:has([class*="st-key-sheet_"]) [role="dialog"] button[aria-label="Close"] {
                 min-width: 44px;
                 min-height: 44px;
@@ -4794,10 +4817,10 @@ def _render_header() -> None:
             .gd-note { margin-top: 14px; padding: 10px 12px; border: 1px solid #bfdbfe; border-radius: 14px; background: #eff6ff; font-size: 0.82rem; line-height: 1.45; color: #1e3a5f; }
             .gd-fine { margin: 10px 0 0 0; font-size: 0.76rem; line-height: 1.45; color: #475569; }
             /* Streamlit Cloud draws two things over the bottom-right corner: the round avatar of the app's owner and, for the owner, the red
-               Manage app button. Together they are about 122 px wide (measured on a real iPhone: the avatar sat on top of the About tab when
+               Manage app button. Together they are about 122 px wide (measured on a real iPhone: the avatar sat on top of the right-most tab when
                the pill only cleared the red button), so the pill ends 126 px short of the right edge. Five tabs of 44 px still fit beside
                that from 353 px wide when the left margin is 8 px (from 375 px with the normal 16 px). Narrower phones cannot hold five 44 px
-               tabs beside the whole badge: there only the red button is kept clear and the avatar can cover a corner of the About tab. */
+               tabs beside the whole badge: there only the red button is kept clear and the avatar can cover a corner of the More tab. */
             @media (max-width: 374px) {
                 [class~="st-key-appbar"], [class~="st-key-appbar_busy"] {
                     --ss-bar-left: calc(max(0px, (100% - 440px) / 2) + 8px);
@@ -4864,6 +4887,8 @@ def _render_header() -> None:
             .sc-ask { margin: 10px 0 6px 0; padding: 10px 12px; border: 1px solid #fecaca; border-radius: 14px; background: #fef2f2; font-size: 0.86rem; color: #7f1d1d; }
             .sc-ask p { margin: 4px 0 0 0; font-size: 0.82rem; line-height: 1.4; color: #7f1d1d; }
             [class~="st-key-swipe_clear_history_confirm"] button { border-color: #b91c1c !important; background: #b91c1c !important; color: #ffffff !important; }
+            /* More sheet: each entry is a full-width button with its one-line description right under it (the entries keep the sheet's gap). */
+            [class*="st-key-more_entry_"] { gap: 0.25rem; }
             /* About and privacy: five cards. */
             [class*="st-key-about_"] { gap: 0.4rem; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 16px; background: #ffffff; }
             /* Streamlit pulls every markdown block up by 1rem (it cancels a paragraph's margin): not inside these cards. */
@@ -5667,7 +5692,7 @@ def _on_results_screen() -> bool:
 
 
 def _render_analyze_bar(results: bool = False, button: bool = True) -> None:
-    """The primary Scan button under a finished plan. Everything else (Scan, Diet, Guide, Recent, About) is in the fixed bottom bar."""
+    """The primary Scan button under a finished plan. Everything else (Scan, Diet, Guide, Recent, More) is in the fixed bottom bar."""
     if button:
         _render_analyze_button(results=results, primary=results)
 
@@ -5927,11 +5952,62 @@ def _diet_sheet() -> None:
             st.rerun(scope="app")
 
 
-# --- The swipe card's tools: the sheets behind Swap food / Ask AI / More ----------------------------------------------
+# --- More sheet (the bar's right-most item): About & privacy, and the report for the card on screen ------------------------------
+# One dialog at a time: an entry replaces this sheet (it sets the flags of the next one and reruns the whole app, as the Done
+# buttons of the other sheets do), it does not stack a second window. `swipe_sheet_from` = "more" remembers the way in, so that
+# closing the About sheet or the report (X, Esc, a tap outside, Done) gives the focus back to the More tab (see _close_sheet).
+def _more_to_about() -> None:
+    st.session_state["swipe_sheet"] = "about"
+    st.session_state["swipe_sheet_from"] = "more"
+    st.rerun(scope="app")
+
+
+def _more_to_report() -> None:
+    """The report entry replaces the More sheet by the Report sheet for the card on screen. The entry was drawn for a card, but the
+    run that handles the tap decides again (the same guards as the card's own tool tap, _apply_card_tool_tap): nothing while an
+    analysis runs, and only for the card that is on screen now; otherwise the sheet just closes."""
+    on_screen = None if _analysis_in_flight() else _card_on_screen()
+    if on_screen is None:
+        _close_sheet()
+        _request_bar_focus("more")
+        st.rerun(scope="app")
+        return
+    st.session_state["swipe_confirm_restart"] = False
+    st.session_state["swipe_open_analyze"] = False
+    st.session_state["swipe_plan_item"] = None
+    st.session_state["swipe_sheet"] = "report"
+    st.session_state["swipe_sheet_card"] = list(on_screen)  # which card the sheet is for (_card_sheet_view checks it)
+    st.session_state["swipe_sheet_from"] = "more"
+    st.rerun(scope="app")
+
+
+@st.dialog("More", on_dismiss=_close_sheet)
+def _more_sheet() -> None:
+    reportable = not _analysis_in_flight() and _card_on_screen() is not None  # a card, and no analysis that is about to replace it
+    with st.container(key="sheet_more"):
+        st.markdown(
+            f"<div class='sc-sub' {_sheet_anchor('more')}>"
+            + ("Notice, privacy and feedback on this card." if reportable else "Notice and privacy.")
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+        with st.container(key="more_entry_about"):  # a full-width button and its one-line description, kept together (CSS)
+            if st.button("About & privacy", width="stretch", key="more_about"):
+                _more_to_about()
+            st.caption("What is sent, what stays on your device.")
+        if reportable:
+            with st.container(key="more_entry_report"):
+                if st.button("Report a problem with this card", width="stretch", key="more_report"):
+                    _more_to_report()
+                st.caption("Logged for review, nothing personal.")
+
+
+# --- The swipe card's tools: the sheets behind Swap food / Ask AI (and the report, opened from the More sheet) -------------------
 # The cards screen is one fixed screen (nothing below the card), so what used to sit under it lives in sheets that the card's
-# tools open (_apply_card_tool_tap): the food list, the chat about the nutrient and the report. A sheet is for the card it was
-# opened on (`swipe_sheet_card`); it never changes a decision. These are st.dialog functions, so a widget inside one reruns only
-# the sheet; the page behind follows when the sheet is dismissed (X, Esc, tap outside) or on Done: both rerun the app.
+# tools open (_apply_card_tool_tap): the food list and the chat about the nutrient; the report is the More sheet's second entry.
+# A sheet is for the card it was opened on (`swipe_sheet_card`); it never changes a decision. These are st.dialog functions, so a
+# widget inside one reruns only the sheet; the page behind follows when the sheet is dismissed (X, Esc, tap outside) or on Done:
+# both rerun the app.
 def _food_select_key(component_key: str, index: int) -> str:
     return f"swipe_food_select_{component_key}_{index}"
 
@@ -6280,19 +6356,22 @@ def _apply_card_guide_tap(state: Any, value: Any) -> bool:
         return True
     state["swipe_confirm_restart"] = False
     state["swipe_open_analyze"] = False
+    state.pop("swipe_sheet_from", None)  # the card's athlete line opened it, not the More sheet
     state["swipe_sheet"] = "guide"
     state["swipe_guide_focus"] = component_key
     return True
 
 
-_CARD_TOOLS = ("swap", "ask", "report")  # the card's tools (Swap food / Ask AI / More): each opens the sheet of the same name
+# The card's tools: each opens the sheet of the same name. The card sends "swap" (Swap food) and "ask" (Ask AI); "report" is no
+# button of the card any more (the More tab opens the report), but a card page that was loaded before the change may still send it.
+_CARD_TOOLS = ("swap", "ask", "report")
 
 
 def _apply_card_tool_tap(state: Any, value: Any) -> bool:
-    """A tap on one of the card's tools (the component sends {"kind": "swap" | "ask" | "report", id, card, index}): open the sheet of
-    that name for this card. True for every tool value, handled or ignored, so it never reaches _apply_card_swipe; it never
-    changes the card, the food or a decision. A tap made on another card (stale), one already handled, one made while an analysis
-    runs, and one for a card that is not on screen (the results) does nothing."""
+    """A tap on one of the card's tools (the component sends {"kind": "swap" | "ask", id, card, index}; "report" only from a stale
+    page, see _CARD_TOOLS): open the sheet of that name for this card. True for every tool value, handled or ignored, so it never
+    reaches _apply_card_swipe; it never changes the card, the food or a decision. A tap made on another card (stale), one already
+    handled, one made while an analysis runs, and one for a card that is not on screen (the results) does nothing."""
     if not isinstance(value, dict) or value.get("kind") not in _CARD_TOOLS:
         return False
     tap_id = str(value.get("id", "") or "")
@@ -6314,6 +6393,7 @@ def _apply_card_tool_tap(state: Any, value: Any) -> bool:
     state["swipe_open_analyze"] = False
     state["swipe_plan_item"] = None
     state.pop("swipe_guide_focus", None)
+    state.pop("swipe_sheet_from", None)  # the card's own button opened it, not the More sheet
     state["swipe_sheet"] = str(value["kind"])
     state["swipe_sheet_card"] = [component_key, index]  # which card the sheet is for (_card_sheet_view checks it)
     return True

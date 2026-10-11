@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from card_tools import dismiss_sheet, swap_options, tap_tool
+from card_tools import dismiss_sheet, open_report, swap_options
 
 APP = str(Path(__file__).resolve().parent.parent / "swipe_mobile_app" / "app.py")
 SAMPLE = "Vitamin B12 2,5 µg 100%\nFolsäure 200 µg 100%\nMagnesium 56 mg 15%"
@@ -61,7 +61,7 @@ def test_pregnancy_toggle_hides_organ_meats_and_persists():
 def test_report_button_logs_and_thanks(caplog):
     at = _scanned()
     assert not [b for b in at.button if "Report a problem" in b.label]  # nothing below the card: the report is in the More sheet
-    tap_tool(at, "report")
+    open_report(at)  # the More tab, then its "Report a problem with this card" entry: the Report sheet for this card
     report = next(b for b in at.button if b.label == "🚩 Report a problem with this card")
     with caplog.at_level(logging.WARNING, logger="blockbrain.app"):
         report.click()

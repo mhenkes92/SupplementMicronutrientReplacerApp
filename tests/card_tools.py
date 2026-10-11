@@ -1,8 +1,10 @@
-"""AppTest helpers for the swipe card's tools: Swap food / Ask AI / More.
+"""AppTest helpers for the swipe card's tools (Swap food, Ask AI) and for the More sheet (About & privacy, the report).
 
-The card is a custom component in an iframe; its tools are buttons INSIDE it that report {"kind": "swap" | "ask" | "report", id, card,
-index} as the component's value. AppTest has no iframe, so a test plays the component: it writes that value under the component's key
-and reruns, exactly what the browser does through Streamlit's setComponentValue. Not a test module."""
+The card is a custom component in an iframe; its two tools are buttons INSIDE it that report {"kind": "swap" | "ask", id, card, index}
+as the component's value (a card page loaded before the More tab existed may still send "report": the server accepts it). AppTest has
+no iframe, so a test plays the component: it writes that value under the component's key and reruns, exactly what the browser does
+through Streamlit's setComponentValue. The report and About live in the More sheet, behind the bar's right-most tab: `open_more` and
+`tap_more_entry` play that path. Not a test module."""
 from __future__ import annotations
 
 import itertools
@@ -43,8 +45,31 @@ def tool_value(at: AppTest, kind: str, **override: Any) -> dict[str, Any]:
 
 
 def tap_tool(at: AppTest, kind: str, **override: Any) -> AppTest:
-    """A tap on the card's Swap food / Ask AI / More button; the sheet of that name opens."""
+    """A tap on the card's Swap food / Ask AI button (or, from a stale page, on its old More button: kind "report"); the sheet of that
+    name opens."""
     return send(at, tool_value(at, kind, **override))
+
+
+def open_more(at: AppTest) -> AppTest:
+    """A tap on the bar's More tab: the More sheet opens."""
+    at.button(key="appbar_more").click().run()
+    return at
+
+
+def tap_more_entry(at: AppTest, entry: str) -> AppTest:
+    """A tap on an entry of the open More sheet ("about" or "report"): it replaces the More sheet by that sheet."""
+    at.button(key=f"more_{entry}").click().run()
+    return at
+
+
+def open_about(at: AppTest) -> AppTest:
+    """The way to About & privacy: the More tab, then its first entry."""
+    return tap_more_entry(open_more(at), "about")
+
+
+def open_report(at: AppTest) -> AppTest:
+    """The way to the report of the card on screen: the More tab, then its second entry."""
+    return tap_more_entry(open_more(at), "report")
 
 
 def sheet_titles(at: AppTest) -> list[str]:

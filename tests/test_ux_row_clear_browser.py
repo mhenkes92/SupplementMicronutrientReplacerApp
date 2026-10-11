@@ -3,7 +3,12 @@
 The source checks at the top run offline; the browser checks (real Chromium, a touch phone at 2x) are opt-in like
 tests/test_ux_browser.py (SUPPSWIPE_BROWSER_TESTS=1), whose fixtures and helpers they reuse.
 
-Measured before the change (sample label, 7 cards, bar present), the most the bar covered of the row per viewport: 320x568 235 px,
+The row is the pinned footer INSIDE the card's one box now (tests/test_ux_card_inside_browser.py: the footer, the Ask AI chip and the
+Swap food chip are all inside the card, and nothing of the frame is below it): the frame fills the room, the card ends 4 px above the
+bar and the buttons end 11 px (tight) / 13 px (normal) above it, which is why the bound of "just above the bar" is 16 px here (it was 12 when
+the row was the frame's last element). The text that scrolls is the card's body (#cbody), above the footer.
+
+Measured before the first fixed screen (sample label, 7 cards, bar present), the most the bar covered of the row per viewport: 320x568 235 px,
 320x640 163, 360x640 86, 360x670 56, 360x740 42, 375x667 59, 390x664 44, 393x700 8 and 0 at 390x844, 412x780, 412x915. Cards 2-7 carry
 a long note, so their row started lower than the first card's. Now the component measures the room between its frame and the bar
 (it is the same origin as the page): a short phone gets a tighter card (same texts, less spacing; on a touch screen no swipe hint after the first card a
@@ -13,8 +18,7 @@ both, and neither catches a touch. Roomy phones keep today's frame sizes. Where 
 the card behaves as before (no tight class, frames sized to the card's content) plus a blank strip under its buttons.
 
 Fixed screens (tests/test_ux_fixed_screen_browser.py): the frame now FILLS the room on every phone, whatever the card, so the numbers
-of "roomy phones keep today's frames" (475 / 603 px at 390x844) are gone; the row sits ~4-6 px above the bar on every card, and the
-page does not scroll. The frame also holds the card's tools row (Swap food / Ask AI / More): about 50 px more than before."""
+of "roomy phones keep today's frames" (475 / 603 px at 390x844) are gone, and the page does not scroll."""
 from __future__ import annotations
 
 import os
@@ -67,11 +71,12 @@ def test_every_access_to_the_host_page_is_inside_a_try_that_falls_back_to_the_ol
 
 
 def test_the_frame_rule_the_font_floor_and_the_cue_are_as_agreed():
-    assert SCRIPT.count("Math.max(HEIGHT, Math.min(780, contentHeight + actionsHeight + 10), maxHeight)") == 1
+    # contentHeight is the card's body; chrome is what the frame holds around it (the pinned footer and the card's edges)
+    assert SCRIPT.count("Math.max(HEIGHT, Math.min(780, contentHeight + chrome), maxHeight)") == 1
     sizes = [float(m) for m in re.findall(r"font-size:\s*([0-9.]+)rem", SRC)]
     assert min(sizes) >= 0.72  # the new "scroll for more" pill included (the audit floor is 0.7rem)
     assert '<div id="cue" aria-hidden="true">' in SRC  # a visual aid only: the card's aria-label already carries everything
-    assert ".tcard > * { flex-shrink: 0; }" in SRC  # a card that scrolls must not squash its own rows (the progress bar)
+    assert ".cbody > * { flex-shrink: 0; }" in SRC  # a card that scrolls must not squash its own rows (the progress bar)
     assert "hint-keep" in SRC and "(!canReplace || editing)" in SRC  # explanatory hints are never hidden
 
 
@@ -101,8 +106,9 @@ def _rule(selector: str) -> str:
 def test_the_scroll_cue_is_a_fade_and_a_pill_that_never_catch_a_touch():
     """The overlay sits above the card: without pointer-events none a swipe that starts in the card's lower 30 px, and a tap on a
     control under the fade (the athlete-guide button at large text), would land on the overlay and be swallowed."""
-    fade = _rule("#stage.cue::after")
+    fade = _rule("#stage.cue .cmain::after")
     assert "pointer-events: none" in fade and "linear-gradient" in fade and "height: 30px" in fade
+    assert "bottom: 0" in fade  # the foot of the scrolling window, which ends where the footer begins: never over the footer
     pill = _rule("#cue")
     assert "pointer-events: none" in pill and "display: none" in pill
     assert "display: block" in _rule("#stage.cue-strong #cue")
@@ -113,14 +119,14 @@ def test_the_pill_appears_as_soon_as_text_is_cut_and_the_fade_does_not_wash_out_
     to get the fade alone, because the pill needed 48 px."""
     fade, pill = (int(re.search(r"var CUE_%s = (\d+);" % name, SCRIPT).group(1)) for name in ("FADE", "PILL"))
     assert 0 < fade < pill <= 16, (fade, pill)  # about half a line of text cut = "scroll for more"
-    body = SCRIPT[SCRIPT.index("function updateCue()"):SCRIPT.index('card.addEventListener("scroll"')]
+    body = SCRIPT[SCRIPT.index("function updateCue()"):SCRIPT.index('cbody.addEventListener("scroll"')]
     assert "paddingBottom" in body and 'toggle("cue", cut > CUE_FADE)' in body and 'toggle("cue-strong", cut > CUE_PILL)' in body
 
 
 def test_a_focused_control_is_scrolled_clear_of_the_fade():
     """Tab to the athlete-guide button of a card that scrolls: the browser keeps it this far from the card's edge, so neither the
     fade (30 px) nor the pill (to 28 px) covers its last line or its focus ring."""
-    padding = re.search(r"scroll-padding-bottom:\s*(\d+)px", _rule(".tcard"))
+    padding = re.search(r"scroll-padding-bottom:\s*(\d+)px", _rule(".cbody"))
     assert padding and int(padding.group(1)) >= 40, padding
 
 
@@ -288,11 +294,20 @@ def to_top(pg) -> None:
     pg.wait_for_timeout(150)
 
 
+ROW_GAP_MAX = 16  # the buttons end 4 (air under the card) + 1 (border) + 6-8 (footer padding) px above the bar; 16 leaves a few px for rounding
+
+
 def row_gap(pg) -> int:
     """Pixels between the bottom of the Keep / Replace / Back row and the top of the bar (negative = covered)."""
     bar = rect(pg, BAR)
     boxes = [card(pg).locator(s).bounding_box() for s in ("#btnBack", "#btnKeep", "#btnRepl")]
     return round(bar["y"] - max(b["y"] + b["height"] for b in boxes))
+
+
+def card_gap(pg) -> int:
+    """Pixels between the bottom edge of the card's box and the top of the bar: 4 on a fixed screen (the frame ends 2 px below the bar's
+    top and its last 6 px are the strip for the card's shadow)."""
+    return round(rect(pg, BAR)["y"] - card(pg).locator("#card").bounding_box()["y"] - card(pg).locator("#card").bounding_box()["height"])
 
 
 def frame_height(pg) -> int:
@@ -350,7 +365,8 @@ def test_on_a_short_phone_the_row_sits_in_the_same_place_on_every_card_just_abov
 
         gaps = [gap for _, gap in walk(pg, 7, measure)]
         assert max(tops) - min(tops) <= 2, tops  # the thumb finds the row where it left it
-        assert max(gaps) - min(gaps) <= 2 and 0 <= min(gaps) and max(gaps) <= 12, gaps  # about 4 px above the bar, on every card
+        assert max(gaps) - min(gaps) <= 2 and 0 <= min(gaps) and max(gaps) <= ROW_GAP_MAX, gaps  # just above the bar, on every card
+        assert 2 <= card_gap(pg) <= 6, card_gap(pg)  # the card's own box ends 4 px above the bar
         assert frames == sorted(frames), frames  # and the frame never shrinks
     finally:
         ctx.close()
@@ -371,7 +387,7 @@ def test_a_roomy_phone_fills_its_room_with_the_normal_card_and_the_row_sits_just
         to_top(pg)
         assert frame_height(pg) == first  # the same frame on card 2: the buttons stay where the thumb is
         assert "tight" not in card_frame(pg).evaluate("document.getElementById('wrap').className")
-        assert 0 <= row_gap(pg) <= 12
+        assert 0 <= row_gap(pg) <= ROW_GAP_MAX and 2 <= card_gap(pg) <= 6
     finally:
         ctx.close()
 
@@ -380,7 +396,7 @@ def test_the_decision_to_tighten_is_made_from_the_measured_room():
     """A new scan starts tight only when the room is short, and a card tightens only when its normal frame does not fit; the
     thresholds (TIGHT_BELOW, ROOM_FLOOR) are judgment values, so only the shape of the rule is pinned."""
     assert re.search(r"tight = hostRoom\(\) < TIGHT_BELOW", SCRIPT) and "ROOM_FLOOR" in SCRIPT
-    assert "if (Math.max(HEIGHT, Math.min(780, contentHeight + actionsHeight + 10)) <= avail) { break; }" in SCRIPT  # fits: stays normal
+    assert "if (Math.max(HEIGHT, Math.min(780, contentHeight + chrome)) <= avail) { break; }" in SCRIPT  # fits: stays normal
 
 
 WATCH_LIVE = """() => { window.__live = []; window.__renders = 0;
@@ -439,14 +455,14 @@ def test_every_text_of_every_card_is_the_one_the_unpatched_component_showed(brow
 
 @needs_browser
 def test_the_progress_bar_of_a_card_that_scrolls_keeps_its_height(browser, server):
-    ctx, pg = open_page(browser, server, (320, 640))
+    ctx, pg = open_page(browser, server, (320, 568))
     try:
         start_sample(pg)
-        card_frame_js = ("() => { const c = document.getElementById('card'); return { bar: document.querySelector('.bar').getBoundingClientRect().height,"
+        card_frame_js = ("() => { const c = document.getElementById('cbody'); return { bar: document.querySelector('.bar').getBoundingClientRect().height,"
                          " hidden: c.scrollHeight - c.clientHeight }; }")
         seen = walk(pg, 3, lambda: card_frame(pg).evaluate(card_frame_js))
         assert [m["bar"] for _, m in seen] == [4, 4, 4], seen
-        assert seen[1][1]["hidden"] > 0, seen  # card 2 (the long vitamin D note) is the one that scrolls inside its frame
+        assert seen[1][1]["hidden"] > 30, seen  # card 2 (the long vitamin D note) is the one that scrolls inside its frame
     finally:
         ctx.close()
 
@@ -461,8 +477,8 @@ def test_a_frame_that_cannot_read_its_page_behaves_exactly_as_before(browser, se
         assert fr.evaluate("window.__blocked === true")
         assert fr.evaluate("(() => { try { return !!window.frameElement; } catch (e) { return 'THROWS ' + e.name; } })()").startswith("THROWS")
         seen = walk(pg, 3, lambda: (frame_height(pg), fr.evaluate("document.getElementById('wrap').classList.contains('tight')")))
-        # Frames sized to the card's content as before (+ the tools row, + the blank strip under the buttons), never tight.
-        assert [m for _, m in seen] == [(601, False), (748, False), (748, False)], seen
+        # Frames sized to the card's content as before (the footer is part of the card now; + the blank strip under it), never tight.
+        assert [m for _, m in seen] == [(564, False), (711, False), (711, False)], seen
         assert fr.evaluate("document.getElementById('wrap').classList.contains('spacer')")
         # The page cannot be measured, so the row of the second card starts under the bar; the page's own padding is gone on this
         # screen, and the strip is what lets it be scrolled clear: it can be reached and tapped.
@@ -482,7 +498,7 @@ def test_a_visitors_own_label_clears_the_bar_too_without_the_sample_caption(brow
         start_own_label(pg)
         assert pg.get_by_text("Sample label").count() == 0  # no caption above the card: the room is a little larger
         seen = walk(pg, 4, lambda: row_gap(pg))
-        assert len(seen) == 4 and all(0 <= gap <= 12 for _, gap in seen), seen
+        assert len(seen) == 4 and all(0 <= gap <= ROW_GAP_MAX for _, gap in seen), seen
     finally:
         ctx.close()
 
@@ -500,7 +516,7 @@ def test_a_card_reopened_from_the_results_clears_the_bar_and_keeps_its_hint(brow
         assert "Editing from your results" in card(pg).locator("#card").inner_text()
         assert card(pg).locator(".hint").is_visible()  # explanatory text is never dropped
         assert card(pg).locator("#btnBack").get_attribute("aria-label") == "Back to your results"
-        assert 0 <= row_gap(pg) <= 12, row_gap(pg)
+        assert 0 <= row_gap(pg) <= ROW_GAP_MAX, row_gap(pg)
         card(pg).locator("#btnBack").click(timeout=5000)
         results_heading(pg).wait_for(timeout=20000)
     finally:
@@ -522,20 +538,21 @@ def test_a_label_with_upper_limit_warnings_keeps_every_red_box_in_full_view(brow
         settle(pg)
         count = int(card(pg).locator(".count").inner_text().split(" of ")[1])
         probe = ("() => { const w = document.querySelector('.warn'); if (!w) { return null; } const a = w.getBoundingClientRect(),"
-                 " c = document.getElementById('card').getBoundingClientRect(); return { top: a.top - c.top, below: c.bottom - a.bottom, h: a.height }; }")
+                 " c = document.getElementById('cbody').getBoundingClientRect(); return { top: a.top - c.top, below: c.bottom - a.bottom, h: a.height }; }")
         seen = walk(pg, count, lambda: (row_gap(pg), card_frame(pg).evaluate(probe)))
-        assert all(0 <= gap <= 12 for _, (gap, _) in seen), seen
+        assert all(0 <= gap <= ROW_GAP_MAX for _, (gap, _) in seen), seen
         boxes = [box for _, (_, box) in seen if box]
         assert len(boxes) >= 2, seen  # the high doses of iron, zinc and selenium carry a warning
-        assert all(b["top"] >= 0 and b["below"] >= 36 and b["h"] > 40 for b in boxes), boxes  # whole, and clear of the fade at the card's foot
+        assert all(b["top"] >= 0 and b["below"] >= 36 and b["h"] > 40 for b in boxes), boxes  # whole, and clear of the fade at the foot of the body
     finally:
         ctx.close()
 
 
 @needs_browser
 def test_at_double_text_size_the_row_is_clear_and_the_card_scrolls_inside_its_frame(browser, server):
-    """320x640 at 200 % text, the card's own frame zoomed too: its window would be a slit, so the frame grows to give it 240 px and the
-    page scrolls (see MIN_WINDOW); scrolled to the end, the row is clear of the bar on every card."""
+    """320x640 at 200 % text, the card's own frame zoomed too: the footer takes two rows (117 px), the body's window is 244 px (a frame
+    that would leave it less than 240 grows and the page scrolls: see MIN_WINDOW and tests/test_ux_fixed_screen_browser.py); wherever the
+    page is scrolled to, the row is clear of the bar once it is scrolled to the end."""
     ctx, pg = open_page(browser, server, (320, 640), init=TEXT_200)
     try:
         start_sample(pg)
@@ -544,7 +561,7 @@ def test_at_double_text_size_the_row_is_clear_and_the_card_scrolls_inside_its_fr
             pg.evaluate(f"{MAIN}.scrollTo(0, 100000)")
             pg.wait_for_timeout(250)
             return row_gap(pg), card_frame(pg).evaluate(
-                "(() => { const c = document.getElementById('card'); return c.scrollHeight - c.clientHeight; })()")
+                "(() => { const c = document.getElementById('cbody'); return c.scrollHeight - c.clientHeight; })()")
 
         seen = walk(pg, 7, measure)
         assert all(gap >= 0 for _, (gap, _) in seen), seen
@@ -588,8 +605,10 @@ def cdp_swipe(ctx, pg, x0, y0, dx, dy=0, steps=8) -> None:
 
 
 def centre(pg) -> tuple:
+    """A point to start a finger on: the middle of the card's first rows (Card n of N, the progress bar). Nothing tappable is there: a
+    press on a chip or a footer button never starts a swipe, and the chips sit lower, right-aligned."""
     b = card(pg).locator("#card").bounding_box()
-    return b["x"] + b["width"] / 2, b["y"] + min(b["height"] / 2, 150)
+    return b["x"] + b["width"] / 2, b["y"] + 28
 
 
 def moves_to_another_card(pg, old: str, act):
@@ -653,9 +672,9 @@ def test_a_card_that_scrolls_inside_its_frame_still_swipes_sideways_and_scrolls_
     try:
         start_sample(pg)
         name = card_name(pg)
-        keep_and_wait(pg, name)  # card 2 carries the long vitamin D note: ~90 px of it are below the fold of the card
+        keep_and_wait(pg, name)  # card 2 carries the long vitamin D note: ~90 px of it are below the fold of the card's body
         to_top(pg)
-        c = card(pg).locator("#card")
+        c = card(pg).locator("#cbody")
         state = c.evaluate("e => ({ hidden: e.scrollHeight - e.clientHeight, top: e.scrollTop })")
         assert state["hidden"] > 48 and state["top"] == 0, state
         assert card_frame(pg).evaluate("document.getElementById('stage').classList.contains('cue-strong')")  # the pill says "scroll for more"
@@ -707,21 +726,22 @@ def cue_thresholds() -> tuple[int, int]:
     return tuple(int(re.search(r"var CUE_%s = (\d+);" % name, SCRIPT).group(1)) for name in ("FADE", "PILL"))  # type: ignore[return-value]
 
 
+# The scroller is the card's body (#cbody); the fade and the pill are drawn over the foot of its window (.cmain), above the footer.
 CUE_JS = """() => {
-  const stage = document.getElementById('stage'), c = document.getElementById('card'), pill = document.getElementById('cue');
-  const after = getComputedStyle(stage, '::after'), pad = parseFloat(getComputedStyle(c).paddingBottom) || 0;
-  const pr = pill.getBoundingClientRect(), sr = stage.getBoundingClientRect();
+  const stage = document.getElementById('stage'), c = document.getElementById('cbody'), main = document.querySelector('.cmain'), pill = document.getElementById('cue');
+  const after = getComputedStyle(main, '::after'), pad = parseFloat(getComputedStyle(c).paddingBottom) || 0;
+  const pr = pill.getBoundingClientRect(), mr = main.getBoundingClientRect(), fr = document.getElementById('actions').getBoundingClientRect();
   return { hidden: c.scrollHeight - c.clientHeight, pad, cut: Math.round(c.scrollHeight - c.clientHeight - c.scrollTop - pad),
-           fade: after.content !== 'none' && after.content !== 'normal', fadeBg: after.backgroundImage, fadeH: parseFloat(after.height),
+           fade: stage.classList.contains('cue') && after.content !== 'none' && after.content !== 'normal', fadeBg: after.backgroundImage, fadeH: parseFloat(after.height),
            fadePE: after.pointerEvents, pill: getComputedStyle(pill).display, pillPE: getComputedStyle(pill).pointerEvents,
-           pillInside: pr.width > 0 && pr.left >= sr.left && pr.right <= sr.right && pr.bottom <= sr.bottom && pr.top >= sr.top,
-           classes: stage.className }; }"""
-# Shrink the card's box so that exactly `target` px of its content are cut off (font independent), then let the card see a scroll.
+           pillInside: pr.width > 0 && pr.left >= mr.left && pr.right <= mr.right && pr.bottom <= mr.bottom && pr.top >= mr.top, pillAboveFooter: pr.bottom <= fr.top,
+           mainBottom: mr.bottom, footerTop: fr.top, classes: stage.className }; }"""
+# Shrink the card's window so that exactly `target` px of the body's content are cut off (font independent), then let the card see a scroll.
 CUT_OFF_JS = """(target) => {
-  const stage = document.getElementById('stage'), c = document.getElementById('card');
-  c.style.bottom = (stage.clientHeight - 100) + 'px';   // a tiny box: scrollHeight is now the content's own height
+  const m = document.querySelector('.cmain'), c = document.getElementById('cbody');
+  m.style.flex = '0 0 auto'; m.style.height = 'auto';   // the window takes the body's own height: scrollHeight is the content
   const content = c.scrollHeight;
-  c.style.bottom = (stage.clientHeight - (content - target + 2)) + 'px';   // + the two 1 px borders
+  m.style.height = (content - target) + 'px';
   c.scrollTop = 0;
   c.dispatchEvent(new Event('scroll'));
   return { content, hidden: c.scrollHeight - c.clientHeight }; }"""
@@ -748,7 +768,7 @@ def test_the_fade_and_the_pill_follow_how_much_text_is_cut_off(browser, server):
             if m["fade"]:  # it is really painted: a gradient over the foot of the card, which never catches a touch
                 assert "linear-gradient" in m["fadeBg"] and m["fadeH"] == 30 and m["fadePE"] == "none", m
             if m["pill"] == "block":
-                assert m["pillPE"] == "none" and m["pillInside"], m
+                assert m["pillPE"] == "none" and m["pillInside"] and m["pillAboveFooter"], m  # inside the window, never over the footer
             assert ("cue-strong" in m["classes"]) is (cut > pill_t) and ("cue" in m["classes"].split()) is (cut > fade_t), m
     finally:
         ctx.close()
@@ -765,10 +785,10 @@ def test_a_clipped_card_shows_the_fade_and_the_pill_and_loses_both_at_its_end(br
 
         def measure():
             top = fr.evaluate(CUE_JS)
-            fr.evaluate("(() => { const c = document.getElementById('card'); c.scrollTop = c.scrollHeight; })()")
+            fr.evaluate("(() => { const c = document.getElementById('cbody'); c.scrollTop = c.scrollHeight; })()")
             pg.wait_for_timeout(250)
             end = fr.evaluate(CUE_JS)
-            fr.evaluate("document.getElementById('card').scrollTop = 0")
+            fr.evaluate("document.getElementById('cbody').scrollTop = 0")
             pg.wait_for_timeout(100)
             return top, end
 
@@ -787,23 +807,33 @@ def test_a_clipped_card_shows_the_fade_and_the_pill_and_loses_both_at_its_end(br
 
 @needs_browser
 def test_a_card_that_is_only_short_of_its_bottom_padding_gets_no_fade(browser, server):
-    """360x640: the vitamin D card overflows its frame by 5 px, all of it padding. The fade over the last 30 px would wash out a
-    line of text that is entirely visible."""
+    """A card that overflows its window by no more than its bottom padding shows all its text. The fade over the last 30 px would wash
+    out a line of text that is entirely visible. (Before the footer moved into the card the vitamin D card at 360x640 was such a card;
+    the real cards now either fit or are cut by 9 px and more at the sizes measured, so the real vitamin D3 card is cut to that
+    overflow by the harness: font independent.)"""
     ctx, pg = open_page(browser, server, (360, 640))
     try:
         start_sample(pg)
+        keep_and_wait(pg, card_name(pg))  # card 2: vitamin D3, the longest note
         fr = card_frame(pg)
-        seen = walk(pg, 7, lambda: fr.evaluate(CUE_JS))
-        short = [(name, m) for name, m in seen if 0 < m["hidden"] <= m["pad"] + cue_thresholds()[0]]
-        assert short, seen  # a card that overflows by no more than its padding exists at this size
-        assert all(not m["fade"] and m["pill"] == "none" for _, m in short), short
+        fade_t, _pill_t = cue_thresholds()
+        pad = fr.evaluate(CUE_JS)["pad"]
+        for short in (1, pad // 2, pad, pad + fade_t):  # px of the body hidden below the window: all of it is the padding, or at most the fade's threshold more
+            put = fr.evaluate(CUT_OFF_JS, short)
+            assert abs(put["hidden"] - short) <= 1, (short, put)
+            pg.wait_for_timeout(250)
+            m = fr.evaluate(CUE_JS)
+            assert not m["fade"] and m["pill"] == "none", (short, m)
+        put = fr.evaluate(CUT_OFF_JS, pad + fade_t + 4)  # a line of text is cut: now it says so
+        pg.wait_for_timeout(250)
+        assert fr.evaluate(CUE_JS)["fade"], put
     finally:
         ctx.close()
 
 
 @needs_browser
 def test_a_swipe_that_starts_in_the_lower_edge_of_a_scrolling_card_still_moves_the_card(browser, server):
-    """The fade (30 px) must not catch the touch: it is drawn over the card, so only pointer-events: none lets the swipe through."""
+    """The fade (30 px) must not catch the touch: it is drawn over the card's body, so only pointer-events: none lets the swipe through."""
     ctx, pg = open_page(browser, server, (320, 568))
     try:
         start_sample(pg)
@@ -811,13 +841,13 @@ def test_a_swipe_that_starts_in_the_lower_edge_of_a_scrolling_card_still_moves_t
         to_top(pg)
         fr = card_frame(pg)
         assert fr.evaluate(CUE_JS)["fade"]  # card 2 is cut off at this size: the fade is on
-        stage = card(pg).locator("#stage").bounding_box()
-        y = stage["y"] + stage["height"] - 6 - 15  # 15 px above the card's foot, inside the fade
-        x = stage["x"] + stage["width"] / 2
+        body = card(pg).locator("#cbody").bounding_box()
+        y = body["y"] + body["height"] - 15  # 15 px above the foot of the body (just above the footer), inside the fade
+        x = body["x"] + body["width"] / 2
         frame_box = pg.locator(CARD).bounding_box()
-        hit = fr.evaluate("([x, y]) => { const e = document.elementFromPoint(x, y); return e ? { inCard: !!e.closest('#card'), id: e.id } : null; }",
+        hit = fr.evaluate("([x, y]) => { const e = document.elementFromPoint(x, y); return e ? { inBody: !!e.closest('#cbody'), id: e.id } : null; }",
                           [x - frame_box["x"], y - frame_box["y"]])
-        assert hit and hit["inCard"], hit  # the point under the fade belongs to the card, not to the overlay
+        assert hit and hit["inBody"], hit  # the point under the fade belongs to the card's body, not to the overlay and not to the footer
         second = card_name(pg)
         assert moves_to_another_card(pg, second, lambda: cdp_swipe(ctx, pg, x - 60, y, 160)), "swipe from the fade"
         assert pg.errors == []
@@ -833,10 +863,10 @@ def test_a_tap_on_the_athlete_button_under_the_fade_opens_the_guide(browser, ser
         start_sample(pg)
         fr = card_frame(pg)
         # The card (its frame zoomed too) is taller than its window: scroll it until the lower part of the button is under the fade.
-        place = """() => { const c = document.getElementById('card'), s = document.getElementById('stage').getBoundingClientRect(),
-          b = document.querySelector('.pl-guide').getBoundingClientRect(); c.scrollTop += b.bottom - (s.bottom - 6 - 14); }"""
-        probe = """() => { const st = document.getElementById('stage'), s = st.getBoundingClientRect(), b = document.querySelector('.pl-guide').getBoundingClientRect();
-          const top = Math.max(b.top, s.bottom - 6 - 30), bottom = Math.min(b.bottom, s.bottom - 6);
+        place = """() => { const c = document.getElementById('cbody'), s = c.getBoundingClientRect(),
+          b = document.querySelector('.pl-guide').getBoundingClientRect(); c.scrollTop += b.bottom - (s.bottom - 14); }"""
+        probe = """() => { const st = document.getElementById('stage'), s = document.getElementById('cbody').getBoundingClientRect(), b = document.querySelector('.pl-guide').getBoundingClientRect();
+          const top = Math.max(b.top, s.bottom - 30), bottom = Math.min(b.bottom, s.bottom);
           if (!st.classList.contains('cue') || bottom - top < 6) { return null; }
           const x = b.left + b.width / 2, y = (top + bottom) / 2, hit = document.elementFromPoint(x, y);
           return { x, y, overlap: bottom - top, onButton: !!(hit && hit.closest('.pl-guide')) }; }"""
@@ -868,19 +898,24 @@ def test_a_tap_on_the_athlete_button_under_the_fade_opens_the_guide(browser, ser
 @needs_browser
 def test_a_focused_athlete_button_is_never_under_the_fade_or_the_pill(browser, server):
     """Tab to the button at double text size: the browser scrolls it clear of the overlay (scroll-padding), it does not park it at
-    the card's edge with its last line and its focus ring covered."""
+    the body's edge with its last line and its focus ring covered. The tab order is the DOM order: the card, Ask AI, Swap food, then
+    this button, so it takes up to three Tabs."""
     ctx, pg = open_page(browser, server, (320, 640), init=TEXT_200)
     try:
         start_sample(pg)
         fr = card_frame(pg)
-        probe = """() => { const g = document.querySelector('.pl-guide'), st = document.getElementById('stage'), s = st.getBoundingClientRect(), r = g.getBoundingClientRect();
-          return { focused: document.activeElement === g, cue: st.classList.contains('cue'), bottom: r.bottom, fadeTop: s.bottom - 6 - 30,
-                   height: r.height, room: s.bottom - 6 - 30 - s.top, scrolled: document.getElementById('card').scrollTop }; }"""
+        probe = """() => { const g = document.querySelector('.pl-guide'), st = document.getElementById('stage'), s = document.getElementById('cbody').getBoundingClientRect(), r = g.getBoundingClientRect();
+          return { focused: document.activeElement === g, cue: st.classList.contains('cue'), bottom: r.bottom, fadeTop: s.bottom - 30,
+                   height: r.height, room: s.bottom - 30 - s.top, scrolled: document.getElementById('cbody').scrollTop }; }"""
 
         def measure():
             fr.evaluate("document.getElementById('card').focus({ preventScroll: true })")
-            pg.keyboard.press("Tab")
-            pg.wait_for_timeout(200)
+            for _ in range(3):
+                pg.keyboard.press("Tab")
+                pg.wait_for_timeout(150)
+                if fr.evaluate("document.activeElement.classList.contains('pl-guide')"):
+                    break
+            pg.wait_for_timeout(100)
             return fr.evaluate(probe)
 
         seen = walk(pg, 7, measure)
