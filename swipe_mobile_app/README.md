@@ -18,7 +18,13 @@ are pinned at its foot (they travel with the card when you drag it), an **Ask AI
 a second food; it changes that food). Each chip opens a sheet over the card and returns to the same card. The chips look like buttons: a
 raised, tinted pill with an icon (Ask AI indigo with a sparkle, Swap food teal with two arrows), and on the first card of a scan, for a
 visitor who has never tapped one, a soft glow ring goes round both three times (about four seconds, never a loop) and stops at the first
-touch; with "reduce motion" on there is no ring at all. A card that is taller than
+touch; with "reduce motion" on there is no ring at all. The two food amounts under the food are two separate panels, so it is clear what each
+one means: **Match your pill** (green, "Equivalent to your pill's 80 mg": the amount of this food that is equivalent to the pill's dose; "equivalent",
+not "the same", because the amount is sized to the dose, not always to the number printed on it: folic acid in DFE, one day of a weekly pill,
+the low end of a range) and **Athlete target** (slate, "For very active people: 200 mg": the amount that reaches that target; it is the button
+that opens the athlete guide at this nutrient, with a chevron and a small "Why?", which drops out on phones narrower than about 356 px or at
+large text, leaving the chevron). Each has a heading, the amount as a big right-aligned "eat ~35 g" and one plain sentence; a verdict
+such as "not practical from food alone (...)" wraps under the sentence, and a panel with nothing to say is not drawn. A card that is taller than
 its frame, on a small phone or at large text, scrolls its text inside itself, between the header and the footer, with a fade and a
 "scroll for more" pill (where a very large text size would leave that text a slit of less than 240 px, the frame grows to give it
 that and the page scrolls to the buttons, as it does on a landscape phone). Only the results (the long plan) scroll like a normal

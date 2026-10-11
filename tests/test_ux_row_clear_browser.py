@@ -137,76 +137,79 @@ def test_the_first_card_a_page_load_draws_keeps_its_swipe_hint_even_when_it_is_n
     assert "cardIndex === 0 ? \" first\"" not in SCRIPT  # the old rule, which treated a resumed card as already explained
 
 
-# ------------------------------------------------------------------ the sample label, as the card showed it BEFORE this change
-# Captured from the unpatched component (390x844 and 320x640 gave identical texts): the texts of all 7 cards.
+# ------------------------------------------------------------------ the sample label, as the card shows it
+# Captured from the component (390x844 and 320x640 give identical texts): the texts of all 7 cards. 'portion' and 'aria' changed on 2026-10-11 when
+# the one green box of two lines ("Match this dose -> eat ~35 g", "Target for very active people (200 mg) -> eat ~88 g") became two panels
+# (Match your pill / Athlete target: tests/test_ux_dose_blocks*.py); every other text is the one the first captured component showed. The athlete
+# panel's hint ("Why?" and the chevron) is aria-hidden and left out of 'portion', which is what a screen reader reads.
 BASELINE = [
     {
         'count': 'Card 1 of 7',
         'name': 'Vitamin C',
-        'aria': 'Card 1 of 7: Vitamin C, dose 80 mg. Whole-food replacement: Guavas. To match the dose: ~35 g. Notes: Whole foods pair vitamin C with bioflavonoids that support its absorption and antioxidant action.',
+        'aria': 'Card 1 of 7: Vitamin C, dose 80 mg. Whole-food replacement: Guavas. To match the dose: ~35 g. Athlete target for very active people: 200 mg, about 88 g. Notes: Whole foods pair vitamin C with bioflavonoids that support its absorption and antioxidant action.',
         'dose': 'In your pill: 80 mg',
         'food': 'Guavas',
-        'portion': ['💊 Match this dose → eat ~35 g', '🏃 Target for very active people (200 mg) → eat ~88 g. Opens the athlete guide.›'],
+        'portion': ["Match your pill eat ~35 g Equivalent to your pill's 80 mg", 'Athlete target eat ~88 g For very active people: 200 mg. Opens the athlete guide.'],
         'warn': None,
         'note': '💡 Whole foods pair vitamin C with bioflavonoids that support its absorption and antioxidant action.',
     },
     {
         'count': 'Card 2 of 7',
         'name': 'Vitamin D3',
-        'aria': 'Card 2 of 7: Vitamin D3, dose 20 mcg. Whole-food replacement: Mackerel, Atlantic. To match the dose: ~124 g. Notes: Few foods are rich in vitamin D: UV-exposed mushrooms give D2, which raises blood levels less than D3; oily fish and egg yolk give D3. Sunlight is the main source. ℹ️ October–March the sun in Germany is too weak for your skin to make vitamin D, and food alone rarely reaches the 20 µg/day reference. Many people in Germany take vitamin D in winter — ask your doctor whether that suits you.',
+        'aria': 'Card 2 of 7: Vitamin D3, dose 20 mcg. Whole-food replacement: Mackerel, Atlantic. To match the dose: ~124 g. Athlete target for very active people: 25 mcg, about 155 g. Notes: Few foods are rich in vitamin D: UV-exposed mushrooms give D2, which raises blood levels less than D3; oily fish and egg yolk give D3. Sunlight is the main source. ℹ️ October–March the sun in Germany is too weak for your skin to make vitamin D, and food alone rarely reaches the 20 µg/day reference. Many people in Germany take vitamin D in winter — ask your doctor whether that suits you.',
         'dose': 'In your pill: 20 mcg',
         'food': 'Mackerel, Atlantic',
-        'portion': ['💊 Match this dose → eat ~124 g', '🏃 Target for very active people (25 mcg) → eat ~155 g. Opens the athlete guide.›'],
+        'portion': ["Match your pill eat ~124 g Equivalent to your pill's 20 mcg", 'Athlete target eat ~155 g For very active people: 25 mcg. Opens the athlete guide.'],
         'warn': None,
         'note': '💡 Few foods are rich in vitamin D: UV-exposed mushrooms give D2, which raises blood levels less than D3; oily fish and egg yolk give D3. Sunlight is the main source. ℹ️ October–March the sun in Germany is too weak for your skin to make vitamin D, and food alone rarely reaches the 20 µg/day reference. Many people in Germany take vitamin D in winter — ask your doctor whether that suits you.',
     },
     {
         'count': 'Card 3 of 7',
         'name': 'Vitamin B12',
-        'aria': 'Card 3 of 7: Vitamin B12, dose 2.5 mcg. Whole-food replacement: Oysters, eastern (farmed). To match the dose: ~15 g. Notes: Only animal foods reliably supply active vitamin B12, bound to protein; liver and shellfish are the richest sources.',
+        'aria': 'Card 3 of 7: Vitamin B12, dose 2.5 mcg. Whole-food replacement: Oysters, eastern (farmed). To match the dose: ~15 g. Athlete target for very active people: 4 mcg, about 25 g. Notes: Only animal foods reliably supply active vitamin B12, bound to protein; liver and shellfish are the richest sources.',
         'dose': 'In your pill: 2.5 mcg',
         'food': 'Oysters, eastern (farmed)',
-        'portion': ['💊 Match this dose → eat ~15 g', '🏃 Target for very active people (4 mcg) → eat ~25 g. Opens the athlete guide.›'],
+        'portion': ["Match your pill eat ~15 g Equivalent to your pill's 2.5 mcg", 'Athlete target eat ~25 g For very active people: 4 mcg. Opens the athlete guide.'],
         'warn': None,
         'note': '💡 Only animal foods reliably supply active vitamin B12, bound to protein; liver and shellfish are the richest sources.',
     },
     {
         'count': 'Card 4 of 7',
         'name': 'Folic acid',
-        'aria': 'Card 4 of 7: Folic acid, dose 200 mcg. Whole-food replacement: Black-eyed peas (dry). To match the dose: ~54 g. Notes: Your pill is folic acid, which is absorbed ~1.7× better than food folate — so the food portion is sized to 1.7× the label amount (µg DFE).',
+        'aria': 'Card 4 of 7: Folic acid, dose 200 mcg. Whole-food replacement: Black-eyed peas (dry). To match the dose: ~54 g. Athlete target for very active people: 600 mcg, about 95 g. Notes: Your pill is folic acid, which is absorbed ~1.7× better than food folate — so the food portion is sized to 1.7× the label amount (µg DFE).',
         'dose': 'In your pill: 200 mcg',
         'food': 'Black-eyed peas (dry)',
-        'portion': ['💊 Match this dose → eat ~54 g', '🏃 Target for very active people (600 mcg) → eat ~95 g. Opens the athlete guide.›'],
+        'portion': ["Match your pill eat ~54 g Equivalent to your pill's 200 mcg", 'Athlete target eat ~95 g For very active people: 600 mcg. Opens the athlete guide.'],
         'warn': None,
         'note': '💡 Your pill is folic acid, which is absorbed ~1.7× better than food folate — so the food portion is sized to 1.7× the label amount (µg DFE).',
     },
     {
         'count': 'Card 5 of 7',
         'name': 'Magnesium',
-        'aria': "Card 5 of 7: Magnesium, dose 56 mg. Whole-food replacement: Hemp seeds (hulled). To match the dose: ~8 g. Notes: Food magnesium comes bound to fibre and other minerals, so it's better tolerated than high-dose salts. ℹ️ Low dose: about 15% of the EU daily reference intake (NRV).",
+        'aria': "Card 5 of 7: Magnesium, dose 56 mg. Whole-food replacement: Hemp seeds (hulled). To match the dose: ~8 g. Athlete target for very active people: 500 mg, not practical from food alone (~71 g/day; realistic max ~70 g/day). Notes: Food magnesium comes bound to fibre and other minerals, so it's better tolerated than high-dose salts. ℹ️ Low dose: about 15% of the EU daily reference intake (NRV).",
         'dose': 'In your pill: 56 mg',
         'food': 'Hemp seeds (hulled)',
-        'portion': ['💊 Match this dose → eat ~8 g', '🏃 Target for very active people (500 mg) → not practical from food alone (~71 g/day; realistic max ~70 g/day). Opens the athlete guide.›'],
+        'portion': ["Match your pill eat ~8 g Equivalent to your pill's 56 mg", 'Athlete target For very active people: 500 mg not practical from food alone (~71 g/day; realistic max ~70 g/day). Opens the athlete guide.'],
         'warn': None,
         'note': "💡 Food magnesium comes bound to fibre and other minerals, so it's better tolerated than high-dose salts. ℹ️ Low dose: about 15% of the EU daily reference intake (NRV).",
     },
     {
         'count': 'Card 6 of 7',
         'name': 'Zinc',
-        'aria': 'Card 6 of 7: Zinc, dose 10 mg. Whole-food replacement: Oysters, eastern (wild). To match the dose: ~25 g. Notes: Food zinc is balanced with copper; isolated zinc pills can deplete copper over time.',
+        'aria': 'Card 6 of 7: Zinc, dose 10 mg. Whole-food replacement: Oysters, eastern (wild). To match the dose: ~25 g. Athlete target for very active people: 15 mg, about 38 g. Notes: Food zinc is balanced with copper; isolated zinc pills can deplete copper over time.',
         'dose': 'In your pill: 10 mg',
         'food': 'Oysters, eastern (wild)',
-        'portion': ['💊 Match this dose → eat ~25 g', '🏃 Target for very active people (15 mg) → eat ~38 g. Opens the athlete guide.›'],
+        'portion': ["Match your pill eat ~25 g Equivalent to your pill's 10 mg", 'Athlete target eat ~38 g For very active people: 15 mg. Opens the athlete guide.'],
         'warn': None,
         'note': '💡 Food zinc is balanced with copper; isolated zinc pills can deplete copper over time.',
     },
     {
         'count': 'Card 7 of 7',
         'name': 'Selenium',
-        'aria': 'Card 7 of 7: Selenium, dose 55 mcg. Whole-food replacement: Brazil nuts. To match the dose: ~2.9 g (~0.6 Brazil nuts). Notes: One Brazil nut (~5 g) holds roughly 50–100 µg selenium (it varies with soil; USDA reference ~96 µg) — one nut a day is plenty; 3 or more nuts a day can pass the 255 µg/day upper intake level.',
+        'aria': 'Card 7 of 7: Selenium, dose 55 mcg. Whole-food replacement: Brazil nuts. To match the dose: ~2.9 g (~0.6 Brazil nuts). Athlete target for very active people: 70 mcg, about 3.7 g (~0.7 Brazil nuts). Notes: One Brazil nut (~5 g) holds roughly 50–100 µg selenium (it varies with soil; USDA reference ~96 µg) — one nut a day is plenty; 3 or more nuts a day can pass the 255 µg/day upper intake level.',
         'dose': 'In your pill: 55 mcg',
         'food': 'Brazil nuts',
-        'portion': ['💊 Match this dose → eat ~2.9 g (~0.6 Brazil nuts)', '🏃 Target for very active people (70 mcg) → eat ~3.7 g (~0.7 Brazil nuts). Opens the athlete guide.›'],
+        'portion': ["Match your pill eat ~2.9 g Equivalent to your pill's 55 mcg (~0.6 Brazil nuts)", 'Athlete target eat ~3.7 g For very active people: 70 mcg (~0.7 Brazil nuts). Opens the athlete guide.'],
         'warn': None,
         'note': '💡 One Brazil nut (~5 g) holds roughly 50–100 µg selenium (it varies with soil; USDA reference ~96 µg) — one nut a day is plenty; 3 or more nuts a day can pass the 255 µg/day upper intake level.',
     },
@@ -235,7 +238,7 @@ CARD_TEXT_JS = """() => {
   const t = s => { const e = document.querySelector(s); return e ? e.textContent.replace(/\\s+/g, ' ').trim() : null; };
   const hint = document.querySelector('.hint');
   return { count: t('.count'), name: t('.name'), aria: document.getElementById('card').getAttribute('aria-label'), dose: t('.dose'),
-           food: t('.food'), portion: [...document.querySelectorAll('.portion .pl')].map(e => e.textContent.replace(/\\s+/g, ' ').trim()),
+           food: t('.food'), portion: [...document.querySelectorAll('.portion .pl')].map(e => { const c = e.cloneNode(true); c.querySelectorAll('[aria-hidden="true"]').forEach(n => n.remove()); return c.textContent.replace(/\\s+/g, ' ').trim(); }),
            warn: t('.warn'), note: t('.bio'), hint: t('.hint'), hint_shown: hint ? getComputedStyle(hint).display !== 'none' : null,
            tight: document.getElementById('wrap').classList.contains('tight'),
            buttons: [...document.querySelectorAll('#actions button')].map(b => [b.id, b.getAttribute('aria-label'), b.textContent.trim()]),
@@ -478,7 +481,8 @@ def test_a_frame_that_cannot_read_its_page_behaves_exactly_as_before(browser, se
         assert fr.evaluate("(() => { try { return !!window.frameElement; } catch (e) { return 'THROWS ' + e.name; } })()").startswith("THROWS")
         seen = walk(pg, 3, lambda: (frame_height(pg), fr.evaluate("document.getElementById('wrap').classList.contains('tight')")))
         # Frames sized to the card's content as before (the footer is part of the card now; + the blank strip under it), never tight.
-        assert [m for _, m in seen] == [(564, False), (711, False), (711, False)], seen
+        # (They were 564 / 711 / 711 px before the two food amounts became two panels: the panels are 28 px taller than the old box.)
+        assert [m for _, m in seen] == [(592, False), (739, False), (739, False)], seen
         assert fr.evaluate("document.getElementById('wrap').classList.contains('spacer')")
         # The page cannot be measured, so the row of the second card starts under the bar; the page's own padding is gone on this
         # screen, and the strip is what lets it be scrolled clear: it can be reached and tapped.

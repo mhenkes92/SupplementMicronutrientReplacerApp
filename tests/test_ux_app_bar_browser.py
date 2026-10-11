@@ -407,14 +407,14 @@ def test_the_item_window_opens_the_guide_at_its_nutrient(page):
     results_heading(page).wait_for(timeout=5000)
 
 
-# ------------------------------------------------------------------ a tap on the athlete line of a card
+# ------------------------------------------------------------------ a tap on the athlete line (now a panel) of a card
 def test_a_tap_on_the_athlete_line_opens_the_guide_without_swiping(page):
     start_sample(page)
     name = card_name(page)
     line = card(page).locator("button.pl-guide")
     line.wait_for(timeout=10000)
     box = line.bounding_box()
-    assert box["height"] >= 32
+    assert box["height"] >= 44  # the athlete panel is a thumb-sized button (tests/test_ux_dose_blocks_browser.py measures it on every phone)
     page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)  # a mouse: the card holds pointer capture
     page.locator(DIALOG).wait_for(timeout=10000)
     settle(page)
