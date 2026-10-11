@@ -482,7 +482,7 @@ def test_the_component_sends_the_guide_event_as_its_own_kind_and_keeps_drags_apa
     assert 'kind: "guide"' in src and "if (committed || hostBusy()) return;" in src  # nothing while a swipe is on its way or an analysis runs
     assert "e.detail > 0 && movedBeyondTap" in src  # a pointer click after a drag is no tap; a keyboard Enter (detail 0) still works
     assert "if (!downOnGuide)" in src  # the capture waits on the line, so a tap reaches the button and a drag still swipes
-    assert "outline: 3px solid #1d4ed8" in src and "min-height: 32px" in src  # a visible focus ring and a target of 32 px
+    assert "outline: 3px solid #1d4ed8" in src and "min-height: 44px" in src  # a visible focus ring and a target of 44 px (the athlete panel; it was a 32 px line)
     # (The frame rule itself is pinned where the card is tested: tests/test_ux_audit_fixes.py and tests/test_ux_row_clear_browser.py.)
     assert "function fitHeight()" in src and "maxHeight" in src  # the frame still fits itself and still only grows
 

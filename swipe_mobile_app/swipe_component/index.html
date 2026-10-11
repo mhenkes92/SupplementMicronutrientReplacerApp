@@ -108,13 +108,44 @@
   /* The full USDA name of the food: only when the card has room for it (the Swap food window always has it). */
   .src { margin-top: 6px; font-size: .72rem; line-height: 1.3; color: #475569; overflow-wrap: anywhere; }
   #wrap.nosrc .src { display: none; }
-  .portion { margin-top: 10px; padding: 8px 10px; border-radius: 12px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #14532d; font-size: .84rem; line-height: 1.5; }
-  .portion .pl { display: block; }
-  .portion button.pl { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0; padding: 4px 0; margin: 0; cursor: pointer; min-height: 32px; }
-  .portion button.pl .pl-text { flex: 1 1 auto; min-width: 0; }
-  .portion button.pl:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; border-radius: 8px; }
-  .portion button.pl .chev { flex: 0 0 auto; font-weight: 800; color: #047857; }
-  .portion b { color: #0f172a; }
+  /* The two amounts of the "Eat instead" box are TWO panels, not two lines of one box: "Match your pill" (green: the food amount that equals the
+     pill's own dose) and "Athlete target" (slate: the amount very active people aim for; a button that opens the athlete guide). Each has a
+     heading in the style of the "Eat instead" label, the food amount as the big figure at the end of that row (so the two figures are read side
+     by side) and one plain sentence that says what the amount is a match for. A verdict ("not practical from food alone (...)") or a note
+     ("(~0.6 Brazil nuts)") wraps under the sentence at the panel's full width; a panel with nothing to say is not drawn at all. The colours are
+     one family per panel (--p-*); the slate is none of the colours the card's other things use (the warning's orange, the note's blue, the
+     chips' indigo and teal, the footer's red and green), and both tints are opaque, so the text on them has the same contrast on every card
+     colour. Where a panel is too narrow for the hint's word ("Why?", below 17.25 em: a phone narrower than about 356 px, or a large text size)
+     only the chevron stays: the query is in em, so a larger text size narrows the panel for it as a smaller phone does. */
+  .portion { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; container-type: inline-size; }
+  .pl {
+    --p-bg: #ecfdf5; --p-line: #a7f3d0; --p-bar: #10b981; --p-head: #047857; --p-ink: #14532d; --p-eat: #166534; --p-fig: #0f172a;
+    display: block; box-sizing: border-box; width: 100%; margin: 0; padding: 6px 10px 6px 9px; text-align: left; font: inherit; line-height: 1.35;
+    color: var(--p-ink); background: var(--p-bg); border: 1px solid var(--p-line); border-left: 4px solid var(--p-bar); border-radius: 12px;
+  }
+  .pl-guide { --p-bg: #d9e0ea; --p-line: #8796ab; --p-bar: #475569; --p-head: #334155; --p-ink: #1e293b; --p-eat: #334155; min-height: 44px; cursor: pointer; }
+  .pl-top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; column-gap: 8px; }
+  .pl-head { font-size: .74rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; line-height: 1.25; color: var(--p-head); }
+  /* position: relative with a z-index paints the figure above the rows after it (and above the chevron, which is clipped below). In
+     forced-colors mode (Windows high contrast) the browser puts a backplate behind every glyph, and the next row's backplate used to be
+     painted over the tail of the figure's "g" (it read as "q"). */
+  .pl-amt { position: relative; z-index: 1; margin-left: auto; white-space: nowrap; font-size: .8rem; font-weight: 700; color: var(--p-eat); }
+  .pl-amt b { font-size: 1.2rem; font-weight: 800; line-height: 1.1; letter-spacing: -.01em; color: var(--p-fig); }
+  .pl-row { display: flex; flex-wrap: wrap; align-items: center; column-gap: 6px; }
+  .pl-line { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .pl-sent { flex: 1 1 auto; min-width: 0; font-size: .84rem; }
+  .pl-note { display: block; font-size: .78rem; line-height: 1.3; }
+  .pl-near { flex: 0 0 auto; margin-left: auto; text-align: right; }   /* a short bracket shares the sentence's row, under the figure, when it fits, else it has a row of its own */
+  .pl-verdict { display: block; margin-top: 1px; font-size: .82rem; font-weight: 800; color: var(--p-fig); overflow-wrap: anywhere; }
+  .pl-more { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 3px; color: var(--p-head); }
+  .pl-why { font-size: .8rem; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
+  .pl-more .chev { font-size: 1.4rem; font-weight: 800; line-height: .8; }
+  .pl-guide:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
+  @container (max-width: 17.25em) { .pl-why { display: none; } }   /* 276 px at 100 % text: a 360 px phone (the panel is 280 px) keeps the word */
+  /* Forced colors also paint a backplate behind the whole content area of the chevron, which is taller than its line (line-height .8). Where
+     the panel's padding is small (the tight density, 3 px) the backplate reached the panel's bottom border and cut a gap in it, right under
+     the chevron. Clipped to the chevron's own row (not at its sides) it cannot. */
+  @media (forced-colors: active) { .pl-more { clip-path: inset(0 -4px); } }
   .warn { margin-top: 10px; padding: 7px 10px; border-radius: 12px; background: #fff7ed; border: 1px solid #fed7aa; color: #7c2d12; font-size: .82rem; font-weight: 600; line-height: 1.4; }
   .bio { margin-top: 8px; padding: 7px 10px; border-radius: 12px; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a5f; font-size: .82rem; line-height: 1.4; }
   .hint { text-align: center; margin-top: auto; padding-top: 10px; font-size: .8rem; color: #475569; }  /* pinned to the foot of the card */
@@ -212,7 +243,9 @@
   #wrap.tight .foodwrap { margin-top: 6px; padding: 6px 10px; }
   #wrap.tight .foodrow { margin-top: 4px; }
   #wrap.tight .src { margin-top: 3px; }
-  #wrap.tight .portion { margin-top: 6px; padding: 4px 8px; }
+  #wrap.tight .portion { margin-top: 6px; }
+  #wrap.tight .pl { padding: 3px 8px 3px 8px; line-height: 1.3; }   /* two rows of 20 + 17 px: the panel is still 44 px high (the athlete one is a button) */
+  #wrap.tight .pl-amt b { line-height: 1; }
   #wrap.tight .warn { margin-top: 6px; padding: 5px 8px; }
   #wrap.tight .bio { margin-top: 6px; padding: 5px 8px; }
   #wrap.tight .hint { padding-top: 6px; }
@@ -545,21 +578,51 @@
     // are found by id, and one delegated click listener (below) serves them.
     var askHtml = args.canAsk ? '<button type="button" class="chip" id="btnAsk" data-tool="ask" aria-label="Ask AI about this nutrient">' + ICON_ASK + 'Ask AI</button>' : '';
     var swapHtml = args.canSwap ? '<button type="button" class="chip" id="btnSwap" data-tool="swap" aria-label="Swap food: choose another whole food">' + ICON_SWAP + 'Swap food</button>' : '';
-    var portionRows = "";
-    // "eat" only before an actual amount ("~85 g"), not before verdicts such as
-    // "not practical from food alone (~2.3 kg/day)" or "a lot of food (...)".
-    function portion(txt) {
-      var t = String(txt || "");
-      return (/^[~<\d]/.test(t) ? "eat " : "") + "<b>" + esc(t) + "</b>";
+    // An amount: "eat " only before an actual amount ("~85 g"), not before verdicts such as "not practical from food alone (~2.3 kg/day)"
+    // or "a lot of food (...)". The figure is the amount itself; what follows it ("(~0.6 Brazil nuts)", a note) or the whole verdict is
+    // set under the panel's sentence (see ".portion").
+    function amountParts(txt) {
+      var t = String(txt || "").trim();
+      if (!/^[~<\d]/.test(t)) { return { figure: "", rest: t, verdict: true }; }
+      var at = t.indexOf(" (");
+      return { figure: at > 0 ? t.slice(0, at) : t, rest: at > 0 ? t.slice(at + 1) : "", verdict: false };
     }
+    // "200 mg" stays on one line: a unit never starts a line of its own (a no-break space in the sentence of a panel).
+    function glue(s) { return String(s).replace(/ /g, "\u00a0"); }
+    // What a screen reader says for an amount: "~88 g" is "about 88 g"; a verdict is said as it is.
+    function spoken(txt) { var t = String(txt || "").trim(); return t.charAt(0) === "~" ? "about " + t.slice(1).trim() : t; }
+    // One panel: heading and figure on the first row, the sentence under them (with the hint at its end, if any), then the note or verdict.
+    // A short note ("(~0.6 Brazil nuts)") goes into the sentence's row and wraps onto a row of its own only when it does not fit there.
+    // The spaces between the parts are for the text of the panel (its name for a screen reader); the flex rows ignore them.
+    function panel(head, sentence, txt, hint) {
+      var a = amountParts(txt);
+      var near = !a.verdict && a.rest.length > 0 && a.rest.length <= 24;
+      return '<span class="pl-top"><span class="pl-head">' + head + '</span>' + (a.figure ? ' <span class="pl-amt">eat <b>' + esc(a.figure) + '</b></span>' : '') + '</span> ' +
+        '<span class="pl-row"><span class="pl-line"><span class="pl-sent">' + sentence + '</span>' + (hint || '') + '</span>' +
+        (near ? ' <span class="pl-note pl-near">' + esc(a.rest) + '</span>' : '') + '</span>' +
+        (a.rest && !near ? ' <span class="' + (a.verdict ? 'pl-verdict' : 'pl-note') + '">' + esc(a.rest) + '</span>' : '');
+    }
+    var portionRows = "";
     if (args.matchDose) {
-      portionRows += '<span class="pl">💊 Match this dose &rarr; ' + portion(args.matchDose) + '</span>';
+      // "Equivalent to", not "the same as": the amount is sized to the pill's dose, which is not always the amount that is printed (folic acid
+      // is sized in DFE, so the food holds more micrograms than the label says; a weekly pill is matched by one day's share; a range by its
+      // low end). The pill's dose is named only when it is a plain amount ("80 mg"), a range is named by its low end ("100–200 mg" gives
+      // "the low end (100 mg)"), and a weekly dose or "Dose not found" is not named.
+      var pill = String(args.dose || "").trim();
+      var plain = /^\d[^()–]{0,13}$/.test(pill);
+      var weekly = /\b(?:once a week|every \d+ days)\b/i.test(pill);
+      var range = /^\d[^()]*–\s*\d/.test(pill);
+      portionRows += '<div class="pl pl-match">' + panel("Match your pill", "Equivalent to " +
+        (weekly ? "one day of your pill" : range ? "the low end (" + glue(esc(pill.replace(/\s*–\s*[\d.,]+/, ""))) + ")" : plain ? "your pill's " + glue(esc(pill)) : "the dose in your pill"),
+        args.matchDose) + '</div>';
     }
     if (args.rdaAmount) {
-      // A button: a tap opens the Athlete RDA guide at this nutrient (see "guide" in the app). The visible text is its name.
-      portionRows += '<button type="button" class="pl pl-guide" data-guide="1"><span class="pl-text">🏃 Target for very active people' +
-        (args.rdaLabel ? ' (' + esc(args.rdaLabel) + ')' : '') +
-        ' &rarr; ' + portion(args.rdaAmount) + '<span class="sr-only">. Opens the athlete guide.</span></span><span class="chev" aria-hidden="true">&rsaquo;</span></button>';
+      // A button: a tap opens the Athlete RDA guide at this nutrient (see "guide" in the app). The hint ("Why?" and the chevron) is for the
+      // eye; the screen reader hears what the button does.
+      portionRows += '<button type="button" class="pl pl-guide" data-guide="1">' + panel("Athlete target",
+        "For very active people" + (args.rdaLabel ? ": " + glue(esc(args.rdaLabel)) : ""), args.rdaAmount,
+        '<span class="pl-more" aria-hidden="true"><span class="pl-why">Why?</span><span class="chev">&rsaquo;</span></span>') +
+        '<span class="sr-only">. Opens the athlete guide.</span></button>';
     }
     var portionHtml = portionRows ? '<div class="portion">' + portionRows + '</div>' : '';
     var warnHtml = args.warn ? '<div class="warn" role="note">' + esc(args.warn) + '</div>' : '';
@@ -586,6 +649,7 @@
       "Card " + idx + " of " + total + ": " + (args.name || "Micronutrient") + ", dose " + (args.dose || "not available") +
       (args.food ? ". Whole-food replacement: " + args.food : (args.foodNote ? ". " + args.foodNote : "")) +
       (args.matchDose ? ". To match the dose: " + args.matchDose : "") +
+      (args.rdaAmount ? ". Athlete target for very active people" + (args.rdaLabel ? ": " + args.rdaLabel : "") + ", " + spoken(args.rdaAmount) : "") +
       (args.warn ? ". Warning: " + args.warn : "") +
       (args.bioNote ? ". Notes: " + args.bioNote : ""));
 
