@@ -15,7 +15,10 @@ style of a swipe app: the swipe card fills the room between the brand and a fixe
 below it but the bar, so the page does not scroll. Everything you tap is inside the card: **Back**, **Keep pill** and **Replace**
 are pinned at its foot (they travel with the card when you drag it), an **Ask AI** chip sits in its header beside the nutrient name
 (only when the AI is configured; it asks about this nutrient) and a **Swap food** chip beside **Eat instead** (only when the card has
-a second food; it changes that food). Each chip opens a sheet over the card and returns to the same card. A card that is taller than
+a second food; it changes that food). Each chip opens a sheet over the card and returns to the same card. The chips look like buttons: a
+raised, tinted pill with an icon (Ask AI indigo with a sparkle, Swap food teal with two arrows), and on the first card of a scan, for a
+visitor who has never tapped one, a soft glow ring goes round both three times (about four seconds, never a loop) and stops at the first
+touch; with "reduce motion" on there is no ring at all. A card that is taller than
 its frame, on a small phone or at large text, scrolls its text inside itself, between the header and the footer, with a fade and a
 "scroll for more" pill (where a very large text size would leave that text a slit of less than 240 px, the frame grows to give it
 that and the page scrolls to the buttons, as it does on a landscape phone). Only the results (the long plan) scroll like a normal

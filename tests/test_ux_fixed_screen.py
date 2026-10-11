@@ -788,8 +788,8 @@ def test_the_component_has_two_chips_inside_the_card_and_posts_one_kind_each():
     tests/test_ux_card_inside.py."""
     for gone in ('id="extras"', "btnMore", '"report"', "More options"):
         assert gone not in COMPONENT, gone
-    assert re.search(r'<button type="button" class="chip" id="btnAsk" data-tool="ask" aria-label="Ask AI about this nutrient">Ask AI</button>', COMPONENT)
-    assert re.search(r'<button type="button" class="chip" id="btnSwap" data-tool="swap" aria-label="Swap food: choose another whole food">Swap food</button>', COMPONENT)
+    assert re.search(r'<button type="button" class="chip" id="btnAsk" data-tool="ask" aria-label="Ask AI about this nutrient">\' \+ ICON_ASK \+ \'Ask AI</button>', COMPONENT)
+    assert re.search(r'<button type="button" class="chip" id="btnSwap" data-tool="swap" aria-label="Swap food: choose another whole food">\' \+ ICON_SWAP \+ \'Swap food</button>', COMPONENT)
     assert "args.canAsk ? '<button" in COMPONENT and "args.canSwap ? '<button" in COMPONENT  # absent (no gap) when the card does not offer it
     assert "btnSwap.hidden" not in COMPONENT and "btnAsk.hidden" not in COMPONENT
     assert 'toolEvent(hit.getAttribute("data-tool"));' in COMPONENT  # one delegated listener: the chips are rebuilt with every card

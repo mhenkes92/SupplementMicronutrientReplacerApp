@@ -15,6 +15,7 @@ and the page scrolls: there the footer is checked after the page is scrolled to 
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import time
@@ -36,6 +37,7 @@ from test_ux_row_clear_browser import (  # noqa: E402
 
 SIZES = [(320, 568), (320, 640), (360, 640), (375, 667), (390, 844), (393, 852), (412, 915)]
 PERCENTS = [("100", None), ("150", TEXT_150), ("200", TEXT_200)]
+RING_SPREAD = 10  # px: how far the attention ring reaches past a chip at the most (the last keyframe of .chip-ring)
 SPY_EVENTS = """() => { const orig = window.parent.postMessage.bind(window.parent); window.__events = [];
   window.parent.postMessage = (m, t) => { if (m && m.type === 'streamlit:setComponentValue') { window.__events.push(m.value); } return orig(m, t); }; }"""
 
@@ -106,8 +108,16 @@ GEOMETRY_JS = """() => {
     const reach = tap.right > tap.left && tap.bottom > tap.top;
     return [...texts.filter(([s, e]) => hit(b, e.getBoundingClientRect())).map(([s]) => c.id + ' x ' + s),
             ...others.filter(o => reach && o !== c && hit(tap, o.getBoundingClientRect())).map(o => c.id + ' tap x ' + (o.id || o.className))]; });
+  // where the chips sit: Ask AI beside the name ('inline'), on a row of its own under it ('chip-below-name') or beside the badge with the name under both
+  // (large text, 'name-below-badge'); Swap food beside the "Eat instead" label or under it. The tap areas (the ::after) and the room the attention ring has to the body's edge.
+  const R = e => e.getBoundingClientRect(), head = document.querySelector('.head'), nameBox = head.querySelector('div'), label = document.querySelector('.foodlbl');
+  const headLayout = g('btnAsk') ? (R(g('btnAsk')).top >= R(nameBox).bottom - 2 ? 'chip-below-name' : (R(nameBox).top >= R(document.querySelector('.badge')).bottom - 2 ? 'name-below-badge' : 'inline')) : null;
+  const foodLayout = g('btnSwap') ? (R(g('btnSwap')).top >= R(label).bottom - 2 ? 'swap-below-label' : 'inline') : null;
+  const tapArea = e => { if (!e) return null; const a = getComputedStyle(e, '::after'), k = R(e); return [k.width - parseFloat(a.left) - parseFloat(a.right), k.height - parseFloat(a.top) - parseFloat(a.bottom)]; };
+  const ringRoom = chips.length ? Math.min(...chips.map(c => br.right - R(c).right)) : null;
   return { card: r(card), body: r(body), footer: r(g('actions')), ask: r(g('btnAsk')), swap: r(g('btnSwap')), askShown: shown(g('btnAsk')), swapShown: shown(g('btnSwap')),
            strays, overlaps, allInside: parts.every(p => p[1]), parts, frame: innerHeight, cue: stage.classList.contains('cue'), tight: g('wrap').classList.contains('tight'),
+           headLayout, foodLayout, askArea: tapArea(g('btnAsk')), swapArea: tapArea(g('btnSwap')), ringRoom,
            spacer: g('wrap').classList.contains('spacer') }; }"""
 
 
@@ -141,6 +151,13 @@ def test_the_footer_and_both_chips_are_inside_the_cards_box_whole_on_every_card_
             assert m["ask"]["bottom"] <= m["swap"]["y"], (name, m)  # the header's chip is above the food box's
             assert m["strays"] == [], (name, m["strays"])  # nothing of the frame is below the card: no row of tools, no row of buttons
             assert m["overlaps"] == [], (name, m["overlaps"])  # the chips overlap no text and their tap areas reach no other control
+            assert min(m["askArea"] + m["swapArea"]) >= 44, (name, m["askArea"], m["swapArea"])  # a finger-sized tap area, with the icon and the bigger chip too
+            assert m["ringRoom"] >= RING_SPREAD, (name, m["ringRoom"])  # the attention ring has room to the body's edge: the card's overflow never clips it
+            # the icon must not make the header chip wrap needlessly: beside the name on every phone at normal text (on a 320 px phone without the icon);
+            # at large text it takes the badge's row (or a row of its own, right-aligned), and never overlaps anything (above)
+            assert m["headLayout"] in ("inline", "chip-below-name", "name-below-badge") and m["foodLayout"] in ("inline", "swap-below-label"), (name, m)
+            if percent == "100":  # 320 px too: the icon is dropped there (a 288 px card), so the chip never takes a row of its own
+                assert m["headLayout"] == "inline" and m["foodLayout"] == "inline", (name, size, m["headLayout"], m["foodLayout"])
             if not m["spacer"]:
                 assert 5 <= round(m["frame"] - card_box["bottom"]) <= 7, (name, m["frame"], card_box)  # only the strip for the card's shadow
                 assert 2 <= round(bar["y"] - (iframe["y"] + card_box["bottom"])) <= 6, (name, bar, iframe, card_box)  # the card's edge, 4 px above the bar
@@ -594,5 +611,292 @@ def test_a_landscape_phone_scrolls_the_page_to_the_footer_and_the_chips_are_in_t
         pg.wait_for_timeout(300)
         foot = card(pg).locator("#actions").bounding_box()
         assert foot["y"] + foot["height"] <= rect(pg, BAR)["y"] + 1, (foot, rect(pg, BAR))  # the footer can be scrolled clear of the bar
+    finally:
+        ctx.close()
+
+
+# ------------------------------------------------------------------ the chips look like buttons and point at themselves once
+# The ring is a box-shadow on the chip's ::before for 3 slow cycles (1.4 s each), starting 0.7 s after the first card of a scan is drawn, for a
+# visitor who has never tapped a chip (localStorage "suppswipe_tools_used"). The offline pins: tests/test_ux_card_inside.py.
+TOOLS_KEY = "suppswipe_tools_used"
+PULSE_JS = "() => ({ lit: document.querySelectorAll('.chip.pulse').length, anims: document.getAnimations().filter(a => a.animationName === 'chip-ring').length, chips: document.querySelectorAll('#card .chip').length })"
+FLAG_JS = f"() => {{ try {{ return window.localStorage.getItem('{TOOLS_KEY}'); }} catch (e) {{ return 'blocked'; }} }}"
+CHIP_JS = """() => [...document.querySelectorAll('#card .chip')].map(c => { const cs = getComputedStyle(c), before = getComputedStyle(c, '::before'), ico = c.querySelector('svg.ico');
+  const k = c.getBoundingClientRect(), i = ico && ico.getBoundingClientRect();
+  return { id: c.id, text: c.textContent.trim(), aria: c.getAttribute('aria-label'), color: cs.color, bg: cs.backgroundImage, border: cs.borderTopColor, borderW: cs.borderTopWidth,
+           shadow: cs.boxShadow, weight: cs.fontWeight, ring: [before.animationName, before.animationIterationCount, before.animationDuration],
+           ico: ico ? { w: i.width, h: i.height, hidden: ico.getAttribute('aria-hidden'), inside: i.left >= k.left && i.right <= k.right && i.top >= k.top && i.bottom <= k.bottom, gap: i.left - k.left } : null }; })"""
+RECTS_JS = """() => { const q = s => document.querySelector(s), r = e => { const b = e.getBoundingClientRect(); return [b.left, b.top, b.width, b.height].map(v => Math.round(v * 100) / 100); };
+  const chips = [...document.querySelectorAll('#card .chip')], body = q('#cbody');
+  return { chips: chips.map(r), taps: chips.map(c => { const a = getComputedStyle(c, '::after'); return [a.top, a.right, a.bottom, a.left].join(' '); }), card: r(q('#card')), body: r(body), head: r(q('.head')),
+           foodwrap: r(q('.foodwrap')), footer: r(q('#actions')), scroll: [body.scrollHeight, body.clientHeight, body.scrollWidth, body.clientWidth, body.scrollTop],
+           page: [document.documentElement.scrollWidth, document.documentElement.scrollHeight] }; }"""
+
+
+def start_sample_fast(pg, replacing=None):
+    """Like start_sample, but returns the moment the first card is drawn (no settling), so the 0.7 s before the ring starts is still ahead.
+    `replacing`: the frame of the scan on screen; the sample then replaces it with a new frame, and this waits for that one."""
+    from test_ux_browser import open_scan_sheet
+
+    open_scan_sheet(pg)
+    pg.get_by_role("button", name="Try with a sample label").click()
+    card(pg).locator("#card .name").wait_for(timeout=60000)
+    end = time.time() + 30
+    while replacing is not None and time.time() < end:
+        fr = card_frame(pg)
+        if fr is not None and fr is not replacing and fr.locator("#card .name").count() == 1:
+            return fr
+        pg.wait_for_timeout(50)  # (not time.sleep: the sync API only learns of the new frame while it is inside a call)
+    return card_frame(pg)
+
+
+def wait_for_pulse(fr) -> None:
+    fr.wait_for_function("document.querySelectorAll('.chip.pulse').length === 2", timeout=6000)
+
+
+def assert_quiet(fr, where, wait_ms: int = 0, pg=None) -> None:
+    """No chip pulses and no animation runs in the card (after waiting `wait_ms`: longer than the 0.7 s before a ring would start)."""
+    if wait_ms:
+        pg.wait_for_timeout(wait_ms)
+    state = fr.evaluate(PULSE_JS)
+    assert state["lit"] == 0 and state["anims"] == 0, (where, state)
+
+
+def rgb_values(css: str) -> list[tuple[float, ...]]:
+    return [tuple(float(v) for v in m.split(",")[:3]) for m in re.findall(r"rgba?\(([^)]*)\)", css)]
+
+
+def test_a_fresh_visit_pulses_both_chips_of_the_first_card_for_three_cycles_and_then_stops(browser, ai_card_server):
+    ctx, pg = open_page(browser, ai_card_server, (390, 844))
+    try:
+        fr = start_sample_fast(pg)
+        drawn = time.time()
+        wait_for_pulse(fr)
+        assert 0.2 <= time.time() - drawn <= 4.0, time.time() - drawn  # not at once (about 0.7 s after the card is drawn): the card is read first
+        chips = fr.evaluate(CHIP_JS)
+        assert [c["id"] for c in chips] == ["btnAsk", "btnSwap"]
+        for c in chips:
+            assert c["ring"][0] == "chip-ring" and c["ring"][1] == "3" and c["ring"][2] == "1.4s", c  # three cycles, never "infinite"
+        # what the browser runs: both rings are one finite animation of 3 iterations of 1.4 s; follow the iteration it is in until it is over
+        timing = fr.evaluate("() => document.getAnimations().filter(a => a.animationName === 'chip-ring').map(a => { const t = a.effect.getComputedTiming(); return [t.iterations, t.duration]; })")
+        assert timing == [[3, 1400], [3, 1400]], timing
+        seen, end = set(), time.time() + 8
+        while time.time() < end:
+            now = fr.evaluate("() => ({ lit: document.querySelectorAll('.chip.pulse').length, it: document.getAnimations().filter(a => a.animationName === 'chip-ring').map(a => a.effect.getComputedTiming().currentIteration) })")
+            seen.update(i for i in now["it"] if i is not None)
+            if now["lit"] == 0:
+                break
+            pg.wait_for_timeout(100)
+        assert fr.evaluate(PULSE_JS)["lit"] == 0, "it never loops: the class is gone after the third ring"
+        assert seen <= {0, 1, 2} and 2 in seen, seen  # never a fourth cycle, and the third was seen
+        assert_quiet(fr, "after the ring", 600, pg)
+        assert fr.evaluate(FLAG_JS) is None  # watching is not using: only a tap on a chip sets the flag
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("selector", ["#btnAsk", "#btnSwap"])
+def test_tapping_a_chip_sets_the_flag_and_a_new_scan_of_that_visitor_never_pulses(browser, ai_card_server, selector):
+    ctx, pg = open_page(browser, ai_card_server, (390, 844))
+    try:
+        fr = start_sample_fast(pg)
+        wait_for_pulse(fr)
+        card(pg).locator(selector).click(timeout=5000)
+        pg.get_by_role("dialog").wait_for(timeout=10000)
+        assert fr.evaluate(FLAG_JS) == "1"
+        assert fr.evaluate("document.getElementById('btnAsk').classList.contains('pulse') || document.getElementById('btnSwap').classList.contains('pulse')") is False
+        pg.wait_for_timeout(700)
+        pg.keyboard.press("Escape")
+        pg.get_by_role("dialog").wait_for(state="detached", timeout=10000)
+        pg.reload(wait_until="networkidle")  # a new visit of the same browser, a new scan: the first card again
+        pg.locator('[class~="st-key-appbar_scan"] button').wait_for(timeout=20000)
+        fr = start_sample_fast(pg)
+        assert card_name(pg) == "Vitamin C"
+        assert_quiet(fr, "a new scan after a chip was used", 2000, pg)
+        assert fr.evaluate(FLAG_JS) == "1"
+    finally:
+        ctx.close()
+
+
+def test_without_a_tap_a_new_scan_pulses_again_but_cards_after_the_first_and_a_return_to_it_never_do(browser, ai_card_server):
+    ctx, pg = open_page(browser, ai_card_server, (390, 844))
+    try:
+        fr = start_sample_fast(pg)
+        wait_for_pulse(fr)
+        box = card(pg).locator("#card").bounding_box()
+        pg.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] * 0.62)  # a press on the empty body of the card: not a chip, not a decision
+        assert fr.evaluate(PULSE_JS)["lit"] == 0
+        # a new scan in this page (the sample replaces the cards on screen): its first card is a new first card, and this visitor has used no chip yet
+        fr = start_sample_fast(pg, replacing=fr)
+        assert card_name(pg) == "Vitamin C"
+        wait_for_pulse(fr)
+        name = card_name(pg)
+        card(pg).locator("#btnKeep").click(timeout=5000)  # the press stops the ring for good
+        assert fr.evaluate(PULSE_JS)["lit"] == 0
+        assert wait_name_change(pg, name)
+        assert_quiet(fr, "card 2", 1600, pg)  # longer than the 0.7 s a ring would wait: cards after the first never get one
+        card(pg).locator("#btnBack").click(timeout=5000)
+        assert wait_name_change(pg, card_name(pg)) == "Vitamin C"
+        assert_quiet(fr, "back on card 1: it had its turn", 1600, pg)  # the same card of the same scan is not given a second turn
+        for number in (2, 3, 4):
+            card(pg).locator("#btnKeep").click(timeout=5000)
+            wait_name_change(pg, card_name(pg))
+            assert_quiet(fr, f"card {number}", 1300, pg)
+    finally:
+        ctx.close()
+
+
+def test_a_card_opened_from_the_results_and_a_card_without_chips_never_pulse(browser, server):
+    """Edit mode (a card opened from the results) is not a first card; and a server with no AI and a card with a second food has one chip only
+    (the ring is on that one); the vegan EPA / DHA card has none and nothing runs."""
+    from test_ux_browser import choose_diet
+
+    ctx, pg = open_page(browser, server, (390, 844))  # no AI: only Swap food
+    try:
+        fr = start_sample_fast(pg)
+        fr.wait_for_function("document.querySelectorAll('.chip.pulse').length === 1", timeout=6000)  # the one chip the card offers
+        assert fr.evaluate("document.querySelector('.chip.pulse').id") == "btnSwap"
+    finally:
+        ctx.close()
+    ctx, pg = open_page(browser, server, (390, 844))
+    try:
+        choose_diet(pg, "Vegan")
+        start_text(pg, "Omega-3 EPA 300 mg DHA 200 mg")  # no second food: no chip at all
+        fr = card_frame(pg)
+        assert fr.evaluate(PULSE_JS)["chips"] == 0
+        assert_quiet(fr, "a card without chips", 1500, pg)
+    finally:
+        ctx.close()
+
+
+def test_reduced_motion_shows_no_ring_at_all_and_the_static_look_stays(browser, ai_card_server):
+    ctx, pg = open_page(browser, ai_card_server, (390, 844), reduced_motion="reduce")
+    try:
+        fr = start_sample_fast(pg)
+        assert fr.evaluate("window.matchMedia('(prefers-reduced-motion: reduce)').matches") is True
+        pg.wait_for_timeout(1800)  # long past the 0.7 s a ring would wait
+        chips = fr.evaluate(CHIP_JS)
+        assert [c["id"] for c in chips] == ["btnAsk", "btnSwap"]
+        assert all(c["ring"][0] == "none" for c in chips), chips  # no animation at all
+        assert fr.evaluate(PULSE_JS)["anims"] == 0
+        assert all("linear-gradient" in c["bg"] and c["shadow"] != "none" for c in chips)  # the raised, tinted pill is the cue
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("how", ["press on the card", "key", "press on the page", "drag"])
+def test_the_first_press_or_key_anywhere_stops_the_ring_at_once(browser, ai_card_server, how):
+    ctx, pg = open_page(browser, ai_card_server, (390, 844), touch=False)
+    try:
+        fr = start_sample_fast(pg)
+        wait_for_pulse(fr)
+        assert fr.evaluate(PULSE_JS)["anims"] == 2
+        box = card(pg).locator("#card").bounding_box()
+        x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] * 0.62  # the empty part of the card's body, no button there
+        if how == "press on the card":
+            pg.mouse.move(x, y)
+            pg.mouse.down()
+        elif how == "key":
+            fr.evaluate("document.getElementById('card').focus({ preventScroll: true })")
+            pg.keyboard.press("Shift")
+        elif how == "press on the page":
+            pg.locator(BAR + " button").first.click()  # the bar of the page around the card: a press outside the frame
+        else:
+            pg.mouse.move(x, y)
+            pg.mouse.down()
+            pg.mouse.move(x + 30, y + 4, steps=4)
+        state = fr.evaluate(PULSE_JS)
+        assert state["lit"] == 0 and state["anims"] == 0, (how, state)  # gone before the next frame, not at the end of the cycle
+        if how in ("press on the card", "drag"):
+            pg.mouse.up()
+        assert fr.evaluate(FLAG_JS) is None  # a press is not a tap on a chip: the visitor may be shown the ring on the next scan
+    finally:
+        ctx.close()
+
+
+def test_a_blocked_local_storage_changes_nothing_but_the_memory_of_a_tap(browser, ai_card_server):
+    """A private window or blocked site data makes localStorage throw: the ring still runs, a tap on a chip still opens its sheet, and nothing
+    throws."""
+    ctx, pg = open_page(browser, ai_card_server, (390, 844), init="Object.defineProperty(window, 'localStorage', { configurable: true, get() { throw new DOMException('denied', 'SecurityError'); } });")
+    try:
+        fr = start_sample_fast(pg)
+        wait_for_pulse(fr)  # the read of the flag threw and was caught: the ring runs
+        assert fr.evaluate(FLAG_JS) == "blocked"
+        card(pg).locator("#btnSwap").click(timeout=5000)  # the write throws and is caught: the sheet opens as usual
+        pg.get_by_role("dialog").wait_for(timeout=10000)
+        assert pg.errors == [], pg.errors
+        assert fr.evaluate(PULSE_JS)["lit"] == 0
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("size,percent,init", [((320, 568), "100", None), ((390, 844), "100", None), ((360, 640), "150", TEXT_150), ((320, 640), "200", TEXT_200)],
+                         ids=["320x568", "390x844", "360x640-150", "320x640-200"])
+def test_the_ring_moves_nothing_while_it_runs(browser, ai_card_server, size, percent, init):
+    """Sampled with the animation held at 0 / 400 / 800 ms of a cycle (the ring is visible in each) and again in the second cycle: no chip
+    rect, tap area, body, header, food box, footer, scroll height / width or page size differs from the same card without the ring."""
+    ctx, pg = open_page(browser, ai_card_server, size, init=init)
+    try:
+        fr = start_sample_fast(pg)
+        wait_for_pulse(fr)
+        samples = {}
+        for at in (0, 400, 800, 1400 + 300):
+            fr.evaluate("t => document.getAnimations().filter(a => a.animationName === 'chip-ring').forEach(a => { a.pause(); a.currentTime = t; })", at)
+            pg.wait_for_timeout(60)
+            samples[at] = fr.evaluate(RECTS_JS)
+            shadows = fr.evaluate("() => [...document.querySelectorAll('#card .chip')].map(c => getComputedStyle(c, '::before').boxShadow)")
+            if at in (0, 400):
+                assert all(sh != "none" and rgb_alpha(sh) > 0.05 for sh in shadows), (at, shadows)  # the ring really is drawn in this sample
+        fr.evaluate("() => document.querySelectorAll('.chip.pulse').forEach(c => c.classList.remove('pulse'))")
+        pg.wait_for_timeout(60)
+        baseline = fr.evaluate(RECTS_JS)
+        assert baseline["scroll"][4] == 0
+        for at, got in samples.items():
+            assert got == baseline, (at, {k: (got[k], baseline[k]) for k in got if got[k] != baseline[k]})
+    finally:
+        ctx.close()
+
+
+def rgb_alpha(shadow: str) -> float:
+    """The largest alpha of the colours of a computed box-shadow ("rgba(99, 102, 241, 0.3) 0px 0px 0px 3px"); 1 for a plain rgb()."""
+    alphas = [float(m.split(",")[3]) if m.count(",") == 3 else 1.0 for m in re.findall(r"rgba?\(([^)]*)\)", shadow)]
+    return max(alphas) if alphas else 0.0
+
+
+@pytest.mark.parametrize("size", [(390, 844), (320, 568)], ids=["390x844", "320x568"])
+def test_the_chips_are_tinted_bordered_buttons_with_an_icon_and_enough_contrast_on_every_card_colour(browser, ai_card_server, size):
+    """From the computed colours of the 7 cards of the sample (seven different card tints): a fill that is not white, a border of an
+    accent colour (1.5 px as declared; Chromium floors a fractional border to 1 px, WebKit and Firefox draw 1.33-1.5), the text >= 4.5:1 on every stop of the fill, the border >= 3:1 against the card behind it (the Swap chip: the 82 % white box),
+    a raised shadow, a bold label, an icon of the chip's own size inside it, and the two chips of two different families."""
+    from test_ux_card_inside import _contrast, _mix
+
+    ctx, pg = open_page(browser, ai_card_server, size)
+    try:
+        fr = start_sample_fast(pg)
+        fr.evaluate("() => document.querySelectorAll('.chip.pulse').forEach(c => c.classList.remove('pulse'))")
+        families = {}
+        for i in range(7):
+            name = card_name(pg)
+            chips = fr.evaluate(CHIP_JS)
+            ground = rgb_values(fr.evaluate("getComputedStyle(document.getElementById('card')).backgroundImage"))
+            assert len(ground) == 3, ground  # white, then the card's two tints
+            for chip in chips:
+                stops = rgb_values(chip["bg"])
+                assert len(stops) == 2 and all(st != (255.0, 255.0, 255.0) for st in stops) and stops[0] != stops[1], (name, chip["id"], chip["bg"])  # tinted, not white
+                text, line = rgb_values(chip["color"])[0], rgb_values(chip["border"])[0]
+                assert min(_contrast(text, st) for st in stops) >= 4.5, (name, chip["id"], chip["color"], chip["bg"])
+                behind = [_mix(g, (255, 255, 255), 0.82) for g in ground] if chip["id"] == "btnSwap" else ground
+                assert min(_contrast(line, g) for g in behind) >= 3.0, (name, chip["id"], chip["border"], behind)
+                assert float(chip["borderW"][:-2]) >= 1.0 and chip["weight"] in ("800", "900") and chip["shadow"] != "none", chip  # (declared 1.5 px; Chromium draws 1 px)
+                assert chip["ico"] and chip["ico"]["hidden"] == "true", chip  # decorative
+                if size[0] <= 320:  # a 288 px card: no icon (the chip stays as narrow as it was)
+                    assert chip["ico"]["w"] == 0, chip
+                else:
+                    assert chip["ico"]["inside"] and 10 <= chip["ico"]["w"] <= 20 and chip["ico"]["w"] == chip["ico"]["h"], chip
+                assert chip["text"] in ("Ask AI", "Swap food") and chip["text"] in chip["aria"]
+                families[chip["id"]] = (chip["color"], chip["border"], chip["bg"])
+            if i < 6:
+                keep_and_wait(pg, name)
+        assert len({families["btnAsk"][1], families["btnSwap"][1]}) == 2 and families["btnAsk"][2] != families["btnSwap"][2]  # two families
     finally:
         ctx.close()
