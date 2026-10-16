@@ -180,14 +180,27 @@
   .chip[data-tool="swap"] { --c-ink: #115e59; --c-top: #f0fdfa; --c-bot: #ccfbf1; --c-line: #0f766e; --c-press: #99f6e4; --c-edge: 15, 118, 110; --c-glow: 20, 184, 166; }
   .chip .ico { flex: 0 0 auto; width: 1.1em; height: 1.1em; }   /* as tall as the label's line, so it grows with the text size and never makes the chip taller */
   .chip::after { content: ""; position: absolute; inset: -6px -4px; }
-  /* The attention ring: a pseudo element on the chip's border box whose box-shadow grows and fades. It is drawn only while the script
-     has put .pulse on the chip (see "The attention pulse"); a shadow is paint only, so it moves nothing and adds no scroll area. */
-  .chip::before { content: ""; position: absolute; inset: -1.5px; border-radius: inherit; pointer-events: none; }
-  .chip.pulse::before { animation: chip-ring 1.4s ease-out 3 both; }
-  @keyframes chip-ring {
-    0%        { box-shadow: 0 0 0 0 rgba(var(--c-glow), .5); }
-    70%, 100% { box-shadow: 0 0 3px 10px rgba(var(--c-glow), 0); }
+  /* The glow: both chips breathe, on every card, always, so the visitor sees at a glance that they can be tapped. The halo is the
+     box-shadow of a pseudo element on the chip's border box (1 px in from the 1.5 px border, so no seam shows between them), drawn once
+     and never changed; only its OPACITY moves, slowly and eased (a breath is 3 s: 0.33 Hz, far below the 3 flashes a second of WCAG 2.3.1),
+     so it costs no paint, runs on the compositor and moves nothing: a shadow adds no box and no scroll area. It reaches 9.5 px beyond the
+     chip (the body's padding is 12 px or more at the sides, so the card's overflow never clips it) and starts from its low end, both chips
+     together, so they breathe in phase. */
+  .chip::before {
+    content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
+    box-shadow: 0 0 7px 1.5px rgba(var(--c-glow), .85);
+    opacity: .3; transition: box-shadow .25s ease;
+    animation: chip-glow 3s ease-in-out infinite;
   }
+  @keyframes chip-glow {
+    0%, 100% { opacity: .3; }
+    50%      { opacity: .95; }
+  }
+  /* It holds still where it would be in the way: while the card is dragged, while the page is busy and while a sheet is open over it, it stops
+     where it is and the halo fades to a faint one (a fade of the shadow's colour: stopping an opacity animation by removing it would snap),
+     and on a chip that is not live (a swipe is on its way) it is gone. */
+  #wrap.dragging .chip::before, #wrap.busy .chip::before { animation-play-state: paused; box-shadow: 0 0 7px 1.5px rgba(var(--c-glow), .25); }
+  .chip[aria-disabled="true"]::before { animation: none; opacity: 0; }
   .chip:focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
   .chip:not([aria-disabled="true"]):active { transform: translateY(1px) scale(0.97); background: var(--c-press); box-shadow: 0 1px 0 rgba(var(--c-edge), .32); }
   .chip[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
@@ -263,7 +276,7 @@
   #stage.cue-strong #cue { display: block; }
   /* A 320 px phone (the card's own width is then 288 px; 308 px on a 340 px phone, which still has room): without the icon the chip is as narrow as it
      was, so the header chip stays beside the name on every card instead of taking a 40 px row of its own on some of them. The tint, the border, the
-     edge, the bold label and the ring stay. */
+     edge, the bold label and the glow stay. */
   @media (max-width: 300px) {
     .chip .ico { display: none; }
     #wrap .chip { padding: 0 11px; }
@@ -271,8 +284,9 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .tcard, .rail { transition: none !important; }
-    .chip.pulse::before { animation: none !important; }   /* no ring at all: the raised, tinted look is the cue */
+    .chip::before { animation: none !important; transition: none; opacity: .55; }   /* nothing moves, but the halo stays, still and soft: the cue is not lost */
   }
+  @media (forced-colors: active) { .chip::before { animation: none; } }   /* the browser drops the shadow there (the chips keep their borders): nothing to animate */
 </style>
 </head>
 <body>
@@ -316,6 +330,7 @@
   var showSrc = true; // the full USDA name in the food block: only while the card has room for it (see fitHeight)
   var spacer = false; // the blank strip under the buttons (see "#wrap.spacer")
   var big = false;    // a large text size (the root font size is 140 % or more): see "#wrap.big"
+  var busy = false;   // the page is analysing a new label or has a sheet open over the card: the chips' glow holds still meanwhile (see "#wrap.busy")
   var drawnBefore = false;  // a card was drawn in this page load already (a resumed scan opens on a later card: its hint is still new)
   var firstCard = true;     // the card on screen is the first of the scan or the first this page load drew: it keeps the swipe hint
   var wrap = document.getElementById("wrap");
@@ -374,7 +389,7 @@
   // The one place the wrapper's classes are written.
   function paint() {
     wrap.className = (tight ? "tight" : "") + (firstCard ? " first" : "") + (finePointer ? " fine" : "") +
-      (showSrc ? "" : " nosrc") + (spacer ? " spacer" : "") + (big ? " big" : "");
+      (showSrc ? "" : " nosrc") + (spacer ? " spacer" : "") + (big ? " big" : "") + (dragging ? " dragging" : "") + (busy ? " busy" : "");
     wrap.style.paddingBottom = (spacer && spacerPx > SPACER) ? spacerPx + "px" : "";   // the class gives the usual strip
   }
   function setTight(on) {
@@ -477,8 +492,12 @@
   } catch (e) {}
   // The room also changes without any message to this frame: a filter chip appears above the card when the Diet sheet closes, a
   // caption comes or goes, the bar hides for a text field. Streamlit sends no new props for an unchanged card, so the room is looked at
-  // again a few times a second (two rectangles; nothing is redrawn unless it changed).
+  // again a few times a second (two rectangles; nothing is redrawn unless it changed). The same beat tells the glow that the page is busy
+  // or has a sheet open over the card.
   setInterval(function () {
+    var wasBusy = busy;
+    busy = hostBusy() || hostSheet();
+    if (busy !== wasBusy) { paint(); }
     if (committed || document.hidden || lastRoom === null) { return; }
     var room = hostRoom();
     if (room !== lastRoom) { refit(); }
@@ -497,49 +516,6 @@
     '<path fill="currentColor" d="M12.5 .8C12.7 2.4 13.6 3.3 15.2 3.5C13.6 3.7 12.7 4.6 12.5 6.2C12.3 4.6 11.4 3.7 9.8 3.5C11.4 3.3 12.3 2.4 12.5 .8Z"/></svg>';
   var ICON_SWAP = '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ' +
     'd="M2 5h11.5M10.5 2.2L13.5 5l-3 2.8M14 11H2.5M5.5 8.2L2.5 11l3 2.8"/></svg>';
-
-  // The attention pulse: a soft ring around the two chips, three times, for a visitor who has not tried either yet. Only the first card of
-  // a scan gets it (never a card opened from the results), once, about 0.7 s after it is drawn. Any press or key in the card, a swipe, a tap
-  // on the page around it, a busy page or a tap on a chip ends it for good, and reduced motion shows no ring at all (see ".chip.pulse").
-  // The ring is the box-shadow of a pseudo element, so it moves nothing and adds no scroll area. It never loops and never flashes: one slow
-  // ring per 1.4 s.
-  var TOOLS_KEY = "suppswipe_tools_used";   // "1" once a chip was tapped in this browser
-  var PULSE_DELAY = 700, PULSE_MS = 1400, PULSE_CYCLES = 3;   // the cycle length and count are the CSS animation's (".chip.pulse::before")
-  var toolsUsed = false;   // the same flag in memory: localStorage can throw (private window, blocked site data) or come back empty
-  var pulseTimer = 0, pulseKey = "";   // pulseKey: the card (scan + card) that had its turn; a redraw of it never starts the pulse again
-  function toolsWereUsed() {
-    try { if (window.localStorage.getItem(TOOLS_KEY) === "1") { return true; } } catch (e) {}
-    return toolsUsed;
-  }
-  function markToolsUsed() {
-    toolsUsed = true;
-    try { window.localStorage.setItem(TOOLS_KEY, "1"); } catch (e) {}
-  }
-  function stopPulse() {
-    clearTimeout(pulseTimer);
-    var lit = cbody.querySelectorAll(".chip.pulse");
-    for (var i = 0; i < lit.length; i++) { lit[i].classList.remove("pulse"); }
-  }
-  function startPulse() {
-    var chips = cbody.querySelectorAll(".chip");
-    if (!chips.length || committed || document.hidden || hostBusy() || toolsWereUsed()) { return; }
-    for (var i = 0; i < chips.length; i++) { chips[i].classList.add("pulse"); }
-    pulseTimer = setTimeout(stopPulse, PULSE_MS * PULSE_CYCLES + 200);   // the class goes when the third ring has faded
-  }
-  // The visitor is interacting: a press or a key anywhere in the card (a swipe starts with a press), and, best effort, a press or a key in
-  // the page around it (the bar, a sheet).
-  ["pointerdown", "touchstart", "mousedown", "keydown"].forEach(function (type) { document.addEventListener(type, stopPulse, { capture: true, passive: true }); });
-  try {
-    window.parent.addEventListener("pointerdown", stopPulse, true);
-    window.parent.addEventListener("keydown", stopPulse, true);
-    // A new scan brings a new frame: the old one must not leave its listeners on the page around it.
-    window.addEventListener("pagehide", function () {
-      try {
-        window.parent.removeEventListener("pointerdown", stopPulse, true);
-        window.parent.removeEventListener("keydown", stopPulse, true);
-      } catch (e) {}
-    });
-  } catch (e) {}
 
   function render(args) {
     args = args || {};
@@ -665,13 +641,6 @@
     railRepl.style.opacity = 0;
     cbody.scrollTop = 0;
     if (chipFocus) { var chip = document.getElementById(chipFocus); if (chip) { focusChip(chip); } }
-    // The attention pulse (see "The attention pulse"): the first card of a scan, once per card.
-    stopPulse();
-    var turn = scanId + "|" + cardId;
-    if (cardIndex === 0 && !editing && (args.canAsk || args.canSwap) && turn !== pulseKey && !toolsWereUsed()) {
-      pulseKey = turn;
-      pulseTimer = setTimeout(startPulse, PULSE_DELAY);
-    }
     // Say what was done and which card is next (cleared first, so identical texts are announced again).
     var said = announce + "Card " + idx + " of " + total + ": " + (args.name || "Micronutrient") + ", " + (args.dose || "dose not available") + ".";
     announce = "";
@@ -710,6 +679,12 @@
   function hostBusy() {
     try { return !!window.parent.document.querySelector(".analyze-loading-wrap"); } catch (e) { return false; }
   }
+  // A sheet (Swap the food, Ask AI, a guide, the bar's Scan and Diet) is open over the page: the card behind it is out of reach, and its glow
+  // rests while it is open (a perpetual animation behind a sheet also made the select box in it close as it opened, in a headless Chromium
+  // that has no GPU, in 5 of 12 tries). Same origin as the page; false when it cannot be read.
+  function hostSheet() {
+    try { return !!window.parent.document.querySelector('[data-testid="stDialog"]'); } catch (e) { return false; }
+  }
   // Every event carries the card, its index and the scan it was made on.
   function stamp(value) {
     value.card = cardId;
@@ -723,7 +698,6 @@
     if (dir === "right" && !canReplace) return;
     if (dir === "back" && !canBack) return;
     committed = true;
-    stopPulse();
     var active = document.activeElement;
     lastFocusId = (active && active.parentNode && active.parentNode.id === "actions") ? active.id : "";
     // aria-disabled (not disabled): a disabled button drops keyboard focus, and the page loses its place after every swipe.
@@ -770,6 +744,7 @@
     dragging = true; horizontal = null;
     sx = x; sy = y; dx = 0; dy = 0;
     card.style.transition = "none";
+    paint();   // the chips' glow holds still while the card is held
   }
   function move(x, y, ev) {
     if (!dragging) return;
@@ -786,6 +761,7 @@
   function up() {
     if (!dragging) return;
     dragging = false;
+    paint();   // ... and breathes again
     if (horizontal && dx > THRESH && canReplace) {
       commit("right");
     } else if (horizontal && dx < -THRESH) {
@@ -863,7 +839,7 @@
   card.addEventListener("click", function (e) {
     var hit = e.target.closest ? e.target.closest("[data-tool], [data-guide]") : null;
     if (!hit) { return; }
-    if (hit.hasAttribute("data-tool")) { markToolsUsed(); stopPulse(); toolEvent(hit.getAttribute("data-tool")); return; }   // the visitor found the chips: no more pulse
+    if (hit.hasAttribute("data-tool")) { toolEvent(hit.getAttribute("data-tool")); return; }
     if (e.detail > 0 && movedBeyondTap) { movedBeyondTap = false; return; }   // a pointer click after a drag was a swipe, not a tap (keyboard clicks have detail 0)
     guideEvent();
   });

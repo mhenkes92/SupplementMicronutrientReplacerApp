@@ -10,9 +10,10 @@ Tab order (the DOM order, which is also the visual one): the card, Ask AI (heade
 athlete-guide button, then Back, Keep pill, Replace in the footer. A chip is present only when the card offers it.
 
 The chips look like buttons (a tinted, raised pill with an icon: Ask AI indigo with a sparkle, Swap food teal with two arrows) and
-point at themselves once with a short ring (three slow cycles on the first card of a scan, only until the visitor has tapped a chip):
-the pins of the colours' contrast, of the finite, paint-only animation and of when it may run are after the chip tests; the browser
-half (computed styles, rectangles while the ring runs, the localStorage flag) is in tests/test_ux_card_inside_browser.py."""
+breathe: a soft halo whose opacity rises and falls once every 3 s, on every card that has them, for everyone, always (no flag, no timer,
+nothing remembered): the pins of the colours' contrast, of the slow, opacity-only animation, of the halo's reach and of where it holds still
+are after the chip tests; the browser half (computed styles, the opacity over time, rectangles while it breathes, a drag, reduced motion)
+is in tests/test_ux_card_inside_browser.py."""
 from __future__ import annotations
 
 import re
@@ -169,7 +170,7 @@ def test_a_chip_is_compact_to_look_at_and_a_finger_to_tap():
     assert tight and tight_hit and int(tight.group(1)) + 2 * -int(tight_hit.group(1)) >= 44  # a tight card's chip is 30 px, its tap area still 44
     assert "outline: 3px solid #1d4ed8" in _rule(".chip:focus-visible") and "outline-offset: 2px" in _rule(".chip:focus-visible")
     assert "margin-left: auto" in STYLE[STYLE.index(".head .chip"):STYLE.index(".head .chip") + 120]  # right-aligned, also when it wraps onto its own row
-    # the ring is 5 px: the body's padding is wider, so the card's overflow never clips it
+    # the glow reaches 9.5 px (pinned below): the body's padding is wider at the sides, so the card's overflow never clips it
     assert min(_px(_rule(".cbody"), "padding")) >= 12 and min(_px(_rule("#wrap.tight .cbody"), "padding")) >= 6
 
 
@@ -283,57 +284,117 @@ def test_the_icon_goes_on_a_320_px_phone_so_the_header_chip_stays_beside_the_nam
     assert STYLE.index("@media (max-width: 300px)") > STYLE.index("#wrap.tight .chip { min-height")  # later, so the tight rule's padding does not win
 
 
-# ------------------------------------------------------------------ the attention pulse
-def test_the_ring_is_a_finite_slow_paint_only_animation_and_reduced_motion_removes_it():
-    assert "infinite" not in STYLE  # never an endless loop
-    assert STYLE.count("@keyframes") == 1  # the one ring
-    use = _rule(".chip.pulse::before")
-    match = re.fullmatch(r"\s*animation:\s*chip-ring ([\d.]+)s ease-out (\d+) both;\s*", use)
-    assert match, use
-    seconds, cycles = float(match.group(1)), int(match.group(2))
-    assert cycles == 3 and seconds >= 1.0  # three cycles; one ring per 1.4 s is far below the 3 flashes a second of WCAG 2.3.1
-    # the script's numbers are the stylesheet's (it removes the class when the third ring has faded)
-    assert "var PULSE_DELAY = 700, PULSE_MS = 1400, PULSE_CYCLES = 3;" in SCRIPT and (seconds, cycles) == (1.4, 3)
-    frames = STYLE[STYLE.index("@keyframes chip-ring"):]
-    frames = frames[:frames.index("\n  }") + 4]
-    props = set(re.findall(r"([a-z-]+):", re.sub(r"rgba\([^)]*\)", "", frames.split("{", 1)[1])))
-    assert props == {"box-shadow"}, props  # paint only: no transform, size, margin or opacity (nothing that changes a rect or the scroll area)
-    assert "rgba(var(--c-glow), 0)" in frames  # it fades out completely
-    ring = _rule(".chip::before")
-    assert "position: absolute" in ring and "pointer-events: none" in ring and "border-radius: inherit" in ring and "inset: -1.5px" in ring
-    reduced = STYLE[STYLE.index("@media (prefers-reduced-motion: reduce)"):]
-    reduced = reduced[:reduced.index("\n  }") + 4]
-    assert ".chip.pulse::before { animation: none !important; }" in reduced  # no animation at all: the static look is the cue
-    # the ring's spread is less than the body's side padding (the chip at the right edge): the card's clipping never cuts a visible ring
-    last = re.search(r"70%, 100% \{ box-shadow: 0 0 (\d+)px (\d+)px", STYLE)
-    assert last and int(last.group(2)) < min(_px(_rule(".cbody"), "padding")[1], _px(_rule("#wrap.tight .cbody"), "padding")[1])
+# ------------------------------------------------------------------ the glow
+GLOW_REACH = 10  # px: the halo may reach this far past a chip at the most (the body's side padding is 12-14 px)
 
 
-def test_the_pulse_runs_on_the_first_card_of_a_scan_for_a_visitor_who_has_not_used_a_chip_and_stops_at_the_first_interaction():
-    assert 'var TOOLS_KEY = "suppswipe_tools_used";' in SCRIPT
-    # the flag lives in localStorage and in memory: every access is inside a try / catch (a private window or blocked site data throws)
-    assert SCRIPT.count("window.localStorage.") == 2
-    read = SCRIPT[SCRIPT.index("function toolsWereUsed()"):SCRIPT.index("function markToolsUsed()")]
-    write = SCRIPT[SCRIPT.index("function markToolsUsed()"):SCRIPT.index("function stopPulse()")]
-    for body, call in ((read, "window.localStorage.getItem(TOOLS_KEY)"), (write, "window.localStorage.setItem(TOOLS_KEY")):
-        assert body.index("try {") < body.index(call) < body.index("catch (e)"), body
-    assert "return toolsUsed;" in read and write.index("toolsUsed = true;") < write.index("try {")  # the memory fallback is written first
-    # when it is offered: the first card of a scan (not one opened from the results), with a chip, once per card, never after a chip was used
-    assert "if (cardIndex === 0 && !editing && (args.canAsk || args.canSwap) && turn !== pulseKey && !toolsWereUsed()) {" in SCRIPT
-    assert 'var turn = scanId + "|" + cardId;' in SCRIPT and "pulseKey = turn;" in SCRIPT  # a redraw of the same card does not start it again
-    assert "pulseTimer = setTimeout(startPulse, PULSE_DELAY);" in SCRIPT
-    start = SCRIPT[SCRIPT.index("function startPulse()"):SCRIPT.index("// The visitor is interacting")]
-    for guard in ("!chips.length", "committed", "document.hidden", "hostBusy()", "toolsWereUsed()"):
-        assert guard in start, guard  # not on a card without chips, not during a swipe, in a hidden tab, while the page is busy
-    assert 'classList.add("pulse")' in start and "setTimeout(stopPulse, PULSE_MS * PULSE_CYCLES + 200)" in start
-    # stopped at once by any press or key in the card (a drag starts with a press), by a press or key in the page around it, and by a swipe
-    assert '["pointerdown", "touchstart", "mousedown", "keydown"].forEach(function (type) { document.addEventListener(type, stopPulse, { capture: true, passive: true }); });' in SCRIPT
-    assert 'window.parent.addEventListener("pointerdown", stopPulse, true);' in SCRIPT
-    assert "committed = true;\n    stopPulse();" in SCRIPT
-    # tapping a chip is what sets the flag, before the sheet's event is sent
+def _block(start: str) -> str:
+    """From `start` (an at-rule or a @keyframes) to the end of its block: the first "\n  }" on a line of its own."""
+    text = STYLE[STYLE.index(start):]
+    return text[:text.index("\n  }") + 4]
+
+
+def _glow() -> dict:
+    """The numbers of the breathing, read from the stylesheet: the period, the keyframes' opacities, the halo's blur, spread and alpha."""
+    use = _rule(".chip::before")
+    anim = re.search(r"animation:\s*chip-glow ([\d.]+)s ease-in-out infinite;", use)
+    assert anim, use
+    frames = _block("@keyframes chip-glow")
+    steps = re.findall(r"([\d%,\s]+?)\s*\{\s*([^}]*)\}", frames.split("{", 1)[1])
+    shadow = re.search(r"box-shadow:\s*0 0 ([\d.]+)px ([\d.]+)px rgba\(var\(--c-glow\), ([\d.]+)\);", use)
+    assert shadow, use
+    return {"use": use, "seconds": float(anim.group(1)), "frames": frames, "steps": [(k.strip(), v.strip()) for k, v in steps],
+            "blur": float(shadow.group(1)), "spread": float(shadow.group(2)), "alpha": float(shadow.group(3)),
+            "inset": abs(_px(use, "inset")[0]), "base": float(re.search(r"(?<![-\w])opacity:\s*([\d.]+);", use).group(1))}
+
+
+def test_the_chips_breathe_slowly_and_only_their_halos_opacity_moves():
+    g = _glow()
+    assert STYLE.count("@keyframes") == 1 and STYLE.count("infinite") == 1  # the one breathing is the only animation, and the only endless one
+    assert g["seconds"] >= 2.5  # a breath is slower than 0.4 Hz (3 s): far below the 3 flashes a second of WCAG 2.3.1, calm, not a blink
+    props = {name for _, body in g["steps"] for name in re.findall(r"([a-z-]+):", body)}
+    assert props == {"opacity"}, props  # compositor-only: no paint, no transform, size, margin or shadow that moves or reflows anything
+    keys = [k for k, _ in g["steps"]]
+    assert keys == ["0%, 100%", "50%"], keys  # low at both ends, high in the middle: the loop has no seam
+    low, high = (float(re.search(r"opacity:\s*([\d.]+)", body).group(1)) for _, body in g["steps"])
+    assert 0.2 <= low <= 0.4 and 0.8 <= high <= 1.0 and high - low >= 0.5, (low, high)  # slight, yet a plain difference between the ends
+    assert g["base"] == low  # without the animation (a held card) the halo sits at the low end
+    # it starts from the low end, both chips together (the same rule, the same moment): they breathe in phase
+    assert "animation-delay" not in g["use"] and "animation-delay" not in STYLE
+    assert re.search(r"ease-in-out infinite;", g["use"])  # eased at both ends of each half
+
+
+def test_the_halo_is_one_still_soft_shadow_that_never_reaches_past_the_cards_padding_or_adds_a_box():
+    g = _glow()
+    use = g["use"]
+    for need in ('content: ""', "position: absolute", "pointer-events: none", "border-radius: inherit"):
+        assert need in use, need  # a pseudo element: it adds no box, no scroll area and no tap target, and it follows the pill's shape
+    assert "inset: -1px" in use  # on the chip's border box (the 1 px Chromium border, 1.5 px elsewhere): no seam between border and halo
+    reach = g["inset"] + g["spread"] + g["blur"]
+    assert reach <= GLOW_REACH, reach  # 9.5 px
+    sides = (_px(_rule(".cbody"), "padding")[1], _px(_rule("#wrap.tight .cbody"), "padding")[1])  # the right padding: the chip at the edge
+    assert reach < min(sides), (reach, sides)  # so the body's overflow clip never cuts it
+    assert 0.5 <= g["alpha"] <= 0.95  # slight: a soft, translucent halo, not a solid ring
+    assert "box-shadow" not in g["frames"]  # the shadow is drawn once; the keyframes only fade it
+    assert re.search(r"transition:\s*box-shadow [\d.]+s ease;", use)  # only the shadow's colour fades (the hold below); the opacity is never transitioned
+    # the glow colour is the chip family's own (indigo / teal): --c-glow is declared with the family, nothing else sets a colour for it
+    assert "--c-glow: 99, 102, 241" in _rule(".chip") and "--c-glow: 20, 184, 166" in _rule('.chip[data-tool="swap"]')
+    # the pseudo element sits under no text: an outer shadow is drawn outside its own box only, so the chip's text and tint are untouched
+    assert "background" not in use and "color" not in use.replace("--c-glow", "")
+
+
+def test_the_glow_holds_still_while_the_card_is_held_and_while_the_page_is_busy_and_is_gone_on_a_chip_that_is_not_live():
+    g = _glow()
+    hold = _rule("#wrap.dragging .chip::before, #wrap.busy .chip::before")
+    assert "animation-play-state: paused" in hold  # it stops where it is (no snap), and goes on from there
+    dim = re.search(r"box-shadow:\s*0 0 ([\d.]+)px ([\d.]+)px rgba\(var\(--c-glow\), ([\d.]+)\);", hold)
+    assert dim and (float(dim.group(1)), float(dim.group(2))) == (g["blur"], g["spread"]) and float(dim.group(3)) <= 0.35 < g["alpha"], hold  # a fainter halo, never a wider one
+    off = _rule('.chip[aria-disabled="true"]::before')
+    assert "animation: none" in off and "opacity: 0" in off  # a swipe is on its way: its chips are dimmed as a whole, and carry no glow
+    # the wrapper's class follows the script's own state: paint() writes every class of #wrap at once, so a repaint cannot drop it
+    paint = SCRIPT[SCRIPT.index("function paint()"):SCRIPT.index("function setTight(")]
+    assert '(dragging ? " dragging" : "")' in paint and '(busy ? " busy" : "")' in paint
+    down = SCRIPT[SCRIPT.index("function down(x, y)"):SCRIPT.index("function move(x, y, ev)")]
+    assert down.index("dragging = true;") < down.index("paint();")  # a press on the card (a swipe starts with one) holds the glow ...
+    up = SCRIPT[SCRIPT.index("function up()"):SCRIPT.index("// A press on a button of the card")]
+    assert up.index("dragging = false;") < up.index("paint();") < up.index('commit("right")')  # ... and the release (also a pointercancel) lets it go, whatever follows
+    poll = SCRIPT[SCRIPT.index("setInterval(function () {"):SCRIPT.index("function setValue(v)")]
+    assert "var wasBusy = busy;" in poll and "busy = hostBusy() || hostSheet();" in poll and "if (busy !== wasBusy) { paint(); }" in poll  # the page's busy state and an open sheet, on the existing beat
+    assert poll.index("busy = hostBusy() || hostSheet();") < poll.index("if (committed || document.hidden || lastRoom === null) { return; }")  # also while a swipe is on its way
+    assert SCRIPT.count("setInterval(") == 1  # no second timer for it
+    sheet = SCRIPT[SCRIPT.index("function hostSheet()"):SCRIPT.index("// Every event carries the card")]
+    assert 'querySelector(\'[data-testid="stDialog"]\')' in sheet and "try {" in sheet and "catch (e) { return false; }" in sheet  # an unreadable page is not a sheet
+
+
+def test_reduced_motion_keeps_a_still_soft_halo_and_forced_colors_drops_the_animation():
+    g = _glow()
+    reduced = _block("@media (prefers-reduced-motion: reduce)")
+    rule = re.search(r"\.chip::before \{([^}]*)\}", reduced)
+    assert rule, reduced
+    declarations = rule.group(1)
+    assert "animation: none !important" in declarations and "transition: none" in declarations  # nothing moves at all ...
+    still = float(re.search(r"opacity:\s*([\d.]+);", declarations).group(1))
+    assert 0.4 <= still <= 0.7 and g["base"] < still, still  # ... but the halo stays, constant and soft: these visitors get the cue too
+    assert "infinite" not in reduced and "@keyframes" not in reduced
+    assert ".tcard, .rail { transition: none !important; }" in reduced  # (as before)
+    forced = "@media (forced-colors: active) { .chip::before { animation: none; } }"
+    assert forced in STYLE  # the browser drops box-shadow there: nothing to animate; the chips keep their 1.5 px borders (pinned above)
+    assert "border: 1.5px solid var(--c-line)" in _rule(".chip")
+
+
+def test_nothing_of_the_old_attention_pulse_is_left():
+    """The pulse (a ring three times on the first card, until a chip was tapped once, remembered in localStorage) is gone: the visitor who
+    tapped a chip once never saw a cue again and cards 2+ never had one. The glow needs no flag, no timer, no listener on the page."""
+    for gone in ("TOOLS_KEY", "suppswipe_tools_used", "toolsWereUsed", "markToolsUsed", "stopPulse", "startPulse", "pulseKey", "pulseTimer",
+                 "PULSE_DELAY", "PULSE_MS", "PULSE_CYCLES", "toolsUsed", "localStorage", "pagehide", "removeEventListener"):
+        assert gone not in SCRIPT, gone
+    for gone in (".pulse", "chip-ring", "@keyframes chip-ring"):
+        assert gone not in STYLE, gone
+    assert "pulse" not in SRC.lower().replace("pulses", "")  # no word of it in the component at all
+    assert "window.parent.addEventListener" in SCRIPT  # the host's resize (the frame maths) is the one listener left on the page
+    assert len(re.findall(r"window\.parent\.addEventListener\(", SCRIPT)) == 1
     click = SCRIPT[SCRIPT.index('card.addEventListener("click"'):SCRIPT.index("btnKeep.addEventListener")]
-    assert click.index("markToolsUsed();") < click.index("toolEvent(") and "stopPulse();" in click
-    assert "stopPulse();\n    var turn" in SCRIPT  # and a new card clears the old card's timer before it decides again
+    assert 'if (hit.hasAttribute("data-tool")) { toolEvent(hit.getAttribute("data-tool")); return; }' in click  # a tap on a chip only opens its sheet
 
 
 # ------------------------------------------------------------------ taps and drags

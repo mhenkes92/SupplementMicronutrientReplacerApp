@@ -64,7 +64,7 @@ def test_every_access_to_the_host_page_is_inside_a_try_that_falls_back_to_the_ol
     # Everything else that mentions the host only posts a message to it or compares the message source.
     others = [m.group(0) for m in re.finditer(r"window\.parent[.\w]*", rest)]
     assert set(others) <= {"window.parent.postMessage", "window.parent", "window.parent.addEventListener",
-                           "window.parent.removeEventListener", "window.parent.document.querySelector"}, others
+                           "window.parent.document.querySelector"}, others
     # The one other thing the frame does to the host: listen for its resize (the bar moves with the phone's toolbars), best effort.
     assert re.search(r"try \{\s+window\.parent\.addEventListener\(\"resize\".*?\}\);\s+\} catch \(e\) \{\}", rest, re.S)
     assert "return Infinity" in body and "isFinite(room)" in SCRIPT  # an unmeasurable room changes nothing downstream
