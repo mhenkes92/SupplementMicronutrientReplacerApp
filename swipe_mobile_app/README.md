@@ -16,10 +16,11 @@ below it but the bar, so the page does not scroll. Everything you tap is inside 
 are pinned at its foot (they travel with the card when you drag it), an **Ask AI** chip sits in its header beside the nutrient name
 (only when the AI is configured; it asks about this nutrient) and a **Swap food** chip beside **Eat instead** (only when the card has
 a second food; it changes that food). Each chip opens a sheet over the card and returns to the same card. The chips look like buttons: a
-raised, tinted pill with an icon (Ask AI indigo with a sparkle, Swap food teal with two arrows), and on the first card of a scan, for a
-visitor who has never tapped one, a soft glow ring goes round both three times (about four seconds, never a loop) and stops at the first
-touch; with "reduce motion" on there is no ring at all. The two food amounts under the food are two separate panels, so it is clear what each
-one means: **Match your pill** (green, "Equivalent to your pill's 80 mg": the amount of this food that is equivalent to the pill's dose; "equivalent",
+raised, tinted pill with an icon (Ask AI indigo with a sparkle, Swap food teal with two arrows), and they glow: a soft halo in the chip's
+own colour slowly brightens and fades (one breath takes 3 s, never a blink, both chips together) on every card that has them, for everyone,
+so it is clear at a glance what the card can do. The glow rests while you drag the card, while the page is busy and while a sheet is open
+over the card; with "reduce motion" on it is a still, soft halo instead of a moving one. The two food amounts under the food are two
+separate panels, so it is clear what each one means: **Match your pill** (green, "Equivalent to your pill's 80 mg": the amount of this food that is equivalent to the pill's dose; "equivalent",
 not "the same", because the amount is sized to the dose, not always to the number printed on it: folic acid in DFE, one day of a weekly pill,
 the low end of a range) and **Athlete target** (slate, "For very active people: 200 mg": the amount that reaches that target; it is the button
 that opens the athlete guide at this nutrient, with a chevron and a small "Why?", which drops out on phones narrower than about 356 px or at
