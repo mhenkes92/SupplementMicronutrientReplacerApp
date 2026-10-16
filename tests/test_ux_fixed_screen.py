@@ -96,7 +96,7 @@ def test_the_cards_screen_draws_nothing_below_the_card():
 def test_the_results_screen_is_not_changed_by_any_of_it():
     at = _screen("results")
     assert any("<div class='brand-foot'>" in m.value for m in at.markdown)  # the © line closes the long page, as before
-    assert "swipe_analyze_btn" in [b.key for b in at.button]  # and the primary Scan button
+    assert "swipe_analyze_btn" not in [b.key for b in at.button]  # and no Scan button of its own under the plan (the bar's Scan item does it)
     assert not [k for k in at.main.children.values() if getattr(k, "key", None) == "swipe_card"]  # no card container (so no fixed-screen rules)
     assert not at.get("component_instance") or card_args(at) == {}
     tabs = [t.label for t in at.tabs]

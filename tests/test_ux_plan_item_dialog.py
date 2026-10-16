@@ -430,7 +430,9 @@ def test_the_analyze_dialog_wins_and_nothing_breaks_with_two_flags():
 def test_scan_another_supplement_forgets_the_request():
     at = _results_app()
     _row_buttons(at, "keep")[0].click().run()
-    at.button(key="swipe_analyze_btn").click().run()
+    at.button(key="appbar_scan").click().run()  # the bar's Scan item asks first on a finished plan
+    assert _dialogs(at) == ["Scan another supplement?"]
+    at.button(key="swipe_scan_another_confirm").click().run()
     assert not at.session_state["swipe_plan_item"] if "swipe_plan_item" in at.session_state else True
     assert _dialogs(at) == ["Analyze my supplement"]
 

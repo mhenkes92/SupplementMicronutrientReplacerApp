@@ -221,6 +221,35 @@ def test_scan_asks_first_in_the_middle_of_a_scan_and_on_the_results_and_the_ques
     assert results_heading(page).count() == 0
 
 
+def test_nothing_sits_below_the_ask_ai_box_on_the_results_that_a_thumb_could_hit_instead_of_its_send_arrow(browser, ai_server):
+    """The owner's report: on the finished plan, tapping Ask AI and then the send arrow, a second "Scan another supplement" button
+    sat right below the box and was hit by mistake. The bar's Scan item is the only Scan control; nothing else is under the input."""
+    url, _fake = ai_server
+    ctx = browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
+    pg = ctx.new_page()
+    try:
+        pg.goto(url, wait_until="networkidle")
+        pg.locator(BAR_BUTTON).nth(4).wait_for(timeout=15000)
+        start_sample(pg)
+        finish_all_cards(pg, replace=True)
+        results_heading(pg).wait_for(timeout=10000)
+        pg.get_by_role("tab", name="💬 Ask AI").click()
+        pg.get_by_test_id("stChatInput").wait_for(timeout=10000)
+        settle(pg)
+        below = pg.evaluate(
+            "() => { const input = document.querySelector('[data-testid=stChatInput]').getBoundingClientRect();"
+            " return [...document.querySelectorAll('[data-testid=stMain] button')]"
+            ".filter(b => !b.closest('[data-testid=stChatInput]') && !b.closest('[class~=\"st-key-appbar\"]')"
+            " && b.offsetParent !== null && b.getBoundingClientRect().top >= input.bottom - 2)"
+            ".map(b => (b.innerText || b.getAttribute('aria-label') || '').trim()); }"
+        )
+        assert below == [], below  # no button under the input (the bar is fixed and is not part of the page)
+        assert pg.get_by_role("button", name="Scan another supplement").count() == 0
+        assert pg.get_by_role("button", name="Analyze my supplement").count() == 0
+    finally:
+        ctx.close()
+
+
 # ------------------------------------------------------------------ the Diet item and the safety regressions
 def test_the_diet_item_has_a_dot_and_the_page_a_one_line_chip_exactly_while_a_filter_is_on(page):
     dot = "([s]) => { const c = getComputedStyle(document.querySelector(s), '::after'); return [c.content, c.width, c.backgroundColor]; }"
