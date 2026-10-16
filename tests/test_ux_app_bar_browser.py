@@ -100,12 +100,10 @@ def test_the_end_of_the_page_is_not_hidden_behind_the_bar(browser, server, size,
         else:
             foot = rect(pg, ".brand-foot")
             assert foot and foot["bottom"] <= bar["y"] + 1, (foot, bar)  # the last line sits above the bar
-            main_button = pg.get_by_role("button", name="Scan another supplement")
-            main_button.scroll_into_view_if_needed()
-            box = main_button.bounding_box()
-            assert box["y"] + box["height"] <= bar["y"] + 1 or box["y"] >= bar["y"] + bar["h"], (box, bar)
-            main_button.click()  # not intercepted by the bar
-            pg.get_by_role("dialog").wait_for(timeout=10000)
+            # The page has no Scan button of its own under the plan (it sat right below the Ask AI box): the bar's Scan item is the only one.
+            assert pg.get_by_role("button", name="Scan another supplement").count() == 0
+            pg.locator('[class~="st-key-appbar_scan"] button').click()  # reachable above the page's last line, and it asks first
+            pg.get_by_role("dialog").get_by_text("Scan another supplement?").wait_for(timeout=10000)
     finally:
         ctx.close()
 

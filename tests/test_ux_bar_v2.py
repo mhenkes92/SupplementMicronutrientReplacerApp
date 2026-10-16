@@ -186,7 +186,7 @@ def test_no_filter_chips_toggle_settings_or_old_buttons_on_any_page(screen):
     assert not [t for t in at.toggle if "Pregnant" in t.label]
     assert not [e for e in at.expander if "Diet" in e.label]  # the results' settings expander is gone
     assert not {"swipe_try_sample", "swipe_resume_scan", "swipe_scan_analyze"} & set(_page_buttons(at))
-    assert ("swipe_analyze_btn" in _page_buttons(at)) == (screen == "results")  # the primary Scan button ends a finished plan, only there
+    assert "swipe_analyze_btn" not in _page_buttons(at)  # no page has a Scan button of its own: the bar's Scan item is the only one
 
 
 def test_the_footer_is_only_on_the_results_screen_and_the_about_sheet_carries_it_too(sw):
@@ -547,10 +547,12 @@ def test_scan_on_a_finished_sample_says_the_sample_is_not_saved():
     assert at.session_state["suppswipe_scan_history"] == []
 
 
-def test_the_pages_own_scan_button_on_the_results_still_starts_at_once():
+def test_the_results_page_has_no_scan_button_of_its_own():
+    """A second Scan button under a finished plan sat right below the Ask AI box, where a thumb that wants the send arrow can hit it."""
     at = _screen("results")
-    at.button(key="swipe_analyze_btn").click().run()
-    assert _titles(at) == ["Analyze my supplement"] and not at.session_state["swipe_cards"]  # no question: unchanged
+    assert "swipe_analyze_btn" not in _page_buttons(at)
+    assert not [b for b in at.button if "Scan another" in str(b.label)]
+    assert [b.key for b in at.button if str(b.key).startswith("appbar") and b.key.endswith("_scan")] == ["appbar_scan"]
 
 
 def test_scan_does_nothing_while_an_analysis_runs(sw, monkeypatch):

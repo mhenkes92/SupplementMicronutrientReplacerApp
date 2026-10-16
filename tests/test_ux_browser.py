@@ -398,10 +398,13 @@ def test_results_tabs_show_their_content(page):
     assert page.evaluate("document.scrollingElement.scrollWidth") <= 390  # no sideways scroll
     shot(page, "ux_results_share_tab")
     assert page.get_by_role("button", name="↩ Back to the cards").count() == 1
-    # Settings fold away under the plan; scanning again needs no confirmation.
+    # Settings fold away under the plan; the page has no Scan button of its own (the bar's Scan item asks first, then opens the Analyze window).
     assert page.locator('[data-testid="stExpander"]', has_text="Diet:").count() == 0  # the settings moved into the Diet sheet
-    page.get_by_role("button", name="📸 Scan another supplement").click()
-    page.get_by_role("dialog").wait_for(timeout=10000)
+    assert page.get_by_role("button", name="📸 Scan another supplement").count() == 0
+    page.locator('[class~="st-key-appbar_scan"] button').click()
+    page.get_by_role("dialog").get_by_text("Scan another supplement?").wait_for(timeout=10000)
+    page.get_by_role("dialog").get_by_role("button", name="Scan another").click()
+    page.get_by_role("dialog").get_by_text("Analyze my supplement").first.wait_for(timeout=10000)
 
 
 def test_filter_line_and_misfit_flag(page):
@@ -772,8 +775,10 @@ def test_scanning_another_supplement_after_a_row_window_opens_the_analyze_dialog
     open_plan_item(page, "keep", "")
     page.keyboard.press("Escape")
     settle(page)
-    page.get_by_role("button", name="📸 Scan another supplement").click()
-    page.get_by_role("dialog").wait_for(timeout=10000)
+    page.locator('[class~="st-key-appbar_scan"] button').click()  # the bar's Scan item asks first on a finished plan
+    page.get_by_role("dialog").get_by_text("Scan another supplement?").wait_for(timeout=10000)
+    page.get_by_role("dialog").get_by_role("button", name="Scan another").click()
+    page.get_by_role("dialog").get_by_text("Analyze my supplement").first.wait_for(timeout=10000)
     assert page.get_by_role("dialog").get_by_text("Analyze my supplement").count() >= 1
     assert page.locator(DIALOG).count() == 1  # only the Analyze dialog
 

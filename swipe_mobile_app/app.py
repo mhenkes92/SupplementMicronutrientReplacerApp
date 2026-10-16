@@ -3285,8 +3285,9 @@ def _open_sheet(name: str) -> None:
 
 def _tap_scan() -> None:
     """The bar's Scan item. On the welcome screen (and on cards nothing was decided on) it opens the Scan sheet: the ways to start.
-    Half-way through a scan, or on the results, it asks first with the question the page's Scan button has always asked
-    (`_request_analyze`), so a stray tap never throws a scan or a plan away."""
+    Half-way through a scan, or on the results, it asks first (`_confirm_restart_dialog` / `_confirm_scan_another_dialog`), so a
+    stray tap never throws a scan or a plan away. It is the only Scan control of a finished plan: the page has no button of its own
+    under the results (a second one sat right below the Ask AI box and was easy to hit instead of its send arrow)."""
     if _analysis_in_flight():
         return
     _open_sheet("scan")
@@ -3419,7 +3420,7 @@ def _show_older_scans() -> None:
 
 
 def _scan_from_sheet() -> None:
-    """The empty state's button: leave the sheet and do what the page's Scan button does. From inside the dialog, so the
+    """The empty state's button: leave the sheet and do what the bar's Scan item does. From inside the dialog, so the
     page needs the app-wide rerun."""
     on_results = _on_results_screen()
     _close_sheet()
@@ -5667,8 +5668,8 @@ def _confirm_restart_dialog() -> None:
 
 @st.dialog("Scan another supplement?", on_dismiss=_cancel_restart_dialog)
 def _confirm_scan_another_dialog() -> None:
-    """The bar's Scan item on the results: the page's own "Scan another supplement" button at the end of the plan starts at
-    once, but the bar is always within reach of a thumb, so it asks first (the plan on screen cannot be rebuilt from Recent scans)."""
+    """The bar's Scan item on the results: the bar is always within reach of a thumb, so it asks first (the plan on screen
+    cannot be rebuilt from Recent scans)."""
     sample = str((st.session_state.get("swipe_label_source") or {}).get("kind", "") or "") == "sample"
     st.write(
         "This clears the sample plan on screen. The sample is not saved."
@@ -5681,7 +5682,7 @@ def _confirm_scan_another_dialog() -> None:
             st.rerun(scope="app")
     with col_ok:
         if st.button("Scan another", type="primary", width="stretch", key="swipe_scan_another_confirm"):
-            _request_analyze(results=True)  # what the page's own button does: reset, forget the saved scan, open the Analyze window
+            _request_analyze(results=True)  # reset, forget the saved scan, open the Analyze window
             st.rerun(scope="app")
 
 
@@ -5691,14 +5692,8 @@ def _on_results_screen() -> bool:
     return bool(cards) and int(st.session_state.get("swipe_index", 0) or 0) >= len(cards)
 
 
-def _render_analyze_bar(results: bool = False, button: bool = True) -> None:
-    """The primary Scan button under a finished plan. Everything else (Scan, Diet, Guide, Recent, More) is in the fixed bottom bar."""
-    if button:
-        _render_analyze_button(results=results, primary=results)
-
-
 def _request_analyze(results: bool = False) -> None:
-    """What the page's Scan button asks for: the Analyze window, or the Start over question while a scan is half
+    """What the Scan item asks for: the Analyze window, or the Start over question while a scan is half
     done. A finished plan is already in Recent scans, so on the results there is nothing to lose."""
     if results:
         _reset_scan_and_forget_it()
@@ -5707,17 +5702,6 @@ def _request_analyze(results: bool = False) -> None:
         st.session_state["swipe_confirm_restart"] = True
     else:
         st.session_state["swipe_open_analyze"] = True
-
-
-def _render_analyze_button(results: bool = False, primary: bool = False) -> None:
-    if results:
-        label = "📸 Scan another supplement"
-    else:
-        label = "📸 Analyze my supplement"
-    kind = "primary" if primary else "secondary"
-    if st.button(label, type=kind, width="stretch", key="swipe_analyze_btn"):
-        _request_analyze(results)
-        st.rerun()
 
 
 # --- Bottom bar: the five global tools as app-style tabs ------------------------------------------------------
@@ -8036,8 +8020,6 @@ def _build_mobile_ui() -> None:
         bar_slot.empty()
     _render_app_bar()
     _render_card()
-    if _on_results_screen():
-        _render_analyze_bar(results=True)  # the Scan button at the end of a finished plan; elsewhere the bar's Scan item does it
     for note_key in ("_suppswipe_resume_note", "_suppswipe_report_note"):
         note = st.session_state.pop(note_key, "")
         if note:

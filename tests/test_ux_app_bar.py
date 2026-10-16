@@ -93,12 +93,15 @@ def test_every_screen_has_the_bar_with_all_five_buttons_and_no_popover_left(scre
     assert popovers == [], popovers  # the card's Ask AI is a sheet now (tests/test_ux_fixed_screen.py): no popover on any screen
 
 
-def test_the_primary_scan_button_is_only_on_the_results_page_and_the_welcome_page_has_only_the_bar():
+def test_no_page_has_a_scan_button_of_its_own_besides_the_bar_and_the_welcome_card():
     at = _screen("welcome")
     # The hero card has ONE button, inside the card (it opens the same Scan sheet as the bar's Scan item); nothing else on the page.
     assert [b.key for b in at.button if not str(b.key).startswith("appbar")] == ["hero_scan"]
+    # The results end with the plan and the © line: the bar's Scan item is the only way to scan again (a button of the page's own sat
+    # right under the Ask AI box and was easy to hit instead of its send arrow).
     at = _screen("results")
-    assert [b.label for b in at.button if b.key == "swipe_analyze_btn"] == ["📸 Scan another supplement"]
+    assert "swipe_analyze_btn" not in [b.key for b in at.button]
+    assert not [b for b in at.button if "Scan another" in str(b.label) or "Analyze my supplement" in str(b.label)]
 
 
 def test_no_bar_label_collides_with_the_labels_other_tests_and_users_look_for():
@@ -359,7 +362,9 @@ def test_an_unknown_sheet_flag_opens_nothing_and_does_not_break():
 def test_history_and_the_bar_survive_scan_another_and_start_over():
     at = _screen("results")
     assert len(at.session_state["suppswipe_scan_history"]) == 1  # the finished own scan was recorded
-    at.button(key="swipe_analyze_btn").click().run()  # "Scan another supplement": no confirmation after a finished plan
+    at.button(key=BAR["scan"]).click().run()  # the bar's Scan item asks first on a finished plan
+    assert _titles(at) == ["Scan another supplement?"]
+    at.button(key="swipe_scan_another_confirm").click().run()
     assert _titles(at) == ["Analyze my supplement"] and not at.session_state.get(SHEET)
     assert [b.key for b in _bar(at)] == list(BAR.values())
     at.session_state["swipe_open_analyze"] = False
