@@ -821,7 +821,11 @@ def test_a_resumed_scan_starts_from_the_density_a_new_scan_has_on_this_phone():
 
 def test_the_component_says_why_there_is_no_food_and_keeps_the_source_line_only_where_it_fits():
     assert "esc(args.foodNote || \"No whole-food match for this one.\")" in COMPONENT and "Pick a food below" not in COMPONENT
-    assert "#wrap.nosrc .src { display: none; }" in COMPONENT and "showSrc = false; paint();" in COMPONENT
+    # The source line (and, since "How to combine", the "Pairs well with" row) is drawn only where the card still fits its frame with it: the first
+    # of (both, the row alone, the source line alone, neither) that fits; the source line is the one that gives way first.
+    assert "#wrap.nosrc .src { display: none; }" in COMPONENT and "#wrap.nopair .pair { display: none; }" in COMPONENT
+    assert "var states = [[true, true], [true, false], [false, true], [false, false]];" in COMPONENT
+    assert "showPair = pick[0]; showSrc = pick[1];" in COMPONENT and "if (measureContent() <= bodyRoom) { pick = states[si]; break; }" in COMPONENT
     assert "args.foodNote" in COMPONENT[COMPONENT.index("card.setAttribute(\"aria-label\""):COMPONENT.index("btnRepl.disabled")]  # a screen reader hears it too
 
 
