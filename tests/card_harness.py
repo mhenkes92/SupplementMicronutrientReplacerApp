@@ -142,7 +142,7 @@ def card_args(**override: Any) -> dict[str, Any]:
         matchDose="~35 g", rdaAmount="~88 g", rdaLabel="200 mg", warn="",
         bioNote="Whole foods pair vitamin C with bioflavonoids that support its absorption and antioxidant action.",
         index=0, total=7, accent="#f97316", ink="#7a3a10", bg="linear-gradient(160deg, #ffffff 0%, #fef1e8 55%, #fee6d5 100%)",
-        canReplace=True, canSwap=True, canAsk=True, previous="", editing=False, cardId="vitamin c", scan=1, ack="", height=440,
+        canReplace=True, canSwap=True, canAsk=True, previous="", editing=False, cardId="vitamin c", scan=1, ack="", height=440, pairs=[],
     )
     args.update(override)
     return args

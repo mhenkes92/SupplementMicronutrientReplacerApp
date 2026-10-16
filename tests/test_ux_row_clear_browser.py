@@ -156,7 +156,7 @@ BASELINE = [
     {
         'count': 'Card 2 of 7',
         'name': 'Vitamin D3',
-        'aria': 'Card 2 of 7: Vitamin D3, dose 20 mcg. Whole-food replacement: Mackerel, Atlantic. To match the dose: ~124 g. Athlete target for very active people: 25 mcg, about 155 g. Notes: Few foods are rich in vitamin D: UV-exposed mushrooms give D2, which raises blood levels less than D3; oily fish and egg yolk give D3. Sunlight is the main source. ℹ️ October–March the sun in Germany is too weak for your skin to make vitamin D, and food alone rarely reaches the 20 µg/day reference. Many people in Germany take vitamin D in winter — ask your doctor whether that suits you.',
+        'aria': 'Card 2 of 7: Vitamin D3, dose 20 mcg. Whole-food replacement: Mackerel, Atlantic. To match the dose: ~124 g. Athlete target for very active people: 25 mcg, about 155 g. Pairs well with: some fat. Notes: Few foods are rich in vitamin D: UV-exposed mushrooms give D2, which raises blood levels less than D3; oily fish and egg yolk give D3. Sunlight is the main source. ℹ️ October–March the sun in Germany is too weak for your skin to make vitamin D, and food alone rarely reaches the 20 µg/day reference. Many people in Germany take vitamin D in winter — ask your doctor whether that suits you.',
         'dose': 'In your pill: 20 mcg',
         'food': 'Mackerel, Atlantic',
         'portion': ["Match your pill eat ~124 g Equivalent to your pill's 20 mcg", 'Athlete target eat ~155 g For very active people: 25 mcg. Opens the athlete guide.'],
@@ -482,7 +482,9 @@ def test_a_frame_that_cannot_read_its_page_behaves_exactly_as_before(browser, se
         seen = walk(pg, 3, lambda: (frame_height(pg), fr.evaluate("document.getElementById('wrap').classList.contains('tight')")))
         # Frames sized to the card's content as before (the footer is part of the card now; + the blank strip under it), never tight.
         # (They were 564 / 711 / 711 px before the two food amounts became two panels: the panels are 28 px taller than the old box.)
-        assert [m for _, m in seen] == [(592, False), (739, False), (739, False)], seen
+        # (Vitamin D3, card 2, carries the 28 px "Pairs well with" row since "How to combine": where the room cannot be measured the frame holds
+        # the row, so 739 became 767; the frame only grows, so card 3 keeps it. Every card without a tag is exactly as before.)
+        assert [m for _, m in seen] == [(592, False), (767, False), (767, False)], seen
         assert fr.evaluate("document.getElementById('wrap').classList.contains('spacer')")
         # The page cannot be measured, so the row of the second card starts under the bar; the page's own padding is gone on this
         # screen, and the strip is what lets it be scrolled clear: it can be reached and tapped.

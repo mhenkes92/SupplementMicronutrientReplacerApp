@@ -148,6 +148,22 @@
   @media (forced-colors: active) { .pl-more { clip-path: inset(0 -4px); } }
   .warn { margin-top: 10px; padding: 7px 10px; border-radius: 12px; background: #fff7ed; border: 1px solid #fed7aa; color: #7c2d12; font-size: .82rem; font-weight: 600; line-height: 1.4; }
   .bio { margin-top: 8px; padding: 7px 10px; border-radius: 12px; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a5f; font-size: .82rem; line-height: 1.4; }
+  /* "Pairs well with": one quiet line glued to the top of the blue note, only on the few cards where a sourced rule says what the pill goes
+     well with (some fat, a meal). It is information, not a control: no button, no role, no pointer, no raised look, none of the chips'
+     indigo or teal, and a flat blue like the note it joins (a sibling of .bio, whose rules and text stay as they were). One line at 100 %
+     text down to 320 px; from about 140 % text only its first tag is drawn (the card's label still names them all). It costs 28 px at the
+     normal density and 24 px at the tight one when a note follows (the note's own top margin and border are given up), 0 px on every card
+     without a tag. fitHeight() never lets it be what makes a card scroll. */
+  .pair { display: flex; flex-wrap: wrap; align-items: baseline; gap: 1px 10px; margin-top: 8px; padding: 5px 10px; border: 1px solid #bfdbfe; border-radius: 12px;
+          background: #eff6ff; color: #1e3a5f; font-size: .78rem; line-height: 1.3; cursor: default; }
+  .pair[data-top="1"] { border-bottom-color: rgba(30, 58, 95, .16); border-radius: 12px 12px 0 0; }
+  .pair-l { font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
+  .pair-t { font-weight: 700; white-space: nowrap; }
+  /* The note is joined to the row only while the row is drawn: when fitHeight() takes the row away the note is the box it always was. The id
+     makes this win over "#wrap.tight .bio" (its smaller top margin) without a second rule for the tight density. */
+  #wrap:not(.nopair) .pair[data-top="1"] + .bio { margin-top: 0; border-top: 0; border-radius: 0 0 12px 12px; }
+  #wrap.nopair .pair { display: none; }
+  #wrap.big .pair-t ~ .pair-t { display: none; }
   .hint { text-align: center; margin-top: auto; padding-top: 10px; font-size: .8rem; color: #475569; }  /* pinned to the foot of the card */
   /* Ask AI (header) and Swap food (the "Eat instead" box): two chips inside the card, each beside the thing it acts on. A tap opens a sheet
      of the page; it never changes the card or a decision. They must read as buttons, so each is a raised, tinted pill with a small icon
@@ -248,6 +264,7 @@
   #wrap.tight .pl-amt b { line-height: 1; }
   #wrap.tight .warn { margin-top: 6px; padding: 5px 8px; }
   #wrap.tight .bio { margin-top: 6px; padding: 5px 8px; }
+  #wrap.tight .pair { margin-top: 6px; padding: 3px 8px; }
   #wrap.tight .hint { padding-top: 6px; }
   #wrap.tight .chip { min-height: 30px; padding: 0 10px 0 8px; }   /* ~79 px wide with its icon: beside the name from a 340 px phone up (below it only when the name is longer); a 320 px phone has no icon, see below */
   #wrap.tight .chip::after { inset: -8px -4px; }
@@ -314,6 +331,7 @@
   var lastHeight = 0;
   var tight = false;  // the compact card (see "#wrap.tight"); once on it stays on for the scan
   var showSrc = true; // the full USDA name in the food block: only while the card has room for it (see fitHeight)
+  var showPair = true; // the "Pairs well with" row: only while it does not make a card scroll that fits without it (see fitHeight)
   var spacer = false; // the blank strip under the buttons (see "#wrap.spacer")
   var big = false;    // a large text size (the root font size is 140 % or more): see "#wrap.big"
   var drawnBefore = false;  // a card was drawn in this page load already (a resumed scan opens on a later card: its hint is still new)
@@ -374,7 +392,7 @@
   // The one place the wrapper's classes are written.
   function paint() {
     wrap.className = (tight ? "tight" : "") + (firstCard ? " first" : "") + (finePointer ? " fine" : "") +
-      (showSrc ? "" : " nosrc") + (spacer ? " spacer" : "") + (big ? " big" : "");
+      (showSrc ? "" : " nosrc") + (showPair ? "" : " nopair") + (spacer ? " spacer" : "") + (big ? " big" : "");
     wrap.style.paddingBottom = (spacer && spacerPx > SPACER) ? spacerPx + "px" : "";   // the class gives the usual strip
   }
   function setTight(on) {
@@ -422,7 +440,8 @@
     var measured = isFinite(room);
     var avail = measured ? Math.min(Math.max(room, ROOM_FLOOR), FILL_MAX) : Infinity;   // the frame height asked for
     var contentHeight, chrome;
-    showSrc = false;   // the density is chosen on the card without the optional source line
+    showSrc = false;   // the density is chosen on the card without the two optional lines (the source line and "Pairs well with"):
+    showPair = !measured;   // neither of them ever makes a card tighten (an unmeasurable room has no density to choose: the frame holds the row)
     for (var on = tight ? 1 : 0; on <= 1; on++) {
       setTight(on === 1);
       chrome = chromeHeight();
@@ -445,11 +464,29 @@
     }
     spacerPx = spacer ? Math.max(SPACER, footprint + ROW_GAP + 4) : SPACER;   // enough for the page to scroll the footer clear of the bar
     if (spacer) { h += spacerPx; }
-    // The source line stays when the card still fits its frame with it.
-    showSrc = true;
-    paint();
+    // The two optional lines stay while the card still fits its frame with them. Where the room is measured, the first of these is taken that
+    // fits: both, the row alone, the source line alone, neither (the source line gives way first; a card that fits without the row never
+    // starts to scroll because of it, so the row is never what introduces the fade or the "scroll for more" pill). A card that scrolls
+    // anyway shows the row (it sits in the first window, above the note) and not the source line. Unmeasured: both.
     var bodyRoom = h - (spacer ? spacerPx : 0) - chromeHeight();
-    if (measured && measureContent() > bodyRoom) { showSrc = false; paint(); }
+    var states = [[true, true], [true, false], [false, true], [false, false]];
+    var pick = null;
+    for (var si = 0; measured && si < states.length; si++) {
+      showPair = states[si][0]; showSrc = states[si][1];
+      paint();
+      if (measureContent() <= bodyRoom) { pick = states[si]; break; }
+    }
+    if (!measured) { pick = states[0]; }
+    if (!pick) {
+      // Nothing fits: the card scrolls anyway, so it shows the row. Except a card that is short only of its own bottom padding (the cue
+      // ignores that much: no fade, no pill): the row would be what makes it scroll, so it stays out.
+      showPair = false; showSrc = false;
+      paint();
+      var slack = (parseFloat(window.getComputedStyle(cbody).paddingBottom) || 0) + CUE_FADE;
+      pick = measureContent() <= bodyRoom + slack ? states[3] : states[1];
+    }
+    showPair = pick[0]; showSrc = pick[1];
+    paint();
     if (Math.abs(h - lastHeight) > 2) { lastHeight = h; setHeight(h); }
     setTimeout(updateCue, 80);
   }
@@ -627,6 +664,10 @@
     var portionHtml = portionRows ? '<div class="portion">' + portionRows + '</div>' : '';
     var warnHtml = args.warn ? '<div class="warn" role="note">' + esc(args.warn) + '</div>' : '';
     var bioHtml = args.bioNote ? '<div class="bio" role="note">💡 ' + esc(args.bioNote) + '</div>' : '';
+    // "Pairs well with": up to two short tags from the curated, sourced rules (see ".pair"); nothing, not even a gap, when there is none.
+    var pairs = Array.isArray(args.pairs) ? args.pairs.slice(0, 2).filter(function (p) { return p && p.text; }) : [];
+    var pairHtml = pairs.length ? '<div class="pair" data-top="' + (args.bioNote ? '1' : '0') + '"><span class="pair-l">Pairs well with</span> ' +
+      pairs.map(function (p) { return '<span class="pair-t">' + (p.icon ? '<span aria-hidden="true">' + esc(p.icon) + '</span> ' : '') + esc(p.text) + '</span>'; }).join(' ') + '</div>' : '';
     var prevHtml = args.previous ? '<span class="prev">Your choice: ' + esc(args.previous) + '</span>' : '';
     var pct = Math.max(4, Math.min(100, Math.round(100 * idx / Math.max(total, 1))));
     var foodIcon = args.foodIcon ? '<span class="ficon" aria-hidden="true">' + esc(args.foodIcon) + '</span>' : '';
@@ -640,7 +681,7 @@
       warnHtml +
       '<div class="foodwrap"><div class="foodhead"><div class="foodlbl">Eat instead</div>' + swapHtml + '</div>' +
       '<div class="foodrow">' + foodIcon + '<div class="food' + (args.food ? '' : ' nofood') + '">' + foodTxt + '</div></div>' + srcHtml + portionHtml + '</div>' +
-      bioHtml +
+      pairHtml + bioHtml +
       '<div class="hint' + ((!canReplace || editing) ? ' hint-keep' : '') + '">' + (canReplace
         ? 'Swipe <b>◀ keep the pill</b> · <b>eat the food ▶</b>' + (finePointer ? ' (or ← →)' : '')
         : 'No whole-food match for this one — keep the pill or go back') +
@@ -651,6 +692,7 @@
       (args.matchDose ? ". To match the dose: " + args.matchDose : "") +
       (args.rdaAmount ? ". Athlete target for very active people" + (args.rdaLabel ? ": " + args.rdaLabel : "") + ", " + spoken(args.rdaAmount) : "") +
       (args.warn ? ". Warning: " + args.warn : "") +
+      (pairs.length ? ". Pairs well with: " + pairs.map(function (p) { return p.text; }).join(" and ") : "") +
       (args.bioNote ? ". Notes: " + args.bioNote : ""));
 
     btnRepl.disabled = !canReplace;

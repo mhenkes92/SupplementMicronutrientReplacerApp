@@ -152,6 +152,8 @@ def _load_current(name: str, watch: str | os.PathLike[str] | None = None):
 _load_current("blockbrain_llm_client")  # before blockbrain.app, which imports it
 bb = _load_current("blockbrain.app", watch=ROOT_DIR / "blockbrain" / "data")
 llm_cache = _load_current("llm_cache")
+# The curated "how to combine" rules and their engine: pure Python, its data is its own source (so no `watch` folder).
+combine = _load_current("combine")
 
 # st.cache_data / st.cache_resource key on the cached function's own source, not on the
 # modules it calls: their results were produced by the code a reload just replaced
@@ -2867,6 +2869,68 @@ def _meal_plan_amount(decision: dict[str, Any]) -> str:
     return _amount_to_match_dose(decision)
 
 
+# --- How foods and pills combine (the engine is the `combine` module of this folder; this is what only the app knows) -----------
+def _combine_enabled() -> bool:
+    """SUPPSWIPE_COMBINE=0 (or false / off / no) switches the whole "How to combine" feature off at once: the card row, the day on
+    the Meals tab, the table, the dialog part, the share lines and the meal layout of the plan prompt. On by default."""
+    return str(os.getenv("SUPPSWIPE_COMBINE", "1") or "1").strip().lower() not in {"0", "false", "off", "no"}
+
+
+def _combine_hooks(pregnant: bool | None = None) -> dict[str, Any]:
+    """The app's own functions for the engine: names, the amount the Plan tab counts, the upper-limit check the Heads-up box uses,
+    the pregnancy food filter (an explicit flag: _meal_plan_prompts has its own `pregnant` argument) and the USDA vitamin C facts.
+    Nothing here reads a secret or calls the AI."""
+    if pregnant is None:
+        pregnant = _pregnancy_mode()
+    return {
+        "canon": bb.canonical_nutrient_key,
+        "title": lambda d: _nutrient_title(d.get("component")),
+        "dose_text": lambda d: _dose_for_context(d).strip(),  # "" for "Dose not found"
+        "food_label": _food_name,
+        "food_icon": lambda food: _whole_food_icon_from_food(food, ""),
+        "grams": _swap_grams,
+        "over_limit": lambda d: bool(_final_upper_limit_warnings([d])),
+        "skip_food": (lambda d: _not_advised_in_pregnancy(d.get("selected_food"))) if pregnant else (lambda d: False),
+        "fact": lambda description, what: bb.food_nutrient_amount(description, "vitamin c") if what == "vitamin c" else None,
+    }
+
+
+def _combine_day(
+    keep_items: list[dict[str, Any]], replace_items: list[dict[str, Any]], pregnant: bool | None = None
+) -> dict[str, Any]:
+    """The engine's day with the app's hooks: which swapped food and which kept pill goes into breakfast, lunch or dinner."""
+    return combine.plan_day(keep_items, replace_items, _combine_hooks(pregnant))
+
+
+def _card_pairs(card: dict[str, Any], component_key: str, form: str) -> list[dict[str, str]]:
+    """The "Pairs well with" tags of a swipe card as the card component takes them: [{"icon", "text"}], at most two, [] where the rules
+    have none, where the pill is over its upper intake level (the card's own warning is the message) or where the feature is off."""
+    if not _combine_enabled():
+        return []
+    tags = combine.card_tags(
+        component_key, form, card.get("dose_value"), str(card.get("dose_unit", "") or ""), dose_max=card.get("dose_max"),
+        over_limit=bool(_final_upper_limit_warnings([card])), component=card.get("component"), hooks=_combine_hooks(),
+    )
+    return [{"icon": t["icon"], "text": t["text"]} for t in tags[:2]]
+
+
+# Added to the meal-plan prompt only where the swapped foods need a layout (a plant-iron food and its vitamin C partner, a carotenoid
+# vegetable and its fat); a plan that needs none gets exactly the prompt it always got, so its cache key and the prefetch stay valid.
+_MEAL_LAYOUT_HEAD = (
+    "\n\nMeal layout (put each food named here in its meal; any other food can go in any meal; "
+    "you may add small extras such as oil, lemon or herbs):\n"
+)
+
+
+def _meal_layout_text(replace_items: list[dict[str, Any]], num_meals: int, pregnant: bool) -> str:
+    """The prompt's "Meal layout" block, or "". Built from the swapped foods, the number of meals and the pregnancy flag ONLY: never
+    from a kept pill, a dose or a rule, so it adds no personal data (food names and meal numbers are in the prompt already)."""
+    if not _combine_enabled():
+        return ""
+    lines = combine.meal_layout(replace_items, num_meals, _combine_hooks(pregnant))
+    return _MEAL_LAYOUT_HEAD + "\n".join(lines) if lines else ""
+
+
 def _meal_plan_prompts(
     replace_items: list[dict[str, Any]], diet_label: str, num_meals: int = 3, pregnant: bool | None = None
 ) -> tuple[str, str, str]:
@@ -2909,6 +2973,7 @@ def _meal_plan_prompts(
         "Whole foods to include, with the daily amount to aim for:\n"
         + "\n".join(lines)
         + diet_clause
+        + _meal_layout_text(replace_items, n, pregnant)
         + f"\n\nWrite exactly {n} {meal_word} now."
     )
     return system_prompt, user_prompt, llm_cache.make_key("meal_plan", system_prompt, user_prompt, _generation_model(), _feature_model("meal"))
@@ -3043,7 +3108,10 @@ def _build_share_text(
     keep_items: list[dict[str, Any]],
     replace_items: list[dict[str, Any]],
     meal_plan: str,
+    day_lines: list[str] | None = None,
 ) -> str:
+    """The plain-text plan. `day_lines` (combine.day_text of the Meals tab's day) add a "How to combine" part between the kept
+    pills and the meal plan; they are ignored while SUPPSWIPE_COMBINE is off."""
     out = ["SuppSwipe — my results", ""]
     out.append(f"🥗 Replaced with whole foods ({len(replace_items)}):")
     if replace_items:
@@ -3060,6 +3128,8 @@ def _build_share_text(
             out.append(f"  • {_nutrient_title(d.get('component'))} {d.get('dose_label', '')}".rstrip())
     else:
         out.append("  • (none)")
+    if day_lines and _combine_enabled():
+        out += ["", "How to combine (general guidance, not medical advice):", *day_lines]
     if meal_plan.strip():
         out += ["", "🍽️ Meal plan:", meal_plan.strip()]
     out += ["", "Made with SuppSwipe. General nutrition information, not medical advice: https://suppswipe.streamlit.app"]
@@ -4179,6 +4249,68 @@ def _render_header() -> None:
                 color: #1e293b;
                 padding: 8px 0;
                 border-bottom: 1px solid #f1f5f9;
+            }
+            /* How to combine: "Your day" at the top of the Meals tab. ONE white list card (like the Plan tab's lists) holds the meals, the "Any
+               meal" row, the pharmacist strip and the table. A meal is its name, the pills and foods in it as tinted pills (rose = a kept pill,
+               green = a food, the colours of the Plan tab; labels, not buttons) and a 44 px strip per tip. A tip and a table row are native
+               disclosures, so a tap opens one without a rerun. The glyph is green for "goes well together", blue for "keep apart" and for a note;
+               every strip also says it in words for a screen reader. No transition or animation anywhere. */
+            .cb-cap { margin: 0; padding: 10px 0 0 0; font-size: 0.82rem; line-height: 1.4; color: #475569; }
+            .cb-card { margin-bottom: 0.5rem; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 0 12px; overflow: hidden; }   /* Streamlit pulls a markdown block up by 1 rem: air for what follows */
+            /* The day is CLOSED at first: one 44 px strip that says what is inside, so the Meals tab still opens on meals (the plan button
+               stays on the first screen of a phone). Only the strip is shown until a tap; the caption sits inside, next to the tips. */
+            .cb-day > summary { display: flex; align-items: center; gap: 10px; box-sizing: border-box; min-height: 44px; padding: 6px 0; border-radius: 10px; list-style: none; cursor: pointer; }
+            .cb-day > summary::-webkit-details-marker { display: none; }
+            .cb-day > summary::after { content: "▾"; content: "▾" / ""; flex: 0 0 auto; margin-left: auto; padding-left: 4px; color: #475569; font-size: 1rem; }
+            .cb-day[open] > summary::after { content: "▴"; content: "▴" / ""; }
+            .cb-day[data-state="empty"] > summary .cb-g { border-color: #a7f3d0; background: #d1fae5; color: #065f46; }
+            .cb-dbody { border-top: 1px solid #f1f5f9; }
+            .cb-dbody > * + * { border-top: 1px solid #f1f5f9; }
+            .cb-dbody > .cb-cap + * { border-top: 0; }
+            .cb-slot, .cb-any, .cb-held { padding: 10px 0 4px 0; }
+            .cb-med { padding: 8px 0; }
+            .cb-sh { display: flex; align-items: center; gap: 6px; font-size: 0.95rem; font-weight: 800; color: #0f172a; }
+            /* Streamlit styles lists inside its markdown (a margin, a bullet, an indent): the pills are none of that. */
+            .cb-card .cb-items { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 6px 0 8px 0; padding: 0; }
+            .cb-card .cb-chip { margin: 0; padding: 2px 9px; list-style: none; border-radius: 999px; font-size: 0.76rem; font-weight: 800; line-height: 1.35; max-width: 100%; overflow-wrap: anywhere; }
+            .cb-card .cb-chip::marker { content: ""; }
+            .cb-card .cb-chip[data-kind="pill"] { background: #fee2e2; color: #7f1d1d; }
+            .cb-card .cb-chip[data-kind="food"] { background: #d1fae5; color: #065f46; }
+            .cb-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+            .cb-tip { margin: 0 0 6px 0; border-radius: 10px; background: #f8fafc; }
+            .cb-tip > summary { display: flex; align-items: center; gap: 10px; box-sizing: border-box; min-height: 44px; padding: 6px 12px; border-radius: 10px; list-style: none; cursor: pointer; }
+            .cb-tip > summary::-webkit-details-marker { display: none; }
+            .cb-tip > summary::after { content: "▾"; content: "▾" / ""; flex: 0 0 auto; margin-left: auto; padding-left: 4px; color: #475569; font-size: 1rem; }
+            .cb-tip[open] > summary::after { content: "▴"; content: "▴" / ""; }
+            /* The page's focus ring (3 px, #1d4ed8, offset 2 px, !important) is drawn INSIDE the strip here: the card clips what leaves it. */
+            .cb-day > summary:focus-visible, .cb-tip > summary:focus-visible, .cb-all > summary:focus-visible, a.cb-src:focus-visible { outline-offset: -3px !important; }
+            .cb-g { flex: 0 0 22px; width: 22px; height: 22px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #bfdbfe; border-radius: 50%; background: #eff6ff; color: #1e3a5f; font-size: 0.8rem; font-weight: 900; line-height: 1; }
+            .cb-tip[data-rel="with"] .cb-g { border-color: #a7f3d0; background: #d1fae5; color: #065f46; }
+            .cb-t { flex: 1 1 auto; min-width: 0; font-size: 0.86rem; font-weight: 700; line-height: 1.3; color: #1e293b; overflow-wrap: anywhere; }
+            .cb-ti { font-size: 0.88rem; font-weight: 800; color: #0f172a; }
+            .cb-tx { display: block; font-size: 0.8rem; font-weight: 600; color: #334155; }
+            .cb-tag { display: inline-block; padding: 1px 8px; border-radius: 999px; background: #d1fae5; color: #065f46; font-size: 0.72rem; font-weight: 800; line-height: 1.3; }
+            /* The text of an opened tip lines up with the tip's own text (the glyph's width and gap); a phone narrower than about 360 px
+               gives that indent back, so the lines are not squeezed. */
+            .cb-body { padding: 2px 12px 8px 44px; font-size: 0.82rem; line-height: 1.4; color: #334155; }
+            .cb-body > * + * { margin-top: 4px; }
+            @media (max-width: 360px) { .cb-body { padding-left: 12px; } }
+            .cb-extra { font-weight: 700; color: #1e293b; }
+            .cb-src, .cb-srch { font-size: 0.78rem; color: #475569; overflow-wrap: anywhere; }
+            .cb-srch { font-weight: 800; }
+            a.cb-src { display: flex; align-items: center; box-sizing: border-box; min-height: 44px; margin-top: 0; border-radius: 6px; color: #1d4ed8; text-decoration: underline; text-underline-offset: 2px; }
+            .cb-small { margin: 0 0 8px 0; font-size: 0.78rem; line-height: 1.4; color: #475569; }
+            .cb-empty { padding: 10px 0; }
+            .cb-eb { font-size: 0.84rem; line-height: 1.45; color: #334155; }
+            .cb-all > summary { display: flex; align-items: center; gap: 6px; box-sizing: border-box; min-height: 44px; border-radius: 8px; font-size: 0.84rem; font-weight: 800; color: #047857; list-style: none; cursor: pointer; }
+            .cb-all > summary::-webkit-details-marker { display: none; }
+            .cb-all > summary::after { content: "▾"; content: "▾" / ""; }
+            .cb-all[open] > summary::after { content: "▴"; content: "▴" / ""; }
+            .cb-rows { padding-bottom: 6px; }
+            .cb-label { margin: 8px 0 6px 0; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: #475569; }
+            @media (forced-colors: active) {
+                .cb-card .cb-chip { border: 1px solid ButtonText; }
+                .cb-tip > summary, .cb-day > summary { border: 1px solid ButtonText; }
             }
             .plan-sr {
                 position: absolute;
@@ -6815,6 +6947,9 @@ def _render_card() -> None:
         )
         if extra_info:
             bio_note = f"{bio_note} {extra_info}".strip()
+        # "Pairs well with": up to two short tags from the curated rules of the combine module (a vitamin D pill goes well with some
+        # fat). A flat line glued to the note inside the card, on the few cards that have a sourced tag and no upper-limit warning.
+        pairs = _card_pairs(card, component_key, card_form)
 
         food_label = _food_name(selected_food)
         # What this card offers, so the swipe (applied at the start of the next
@@ -6844,6 +6979,7 @@ def _render_card() -> None:
             rdaLabel=rda_label_txt,
             warn=warn_text,
             bioNote=bio_note,
+            pairs=pairs,
             index=index,
             total=len(cards),
             accent=theme["accent"],
@@ -7200,6 +7336,7 @@ def _plan_item_dialog_body() -> None:
         if item["kind"] == "food":
             with st.expander("\U0001F331 What the whole food adds (AI)"):
                 _render_plan_item_adds(item)
+        _render_plan_item_combine(item)
         with st.expander("\U0001F3C3 Athlete targets"):
             _render_plan_item_athlete(item)
         if st.button("Done", width="stretch", key="plandlg_close"):
@@ -7446,12 +7583,249 @@ def _render_plan_tab(
         st.info("Swipe through your cards to build your plan.")
 
 
-def _render_meals_tab(replace_items: list[dict[str, Any]], diet_label: str, excluded: list[dict[str, Any]]) -> str:
-    """Instant serving ideas + the AI meal plan. Returns the plan's cache key."""
+# --- "How to combine" on the results page: the day, the table of all combinations and the part of a plan row's window ----------------
+# The engine is the `combine` module (curated, sourced rules; no AI, no network). Everything here is the app's own drawing of its data:
+# the day is ONE markdown block of native <details> disclosures (a tap opens one without a widget, a key or a rerun), written as one line
+# (a newline or a 4-space indent would make Markdown break the HTML), every engine string through html.escape.
+_COMBINE_SLOT_ICON = {"breakfast": "\U0001F305", "lunch": "☀️", "dinner": "\U0001F319"}
+# rel -> (the glyph, what a screen reader hears before the tip). The glyph is decorative, the word is not: no information by colour alone.
+_COMBINE_REL = {"with": ("+", "Pairs well: "), "apart": ("↔︎", "Better apart: "), "note": ("i", "Good to know: ")}
+_COMBINE_TIPS_PER_SLOT = 3  # the most strips a meal shows (ranked: what explains a move first); the rest is one tap away in the table
+_COMBINE_CAPTION = (
+    "A simple order for your pills and foods, so your body can use them well. General guidance, not medical advice."
+)
+_COMBINE_EMPTY_TITLE = "No special pairing needed"
+_COMBINE_EMPTY_BODY = (
+    "Nothing in your plan needs a particular order. Enjoy your foods and pills with your usual meals, and follow the directions on your pack."
+)
+# A pill the Heads-up box warns about is not placed in a meal. The box holds two kinds of warning (over an upper intake level; the
+# smokers' beta-carotene advice), so these words only point to it and claim nothing about the dose.
+_COMBINE_HELD_TITLE = "See the Heads-up"
+_COMBINE_HELD_NOTE = "These have a note in the Heads-up above, so they are not placed in a meal."
+# Under the meals radio when the plan prompt carries a meal layout: how the written plan relates to the day above it.
+_COMBINE_BRIDGE = {
+    3: "Written around your day: foods that pair well share a meal.",
+    2: "Written around your day. With 2 meals, your breakfast foods join lunch.",
+    1: "Written around your day. With 1 meal, all your foods share it.",
+}
+
+
+def _combine_source_html(source: dict[str, Any], prefix: str = "Source: ") -> str:
+    """One source line: its name, and, as a whole-line link, the page itself (a new tab: the visitor's session stays where it is)."""
+    name = html.escape(str(source.get("name", "") or ""))
+    url = str(source.get("url", "") or "")
+    if url.startswith("https://"):
+        return (
+            f"<a class='cb-src' href='{html.escape(url)}' target='_blank' rel='noopener noreferrer'>{prefix}{name}"
+            "<span class='cb-sr'> (opens in a new tab)</span></a>"
+        )
+    return f"<div class='cb-src'>{prefix}{name}</div>"
+
+
+def _combine_body_html(
+    why: str, caveats: list[str], sources: list[dict[str, Any]], extra: str = "", sources_list: bool = False
+) -> str:
+    """What opens under a tip: the hint (only the fat tip has one), why, the notes, then the source(s)."""
+    parts = [f"<div class='cb-extra'>{html.escape(extra)}</div>"] if extra else []
+    parts.append(f"<div class='cb-why'>{html.escape(why)}</div>")
+    parts += [f"<div class='cb-note'>Note: {html.escape(c)}</div>" for c in caveats]
+    if sources_list and len(sources) > 1:
+        parts.append("<div class='cb-srch'>Sources:</div>")
+        parts += [_combine_source_html(src, "") for src in sources]
+    else:
+        parts += [_combine_source_html(src) for src in sources]
+    return "".join(parts)
+
+
+def _combine_disclosure_html(rel: str, takeaway: str, body: str, title: str = "", tag: str = "") -> str:
+    """One tip: a 44 px strip (glyph, the one-line takeaway, a chevron) that opens to its body. With a `title` (the table) the title is
+    the bold first line and the takeaway the second."""
+    rel = rel if rel in _COMBINE_REL else "note"
+    glyph, spoken = _COMBINE_REL[rel]
+    if title:
+        line = (
+            f"<span class='cb-ti'>{html.escape(title)}</span>"
+            + (f" <span class='cb-tag'>{html.escape(tag)}</span>" if tag else "")
+            + f"<span class='cb-sr'>. </span><span class='cb-tx'>{html.escape(takeaway)}</span>"
+        )
+    else:
+        line = html.escape(takeaway)
+    return (
+        f"<details class='cb-tip' data-rel='{rel}'><summary><span class='cb-g' aria-hidden='true'>{glyph}</span>"
+        f"<span class='cb-t'><span class='cb-sr'>{spoken}</span>{line}</span></summary><div class='cb-body'>{body}</div></details>"
+    )
+
+
+def _combine_tip_html(tip: dict[str, Any]) -> str:
+    """A tip of the day (the engine's merged tip: one or more rules, the hint, the source of each rule)."""
+    body = _combine_body_html(
+        str(tip.get("why", "") or ""), [str(c) for c in tip.get("caveats") or []], list(tip.get("sources") or []), str(tip.get("extra", "") or "")
+    )
+    return _combine_disclosure_html(str(tip.get("rel", "") or ""), str(tip.get("text", "") or ""), body)
+
+
+def _combine_chip_html(item: dict[str, Any]) -> str:
+    """A pill or a food as a tinted pill, in the colours the Plan tab uses (rose = a kept pill, green = a food). Not a control."""
+    kind = "pill" if item.get("kind") == "pill" else "food"
+    return (
+        f"<li class='cb-chip' data-kind='{kind}'><span class='cb-sr'>{'Pill' if kind == 'pill' else 'Food'}: </span>"
+        f"<span aria-hidden='true'>{html.escape(str(item.get('icon', '') or ''))}</span> {html.escape(str(item.get('text', '') or ''))}</li>"
+    )
+
+
+def _combine_list_html(label: str, items: list[dict[str, Any]]) -> str:
+    return f"<ul class='cb-items' aria-label='{html.escape(label)}'>" + "".join(_combine_chip_html(i) for i in items) + "</ul>"
+
+
+def _combine_slot_html(slot: dict[str, Any]) -> str:
+    """One meal: its name, what goes into it, and up to three tips."""
+    label = str(slot.get("label", "") or "")
+    icon = _COMBINE_SLOT_ICON.get(str(slot.get("key", "") or ""), "")
+    return (
+        "<div class='cb-slot'><div class='cb-sh' role='heading' aria-level='4'>"
+        f"<span aria-hidden='true'>{icon}</span> {html.escape(label)}</div>"
+        + (_combine_list_html(label, slot["items"]) if slot.get("items") else "")
+        + "".join(_combine_tip_html(t) for t in (slot.get("tips") or [])[:_COMBINE_TIPS_PER_SLOT])
+        + "</div>"
+    )
+
+
+def _combine_table_html(rows: list[dict[str, Any]]) -> str:
+    """"See all combinations": every rule of the curated table, the ones that apply to this plan first and tagged. It is the same data as
+    the tips, so the two never disagree."""
+    if not rows:
+        return ""
+
+    def one(row: dict[str, Any], tag: str = "") -> str:
+        body = _combine_body_html(
+            str(row.get("why", "") or ""), [str(c) for c in row.get("caveats") or []], list(row.get("sources") or []), sources_list=True
+        )
+        return _combine_disclosure_html(str(row.get("rel", "") or ""), str(row.get("text", "") or ""), body, str(row.get("title", "") or ""), tag)
+
+    mine = [r for r in rows if r.get("in_plan")]
+    rest = [r for r in rows if not r.get("in_plan")]
+    inner = "".join(one(r, "In your plan") for r in mine)
+    if mine and rest:
+        inner += "<div class='cb-label'>Also good to know</div>"
+    elif rest:
+        inner += "<div class='cb-label'>How foods and pills combine</div>"
+    inner += "".join(one(r) for r in rest)
+    return f"<details class='cb-all'><summary>See all combinations</summary><div class='cb-rows'>{inner}</div></details>"
+
+
+def _combine_summary(day: dict[str, Any], slots: list[dict[str, Any]]) -> tuple[str, str, str, str]:
+    """(state, glyph, first line, second line) of the closed "Your day" strip: the Meals tab opens on meals, not on a schedule, so
+    the day is one 44 px line that says what is inside ("4 pairing tips", "Lunch · Dinner") until the visitor opens it."""
+    if slots:
+        tips = sum(min(len(s.get("tips") or []), _COMBINE_TIPS_PER_SLOT) for s in slots) + (1 if day.get("medicine") else 0)
+        title = f"{tips} pairing tip" + ("" if tips == 1 else "s") if tips else "Meal by meal"
+        return "tips", "", title, " · ".join(str(s.get("label", "") or "") for s in slots)
+    if day.get("held"):
+        return "held", "i", _COMBINE_HELD_TITLE, ""
+    return "empty", "✓", _COMBINE_EMPTY_TITLE, ""
+
+
+def _combine_day_html(day: dict[str, Any], rows: list[dict[str, Any]]) -> str:
+    """The "Your day" block: a closed strip that opens to breakfast, lunch and dinner with the pills and foods that belong there and a
+    strip per tip, then "Any meal" and "See the Heads-up" (a pill the Heads-up box warns about: no timing advice), the pharmacist strip
+    and the table. "" when there is nothing in the plan to order."""
+    if not day or not day.get("has_items"):
+        return ""
+    slots = [s for s in day.get("slots") or [] if s.get("items") or s.get("tips")]
+    note = _COMBINE_CAPTION + (f" {combine.ONE_TABLET_NOTE}" if day.get("split_pills") else "")  # pills kept apart may be ONE tablet
+    parts: list[str] = [f"<div class='cb-cap'>{html.escape(note)}</div>"]
+    if slots:
+        parts += [_combine_slot_html(s) for s in slots]
+        if day.get("anytime"):
+            parts.append(
+                "<div class='cb-any'><div class='cb-sh' role='heading' aria-level='4'>Any meal</div>"
+                + _combine_list_html("Any meal", day["anytime"]) + "</div>"
+            )
+    elif not day.get("held"):  # no reassurance above pills the Heads-up box warns about
+        parts.append(f"<div class='cb-empty'><div class='cb-eb'>{_COMBINE_EMPTY_BODY}</div></div>")
+    if day.get("held"):
+        parts.append(
+            f"<div class='cb-held'><div class='cb-sh' role='heading' aria-level='4'>{_COMBINE_HELD_TITLE}</div>"
+            + _combine_list_html(_COMBINE_HELD_TITLE, day["held"]) + f"<div class='cb-small'>{_COMBINE_HELD_NOTE}</div></div>"
+        )
+    if day.get("medicine"):
+        parts.append("<div class='cb-med'>" + _combine_tip_html(day["medicine"]) + "</div>")
+    parts.append(_combine_table_html(rows))
+    state, glyph, first, second = _combine_summary(day, slots)
+    strip = (
+        (f"<span class='cb-g' aria-hidden='true'>{glyph}</span>" if glyph else "")
+        + f"<span class='cb-t'><span class='cb-ti'>{html.escape(first)}</span>"
+        + (f"<span class='cb-sr'>. </span><span class='cb-tx'>{html.escape(second)}</span>" if second else "") + "</span>"
+    )
+    return (
+        "<div class='plan-h' role='heading' aria-level='3'>\U0001F550 Your day</div>"
+        f"<div class='cb-card'><details class='cb-day' data-state='{state}'><summary>{strip}</summary>"
+        "<div class='cb-dbody'>" + "".join(parts) + "</div></details></div>"
+    )
+
+
+def _render_combine_day(day: dict[str, Any] | None, keep_items: list[dict[str, Any]], replace_items: list[dict[str, Any]]) -> None:
+    """The "Your day" block at the top of the Meals tab (nothing while the plan is empty or the feature is off)."""
+    if not day or not day.get("has_items") or not _combine_enabled():
+        return
+    rows = combine.table_rows(keep_items, replace_items, _combine_hooks())
+    st.markdown(_combine_day_html(day, rows), unsafe_allow_html=True)
+
+
+def _render_plan_item_combine(item: dict[str, Any]) -> None:
+    """The "How to combine" part of a plan row's window: for a kept pill when and how to take it, for a food what to pair it with. Plain
+    Streamlit; no expander when the rules have nothing to say about this item (no empty message: that would be a dead end)."""
+    if not _combine_enabled():
+        return
+    hooks = _combine_hooks()
+    tips: list[dict[str, Any]] = []
+    if item["kind"] == "keep":
+        d = item["items"][0]
+        kept = combine.kept_pills(
+            [x for x in (st.session_state.get("swipe_decisions") or {}).values() if x.get("decision") == "keep"], hooks
+        )
+        tips = combine.item_tips(
+            str(d.get("component_key", "") or ""), "pill", form=str(d.get("form", "") or ""), dose_value=d.get("dose_value"),
+            dose_unit=str(d.get("dose_unit", "") or ""), dose_max=d.get("dose_max"), over_limit=bool(_final_upper_limit_warnings([d])),
+            component=d.get("component"), kept=kept, hooks=hooks,
+        )
+        title = "\U0001F550 When and how to take it"
+    else:
+        seen: set[str] = set()
+        for d in item["items"]:
+            for tip in combine.item_tips(str(d.get("component_key", "") or ""), "food", component=d.get("component"), food=d.get("selected_food"), hooks=hooks):
+                if tip["rule_id"] not in seen:
+                    seen.add(tip["rule_id"])
+                    tips.append(tip)
+        tips.sort(key=lambda t: t["rank"])
+        title = "\U0001F9E9 What to pair it with"
+    if not tips:
+        return
+    with st.expander(title):
+        for tip in tips:
+            st.markdown("**" + _md_escape(tip["text"]) + "**")
+            st.caption(_md_escape(tip["why"]))
+            for note in tip["caveats"]:
+                st.caption("Note: " + _md_escape(note))
+            source = tip["sources"][0] if tip["sources"] else None
+            if source:
+                url = str(source.get("url", "") or "")
+                name = _md_escape(source.get("name", ""))
+                st.caption("Source: " + (f"[{name}]({url})" if url.startswith("https://") else name))
+
+
+def _render_meals_tab(
+    replace_items: list[dict[str, Any]], diet_label: str, excluded: list[dict[str, Any]],
+    keep_items: list[dict[str, Any]] | tuple[()] = (), day: dict[str, Any] | None = None,
+) -> str:
+    """Instant serving ideas + the AI meal plan, then "Your day" (which kept pill and which swapped food goes into which meal, with the
+    tips) as a closed strip. Returns the plan's cache key."""
     plan_key = ""
     _excluded_swaps_caption(excluded, diet_label)
     if not replace_items:
         st.info("Swipe right on at least one nutrient to get meal ideas.")
+        # A plan of kept pills alone has a day too: drawn here, before the early return.
+        _render_combine_day(day, list(keep_items), replace_items)
         return plan_key
     st.markdown("<div class='plan-h' role='heading' aria-level='3'>⚡ Quick ideas</div>", unsafe_allow_html=True)
     lines = []
@@ -7482,31 +7856,39 @@ def _render_meals_tab(replace_items: list[dict[str, Any]], diet_label: str, excl
         format_func=lambda m: f"{m} meal" if m == 1 else f"{m} meals",
         label_visibility="collapsed",
     )
-    _sys, _usr, plan_key = _meal_plan_prompts(replace_items, diet_label, int(num_meals))
-    ready = llm_cache.get(plan_key)
-    plan_box = st.empty()
-    if ready:
-        plan_box.markdown(ready)
-        st.session_state["swipe_meal_plan"] = ready
-        st.session_state["swipe_meal_plan_key"] = plan_key
-        if st.button("🔄 Different meals", width="stretch", key="swipe_regen_meal"):
-            llm_cache.drop(plan_key)
-            with st.spinner("Cooking up new meals…"):
-                st.session_state["swipe_meal_plan"] = _generate_meal_plan(
-                    replace_items, diet_label, int(num_meals), placeholder=plan_box
-                )
-    elif llm_cache.inflight(plan_key) is not None:
-        with plan_box.container():
-            _live_meal_plan(plan_key)
-    elif not _ai_is_on():
-        st.caption("The AI meal plan is switched off right now — the ideas above still work.")
-    elif st.button("Generate my meals", type="primary", width="stretch", key="swipe_gen_meal"):
-        with st.spinner("Cooking up your meals…"):
-            plan = _generate_meal_plan(replace_items, diet_label, int(num_meals), placeholder=plan_box)
-        st.session_state["swipe_meal_plan"] = plan
-        st.session_state["swipe_meal_plan_key"] = plan_key
-        if not plan:
-            st.warning(_ai_retry_note("Couldn't generate meals right now — please try again."))
+    if day and day.get("needs_layout") and _combine_enabled():
+        st.caption(_COMBINE_BRIDGE.get(int(num_meals), _COMBINE_BRIDGE[3]))
+    # The plan's controls are ONE element however many they draw (a button, the live plan, a caption): the day below keeps the same place
+    # in the page when the plan is done, so a strip the visitor opened while it was being written stays open.
+    with st.container():
+        _sys, _usr, plan_key = _meal_plan_prompts(replace_items, diet_label, int(num_meals))
+        ready = llm_cache.get(plan_key)
+        plan_box = st.empty()
+        if ready:
+            plan_box.markdown(ready)
+            st.session_state["swipe_meal_plan"] = ready
+            st.session_state["swipe_meal_plan_key"] = plan_key
+            if st.button("🔄 Different meals", width="stretch", key="swipe_regen_meal"):
+                llm_cache.drop(plan_key)
+                with st.spinner("Cooking up new meals…"):
+                    st.session_state["swipe_meal_plan"] = _generate_meal_plan(
+                        replace_items, diet_label, int(num_meals), placeholder=plan_box
+                    )
+        elif llm_cache.inflight(plan_key) is not None:
+            with plan_box.container():
+                _live_meal_plan(plan_key)
+        elif not _ai_is_on():
+            st.caption("The AI meal plan is switched off right now — the ideas above still work.")
+        elif st.button("Generate my meals", type="primary", width="stretch", key="swipe_gen_meal"):
+            with st.spinner("Cooking up your meals…"):
+                plan = _generate_meal_plan(replace_items, diet_label, int(num_meals), placeholder=plan_box)
+            st.session_state["swipe_meal_plan"] = plan
+            st.session_state["swipe_meal_plan_key"] = plan_key
+            if not plan:
+                st.warning(_ai_retry_note("Couldn't generate meals right now — please try again."))
+    # Below the plan controls on purpose: the tab opens on meals and its main button, not on a schedule (a day above them pushed
+    # "Generate my meals" a screen down). Closed at first, one 44 px strip.
+    _render_combine_day(day, list(keep_items), replace_items)
     return plan_key
 
 
@@ -7706,7 +8088,7 @@ def _card_ask_ai_suggestions(card: dict[str, Any]) -> list[str]:
 
 def _render_share_tab(
     keep_items: list[dict[str, Any]], replace_items: list[dict[str, Any]], plan_key: str,
-    diet_label: str, excluded: list[dict[str, Any]],
+    diet_label: str, excluded: list[dict[str, Any]], day_lines: list[str] | None = None,
 ) -> None:
     _excluded_swaps_caption(excluded, diet_label)
     # Only a plan written for the current swaps (not one from before the filter
@@ -7716,7 +8098,7 @@ def _render_share_tab(
         meal_plan = str(st.session_state.get("swipe_meal_plan", "") or "")
         if bb.looks_like_agent_error(meal_plan):  # stored by an older build: not a plan
             meal_plan = ""
-    share_text = _build_share_text(keep_items, replace_items, meal_plan)
+    share_text = _build_share_text(keep_items, replace_items, meal_plan, day_lines)
     st.caption("Tap the copy icon on the box, or download the plan.")
     st.code(share_text, language=None, wrap_lines=True)
     st.download_button(
@@ -7764,12 +8146,14 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
     _record_scan_to_history(decisions, diet_label)
     # Start writing the default (3-meal) plan in the background right away.
     _prefetch_meal_plan(replace_items, diet_label, 3)
+    # Which kept pill and which swapped food goes into which meal (no AI): drawn on the Meals tab, written into the share text.
+    day = _combine_day(keep_items, replace_items) if _combine_enabled() else None
 
     tab_plan, tab_meals, tab_shop, tab_ai, tab_share = st.tabs(_RESULT_TABS, key="swipe_result_tabs")
     with tab_plan:
         _render_plan_tab(cards, replace_items, misfit_items, keep_items, diet_name)
     with tab_meals:
-        plan_key = _render_meals_tab(replace_items, diet_label, misfit_items)
+        plan_key = _render_meals_tab(replace_items, diet_label, misfit_items, keep_items=keep_items, day=day)
     with tab_shop:
         _render_shopping_tab(replace_items, keep_items, diet_label, misfit_items)
     with tab_ai:
@@ -7777,7 +8161,7 @@ def _render_final_card(cards: list[dict[str, Any]], decisions: dict[str, dict[st
         st.caption("Ask about your whole plan — answers use your nutrients and doses.")
         _render_ask_ai_chat(summary_context, "summary", 0, suggestions=_ASK_AI_SUGGESTIONS)
     with tab_share:
-        _render_share_tab(keep_items, replace_items, plan_key, diet_label, misfit_items)
+        _render_share_tab(keep_items, replace_items, plan_key, diet_label, misfit_items, day_lines=combine.day_text(day) if day else None)
 
 
 def _format_eu_nrv(entry: dict[str, Any]) -> str:
