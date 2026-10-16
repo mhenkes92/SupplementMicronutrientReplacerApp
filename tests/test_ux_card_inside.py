@@ -353,9 +353,11 @@ def test_the_glow_holds_still_while_the_card_is_held_and_while_the_page_is_busy_
     assert "animation: none" in off and "opacity: 0" in off  # a swipe is on its way: its chips are dimmed as a whole, and carry no glow
     # the wrapper's class follows the script's own state: paint() writes every class of #wrap at once, so a repaint cannot drop it
     paint = SCRIPT[SCRIPT.index("function paint()"):SCRIPT.index("function setTight(")]
-    assert '(dragging ? " dragging" : "")' in paint and '(busy ? " busy" : "")' in paint
+    assert '(dragging && horizontal ? " dragging" : "")' in paint and '(busy ? " busy" : "")' in paint
     down = SCRIPT[SCRIPT.index("function down(x, y)"):SCRIPT.index("function move(x, y, ev)")]
-    assert down.index("dragging = true;") < down.index("paint();")  # a press on the card (a swipe starts with one) holds the glow ...
+    assert "paint();" not in down  # a press on the card (a tap, the start of a body scroll) leaves the glow alone: no flutter ...
+    move = SCRIPT[SCRIPT.index("function move(x, y, ev)"):SCRIPT.index("function up()")]
+    assert move.index("horizontal = Math.abs(dx) > Math.abs(dy);") < move.index("if (horizontal) { paint(); }") < move.index("if (!horizontal) return;")  # ... only the first sideways move of a drag holds it ...
     up = SCRIPT[SCRIPT.index("function up()"):SCRIPT.index("// A press on a button of the card")]
     assert up.index("dragging = false;") < up.index("paint();") < up.index('commit("right")')  # ... and the release (also a pointercancel) lets it go, whatever follows
     poll = SCRIPT[SCRIPT.index("setInterval(function () {"):SCRIPT.index("function setValue(v)")]

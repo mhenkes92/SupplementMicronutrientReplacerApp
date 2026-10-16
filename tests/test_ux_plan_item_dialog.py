@@ -141,7 +141,8 @@ def test_a_kept_pill_dialog_has_no_comparison():
     text = _text(at)
     assert "kept as a supplement" in text and "✎ Change a choice" in text
     labels = [e.label for e in at.expander]
-    assert labels == ["🏃 Athlete targets"]  # no food was chosen, so no comparison
+    # No food was chosen, so no comparison. A kept vitamin D pill has one more part since "How to combine": when and how to take it.
+    assert labels == ["\U0001F550 When and how to take it", "🏃 Athlete targets"] and not any("whole food adds" in x for x in labels)
 
 
 def test_one_food_for_two_nutrients_is_one_row_with_a_change_button_per_nutrient():

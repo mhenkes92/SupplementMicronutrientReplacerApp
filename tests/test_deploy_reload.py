@@ -96,9 +96,10 @@ def test_every_attribute_the_app_uses_exists_in_its_own_modules(sw):
     """A deploy whose app.py uses a name its modules lack would die on open: keep the two in step."""
     source = (ROOT / "swipe_mobile_app" / "app.py").read_text(encoding="utf-8")
     import blockbrain.app as bb
+    import combine
     import llm_cache
 
-    for alias, module in (("bb", bb), ("llm_cache", llm_cache)):
+    for alias, module in (("bb", bb), ("llm_cache", llm_cache), ("combine", combine)):
         used = set(re.findall(r"\b" + alias + r"\.([A-Za-z_]\w*)", source))
         assert used, alias
         missing = sorted(a for a in used if not hasattr(module, a))
